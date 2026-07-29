@@ -7,7 +7,9 @@ DMG_PATH="build/${APP_NAME}-${VERSION}.dmg"
 OUTPUT_DIR="docs/updates"
 OUTPUT_PATH="${OUTPUT_DIR}/appcast.xml"
 SPARKLE_BIN="${SPARKLE_BIN:-$(find "$HOME/Library/Developer/Xcode/DerivedData" -path '*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast' -type f -print -quit 2>/dev/null)}"
-RELEASE_URL="https://github.com/himudigonda/Voqora/releases/download/v${VERSION}"
+# Sparkle appends the archive filename to this prefix. Keep the trailing slash
+# so GitHub receives /download/vX.Y.Z/<archive>, not /download/<archive>.
+RELEASE_URL="https://github.com/himudigonda/Voqora/releases/download/v${VERSION}/"
 
 fail() { echo "❌ $1" >&2; exit 1; }
 [ -f "$DMG_PATH" ] || fail "DMG not found at $DMG_PATH. Run make release VERSION=$VERSION first."
