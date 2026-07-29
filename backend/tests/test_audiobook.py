@@ -1,7 +1,7 @@
 """Tests for the audiobook pipeline.
 
 Mocks: PDFExtractor (no real PDFs), GeminiCleaner (no API calls),
-EngineManager.generate (yields short np arrays).
+EngineManager.generate_with_timing (yields short segment-timing dicts).
 """
 
 import asyncio
@@ -87,6 +87,15 @@ def test_create_book_makes_dirs():
     assert os.path.isdir(os.path.join(AudiobookStore.book_dir(bid), "audio_pages"))
 
 
+def test_page_segments_path_shape():
+    """The segments sidecar is co-located with its page WAV under audio_pages/,
+    zero-padded to 3 digits, matching the {n:03d}.wav sibling pattern."""
+    path = AudiobookStore.page_segments_path("abc123", 7)
+    assert path == os.path.join(
+        AudiobookStore.book_dir("abc123"), "audio_pages", "007.segments.json"
+    )
+
+
 def test_meta_atomic_write_and_read():
     bid = AudiobookStore.create_book("Test.pdf")
     meta = AudiobookStore.initial_meta(
@@ -137,6 +146,20 @@ def test_estimate_math():
     assert est["cost_usd"] > 0
 
 
+def test_estimate_is_self_consistent_includes_token_count():
+    """estimate() must return token_count itself — callers shouldn't patch it in
+    afterwards (which left other callers KeyError-prone)."""
+    from app.services.gemini_cleaner import GeminiCleaner
+
+    est = AudiobookService.estimate(
+        page_count=10, sample_words=200, sample_chars=1000, speed=1.0
+    )
+    assert "token_count" in est
+    # ~4 chars/token over 10 pages × 1000 chars = 10000 chars → ~2500 tokens.
+    assert est["token_count"] == GeminiCleaner.estimate_tokens(1000 * 10)
+    assert est["token_count"] > 0
+
+
 # ---------- WAV concat ----------
 
 
@@ -185,6 +208,88 @@ async def test_concat_phase_builds_correct_wav_and_page_to_time():
     assert actual["audio_seconds"] == new_meta["total_audio_seconds"]
 
 
+@pytest.mark.asyncio
+async def test_concat_phase_writes_segments_with_absolute_offsets():
+    """T1.7: transcript.json's segments/dropped_segments are the per-page
+    sidecar data, offset from page-relative to whole-book-absolute time via
+    page_to_time — matching how sections[].start_time is already computed."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+
+    # Page 1: 1.0s of audio, starts at absolute t=0.
+    _write_pcm_wav(AudiobookStore.page_audio_path(bid, 1), 24000)
+    AudiobookService._write_segments_json(
+        AudiobookStore.page_segments_path(bid, 1),
+        [{"text": "Page one sentence.", "start_sec": 0.0, "end_sec": 1.0}],
+        [],
+    )
+    # Page 2: 0.5s of audio, starts at absolute t=1.0 (right after page 1).
+    _write_pcm_wav(AudiobookStore.page_audio_path(bid, 2), 12000)
+    AudiobookService._write_segments_json(
+        AudiobookStore.page_segments_path(bid, 2),
+        [{"text": "Page two sentence.", "start_sec": 0.0, "end_sec": 0.5}],
+        [{"index": 3, "text": "A segment that failed on page two."}],
+    )
+
+    await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    assert transcript["segments"]["1"] == [
+        {"text": "Page one sentence.", "start_sec": 0.0, "end_sec": 1.0}
+    ]
+    # Page 2's segment must be offset by page 1's 1.0s duration.
+    seg2 = transcript["segments"]["2"][0]
+    assert seg2["text"] == "Page two sentence."
+    assert abs(seg2["start_sec"] - 1.0) < 1e-6
+    assert abs(seg2["end_sec"] - 1.5) < 1e-6
+
+    assert transcript["dropped_segments"] == {
+        "2": [{"index": 3, "text": "A segment that failed on page two."}]
+    }
+    # Page 1 had no dropped segments — must be absent, not a zero-length placeholder.
+    assert "1" not in transcript["dropped_segments"]
+
+
+@pytest.mark.asyncio
+async def test_concat_phase_transcript_omits_pages_without_sidecar():
+    """§8 edge case: a page with no segments sidecar (pre-Sprint-1 book, or one
+    that hit the total-TTS-failure branch) must be simply absent from
+    transcript.json's segments key — not an error, not a zero-length
+    placeholder — and must not prevent the rest of the transcript from being
+    written correctly."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+
+    _write_pcm_wav(AudiobookStore.page_audio_path(bid, 1), 24000)
+    AudiobookService._write_segments_json(
+        AudiobookStore.page_segments_path(bid, 1),
+        [{"text": "Page one sentence.", "start_sec": 0.0, "end_sec": 1.0}],
+        [],
+    )
+    # Page 2 has real audio but deliberately NO sidecar file.
+    _write_pcm_wav(AudiobookStore.page_audio_path(bid, 2), 12000)
+
+    # Must not raise despite page 2's missing sidecar.
+    await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    assert "1" in transcript["segments"]
+    assert (
+        "2" not in transcript["segments"]
+    ), "missing sidecar must be absent, not a placeholder"
+    assert transcript["dropped_segments"] == {}
+
+
 def test_wav_header_format():
     body_size = 1000
     h = _wav_header(body_size)
@@ -194,12 +299,276 @@ def test_wav_header_format():
     assert h[36:40] == b"data"
 
 
+def test_write_segments_json_round_trip(tmp_path):
+    path = str(tmp_path / "audio_pages" / "003.segments.json")
+    segments = [
+        {"text": "Hello world.", "start_sec": 0.0, "end_sec": 1.2},
+        {"text": "Goodbye.", "start_sec": 1.2, "end_sec": 2.0},
+    ]
+    dropped = [{"index": 2, "text": "This one failed."}]
+
+    AudiobookService._write_segments_json(path, segments, dropped)
+
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    assert data == {"segments": segments, "dropped": dropped}
+
+
 # ---------- TTS phase + per-page failure ----------
 
 
-async def _mock_generate_yielding(*args, **kwargs):
-    yield np.zeros(12000, dtype=np.float32)
-    yield np.zeros(6000, dtype=np.float32)
+async def _mock_generate_with_timing_yielding(*args, **kwargs):
+    """Two successful segments, mirroring the pre-Sprint-1 mock's two chunks
+    (12000, 6000 samples) but in generate_with_timing's dict shape."""
+    for i, n_samples in enumerate((12000, 6000)):
+        audio = np.zeros(n_samples, dtype=np.float32)
+        yield {
+            "index": i,
+            "text": f"segment {i}",
+            "ok": True,
+            "audio": audio,
+            "duration_sec": len(audio) / SAMPLE_RATE,
+        }
+
+
+# ---------- _generate_full_page (T1.5) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_returns_samples_timings_and_dropped():
+    """T1.5's new 3-tuple return shape. A mix of ok/failed segments must
+    produce: samples == concatenation of only the ok segments' audio;
+    segment_timings with correct page-relative cumulative offsets;
+    dropped_segments containing exactly the failed entries."""
+
+    async def mixed_generate_with_timing(text, voice, speed):
+        yield {
+            "index": 0,
+            "text": "First.",
+            "ok": True,
+            "audio": np.ones(1000, dtype=np.float32),
+            "duration_sec": 1000 / SAMPLE_RATE,
+        }
+        yield {
+            "index": 1,
+            "text": "Second (fails).",
+            "ok": False,
+            "audio": None,
+            "duration_sec": 0.0,
+        }
+        yield {
+            "index": 2,
+            "text": "Third.",
+            "ok": True,
+            "audio": np.full(500, 0.5, dtype=np.float32),
+            "duration_sec": 500 / SAMPLE_RATE,
+        }
+
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate_with_timing",
+        side_effect=mixed_generate_with_timing,
+    ):
+        samples, segment_timings, dropped_segments = (
+            await AudiobookService._generate_full_page("irrelevant", "af_bella", 1.0)
+        )
+
+    expected_samples = np.concatenate(
+        [np.ones(1000, dtype=np.float32), np.full(500, 0.5, dtype=np.float32)]
+    )
+    assert np.array_equal(samples, expected_samples)
+
+    assert len(segment_timings) == 2
+    assert segment_timings[0]["text"] == "First."
+    assert segment_timings[0]["start_sec"] == 0.0
+    assert abs(segment_timings[0]["end_sec"] - 1000 / SAMPLE_RATE) < 1e-9
+    assert segment_timings[1]["text"] == "Third."
+    assert abs(segment_timings[1]["start_sec"] - 1000 / SAMPLE_RATE) < 1e-9
+    assert abs(segment_timings[1]["end_sec"] - 1500 / SAMPLE_RATE) < 1e-9
+
+    assert dropped_segments == [{"index": 1, "text": "Second (fails)."}]
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_all_segments_fail_returns_silence_fallback():
+    """§8 edge case: when every segment fails, _generate_full_page preserves
+    the pre-existing 0.3s-silence fallback byte-for-byte, with empty
+    segment_timings and every segment recorded in dropped_segments (not
+    silently vanished, which was the D1 bug)."""
+
+    async def all_fail_generate_with_timing(text, voice, speed):
+        yield {
+            "index": 0,
+            "text": "Bad one.",
+            "ok": False,
+            "audio": None,
+            "duration_sec": 0.0,
+        }
+        yield {
+            "index": 1,
+            "text": "Also bad.",
+            "ok": False,
+            "audio": None,
+            "duration_sec": 0.0,
+        }
+
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate_with_timing",
+        side_effect=all_fail_generate_with_timing,
+    ):
+        samples, segment_timings, dropped_segments = (
+            await AudiobookService._generate_full_page("irrelevant", "af_bella", 1.0)
+        )
+
+    assert np.array_equal(samples, np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32))
+    assert segment_timings == []
+    assert dropped_segments == [
+        {"index": 0, "text": "Bad one."},
+        {"index": 1, "text": "Also bad."},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_tts_phase_flags_partial_segment_failure(monkeypatch):
+    """D1 end-to-end: a page with one failed segment among several successful
+    ones must land in failed_pages even though its WAV still has real
+    (non-silence) audio for the segments that succeeded. Pre-fix, this class
+    of failure was silently swallowed inside generate() — the page was never
+    flagged and failed_count stayed 0 even though words were missing."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("First sentence succeeds. Second sentence fails. Third succeeds.")
+
+    async def partial_fail_generate_with_timing(text, voice, speed):
+        yield {
+            "index": 0,
+            "text": "First sentence succeeds.",
+            "ok": True,
+            "audio": np.ones(2400, dtype=np.float32),
+            "duration_sec": 2400 / SAMPLE_RATE,
+        }
+        yield {
+            "index": 1,
+            "text": "Second sentence fails.",
+            "ok": False,
+            "audio": None,
+            "duration_sec": 0.0,
+        }
+        yield {
+            "index": 2,
+            "text": "Third succeeds.",
+            "ok": True,
+            "audio": np.ones(1200, dtype=np.float32),
+            "duration_sec": 1200 / SAMPLE_RATE,
+        }
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        AudiobookService,
+        "_emit",
+        classmethod(lambda cls, b, ev, **kw: events.append((ev, kw))),
+    )
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=partial_fail_generate_with_timing,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, meta)
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert 1 in new_meta["failed_pages"], "partial segment failure must flag the page"
+
+    # Real, non-silence audio from the 2 successful segments — not a blanket
+    # silence fallback. (2400 + 1200 samples * 2 bytes = 7200 PCM bytes.)
+    wav_path = AudiobookStore.page_audio_path(bid, 1)
+    assert os.path.exists(wav_path)
+    assert os.path.getsize(wav_path) == WAV_HEADER_SIZE + (2400 + 1200) * 2
+
+    with open(AudiobookStore.page_segments_path(bid, 1), encoding="utf-8") as f:
+        sidecar = json.load(f)
+    assert len(sidecar["segments"]) == 2
+    assert sidecar["dropped"] == [{"index": 1, "text": "Second sentence fails."}]
+
+    page_failed = [kw for ev, kw in events if ev == "page_failed"]
+    assert any(
+        e.get("phase") == "tts" for e in page_failed
+    ), "page_failed SSE must fire"
+
+
+@pytest.mark.asyncio
+async def test_tts_phase_sidecar_write_failure_does_not_destroy_good_audio():
+    """Regression: a segments-sidecar write failure occurring AFTER the real
+    WAV was already written must never cascade into the outer except-branch
+    and overwrite good audio with silence. Per the v1.1 design notes §8, the WAV's
+    existence is the pipeline's sole "page is done" checkpoint; a missing
+    sidecar is an already-designed-for, harmless fallback (the frontend
+    degrades to the old per-page estimate) — it must degrade to that, not
+    destroy already-synthesized real audio or false-flag the page failed."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("A perfectly good sentence that synthesizes just fine.")
+
+    async def all_succeed_generate_with_timing(text, voice, speed):
+        yield {
+            "index": 0,
+            "text": "A perfectly good sentence that synthesizes just fine.",
+            "ok": True,
+            "audio": np.ones(4800, dtype=np.float32),
+            "duration_sec": 4800 / SAMPLE_RATE,
+        }
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=all_succeed_generate_with_timing,
+        ),
+        patch.object(
+            AudiobookService,
+            "_write_segments_json",
+            side_effect=OSError("disk full"),
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, meta)
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert 1 not in (
+        new_meta.get("failed_pages") or []
+    ), "a sidecar write failure alone must not mark the page failed"
+
+    # Real synthesized audio (4800 samples * 2 bytes = 9600 PCM bytes), NOT
+    # the 0.5s total-failure silence fallback (12000 samples = 24000 PCM bytes).
+    wav_path = AudiobookStore.page_audio_path(bid, 1)
+    assert os.path.exists(wav_path)
+    assert (
+        os.path.getsize(wav_path) == WAV_HEADER_SIZE + 4800 * 2
+    ), "good audio must survive a sidecar-write failure, not be overwritten with silence"
+
+    # No sidecar was persisted — must be simply absent, matching the
+    # already-designed-for missing-sidecar fallback (no exception here).
+    assert not os.path.exists(AudiobookStore.page_segments_path(bid, 1))
 
 
 @pytest.mark.asyncio
@@ -226,14 +595,115 @@ async def test_tts_phase_writes_per_page_wavs(monkeypatch):
             return_value=None,
         ),
         patch(
-            "app.services.audiobook_service.EngineManager.generate",
-            side_effect=_mock_generate_yielding,
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=_mock_generate_with_timing_yielding,
         ),
     ):
         await AudiobookService._phase_tts(bid, meta)
 
     for n in (1, 2):
         assert os.path.exists(AudiobookStore.page_audio_path(bid, n))
+        # T1.6: a segments sidecar must be written alongside every real WAV.
+        assert os.path.exists(AudiobookStore.page_segments_path(bid, n))
+
+
+@pytest.mark.asyncio
+async def test_phase_tts_ensures_model_loaded_each_page(monkeypatch):
+    """Regression: a long interactive /speak can idle-unload the model while the
+    audiobook waits on the preemption lock. _phase_tts must re-ensure the model
+    is loaded per page so the page doesn't fail with 'Model not initialized'."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2):
+        path = AudiobookStore.page_clean_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(f"Page {n} has some real content to narrate.")
+
+    ensure = AsyncMock(return_value=None)
+    with (
+        patch("app.services.audiobook_service.EngineManager.ensure_loaded", ensure),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=_mock_generate_with_timing_yielding,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, meta)
+
+    # Once before the loop + once per page (2) = 3. Assert at least per-page.
+    assert ensure.await_count >= 2, "model must be re-ensured each page"
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_surfaces_failed_count_in_done(monkeypatch):
+    """A book that had per-page clean/TTS failures must report failed_count in
+    the 'done' event (and persisted stats) so the UI can offer a retry rather
+    than presenting a flawless book."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    # Simulate clean/tts having recorded two failed pages.
+    await AudiobookStore.update_meta(bid, failed_pages=[2, 3])
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        AudiobookService,
+        "_emit",
+        classmethod(lambda cls, b, ev, **kw: events.append((ev, kw))),
+    )
+    monkeypatch.setattr(AudiobookService, "_phase_extract", AsyncMock())
+    monkeypatch.setattr(AudiobookService, "_phase_clean", AsyncMock())
+    monkeypatch.setattr(AudiobookService, "_phase_section", AsyncMock())
+    monkeypatch.setattr(AudiobookService, "_phase_tts", AsyncMock())
+    monkeypatch.setattr(
+        AudiobookService, "_phase_concat", AsyncMock(return_value={"pages": 3})
+    )
+
+    await AudiobookService._run_pipeline(bid)
+
+    done = [kw for ev, kw in events if ev == "done"]
+    assert done, "no 'done' event emitted"
+    actual = done[0]["actual"]
+    assert actual["failed_count"] == 2
+    assert actual["failed_pages"] == [2, 3]
+    # Persisted into meta.actual too.
+    persisted = AudiobookStore.read_meta(bid)
+    assert persisted["actual"]["failed_count"] == 2
+    assert persisted["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_clean_book_reports_zero_failures(monkeypatch):
+    """No failed pages → failed_count 0, failed_pages empty (no false alarms)."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        AudiobookService,
+        "_emit",
+        classmethod(lambda cls, b, ev, **kw: events.append((ev, kw))),
+    )
+    for name in ("_phase_extract", "_phase_clean", "_phase_section", "_phase_tts"):
+        monkeypatch.setattr(AudiobookService, name, AsyncMock())
+    monkeypatch.setattr(
+        AudiobookService, "_phase_concat", AsyncMock(return_value={"pages": 2})
+    )
+
+    await AudiobookService._run_pipeline(bid)
+
+    actual = [kw for ev, kw in events if ev == "done"][0]["actual"]
+    assert actual["failed_count"] == 0
+    assert actual["failed_pages"] == []
 
 
 # ---------- API endpoints ----------
@@ -311,6 +781,66 @@ def test_start_requires_api_key_header():
     response = client.post(f"/audiobook/{bid}/start")
     assert response.status_code == 400
     assert "X-Gemini-Api-Key" in response.json()["detail"]
+
+
+def test_start_requires_consent_header():
+    """HARD-072: consent is a UI-only gate client-side, so the server must
+    independently reject a /start call missing (or false) X-Gemini-Consent —
+    otherwise a modified client could send a document to Gemini without ever
+    showing the user the consent toggle."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    bid = AudiobookStore.create_book("Test.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    response = client.post(f"/audiobook/{bid}/start", headers={"X-Gemini-Api-Key": "x"})
+    assert response.status_code == 400
+    assert "Consent" in response.json()["detail"]
+
+    response = client.post(
+        f"/audiobook/{bid}/start",
+        headers={"X-Gemini-Api-Key": "x", "X-Gemini-Consent": "false"},
+    )
+    assert response.status_code == 400
+    assert "Consent" in response.json()["detail"]
+
+
+def test_start_succeeds_with_api_key_and_consent(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    enqueued: list[str] = []
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        enqueued.append(book_id)
+
+    monkeypatch.setattr(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    )
+
+    client = TestClient(app)
+    bid = AudiobookStore.create_book("Test.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    response = client.post(
+        f"/audiobook/{bid}/start",
+        headers={"X-Gemini-Api-Key": "x", "X-Gemini-Consent": "true"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "queued"
+    assert enqueued == [bid]
 
 
 # ---------- resume ----------
@@ -429,7 +959,9 @@ def test_audio_no_range_returns_full_file_with_accept_ranges_header():
             bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
         ),
     )
-    payload = b"hello-wav-bytes"
+    # >= 44 bytes: the endpoint treats sub-WAV-header files as not-ready (404),
+    # and a real audio.wav always has at least a 44-byte header.
+    payload = b"RIFF" + b"\x00" * 60
     with open(AudiobookStore.audio_path(bid), "wb") as f:
         f.write(payload)
 
@@ -437,6 +969,26 @@ def test_audio_no_range_returns_full_file_with_accept_ranges_header():
     assert response.status_code == 200
     assert response.headers["Accept-Ranges"] == "bytes"
     assert response.content == payload
+
+
+def test_audio_subheader_file_returns_404_not_ready():
+    """A partial WAV must not be exposed as a successful audio response."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    book_id = AudiobookStore.create_book("Test.pdf")
+    AudiobookStore.write_meta(
+        book_id,
+        AudiobookStore.initial_meta(
+            book_id, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    with open(AudiobookStore.audio_path(book_id), "wb") as file:
+        file.write(b"\x00" * 10)
+
+    assert client.get(f"/audiobook/{book_id}/audio").status_code == 404
 
 
 def test_audio_range_invalid_returns_416():
@@ -547,6 +1099,7 @@ async def test_retry_failed_clears_pages_and_enqueues(monkeypatch):
         for path in (
             AudiobookStore.page_clean_path(bid, n),
             AudiobookStore.page_audio_path(bid, n),
+            AudiobookStore.page_segments_path(bid, n),
         ):
             os.makedirs(os.path.dirname(path), exist_ok=True)
             open(path, "wb").close()
@@ -571,6 +1124,9 @@ async def test_retry_failed_clears_pages_and_enqueues(monkeypatch):
     for n in (2, 3):
         assert not os.path.exists(AudiobookStore.page_clean_path(bid, n))
         assert not os.path.exists(AudiobookStore.page_audio_path(bid, n))
+        # T1.8: a retry must not leave a stale segments sidecar describing
+        # the first attempt's timing against what will be a fresh WAV.
+        assert not os.path.exists(AudiobookStore.page_segments_path(bid, n))
     # Final audio + transcript wiped:
     assert not os.path.exists(AudiobookStore.audio_path(bid))
     assert not os.path.exists(AudiobookStore.transcript_path(bid))
@@ -860,8 +1416,12 @@ def test_estimate_response_includes_cost_warning(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_clean_phase_uses_ocr_for_image_pages(monkeypatch):
-    """Pages with fewer than 50 chars of extracted text are routed to
-    GeminiCleaner.ocr_page instead of clean_page."""
+    """Pages with SOME (but under-threshold) extracted text are routed to
+    GeminiCleaner.ocr_page instead of clean_page. A genuinely-empty page is a
+    different case (D6 — see test_ocr_blank_page_routing.py): it must short-
+    circuit for free rather than reach OCR at all, so this fixture uses a
+    small amount of sparse text (e.g. a page-number/watermark fragment a real
+    scan's text layer might leak) to stay strictly a "some text" case."""
     from app.services import audiobook_service as _svc
     from app.services import pdf_extractor as _pe
 
@@ -872,9 +1432,10 @@ async def test_clean_phase_uses_ocr_for_image_pages(monkeypatch):
     AudiobookStore.write_meta(bid, meta)
     AudiobookStore.save_source(bid, b"%PDF-1.4\n" + b"x" * 200, "pdf")
 
-    # Page 1: minimal text (image page) — should trigger OCR.
+    # Page 1: sparse text under the OCR threshold, but NOT empty (image page
+    # with a little bleed-through text) — should trigger OCR.
     # Page 2: normal text — should use clean_page.
-    for n, content in [(1, ""), (2, "x" * 200)]:
+    for n, content in [(1, "pg 1"), (2, "x" * 200)]:
         path = AudiobookStore.page_raw_path(bid, n)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -1115,3 +1676,363 @@ async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
     with open(clean_path, encoding="utf-8") as f:
         result = f.read()
     assert result == raw_text, "fallback content must equal the original raw text"
+
+
+# ---------- section-detection fallback (no outline, Gemini unavailable) ----------
+
+
+def test_fallback_sections_small_book_is_single_section():
+    """A book at or under the chunk threshold has no real navigational value
+    from chunking, so it stays a single section."""
+    sections = AudiobookService._fallback_sections(10, "My Book")
+    assert sections == [{"title": "My Book", "start_page": 1, "end_page": 10}]
+
+
+def test_fallback_sections_untitled_book_uses_default_title():
+    sections = AudiobookService._fallback_sections(5, None)
+    assert sections[0]["title"] == "Audiobook"
+
+
+def test_fallback_sections_large_book_chunks_into_parts():
+    """Above the threshold, chunk into contiguous, page-covering parts instead
+    of collapsing the whole book into one section (the bug being fixed)."""
+    sections = AudiobookService._fallback_sections(40, "Long Book")
+    assert len(sections) > 1
+    assert sections[0] == {"title": "Part 1", "start_page": 1, "end_page": 15}
+    assert sections[-1]["end_page"] == 40
+    # Contiguous, gapless, and covers every page exactly once.
+    for i in range(1, len(sections)):
+        assert sections[i]["start_page"] == sections[i - 1]["end_page"] + 1
+
+
+@pytest.mark.asyncio
+async def test_phase_section_falls_back_to_chunked_parts_when_gemini_fails(
+    monkeypatch,
+):
+    """A 40-page non-PDF book (no outline) whose Gemini section-detection call
+    fails must not collapse into a single section spanning the whole book —
+    it should chunk into multiple navigable parts (see _fallback_sections)."""
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.txt")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.txt", 40, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "txt"
+    AudiobookStore.write_meta(bid, meta)
+
+    async def _fail_detect(api_key, pages):
+        raise RuntimeError("simulated Gemini failure")
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "detect_sections", AsyncMock(side_effect=_fail_detect)
+    )
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    persisted = AudiobookStore.read_meta(bid)
+    assert len(persisted["sections"]) > 1, "must not collapse to a single section"
+    assert persisted["sections"][0]["start_page"] == 1
+    assert persisted["sections"][-1]["end_page"] == 40
+
+
+@pytest.mark.asyncio
+async def test_phase_section_small_book_stays_single_section_on_gemini_failure(
+    monkeypatch,
+):
+    """Below the chunk threshold, the pre-existing single-section fallback
+    behavior is preserved (chunking a short book adds no value)."""
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.txt")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.txt", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "txt"
+    AudiobookStore.write_meta(bid, meta)
+
+    async def _fail_detect(api_key, pages):
+        raise RuntimeError("simulated Gemini failure")
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "detect_sections", AsyncMock(side_effect=_fail_detect)
+    )
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    persisted = AudiobookStore.read_meta(bid)
+    assert len(persisted["sections"]) == 1
+    assert persisted["sections"][0]["end_page"] == 3
+
+
+# ---------- Phase 2: structural-format-native cascade (Sprint 3 / Finding Set B) ----------
+#
+# the v1.1 design notes §6.6: PDF outline -> DOCX headings -> MD headers -> Gemini -> fallback.
+# Each of the first three, when structural data is found, must short-circuit
+# the cascade the same way the (now-fixed) outline path always has — Gemini's
+# detect_sections must never be called for these books.
+
+
+@pytest.mark.asyncio
+async def test_phase_section_pdf_outline_short_circuits_gemini(monkeypatch):
+    """T3.1 + T3.4: a PDF with a real embedded outline must use those bookmark
+    titles directly and never call Gemini's detect_sections."""
+    import io
+
+    from pypdf import PdfWriter
+
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "pdf"
+    AudiobookStore.write_meta(bid, meta)
+
+    writer = PdfWriter()
+    for _ in range(5):
+        writer.add_blank_page(width=200, height=200)
+    writer.add_outline_item("Real Chapter One", 0)
+    writer.add_outline_item("Real Chapter Two", 2)
+    buf = io.BytesIO()
+    writer.write(buf)
+    AudiobookStore.save_source(bid, buf.getvalue(), "pdf")
+
+    detect_mock = AsyncMock()
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    detect_mock.assert_not_called()
+    persisted = AudiobookStore.read_meta(bid)
+    titles = [s["title"] for s in persisted["sections"]]
+    assert "Real Chapter One" in titles
+    assert "Real Chapter Two" in titles
+    assert not any(t.startswith("Part ") for t in titles), titles
+
+
+@pytest.mark.asyncio
+async def test_phase_section_docx_headings_short_circuit_gemini(monkeypatch):
+    """T3.2 + T3.4: a DOCX with Heading-styled paragraphs must use those
+    headings directly and never call Gemini's detect_sections."""
+    import io
+
+    from docx import Document
+
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.docx")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.docx", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "docx"
+    AudiobookStore.write_meta(bid, meta)
+
+    doc = Document()
+    doc.add_heading("Real Chapter One", level=1)
+    doc.add_paragraph("Body text.")
+    doc.add_heading("Real Chapter Two", level=1)
+    doc.add_paragraph("More body text.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    AudiobookStore.save_source(bid, buf.getvalue(), "docx")
+
+    detect_mock = AsyncMock()
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    detect_mock.assert_not_called()
+    persisted = AudiobookStore.read_meta(bid)
+    titles = [s["title"] for s in persisted["sections"]]
+    assert "Real Chapter One" in titles
+    assert "Real Chapter Two" in titles
+    assert not any(t.startswith("Part ") for t in titles), titles
+
+
+@pytest.mark.asyncio
+async def test_phase_section_md_headers_short_circuit_gemini(monkeypatch):
+    """T3.3 + T3.4: a Markdown file with #/## headers must use those headers
+    directly and never call Gemini's detect_sections."""
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.md")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.md", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    AudiobookStore.write_meta(bid, meta)
+
+    content = "# Real Chapter One\n\nBody text.\n\n# Real Chapter Two\n\nMore text.\n"
+    AudiobookStore.save_source(bid, content.encode("utf-8"), "md")
+
+    detect_mock = AsyncMock()
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    detect_mock.assert_not_called()
+    persisted = AudiobookStore.read_meta(bid)
+    titles = [s["title"] for s in persisted["sections"]]
+    assert "Real Chapter One" in titles
+    assert "Real Chapter Two" in titles
+    assert not any(t.startswith("Part ") for t in titles), titles
+
+
+@pytest.mark.asyncio
+async def test_phase_section_skips_gemini_when_api_key_empty_and_no_structure(
+    monkeypatch,
+):
+    """the v1.1 design notes §6.6 cascade step 4: Gemini is only attempted when a key is
+    present. A book with no structural signal (plain TXT) and an empty key
+    must go straight to _fallback_sections without ever attempting Gemini —
+    avoiding a network round-trip that would just swallow an auth failure
+    and return [] anyway (the exact silent-degrade mechanism behind D3)."""
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.txt")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.txt", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "txt"
+    AudiobookStore.write_meta(bid, meta)
+
+    detect_mock = AsyncMock()
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+
+    detect_mock.assert_not_called()
+    persisted = AudiobookStore.read_meta(bid)
+    assert len(persisted["sections"]) == 1
+    assert persisted["sections"][0]["end_page"] == 3
+
+
+@pytest.mark.asyncio
+async def test_phase_section_drops_outline_entries_outside_page_range(monkeypatch):
+    """Defense-in-depth: an out-of-range start_page from a structural source
+    must never reach the persisted sections (and therefore never corrupt a
+    page_to_time lookup at concat time). DOCX/MD compute their own pagination
+    internally so this should already always hold, but validate centrally
+    here regardless — one uniform guard covering every structural source."""
+    from app.services import pdf_extractor as _pe
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "pdf"
+    AudiobookStore.write_meta(bid, meta)
+
+    # A malformed/adversarial outline: one valid entry, one whose start_page
+    # is beyond the book's real 5-page extent.
+    bogus_outline = [
+        {"title": "Real Chapter", "start_page": 2, "level": 0},
+        {"title": "Out Of Range", "start_page": 99, "level": 0},
+    ]
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "read_outline", classmethod(lambda cls, p: bogus_outline)
+    )
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    persisted = AudiobookStore.read_meta(bid)
+    titles = [s["title"] for s in persisted["sections"]]
+    assert "Out Of Range" not in titles
+    assert "Real Chapter" in titles
+    assert all(s["start_page"] <= 5 for s in persisted["sections"])
+
+
+# ---------- Phase 2: idempotency (D3) ----------
+
+
+@pytest.mark.asyncio
+async def test_phase_section_skips_when_sections_already_present(monkeypatch):
+    """D3: _phase_section must be idempotent like every other phase. A book
+    resumed via resume_in_progress's "tts"/"concatenating" path re-enters
+    _run_pipeline with api_key="" — if section detection re-ran here, Gemini
+    would silently swallow the resulting auth failure and fall back to
+    generic "Part N" sections, overwriting already-correct real chapter
+    titles. Presence of non-empty meta['sections'] must short-circuit before
+    any detection path (outline read OR Gemini) runs at all."""
+    from unittest.mock import MagicMock
+
+    from app.services import gemini_cleaner as _gc
+    from app.services import pdf_extractor as _pe
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "pdf"
+    real_sections = [
+        {
+            "title": "Real Chapter One",
+            "start_page": 1,
+            "end_page": 5,
+            "start_time": 0.0,
+        }
+    ]
+    meta["sections"] = real_sections
+    AudiobookStore.write_meta(bid, meta)
+
+    outline_mock = MagicMock(return_value=None)
+    monkeypatch.setattr(_pe.PDFExtractor, "read_outline", outline_mock)
+    detect_mock = AsyncMock()
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    # Exactly resume_in_progress's "tts"/"concatenating" resume scenario:
+    # empty api_key, sections already populated from the original run.
+    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+
+    outline_mock.assert_not_called()
+    detect_mock.assert_not_called()
+    persisted = AudiobookStore.read_meta(bid)
+    assert persisted["sections"] == real_sections
+    # The phase must never have even started — status stays whatever it was.
+    assert persisted["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_phase_section_runs_normally_when_sections_empty(monkeypatch):
+    """Sanity counterpart to the skip test above: a genuinely fresh book
+    (sections == [], initial_meta's default) must NOT be skipped — the guard
+    is about idempotency, not a blanket no-op."""
+    from app.services import gemini_cleaner as _gc
+    from app.services import pdf_extractor as _pe
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "pdf"
+    assert meta["sections"] == []
+    AudiobookStore.write_meta(bid, meta)
+
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "read_outline", classmethod(lambda cls, p: None)
+    )
+    detect_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect_mock)
+
+    await AudiobookService._phase_section(
+        bid, "test-key", AudiobookStore.read_meta(bid)
+    )
+
+    detect_mock.assert_called_once()
+    persisted = AudiobookStore.read_meta(bid)
+    assert persisted["status"] == "sectioning"
+    assert len(persisted["sections"]) == 1  # fell through to _fallback_sections

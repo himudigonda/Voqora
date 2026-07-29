@@ -2,7 +2,7 @@
 
 ## What you need
 
-Voqora v1.0.0 targets Apple-silicon Macs running macOS 14 or newer. Download
+Voqora targets Apple-silicon Macs running macOS 14 or newer. Download
 the DMG from the [release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.0),
 drag Voqora to Applications, and open it.
 
@@ -29,23 +29,27 @@ first try, click back into the source app, select the text again, and retry.
 
 ## Choose a voice and speed
 
-Open Preferences to choose a voice, set the reading speed, adjust volume, and
-change the global shortcuts. Voqora includes eight Kokoro voice options:
+Open Preferences to choose a voice, preview it, set the reading speed, adjust
+volume, and change the global shortcuts. The v1.1 candidate includes 28
+curated voices across these locales:
 
-| Voice | Voice |
+| Locale | Status |
 | --- | --- |
-| `af_bella` | `af_sarah` |
-| `am_adam` | `am_michael` |
-| `bf_emma` | `bf_isabella` |
-| `bm_george` | `bm_lewis` |
+| English (US), English (UK), Spanish, French, Italian, Brazilian Portuguese, Hindi | Supported |
+| Mandarin | Beta |
+
+Turn on **Auto-detect language** to select a matching voice on-device when you
+speak supported non-English text. It preserves your chosen English US/UK voice
+for English. Japanese is not offered yet because reliable narration of ordinary
+kanji text requires a different phonemizer.
 
 There is no universally right voice or speed. Start with the default voice and
 adjust until you can follow a paragraph without wanting to rewind it.
 
-## Turn a PDF into an audiobook
+## Turn a document into an audiobook
 
 1. Open **Audiobooks**.
-2. Add the PDF you want to finish.
+2. Add a PDF, DOCX, Markdown, or plain-text file you want to finish.
 3. Review the creation step and start processing.
 4. Return to the book when it is ready, then use its progress and playback
    controls to continue where you left off.
@@ -53,12 +57,13 @@ adjust until you can follow a paragraph without wanting to rewind it.
 Voqora stores audiobook state locally. Close the app and return later without
 starting the document from the beginning.
 
-### Optional PDF cleanup
+### Optional document cleanup
 
-Most text PDFs can be handled locally. If a document is poorly extracted or
+Most documents can be handled locally. If extraction is poor or a PDF is
 scanned, you can choose optional cleanup with a Gemini API key you provide.
-That operation sends the relevant document material to Gemini. It is separate
-from the core selected-text speech flow and can be skipped.
+Voqora shows a consent control before starting that request. The operation sends
+relevant document material to Gemini, is separate from selected-text speech,
+and can be skipped.
 
 ## History and export
 

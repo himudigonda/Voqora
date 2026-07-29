@@ -3,6 +3,69 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
+## [Unreleased] - v1.1.0 candidate
+
+This section describes private, unreleased work. It is not a public release
+note and must receive a release date only after the full release checklist has
+passed.
+
+### First-run default
+
+- Start every install and upgrade from Bella, the US-English voice, with
+  automatic language switching off. The user can opt into automatic
+  matching-language speech during onboarding or later in Preferences.
+
+### Multilingual listening
+
+- Added 28 curated Kokoro voices across eight supported locales: English (US),
+  English (UK), Spanish, French, Italian, Brazilian Portuguese, Hindi, and
+  Mandarin.
+- Added a grouped, flag-labelled voice picker and bundled voice previews.
+- Added on-device automatic language detection through Apple's
+  `NLLanguageRecognizer`. It preserves a user's English US/UK choice and only
+  switches when a supported non-English language is detected with confidence.
+- Marked Mandarin as beta. Japanese is intentionally excluded because the
+  bundled phonemization path does not produce dependable narration for normal
+  kanji text.
+
+### First-use and reading experience
+
+- Added a voice, language, speed, and auto-detect step to onboarding.
+- Made Accessibility loss visible and recoverable after reinstall or a revoked
+  system permission.
+- Added a real loading state while the first audio buffer is still being
+  generated, rather than presenting an apparently frozen playback state.
+- Preserved the no-account product model: optional email attribution remains
+  optional and does not unlock or gate any reading feature.
+
+### Audiobooks
+
+- Extended document intake to PDF, DOCX, Markdown, and plain-text files.
+- Detect native PDF bookmarks, DOCX heading styles, and Markdown level-one/two
+  headings before falling back to an optional cleanup service.
+- Persist real per-segment speech timing and render a flowing transcript that
+  can follow actual audio rather than a page-duration estimate.
+- Added safer upload handling, retry/reconnect recovery, cancellation of
+  sibling cleanup work, adaptive layouts, clearer processing states, and live
+  audiobook speed updates.
+- Reject incomplete audio files instead of serving them as ready playback.
+
+### Consent and resilience
+
+- Require explicit user consent on the local API before sending document
+  material to Gemini for cleanup or OCR.
+- Prevent duplicate audiobook starts while a book is already processing.
+- Harden atomic file writes, blank-page routing, cover rendering, backend
+  lifecycle handling, and in-progress resume recovery.
+
+### Engineering
+
+- Added deterministic backend and Swift tests for the new language catalog,
+  language detection, document extraction, transcript timing, layout rules,
+  retries, cancellation, and partial-output boundaries.
+- Kept the public v1.0.0 branch and release untouched while this candidate is
+  developed locally.
+
 ## [1.0.0] - 2026-07-28
 
 ### Highlights

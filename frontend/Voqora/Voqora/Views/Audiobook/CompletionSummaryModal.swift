@@ -6,32 +6,55 @@ struct CompletionSummaryModal: View {
     @Environment(\.dismiss) private var dismiss
 
     let book: Audiobook
-    var onListenNow: ((Audiobook) -> Void)? = nil
+    var onListenNow: ((Audiobook) -> Void)?
     @State private var bouncing = false
 
     var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.cyan)
-                .symbolEffect(.bounce, value: bouncing)
-                .padding(.top, 12)
+        VStack(spacing: 0) {
+            // Header + stats + retry scroll if tall (long title, failed-pages row),
+            // so the Listen Now / Later buttons stay pinned and never clip.
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 16) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 56))
+                        .foregroundStyle(.cyan)
+                        .symbolEffect(.bounce, value: bouncing)
+                        .padding(.top, 4)
 
-            VStack(spacing: 4) {
-                Text("YOUR AUDIOBOOK IS READY")
-                    .font(vm.appFont(size: 11, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.cyan)
-                Text(prettyTitle)
-                    .font(vm.appFont(size: 20, weight: .bold))
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(.horizontal, 16)
+                    VStack(spacing: 4) {
+                        Text("YOUR AUDIOBOOK IS READY")
+                            .font(vm.appFont(size: 11, weight: .black))
+                            .kerning(2)
+                            .foregroundStyle(.cyan)
+                        Text(prettyTitle)
+                            .font(vm.appFont(size: 20, weight: .bold))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .padding(.horizontal, 16)
+                    }
+
+                    statsGrid
+
+                    if !book.failedPages.isEmpty {
+                        Button {
+                            let snapshot = book
+                            dismiss()
+                            bookVM.retry(snapshot)
+                        } label: {
+                            Label(
+                                "Retry \(book.failedPages.count) failed page\(book.failedPages.count == 1 ? "" : "s")",
+                                systemImage: "arrow.clockwise"
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .font(vm.appFont(size: 12, weight: .semibold))
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.orange)
+                    }
+                }
+                .padding(.bottom, 6)
             }
-
-            statsGrid
-
-            Spacer(minLength: 0)
 
             HStack(spacing: 12) {
                 Button { dismiss() } label: {
@@ -79,6 +102,22 @@ struct CompletionSummaryModal: View {
             if let cost = book.actual?.costUsd, cost > 0 {
                 statRow("COST", String(format: "$%.2f", cost), "dollarsign.circle")
             }
+            if !book.failedPages.isEmpty {
+                // A page can fail Gemini clean / TTS and be filled with silence;
+                // surface it so the book isn't silently presented as flawless.
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).font(.system(size: 11)).frame(width: 18)
+                    Text("INCOMPLETE")
+                        .font(vm.appFont(size: 9, weight: .black))
+                        .kerning(1.5)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text("\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s")")
+                        .font(vm.appFont(size: 14, weight: .bold).monospaced())
+                        .foregroundStyle(.orange)
+                }
+            }
         }
         .padding(16)
         .background(.ultraThinMaterial.opacity(0.5))
@@ -105,7 +144,9 @@ struct CompletionSummaryModal: View {
 
     private var prettyTitle: String {
         var t = book.title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
+        if t.lowercased().hasSuffix(".pdf") {
+            t = String(t.dropLast(4))
+        }
         return t
     }
 

@@ -129,6 +129,15 @@ for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
 done
 echo "   ✓ License and third-party notices bundled."
 
+# Xcode signs the archive before the distributable-only fonts, backend bundle,
+# and notices are staged. Re-sign the completed app so its resource seal
+# describes exactly what ships inside the DMG. This is deliberately ad-hoc;
+# Developer ID signing and notarization are separate release credentials.
+echo "🔏 Sealing staged app bundle..."
+codesign --force --deep --sign - "$STAGING_DIR/${APP_NAME}.app"
+codesign --verify --deep --strict "$STAGING_DIR/${APP_NAME}.app"
+echo "   ✓ Staged app signature verified."
+
 # ── 6. Build drag-and-drop DMG ──────────────────────────────
 echo "💿 Building installer DMG..."
 rm -f "${BUILD_DIR}/${DMG_NAME}.dmg"

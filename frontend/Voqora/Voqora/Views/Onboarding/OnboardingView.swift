@@ -1,14 +1,15 @@
 import SwiftUI
 
-/// Six-step first-launch wizard.
+/// Seven-step first-launch wizard.
 ///
 /// Steps:
 ///   1. Welcome
 ///   2. Hotkey explanation
 ///   3. Accessibility permission (REQUIRED — blocks Next)
-///   4. Notifications permission (optional)
-///   5. Identity / email (optional)
-///   6. Privacy + done
+///   4. Voice / language / speed personalization (with audio preview)
+///   5. Notifications permission (optional)
+///   6. Identity / email (optional)
+///   7. Privacy + done
 ///
 /// Presented full-window via `.fullScreenCover`-style overlay (not `.sheet`)
 /// so the user can't dismiss it by clicking outside.
@@ -16,14 +17,19 @@ struct OnboardingView: View {
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
+    @EnvironmentObject var vm: DashboardViewModel
+
+    @StateObject private var samplePlayer = VoiceSamplePlayer()
 
     @State private var step: Int = 0
     @State private var emailDraft: String = ""
     @State private var emailSubmitting: Bool = false
     @State private var emailError: String?
     @State private var emailSaved: Bool = false
+    @State private var didSetDefaultVoice = false
 
-    private let stepCount = 6
+    private let stepCount = 7
+    private let voiceStep = 3
 
     var body: some View {
         ZStack {
@@ -44,9 +50,26 @@ struct OnboardingView: View {
         .onAppear {
             emailDraft = identity.email ?? ""
             permissions.startPolling()
+            // Start onboarding from a sensible default voice (US English, Bella)
+            // rather than whatever happened to be persisted before.
+            if !didSetDefaultVoice {
+                vm.selectedVoice = "af_bella"
+                didSetDefaultVoice = true
+            }
+        }
+        .onChange(of: step) { _, newStep in
+            // Stop any voice preview when navigating away from the voice step.
+            if newStep != voiceStep {
+                samplePlayer.stop()
+            }
+        }
+        .onChange(of: vm.selectedVoice) { _, _ in
+            // Switching voice stops the previous sample so it doesn't linger.
+            samplePlayer.stop()
         }
         .onDisappear {
             permissions.stopPolling()
+            samplePlayer.stop()
         }
     }
 
@@ -79,8 +102,9 @@ struct OnboardingView: View {
         case 0: stepWelcome
         case 1: stepHotkey
         case 2: stepAccessibility
-        case 3: stepNotifications
-        case 4: stepIdentity
+        case 3: stepVoice
+        case 4: stepNotifications
+        case 5: stepIdentity
         default: stepDone
         }
     }
@@ -114,13 +138,13 @@ struct OnboardingView: View {
     /// Step-specific Next-button gating.
     private var canAdvance: Bool {
         switch step {
-        case 2: return permissions.accessibilityGranted
-        default: return true
+        case 2: permissions.accessibilityGranted
+        default: true
         }
     }
 
     private var advanceBlockedReason: String? {
-        if step == 2 && !permissions.accessibilityGranted {
+        if step == 2, !permissions.accessibilityGranted {
             return "Grant Accessibility access to continue"
         }
         return nil
@@ -191,6 +215,72 @@ struct OnboardingView: View {
                     pendingLabel: OnboardingCopy.axPendingLabel
                 )
             }
+        }
+    }
+
+    /// True while a bundled voice sample is playing.
+    private var isPreviewing: Bool {
+        samplePlayer.isPlaying
+    }
+
+    private var stepVoice: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "person.wave.2.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.cyan.gradient)
+            Text(OnboardingCopy.voiceTitle)
+                .font(.system(size: 24, weight: .bold))
+            Text(OnboardingCopy.voiceBody)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                GroupedVoicePicker(selection: $vm.selectedVoice)
+                Button {
+                    if samplePlayer.isPlaying {
+                        samplePlayer.stop()
+                    } else {
+                        samplePlayer.play(voice: vm.selectedVoice, speed: vm.speechSpeed)
+                    }
+                } label: {
+                    Label(
+                        isPreviewing ? OnboardingCopy.voiceStopButton : OnboardingCopy.voiceSampleButton,
+                        systemImage: isPreviewing ? "stop.fill" : "play.fill"
+                    )
+                    .frame(minWidth: 130)
+                    .padding(.vertical, 4)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.cyan)
+            }
+
+            VStack(spacing: 6) {
+                HStack {
+                    Text(OnboardingCopy.voiceSpeedLabel)
+                        .font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text(String(format: "%.1f×", vm.speechSpeed))
+                        .font(.system(size: 12, weight: .bold).monospaced())
+                        .foregroundStyle(.cyan)
+                }
+                Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0).tint(.cyan)
+            }
+            .frame(maxWidth: 320)
+
+            Toggle(isOn: $vm.autoDetectLanguage) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(OnboardingCopy.voiceAutoDetectTitle)
+                        .font(.system(size: 13, weight: .medium))
+                    Text(OnboardingCopy.voiceAutoDetectBody)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+            .tint(.cyan)
+            .frame(maxWidth: 320)
         }
     }
 
@@ -317,7 +407,12 @@ struct OnboardingView: View {
                 try await identity.submitEmail(candidate)
                 emailSaved = true
             } catch {
-                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+                let desc = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+                // A server hiccup (e.g. 500) shouldn't look alarming — the step is
+                // optional, so show a reassuring message instead of a raw error.
+                let isServerSide = desc.localizedCaseInsensitiveContains("server")
+                    || desc.contains("500") || desc.contains("503")
+                emailError = isServerSide ? OnboardingCopy.identityServerError : desc
             }
         }
     }

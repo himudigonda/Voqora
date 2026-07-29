@@ -14,26 +14,49 @@ struct AudiobookPlayerView: View {
     @State private var transcriptOpen = false
     @State private var ticker = Date()
     @State private var dominantColor: Color = .cyan
+    @State private var displayParagraphs: [TranscriptParagraphBuilder.Paragraph] = []
+    /// `displayParagraphs.flatMap(\.segments)`, cached once per transcript
+    /// refresh so the 250ms ticker (below) doesn't re-flatten the whole
+    /// book's segments on every tick.
+    @State private var flatSegments: [TranscriptParagraphBuilder.DisplaySegment] = []
+    @State private var currentSegmentID: String? = nil
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
-    // Hardware-paced timer to push UI updates while audio is playing.
+    /// Hardware-paced timer to push UI updates while audio is playing.
     private let tickerTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            background
-            HStack(alignment: .top, spacing: 24) {
-                coverColumn
-                centerColumn
-                sectionsRail
-            }
-            .padding(28)
+        // GeometryReader-driven adaptive layout (the v1.1 design notes Sprint 6, T6.2 —
+        // Defect B): the three-column HStack previously demanded 604pt of
+        // non-negotiable width regardless of what the NavigationSplitView
+        // detail pane actually offered, overflowing it at the app's stated
+        // minimum window size. AudiobookPlayerLayout hides sectionsRail and
+        // then coverColumn as width shrinks so centerColumn (transport,
+        // scrubber, transcript) always has room.
+        GeometryReader { geo in
+            let visibility = AudiobookPlayerLayout.columnVisibility(for: geo.size.width)
+            ZStack(alignment: .topTrailing) {
+                background
+                HStack(alignment: .top, spacing: 24) {
+                    if visibility.showCover {
+                        coverColumn
+                    }
+                    centerColumn
+                    if visibility.showRail {
+                        sectionsRail
+                    }
+                }
+                .padding(28)
 
-            sleepTimerMenu
-                .padding(.top, 16)
-                .padding(.trailing, 20)
+                sleepTimerMenu
+                    .padding(.top, 16)
+                    .padding(.trailing, 20)
+            }
+            // Defense-in-depth (the v1.1 design notes §5.3): a future sizing mistake
+            // degrades to a clean cut instead of visual bleed-through.
+            .clipped()
         }
-        .frame(minWidth: 760, minHeight: 580)
+        .frame(minWidth: AudiobookPlayerLayout.minWidth, minHeight: 580)
         .focusable()
         // Real .onKeyPress modifiers live on the focused root — no hidden
         // buttons. Works because the NavigationStack pushes us into the
@@ -48,26 +71,58 @@ struct AudiobookPlayerView: View {
         .onKeyPress("[") { adjustSpeed(-0.25); return .handled }
         .onKeyPress("]") { adjustSpeed(0.25); return .handled }
         .onKeyPress(",") {
-            if let s = bookVM.currentSection(in: book) { bookVM.seek(toSeconds: s.startTime) }
+            if let s = bookVM.currentSection(in: book) {
+                bookVM.seek(toSeconds: s.startTime)
+            }
             return .handled
         }
         .onKeyPress(".") { bookVM.jumpToNextSection(in: book); return .handled }
         .onReceive(tickerTimer) { now in
+            // Skip re-renders when nothing is playing and no sleep timer is active.
+            guard bookVM.audio.isPlaying || bookVM.sleepUntilEndOfBook || bookVM.sleepRemainingSeconds != nil else { return }
             ticker = now
-            if bookVM.audio.playbackCompleted && bookVM.sleepUntilEndOfBook {
+            if bookVM.audio.playbackCompleted, bookVM.sleepUntilEndOfBook {
                 bookVM.cancelSleepTimer()
+            }
+            if !flatSegments.isEmpty {
+                let t = bookVM.audio.currentTime
+                let newID = TranscriptParagraphBuilder.activeSegmentID(in: flatSegments, at: t)
+                if newID != currentSegmentID {
+                    currentSegmentID = newID
+                }
             }
         }
         .onAppear {
+            // the v1.1 design notes Sprint 6, T6.1 (Defect A): the NavigationStack push is
+            // the real source of truth for "is the player on screen" —
+            // NowPlayingBar reads this flag so it never ghosts underneath
+            // the real player.
+            bookVM.isPlayerViewActive = true
             playerSpeed = bookVM.defaultBookSpeed
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
+            } else {
+                // Already the active book (e.g. reopened from the library) —
+                // play() won't re-run, so make sure the engine's live rate
+                // still matches the persisted preference.
+                bookVM.audio.setPlaybackRate(Float(playerSpeed))
+            }
+            if let t = bookVM.currentTranscript {
+                refreshDisplayParagraphs(from: t)
             }
             // Sample dominant cover color for the ambient gradient.
             let coverURL = baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")
             Task {
                 let color = await CoverColorExtractor.shared.dominantColor(for: coverURL)
                 dominantColor = color
+            }
+        }
+        .onDisappear {
+            bookVM.isPlayerViewActive = false
+        }
+        .onChange(of: bookVM.currentTranscript?.bookID) { _, _ in
+            if let t = bookVM.currentTranscript {
+                refreshDisplayParagraphs(from: t)
             }
         }
     }
@@ -232,7 +287,9 @@ struct AudiobookPlayerView: View {
     }
 
     private var displayProgress: Double {
-        if dragging { return localScrub }
+        if dragging {
+            return localScrub
+        }
         return bookVM.audio.progress
     }
 
@@ -289,6 +346,7 @@ struct AudiobookPlayerView: View {
                     Button(String(format: "%.2gx", s)) {
                         playerSpeed = s
                         bookVM.defaultBookSpeed = s
+                        bookVM.audio.setPlaybackRate(Float(s))
                     }
                 }
             } label: {
@@ -310,9 +368,9 @@ struct AudiobookPlayerView: View {
                 Slider(value: Binding(
                     get: { Double(bookVM.audio.volume) },
                     set: { bookVM.audio.setVolume(Float($0)) }
-                ), in: 0...1.5)
-                .tint(.cyan)
-                .frame(width: 110)
+                ), in: 0 ... 1.5)
+                    .tint(.cyan)
+                    .frame(width: 110)
             }
 
             if bookVM.sleepRemainingSeconds != nil || bookVM.sleepUntilEndOfBook {
@@ -379,62 +437,93 @@ struct AudiobookPlayerView: View {
         .animation(.easeInOut(duration: 0.2), value: transcriptOpen)
     }
 
+    // MARK: - Transcript panel
+
+    @ViewBuilder
     private var transcriptPanel: some View {
-        Group {
-            if let transcript = bookVM.currentTranscript {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            ForEach(orderedPages(transcript), id: \.0) { (pageNum, text) in
-                                let isCurrent = isCurrentPage(pageNum, in: transcript)
-                                Text(text)
-                                    .id(pageNum)
-                                    .font(vm.appFont(size: isCurrent ? 14 : 13, weight: isCurrent ? .bold : .regular))
-                                    .foregroundStyle(isCurrent ? Color.cyan : Color.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+        if !displayParagraphs.isEmpty {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // One flowing Text block per paragraph — only the active
+                    // segment is styled differently, inline within the flow.
+                    // Fixes "it is like 1.5 lines and new line after each":
+                    // there's no longer a Text view (and its spacing) per
+                    // ~90-char fragment, only one per real paragraph.
+                    LazyVStack(alignment: .leading, spacing: 14) {
+                        ForEach(displayParagraphs) { paragraph in
+                            paragraphText(paragraph)
+                                .id(paragraph.id)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .animation(.easeInOut(duration: 0.2), value: currentSegmentID)
                         }
-                        .padding(20)
                     }
-                    // S8: only scroll when the *current page* changes, not on
-                    // every 0.25 s ticker tick. Avoids the ScrollViewReader
-                    // re-layout storm during normal playback.
-                    .onChange(of: currentPageID(in: transcript)) { _, newPage in
-                        guard let newPage else { return }
-                        withAnimation(.easeOut(duration: 0.4)) {
-                            proxy.scrollTo(newPage, anchor: .center)
-                        }
+                    .padding(20)
+                }
+                .onChange(of: currentSegmentID) { _, newID in
+                    guard let newID,
+                          let target = displayParagraphs.first(where: { p in p.segments.contains { $0.id == newID } })
+                    else { return }
+                    // Scroll granularity is per-paragraph — segments within
+                    // one paragraph are fused into a single flowing Text, so
+                    // there's no individual sub-view to scroll to. A real
+                    // paragraph can be taller than this panel, so pan the
+                    // anchor from top to bottom as the active segment
+                    // advances through it, instead of re-centering on the
+                    // same already-visible point for every sentence — keeps
+                    // a highlighted sentence deep in a long paragraph from
+                    // drifting below the visible area until the next
+                    // paragraph starts.
+                    let position = target.segments.firstIndex { $0.id == newID } ?? 0
+                    let progress = target.segments.count > 1
+                        ? Double(position) / Double(target.segments.count - 1)
+                        : 0.5
+                    withAnimation(.easeOut(duration: 0.35)) {
+                        proxy.scrollTo(target.id, anchor: UnitPoint(x: 0.5, y: progress))
                     }
                 }
-                .frame(height: 220)
-                .background(.ultraThinMaterial.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                )
-            } else {
-                ProgressView().tint(.cyan).padding()
             }
+            .frame(height: 220)
+            .background(.ultraThinMaterial.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+            )
+        } else {
+            ProgressView().tint(.cyan).padding()
         }
     }
 
-    private func orderedPages(_ t: AudiobookService.Transcript) -> [(Int, String)] {
-        t.pages
-            .compactMap { (k, v) -> (Int, String)? in Int(k).map { ($0, v) } }
-            .sorted { $0.0 < $1.0 }
+    /// Concatenates a paragraph's segments into one continuous `Text` value
+    /// (SwiftUI `Text + Text`), styling only the currently-active segment —
+    /// `.foregroundColor`/`.font` are used (not `.foregroundStyle`) because
+    /// only the `Text`-returning overloads keep the chain concatenable.
+    private func paragraphText(_ paragraph: TranscriptParagraphBuilder.Paragraph) -> Text {
+        let separator = Text(" ").font(vm.appFont(size: 13, weight: .regular))
+        return paragraph.segments.enumerated().reduce(Text("")) { acc, element in
+            let (index, segment) = element
+            let isCurrent = segment.id == currentSegmentID
+            let run = Text(segment.text)
+                .font(vm.appFont(size: isCurrent ? 14 : 13, weight: isCurrent ? .semibold : .regular))
+                .foregroundColor(isCurrent ? .cyan : .secondary)
+            return index == 0 ? acc + run : acc + separator + run
+        }
     }
 
-    private func currentPageID(in t: AudiobookService.Transcript) -> Int? {
-        let now = bookVM.audio.currentTime
-        let times = t.pageToTime
-            .compactMap { (k, v) -> (Int, Double)? in Int(k).map { ($0, v) } }
-            .sorted { $0.1 < $1.1 }
-        return times.last(where: { $0.1 <= now })?.0
-    }
+    // MARK: - Transcript computation
 
-    private func isCurrentPage(_ page: Int, in t: AudiobookService.Transcript) -> Bool {
-        currentPageID(in: t) == page
+    /// Rebuilds `displayParagraphs` from a freshly-fetched transcript and
+    /// re-syncs `currentSegmentID` to the audio's current position — mirrors
+    /// the tail behavior of the pre-Sprint-2 `computeLines`. Grouping itself
+    /// lives in TranscriptParagraphBuilder (a pure, unit-tested type) per
+    /// the v1.1 design notes T2.2/T2.4.
+    private func refreshDisplayParagraphs(from t: AudiobookService.Transcript) {
+        displayParagraphs = TranscriptParagraphBuilder.buildDisplayParagraphs(from: t)
+        flatSegments = displayParagraphs.flatMap(\.segments)
+        if !flatSegments.isEmpty {
+            let ct = bookVM.audio.currentTime
+            currentSegmentID = TranscriptParagraphBuilder.activeSegmentID(in: flatSegments, at: ct)
+        }
     }
 
     // MARK: - Sections rail
@@ -514,12 +603,15 @@ struct AudiobookPlayerView: View {
         let clamped = min(2.0, max(0.75, raw))
         playerSpeed = clamped
         bookVM.defaultBookSpeed = clamped
+        bookVM.audio.setPlaybackRate(Float(clamped))
     }
 
     private var prettyTitle: String {
         var t = book.title
         for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
+            if t.lowercased().hasSuffix(ext) {
+                return String(t.dropLast(ext.count))
+            }
         }
         return t
     }

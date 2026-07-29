@@ -20,6 +20,12 @@ Key invariants:
  I10. Multi-page concat matches independently-concatenated PCM.
  I11. Transcript JSON written by concat phase contains correct book_id and
       per-page text that matches what was written to the clean files.
+ I12. Sprint 1 cross-consistency invariant (the v1.1 design notes §6.4): a real page's
+      per-segment timing sum (TTSEngine's own timing capture) equals that
+      page's real on-disk WAV duration (independently derived by
+      _phase_concat's byte-size scan) — two different measurements of the
+      same underlying quantity, from a real (not mocked) TTS render, shown
+      to agree within float tolerance.
 """
 
 import asyncio
@@ -477,8 +483,15 @@ async def test_transcript_missing_clean_file_still_writes():
 # ===========================================================================
 
 
-async def _mock_generate(*args, **kwargs):
-    yield np.sin(np.linspace(0, 2 * np.pi, 2400)).astype(np.float32)
+async def _mock_generate_with_timing(*args, **kwargs):
+    audio = np.sin(np.linspace(0, 2 * np.pi, 2400)).astype(np.float32)
+    yield {
+        "index": 0,
+        "text": "mock segment",
+        "ok": True,
+        "audio": audio,
+        "duration_sec": len(audio) / SAMPLE_RATE,
+    }
 
 
 @pytest.mark.asyncio
@@ -497,8 +510,8 @@ async def test_tts_phase_writes_valid_wavs(monkeypatch):
         ),
         patch("app.services.audiobook_service.EngineManager.touch"),
         patch(
-            "app.services.audiobook_service.EngineManager.generate",
-            side_effect=_mock_generate,
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=_mock_generate_with_timing,
         ),
     ):
         await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
@@ -565,11 +578,22 @@ async def test_tts_failure_writes_silence_and_records_failed_page(monkeypatch):
 
     call_count = [0]
 
-    async def flaky_generate(*a, **kw):
+    async def flaky_generate_with_timing(*a, **kw):
         call_count[0] += 1
         if call_count[0] == 1:
+            # Total, infrastructure-level failure (distinct from a per-segment
+            # ok=False) — the generator raises before yielding anything at all,
+            # exercising _phase_tts's outer except-branch silence fallback. The
+            # function is still a valid async generator because of the `yield`
+            # below (Python decides this at compile time, not by reachability).
             raise RuntimeError("TTS exploded")
-        yield np.zeros(100, dtype=np.float32)
+        yield {
+            "index": 0,
+            "text": "seg",
+            "ok": True,
+            "audio": np.zeros(100, dtype=np.float32),
+            "duration_sec": 100 / SAMPLE_RATE,
+        }
 
     with (
         patch(
@@ -578,8 +602,8 @@ async def test_tts_failure_writes_silence_and_records_failed_page(monkeypatch):
         ),
         patch("app.services.audiobook_service.EngineManager.touch"),
         patch(
-            "app.services.audiobook_service.EngineManager.generate",
-            side_effect=flaky_generate,
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=flaky_generate_with_timing,
         ),
     ):
         await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
@@ -628,11 +652,18 @@ async def test_end_to_end_pipeline_produces_valid_wav(monkeypatch):
 
     call_tracker = [0]
 
-    async def rotating_generate(*a, **kw):
+    async def rotating_generate_with_timing(*a, **kw):
         call_tracker[0] += 1
         freq = 220 * call_tracker[0]
         t = np.linspace(0, 0.1, int(0.1 * SAMPLE_RATE), endpoint=False)
-        yield (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
+        audio = (np.sin(2 * np.pi * freq * t) * 0.5).astype(np.float32)
+        yield {
+            "index": 0,
+            "text": "mock segment",
+            "ok": True,
+            "audio": audio,
+            "duration_sec": len(audio) / SAMPLE_RATE,
+        }
 
     with (
         patch(
@@ -641,8 +672,8 @@ async def test_end_to_end_pipeline_produces_valid_wav(monkeypatch):
         ),
         patch("app.services.audiobook_service.EngineManager.touch"),
         patch(
-            "app.services.audiobook_service.EngineManager.generate",
-            side_effect=rotating_generate,
+            "app.services.audiobook_service.EngineManager.generate_with_timing",
+            side_effect=rotating_generate_with_timing,
         ),
     ):
         await AudiobookService._phase_tts(bid, meta)
@@ -799,3 +830,78 @@ async def test_real_pipeline_produces_correct_transcript():
     new_meta = AudiobookStore.read_meta(bid)
     assert new_meta["page_to_time"]["1"] == 0.0
     assert new_meta["page_to_time"]["2"] > 0.0
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.path.exists(
+        os.path.join(os.path.dirname(__file__), "..", "kokoro-v1.0.onnx")
+    ),
+    reason="Kokoro ONNX model not present — skipping cross-consistency invariant test",
+)
+async def test_real_segment_timing_matches_wav_duration_cross_consistency():
+    """I12 / the v1.1 design notes §6.4 — the single most important new test in Sprint 1: it
+    proves the captured per-segment timing data is actually trustworthy, not
+    just present. Two independent measurements of the same real page's audio
+    duration, from a real (not mocked) short TTS render, must agree:
+
+      A. sum of the segments sidecar's real per-segment durations, captured
+         by TTSEngine.generate_with_timing during synthesis.
+      B. that page's real on-disk WAV duration, independently derived by
+         _phase_concat's own byte-size scan (production code, not a
+         test-reimplemented formula).
+    """
+    import json
+
+    from app.services.engine_manager import EngineManager
+
+    await EngineManager.ensure_loaded()
+
+    bid = _make_book(1)
+    meta = AudiobookStore.read_meta(bid)
+    text = (
+        "The quick brown fox jumps over the lazy dog. "
+        "Sphinx of black quartz, judge my vow. "
+        "Pack my box with five dozen liquor jugs."
+    )
+    p = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        f.write(text)
+
+    await AudiobookService._phase_tts(bid, meta)
+
+    # Measurement A: sum of the sidecar's real per-segment durations.
+    with open(AudiobookStore.page_segments_path(bid, 1), encoding="utf-8") as f:
+        sidecar = json.load(f)
+    assert (
+        sidecar["dropped"] == []
+    ), "expected every segment of plain text to synthesize"
+    assert len(sidecar["segments"]) >= 2, "expected multiple segments from 3 sentences"
+    segment_duration_sum = sum(
+        seg["end_sec"] - seg["start_sec"] for seg in sidecar["segments"]
+    )
+
+    # Measurement B: the page WAV's real on-disk duration, via _phase_concat's
+    # own byte-size scan — the actual production code path, for a 1-page book
+    # so total_audio_seconds IS this page's duration.
+    actual = await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+    wav_duration = actual["audio_seconds"]
+
+    assert segment_duration_sum > 0.0
+    assert wav_duration > 0.0
+    assert abs(segment_duration_sum - wav_duration) < 0.01, (
+        f"segment timing sum ({segment_duration_sum:.4f}s) must match the real "
+        f"on-disk WAV duration ({wav_duration:.4f}s) within float tolerance"
+    )
+
+    # The same segments folded into transcript.json (absolute-offset, T1.7)
+    # must be internally consistent with the same measurement.
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+    transcript_segments = transcript["segments"]["1"]
+    assert len(transcript_segments) == len(sidecar["segments"])
+    transcript_duration_sum = sum(
+        seg["end_sec"] - seg["start_sec"] for seg in transcript_segments
+    )
+    assert abs(transcript_duration_sum - segment_duration_sum) < 1e-6

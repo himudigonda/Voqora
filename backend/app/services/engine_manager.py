@@ -8,36 +8,41 @@ from collections.abc import AsyncGenerator
 
 import numpy as np
 
+from app.services.languages import (
+    DEFAULT_VOICE,
+    VOICE_IDS,
+    is_valid_voice,
+    language_catalog,
+    voice_catalog,
+)
 from app.services.tts import TTSEngine
 
-KOKORO_VOICES = [
-    "af_bella",
-    "af_sarah",
-    "am_adam",
-    "am_michael",
-    "bf_emma",
-    "bf_isabella",
-    "bm_george",
-    "bm_lewis",
-]
-KOKORO_DEFAULT_VOICE = "af_bella"
+# Compatibility aliases for existing callers and stored audiobook metadata.
+KOKORO_VOICES = VOICE_IDS
+KOKORO_DEFAULT_VOICE = DEFAULT_VOICE
 
 
 class EngineManager:
     @classmethod
     def voices(cls) -> list[str]:
-        return KOKORO_VOICES
+        return VOICE_IDS
 
     @classmethod
     def default_voice(cls) -> str:
-        return KOKORO_DEFAULT_VOICE
+        return DEFAULT_VOICE
+
+    @classmethod
+    def is_valid_voice(cls, voice: str) -> bool:
+        return is_valid_voice(voice)
 
     @classmethod
     def state(cls) -> dict:
         return {
             "engine": "kokoro",
             "model": "",
-            "voices": KOKORO_VOICES,
+            "voices": VOICE_IDS,
+            "voice_catalog": voice_catalog(),
+            "languages": language_catalog(),
         }
 
     @classmethod
@@ -54,6 +59,16 @@ class EngineManager:
     ) -> AsyncGenerator[np.ndarray, None]:
         async for chunk in TTSEngine.generate(text, voice, speed):
             yield chunk
+
+    @classmethod
+    async def generate_with_timing(
+        cls, text: str, voice: str, speed: float
+    ) -> AsyncGenerator[dict, None]:
+        """Audiobook-only sibling of generate() — mirrors it exactly, passing
+        through to TTSEngine.generate_with_timing(). See that method's
+        docstring for the yielded dict shape."""
+        async for item in TTSEngine.generate_with_timing(text, voice, speed):
+            yield item
 
     @classmethod
     async def prewarm_with_lookahead(cls, text: str, voice: str, speed: float) -> None:

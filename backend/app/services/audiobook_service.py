@@ -2,15 +2,17 @@
 
 Singleton classmethods + ThreadPoolExecutor (mirrors TTSEngine pattern).
 One book processes at a time via asyncio.Queue. Each pipeline phase is
-idempotent: presence of the per-page output file IS the checkpoint.
+idempotent: presence of the per-page output file (or, for section
+detection, non-empty meta["sections"]) IS the checkpoint.
 
-Phases:
+Phases, run in this order by _run_pipeline:
   extract  → pages/N.txt          (skip if exists)
   clean    → pages/N.clean.txt    (skip if exists; Gemini call)
+  section  → meta["sections"]     (skip if already non-empty; PDF outline /
+                                    DOCX headings / MD headers / Gemini /
+                                    fallback cascade — see _phase_section)
   tts      → audio_pages/N.wav    (skip if exists; preempts to /speak)
   concat   → audio.wav            (cheap; recomputes page_to_time map)
-
-Sections detection lives in Phase 2.
 """
 
 import asyncio
@@ -63,6 +65,12 @@ class AudiobookService:
     _job_keys: dict[str, str] = {}
     # Cancel flags set by /cancel endpoint; phases check between pages.
     _cancel_flags: dict[str, bool] = {}
+    # Per-book cancellation events, set alongside _cancel_flags. Unlike the
+    # flag (only polled between pages via _check_cancel), an in-flight
+    # Gemini call in _phase_clean races itself against this event so a
+    # /cancel lands immediately even when every page started before the
+    # flag was set (see _await_cancellable).
+    _cancel_events: dict[str, asyncio.Event] = {}
     # Concurrency for Gemini cleaning (page-level parallelism).
     _CLEAN_PARALLELISM = 4
 
@@ -131,13 +139,20 @@ class AudiobookService:
         assert cls._queue is not None
         cls._job_keys[book_id] = api_key
         cls._cancel_flags.pop(book_id, None)
+        # A stale, already-set Event from a prior cancelled run of this same
+        # book_id must not immediately re-cancel the fresh run — the very
+        # first _await_cancellable() race would otherwise lose instantly.
+        cls._cancel_events.pop(book_id, None)
         await AudiobookStore.update_meta(book_id, status="queued", error=None)
         await cls._queue.put(book_id)
 
     @classmethod
     def cancel(cls, book_id: str) -> bool:
-        """Mark a running job for cancellation. Phases observe between pages."""
+        """Mark a running job for cancellation. Phases observe between pages
+        (_check_cancel) and, for a Gemini call already in flight inside
+        _phase_clean, immediately (_await_cancellable)."""
         cls._cancel_flags[book_id] = True
+        cls._cancel_events.setdefault(book_id, asyncio.Event()).set()
         return True
 
     @classmethod
@@ -177,6 +192,7 @@ class AudiobookService:
                 await asyncio.sleep(0.1)
         AudiobookStore.delete_book(book_id)
         cls._cancel_flags.pop(book_id, None)
+        cls._cancel_events.pop(book_id, None)
         cls._job_keys.pop(book_id, None)
         return True
 
@@ -207,6 +223,7 @@ class AudiobookService:
             for p in (
                 AudiobookStore.page_clean_path(book_id, n),
                 AudiobookStore.page_audio_path(book_id, n),
+                AudiobookStore.page_segments_path(book_id, n),
             ):
                 try:
                     if os.path.exists(p):
@@ -233,6 +250,49 @@ class AudiobookService:
     def _check_cancel(cls, book_id: str) -> None:
         if cls._cancel_flags.get(book_id):
             raise AudiobookCancelled(book_id)
+
+    @classmethod
+    async def _await_cancellable(cls, coro, book_id: str):
+        """Await `coro`, racing it against this book's cancellation event so
+        an in-flight Gemini call is interrupted immediately on /cancel,
+        instead of only being observed at the next _check_cancel() point.
+
+        _check_cancel() alone is only consulted once per page, right when
+        clean_one() acquires its semaphore slot — never again while that
+        call is actually in flight. For page_count <= _CLEAN_PARALLELISM
+        every page starts immediately and none is ever left queued behind
+        the semaphore to notice a flag set later, so a cancel mid-flight
+        was invisible until the NEXT phase — burning the full Gemini cost
+        for every already-in-flight page. Racing the call itself against
+        the event closes that gap regardless of how many pages are queued.
+
+        Raises AudiobookCancelled if cancellation wins the race; otherwise
+        returns coro's result (or re-raises whatever it raised, e.g.
+        asyncio.TimeoutError / GeminiAuthError — transparent pass-through).
+        """
+        event = cls._cancel_events.setdefault(book_id, asyncio.Event())
+        call_task = asyncio.ensure_future(coro)
+        cancel_task = asyncio.ensure_future(event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                {call_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            for t in pending:
+                t.cancel()
+            if call_task in done:
+                return call_task.result()
+            raise AudiobookCancelled(book_id)
+        finally:
+            # Guarantees both bookkeeping tasks are cleaned up no matter how
+            # this coroutine exits — including being cancelled itself (e.g.
+            # by _phase_clean's sibling-cancellation cleanup reaching this
+            # task directly mid-wait), which would otherwise leave call_task
+            # (a real, possibly billed Gemini call) running as an orphan
+            # with nothing left to observe or cancel it.
+            if not call_task.done():
+                call_task.cancel()
+            if not cancel_task.done():
+                cancel_task.cancel()
 
     @classmethod
     def subscribe(cls, book_id: str) -> asyncio.Queue:
@@ -262,7 +322,12 @@ class AudiobookService:
     @classmethod
     async def resume_in_progress(cls) -> None:
         """Scan store for in-progress books. If cleaning was in flight (needs key),
-        flag as needs_key. Otherwise auto-resume non-clean phases."""
+        flag as needs_key. Otherwise auto-resume non-clean phases.
+
+        D10: each book's resume action runs in its own try/except — one
+        corrupted/malformed row must not abort resumption of every other
+        in-flight book that follows it in the list.
+        """
         cls.initialize()
         for meta in AudiobookStore.list_books():
             status = meta.get("status")
@@ -275,18 +340,24 @@ class AudiobookService:
                 "concatenating",
             }:
                 continue
-            book_id = meta["book_id"]
-            if status == "cleaning":
-                # Needs the API key the user re-supplies via Resume.
-                await AudiobookStore.update_meta(book_id, status="needs_key")
-            elif status in {"tts", "concatenating"}:
-                # No key needed; safe to auto-resume.
-                # Use empty key — TTS phase doesn't read it.
-                await cls.enqueue(book_id, api_key="")
-            else:
-                # extracting / queued without key context: also flag needs_key
-                # to keep it transparent (extraction is fast but cleaning is next).
-                await AudiobookStore.update_meta(book_id, status="needs_key")
+            book_id = meta.get("book_id", "<unknown>")
+            try:
+                if status == "cleaning":
+                    # Needs the API key the user re-supplies via Resume.
+                    await AudiobookStore.update_meta(book_id, status="needs_key")
+                elif status in {"tts", "concatenating"}:
+                    # No key needed; safe to auto-resume.
+                    # Use empty key — TTS phase doesn't read it.
+                    await cls.enqueue(book_id, api_key="")
+                else:
+                    # extracting / queued without key context: also flag needs_key
+                    # to keep it transparent (extraction is fast but cleaning is next).
+                    await AudiobookStore.update_meta(book_id, status="needs_key")
+            except Exception as e:
+                log.error(
+                    "audiobook.resume_failed",
+                    extra={"book_id": book_id, "status": status, "error": str(e)},
+                )
 
     # ---------- pipeline ----------
 
@@ -309,6 +380,15 @@ class AudiobookService:
             meta = AudiobookStore.read_meta(book_id) or meta
             await cls._phase_tts(book_id, meta)
             actual = await cls._phase_concat(book_id, meta)
+            # Surface pages that failed during clean/TTS so the UI can offer a
+            # retry instead of presenting a flawless book. Status stays "done"
+            # (the audio plays end-to-end with silence/raw fallback for the bad
+            # pages), but the failure count rides along in the completion event
+            # and persisted stats. Additive — existing consumers ignore it.
+            final_meta = AudiobookStore.read_meta(book_id) or {}
+            failed_pages = list(final_meta.get("failed_pages") or [])
+            actual["failed_pages"] = failed_pages
+            actual["failed_count"] = len(failed_pages)
             await AudiobookStore.update_meta(
                 book_id, status="done", actual=actual, error=None
             )
@@ -330,6 +410,7 @@ class AudiobookService:
             cls._emit(book_id, "failed", error=str(e))
         finally:
             cls._cancel_flags.pop(book_id, None)
+            cls._cancel_events.pop(book_id, None)
 
     # ---------- phase: extract ----------
 
@@ -359,6 +440,20 @@ class AudiobookService:
                 cls._executor, TextExtractor.render_cover, book_id
             )
 
+        # For PDFs, open the file once and extract all pages that still need it.
+        # This replaces N pdfplumber.open() calls (one per page) with a single open.
+        if is_pdf:
+            pages_to_extract = [
+                n
+                for n in range(1, page_count + 1)
+                if not os.path.exists(AudiobookStore.page_raw_path(book_id, n))
+            ]
+            if pages_to_extract:
+                cls._check_cancel(book_id)
+                await loop.run_in_executor(
+                    cls._executor, PDFExtractor.extract_batch, book_id, pages_to_extract
+                )
+
         # Track content hashes so duplicate pages (e.g. DocuSign PDFs that embed
         # the same page twice) are replaced with a silence marker rather than
         # generating identical audio twice.
@@ -370,15 +465,10 @@ class AudiobookService:
             async with interactive_tts_lock:
                 pass
             out = AudiobookStore.page_raw_path(book_id, n)
-            if not os.path.exists(out):
-                if is_pdf:
-                    await loop.run_in_executor(
-                        cls._executor, PDFExtractor.extract_one, book_id, n
-                    )
-                else:
-                    await loop.run_in_executor(
-                        cls._executor, TextExtractor.extract_one, book_id, n
-                    )
+            if not os.path.exists(out) and not is_pdf:
+                await loop.run_in_executor(
+                    cls._executor, TextExtractor.extract_one, book_id, n
+                )
 
             # Deduplication: if this page's content is byte-identical to an
             # earlier page (content hash matches), pre-write "-" to the clean
@@ -425,6 +515,19 @@ class AudiobookService:
     async def _phase_section(
         cls, book_id: str, api_key: str, meta: dict[str, Any]
     ) -> None:
+        # D3 idempotency fix: unlike extract/clean/tts, this phase had no
+        # skip-if-already-done check. resume_in_progress re-enqueues
+        # "tts"/"concatenating"-stage books with api_key="" (TTS doesn't need
+        # a key), which re-ran the WHOLE pipeline from _phase_extract, and
+        # this phase would silently re-detect with an empty key — Gemini
+        # swallows the resulting auth failure internally and returns [],
+        # which fell through to _fallback_sections, overwriting already-real
+        # chapter titles with generic "Part N". Presence of non-empty
+        # meta["sections"] IS this phase's checkpoint, mirroring every other
+        # phase's file-existence checkpoint (see module docstring).
+        if meta.get("sections"):
+            return
+
         await AudiobookStore.update_meta(book_id, status="sectioning")
         cls._emit(book_id, "phase_started", phase="sectioning")
 
@@ -432,19 +535,39 @@ class AudiobookService:
         page_count = int(meta.get("page_count") or 0)
         loop = asyncio.get_running_loop()
 
-        # Path A: try the PDF's own outline first (no API call needed).
-        # For non-PDF files there is no outline; skip straight to Gemini.
+        # Structural-format-native paths, ground truth ahead of Gemini's
+        # prose-pattern-matching (the v1.1 design notes §5.2/§6.6): PDF bookmark outline,
+        # DOCX Heading-N styles, Markdown #/## headers. TextExtractor.read_outline
+        # dispatches on source_path's extension and returns None for TXT (no
+        # native structure) — same "if outline: ... else: try Gemini"
+        # short-circuit PDF's outline path already used, now shared by all
+        # three sources instead of just PDF.
+        source_path = AudiobookStore.source_file_path(book_id, file_ext)
         if file_ext == "pdf":
-            source_path = AudiobookStore.source_file_path(book_id, file_ext)
             outline = await loop.run_in_executor(
                 cls._executor, PDFExtractor.read_outline, source_path
             )
         else:
-            outline = None
+            outline = await loop.run_in_executor(
+                cls._executor, TextExtractor.read_outline, source_path
+            )
+
+        if outline:
+            # Defense-in-depth: validate every entry's start_page against
+            # this book's real page_count, uniformly across all three
+            # structural sources. PDF bookmark destinations come from the
+            # file itself and could point outside a malformed PDF's own
+            # range; DOCX/MD compute pagination internally so this should
+            # already always hold — validating centrally here (rather than
+            # trusting each source not to drift) covers all of them, present
+            # and future, with one check instead of one per source.
+            outline = [e for e in outline if 1 <= e["start_page"] <= page_count]
 
         sections: list[dict] = []
         if outline:
-            # Convert flat outline (title, start_page) to contiguous sections.
+            # Convert flat outline (title, start_page[, level]) to contiguous
+            # sections. `level` (nesting depth) isn't threaded further here —
+            # the persisted section list is intentionally flat, same as today.
             sorted_outline = sorted(outline, key=lambda x: x["start_page"])
             for i, entry in enumerate(sorted_outline):
                 end_page = (
@@ -468,8 +591,13 @@ class AudiobookService:
                         "end_page": sections[0]["start_page"] - 1,
                     },
                 )
-        else:
-            # Path B: ask Gemini.
+        elif api_key:
+            # Fallback: ask Gemini. Never attempted with an empty key (defense
+            # in depth alongside the idempotency guard above — an empty key
+            # would just burn a network round-trip for a swallowed auth
+            # failure that returns [] anyway) — matches the v1.1 design notes §6.6's
+            # "Gemini detect_sections — if none of 1-3 produced sections AND
+            # api_key present".
             cleaned_pages: list[str] = []
             for n in range(1, page_count + 1):
                 p = AudiobookStore.page_clean_path(book_id, n)
@@ -496,13 +624,7 @@ class AudiobookService:
                 sections = []
 
         if not sections:
-            sections = [
-                {
-                    "title": meta.get("title") or "Audiobook",
-                    "start_page": 1,
-                    "end_page": page_count,
-                }
-            ]
+            sections = cls._fallback_sections(page_count, meta.get("title"))
 
         # start_time gets filled in concat phase. Persist now so UI can show titles
         # even before audio is finalized.
@@ -511,6 +633,36 @@ class AudiobookService:
             sections=[{**s, "start_time": 0.0} for s in sections],
         )
         cls._emit(book_id, "phase_finished", phase="sectioning")
+
+    # Pages per synthetic section when there's no PDF outline and Gemini
+    # section detection is unavailable/fails/times out. Below this page
+    # count a book is just treated as one section; above it, chunking into
+    # parts keeps the "SECTIONS" rail navigable instead of every book with
+    # no real chapter data collapsing to a single section spanning the
+    # entire runtime.
+    _FALLBACK_SECTION_PAGES = 15
+
+    @classmethod
+    def _fallback_sections(
+        cls, page_count: int, title: str | None
+    ) -> list[dict[str, Any]]:
+        if page_count <= cls._FALLBACK_SECTION_PAGES:
+            return [
+                {
+                    "title": title or "Audiobook",
+                    "start_page": 1,
+                    "end_page": max(1, page_count),
+                }
+            ]
+        sections = []
+        for i, start in enumerate(
+            range(1, page_count + 1, cls._FALLBACK_SECTION_PAGES), start=1
+        ):
+            end = min(start + cls._FALLBACK_SECTION_PAGES - 1, page_count)
+            sections.append(
+                {"title": f"Part {i}", "start_page": start, "end_page": end}
+            )
+        return sections
 
     # ---------- phase: clean ----------
 
@@ -524,6 +676,16 @@ class AudiobookService:
         is_pdf = file_ext == "pdf"
         page_count = int(meta.get("page_count") or 0)
         failed: list[int] = list(meta.get("failed_pages") or [])
+        # D6: distinguishes a genuinely blank page (safe to silence for free)
+        # from a scanned/image-only page — which ALSO extracts to "" (no
+        # text layer at all, not "no content") but still deserves a real OCR
+        # attempt to recover it. Computed once at upload time (api/audiobook.py)
+        # via the same sampling heuristic the upload estimate already uses,
+        # and persisted here rather than re-derived — re-opening source.pdf
+        # every clean-phase run would be redundant I/O for a value that never
+        # changes for a book's lifetime. Defaults False for books uploaded
+        # before this field existed (additive, non-breaking; see D6 fix).
+        is_image_only = bool(meta.get("is_image_only", False))
 
         # Pages still needing cleaning (skip already-done for resume).
         pending = [
@@ -553,8 +715,23 @@ class AudiobookService:
                     raw_text = f.read()
 
                 try:
-                    if is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
-                        # Image page (PDF only) — render and OCR+clean via Gemini vision.
+                    stripped = raw_text.strip()
+                    if is_pdf and not is_image_only and not stripped:
+                        # D6: only silence-shortcut a blank page when the
+                        # document itself isn't classified as a scan. A
+                        # genuinely blank page in a normal text-based PDF has
+                        # nothing for paid Gemini vision OCR to find — free
+                        # short-circuit, matching GeminiCleaner.clean_page's
+                        # own `if not raw_text.strip(): return "-"`. But a
+                        # 0-char page in a SCANNED document has no text
+                        # LAYER, not necessarily no content — silencing it
+                        # here would silently drop real narration with no
+                        # error. Every under-threshold page in a scanned
+                        # document (0 chars included) still falls through to
+                        # the OCR branch below.
+                        cleaned = "-"
+                    elif is_pdf and len(stripped) < _OCR_TEXT_THRESHOLD:
+                        # Image page — render and OCR+clean via Gemini vision.
                         source_path = AudiobookStore.source_file_path(book_id, file_ext)
                         image_bytes = await asyncio.get_running_loop().run_in_executor(
                             cls._executor,
@@ -563,9 +740,12 @@ class AudiobookService:
                             n,
                         )
                         try:
-                            cleaned = await asyncio.wait_for(
-                                GeminiCleaner.ocr_page(api_key, image_bytes),
-                                timeout=90.0,
+                            cleaned = await cls._await_cancellable(
+                                asyncio.wait_for(
+                                    GeminiCleaner.ocr_page(api_key, image_bytes),
+                                    timeout=90.0,
+                                ),
+                                book_id,
                             )
                         except TimeoutError:
                             log.warning(
@@ -575,9 +755,12 @@ class AudiobookService:
                             cleaned = raw_text or "-"
                     else:
                         try:
-                            cleaned = await asyncio.wait_for(
-                                GeminiCleaner.clean_page(api_key, raw_text),
-                                timeout=90.0,
+                            cleaned = await cls._await_cancellable(
+                                asyncio.wait_for(
+                                    GeminiCleaner.clean_page(api_key, raw_text),
+                                    timeout=90.0,
+                                ),
+                                book_id,
                             )
                         except TimeoutError:
                             log.warning(
@@ -585,7 +768,7 @@ class AudiobookService:
                                 extra={"book_id": book_id, "page": n},
                             )
                             cleaned = raw_text or "-"
-                except GeminiAuthError:
+                except (GeminiAuthError, AudiobookCancelled):
                     raise
                 except Exception as e:
                     log.warning(
@@ -623,9 +806,20 @@ class AudiobookService:
                     total=page_count,
                 )
 
+        tasks = [asyncio.create_task(clean_one(n)) for n in pending]
         try:
-            await asyncio.gather(*(clean_one(n) for n in pending))
-        except GeminiAuthError:
+            await asyncio.gather(*tasks)
+        except (GeminiAuthError, AudiobookCancelled):
+            # D2: a cancel mid-clean must cancel siblings exactly like an auth
+            # error does. Without this, cancelling leaves the other in-flight
+            # Gemini tasks running as orphans — one can finish after the
+            # pipeline has already unwound (and a follow-up delete removed
+            # the book) and call update_meta(), resurrecting a ghost row.
+            # The other half of that fix is the existence guard in
+            # AudiobookStore.update_meta itself.
+            for t in tasks:
+                t.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
         cls._emit(book_id, "phase_finished", phase="cleaning")
@@ -652,6 +846,12 @@ class AudiobookService:
             async with interactive_tts_lock:
                 pass
 
+            # Re-ensure the model is loaded each page: if a long interactive
+            # /speak held the lock past the idle-unload timeout, the engine may
+            # have been dropped. ensure_loaded() is a no-op when already warm, so
+            # this just prevents a spurious "Model not initialized" page failure.
+            await EngineManager.ensure_loaded()
+
             out_path = AudiobookStore.page_audio_path(book_id, n)
             if os.path.exists(out_path):
                 cls._emit(book_id, "page_done", phase="tts", page=n, total=page_count)
@@ -665,20 +865,46 @@ class AudiobookService:
             with open(clean_path, encoding="utf-8") as f:
                 text = f.read().strip() or "-"
 
-            # P3: blank-page marker is silence, never spoken aloud as "dash".
             # GeminiCleaner returns the literal "-" string for empty pages.
-            if text == "-" or text.startswith("[blank") and text.endswith("]"):
+            if text == "-":
                 cls._write_silence_wav(out_path, 0.3)
             else:
                 try:
-                    samples = await cls._generate_full_page(text, voice, speed)
+                    samples, segment_timings, dropped_segments = (
+                        await cls._generate_full_page(text, voice, speed)
+                    )
                     cls._write_wav_from_samples(out_path, samples)
+                    try:
+                        cls._write_segments_json(
+                            AudiobookStore.page_segments_path(book_id, n),
+                            segment_timings,
+                            dropped_segments,
+                        )
+                    except Exception as error:
+                        # Sidecar timing data is optional for playback; never turn
+                        # successful audio into a failure if only its metadata write fails.
+                        log.warning(
+                            "audiobook.segments_sidecar_write_failed",
+                            extra={"book_id": book_id, "page": n, "error": str(error)},
+                        )
+                    if dropped_segments:
+                        if n not in failed:
+                            failed.append(n)
+                        await AudiobookStore.update_meta(book_id, failed_pages=failed)
+                        cls._emit(
+                            book_id,
+                            "page_failed",
+                            phase="tts",
+                            page=n,
+                            error=f"{len(dropped_segments)} segment(s) failed to synthesize",
+                        )
                 except Exception as e:
                     log.warning(
                         "audiobook.tts_failed",
                         extra={"book_id": book_id, "page": n, "error": str(e)},
                     )
-                    failed.append(n)
+                    if n not in failed:
+                        failed.append(n)
                     await AudiobookStore.update_meta(book_id, failed_pages=failed)
                     cls._emit(book_id, "page_failed", phase="tts", page=n, error=str(e))
                     cls._write_silence_wav(out_path, 0.5)
@@ -695,14 +921,47 @@ class AudiobookService:
     @classmethod
     async def _generate_full_page(
         cls, text: str, voice: str, speed: float
-    ) -> np.ndarray:
-        """Drain the EngineManager.generate async generator into one float32 array."""
-        chunks: list[np.ndarray] = []
-        async for chunk in EngineManager.generate(text, voice, speed):
-            chunks.append(chunk)
-        if not chunks:
-            return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32)
-        return np.concatenate(chunks)
+    ) -> tuple[np.ndarray, list[dict[str, Any]], list[dict[str, Any]]]:
+        """Drain EngineManager.generate_with_timing into one page's audio plus
+        its real per-segment timing (D1 / Sprint 1 — see §6.4 of the v1.1 design notes).
+
+        Returns (samples, segment_timings, dropped_segments):
+          samples: concatenated float32 PCM of every successfully-synthesized
+            segment, in order — identical in content to what the pre-Sprint-1
+            np.concatenate(chunks) produced; this rewrite adds metadata, it
+            does not change the synthesized audio.
+          segment_timings: page-relative cumulative offsets,
+            [{"text": str, "start_sec": float, "end_sec": float}], one per ok
+            segment, in order. Invariant (enforced by a dedicated test):
+            sum(end_sec - start_sec) == len(samples) / SAMPLE_RATE.
+          dropped_segments: [{"index": int, "text": str}] for every segment
+            that failed to synthesize, in its original page-order position.
+
+        Falls back to the pre-existing 0.3s-silence placeholder (byte-for-byte
+        unchanged) when every segment fails.
+        """
+        ok_chunks: list[np.ndarray] = []
+        segment_timings: list[dict[str, Any]] = []
+        dropped_segments: list[dict[str, Any]] = []
+        cumulative_sec = 0.0
+
+        async for item in EngineManager.generate_with_timing(text, voice, speed):
+            if not item["ok"]:
+                dropped_segments.append({"index": item["index"], "text": item["text"]})
+                continue
+            ok_chunks.append(item["audio"])
+            start_sec = cumulative_sec
+            end_sec = cumulative_sec + item["duration_sec"]
+            segment_timings.append(
+                {"text": item["text"], "start_sec": start_sec, "end_sec": end_sec}
+            )
+            cumulative_sec = end_sec
+
+        if not ok_chunks:
+            silence = np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32)
+            return silence, [], dropped_segments
+
+        return np.concatenate(ok_chunks), segment_timings, dropped_segments
 
     # ---------- phase: concat ----------
 
@@ -752,13 +1011,7 @@ class AudiobookService:
         # Update each section's start_time from page_to_time.
         existing_sections = list(meta.get("sections") or [])
         if not existing_sections:
-            existing_sections = [
-                {
-                    "title": meta.get("title", "Audiobook"),
-                    "start_page": 1,
-                    "end_page": page_count,
-                }
-            ]
+            existing_sections = cls._fallback_sections(page_count, meta.get("title"))
         timed_sections: list[dict[str, Any]] = []
         for s in existing_sections:
             sp = int(s.get("start_page", 1))
@@ -786,12 +1039,45 @@ class AudiobookService:
                 if os.path.exists(cp):
                     with open(cp, encoding="utf-8") as f:
                         page_texts[str(n)] = f.read()
+
+            # Fold each page's per-segment timing sidecar (if any) into
+            # transcript.json's segments/dropped_segments keys, offsetting
+            # page-relative times to whole-book-absolute via page_to_time —
+            # matching how sections[].start_time is already computed, so the
+            # frontend never has to add offsets itself. A page with no sidecar
+            # (pre-Sprint-1 book, or one that hit the total-TTS-failure branch)
+            # is simply absent — not an error, not a zero-length placeholder.
+            segments_by_page: dict[str, list[dict[str, Any]]] = {}
+            dropped_by_page: dict[str, list[dict[str, Any]]] = {}
+            for n in range(1, page_count + 1):
+                sp = AudiobookStore.page_segments_path(book_id, n)
+                if not os.path.exists(sp):
+                    continue
+                with open(sp, encoding="utf-8") as f:
+                    sidecar = json.load(f)
+                offset = page_to_time.get(str(n), 0.0)
+                page_segments = sidecar.get("segments") or []
+                if page_segments:
+                    segments_by_page[str(n)] = [
+                        {
+                            "text": seg["text"],
+                            "start_sec": seg["start_sec"] + offset,
+                            "end_sec": seg["end_sec"] + offset,
+                        }
+                        for seg in page_segments
+                    ]
+                page_dropped = sidecar.get("dropped") or []
+                if page_dropped:
+                    dropped_by_page[str(n)] = page_dropped
+
             transcript = {
                 "book_id": book_id,
                 "sections": timed_sections,
                 "page_to_time": page_to_time,
                 "total_audio_seconds": total_seconds,
                 "pages": page_texts,
+                "segments": segments_by_page,
+                "dropped_segments": dropped_by_page,
             }
             tpath = AudiobookStore.transcript_path(book_id)
             tmp = tpath + ".tmp"
@@ -820,6 +1106,11 @@ class AudiobookService:
             t_created = calendar.timegm(time.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ"))
             processing_seconds = max(0.0, time.time() - t_created)
         except Exception:
+            log.warning(
+                "Couldn't parse created_at=%r for completion stats; "
+                "processing_seconds will read 0.0",
+                created_at,
+            )
             processing_seconds = 0.0
 
         # tokens_used: input tokens (one Gemini call per page sent the raw text)
@@ -871,6 +1162,18 @@ class AudiobookService:
             wf.writeframes(pcm)
         os.replace(tmp, path)
 
+    @staticmethod
+    def _write_segments_json(
+        path: str, segments: list[dict[str, Any]], dropped: list[dict[str, Any]]
+    ) -> None:
+        """Atomically write a page's per-segment timing sidecar, co-located with
+        its WAV (see AudiobookStore.page_segments_path)."""
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"segments": segments, "dropped": dropped}, f, ensure_ascii=False)
+        os.replace(tmp, path)
+
     # ---------- estimation (called from upload endpoint) ----------
 
     @classmethod
@@ -890,13 +1193,16 @@ class AudiobookService:
         processing_seconds = (
             extract_seconds + clean_seconds + tts_seconds + page_count * 0.02
         )
-        cost_usd = GeminiCleaner.estimate_cost_usd(sample_chars * page_count)
+        total_chars = sample_chars * page_count
+        cost_usd = GeminiCleaner.estimate_cost_usd(total_chars)
         return {
             "pages": page_count,
             "words": word_count,
             "audio_seconds": audio_seconds,
             "processing_seconds": processing_seconds,
             "cost_usd": cost_usd,
+            # Self-consistent: callers shouldn't have to patch this in afterwards.
+            "token_count": GeminiCleaner.estimate_tokens(total_chars),
         }
 
 

@@ -37,7 +37,7 @@ class AudioService: NSObject, ObservableObject {
                     timer.invalidate()
                     self.volumeRampTimer = nil
                     self.stop()
-                    self.volume = originalVolume  // restore for next play
+                    self.volume = originalVolume // restore for next play
                     self.playerNode.volume = originalVolume
                 }
             }
@@ -54,8 +54,30 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
+    /// Live playback-rate multiplier. Used by the audiobook player, where
+    /// audio is pre-rendered at a fixed speed and the only way to change
+    /// tempo mid-playback is client-side (the backend has no re-render
+    /// endpoint). Streaming TTS bakes speed into synthesis instead, so
+    /// `stop()` resets this to 1.0 at the start of every new session and
+    /// callers that want a non-default rate must re-apply it explicitly.
+    @Published private(set) var playbackRate: Float = 1.0
+
+    func setPlaybackRate(_ rate: Float) {
+        let clamped = max(0.5, min(2.0, rate))
+        playbackRate = clamped
+        timePitch.rate = clamped
+    }
+
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
+    /// Live playback-rate control, inserted between playerNode and the mixer.
+    /// AVAudioUnitTimePitch stretches/compresses tempo without shifting pitch,
+    /// so sped-up speech doesn't get chipmunked. Because it resamples
+    /// downstream of playerNode, playerNode's own sample clock (read via
+    /// `playerTime(forNodeTime:)` in startTimer()) still advances in lockstep
+    /// with position in the *source* audio regardless of rate — so none of
+    /// the currentTime/scrubbing math below needs to account for rate.
+    private let timePitch = AVAudioUnitTimePitch()
     private let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
 
     private var lastAudioData = Data()
@@ -89,7 +111,8 @@ class AudioService: NSObject, ObservableObject {
 
     private func setupEngine() {
         engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        engine.attach(timePitch)
+        connectRenderChain()
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
@@ -103,10 +126,27 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
-    @objc private func handleEngineConfigChange(_ notification: Notification) {
+    /// playerNode -> mainMixerNode stays Int16 (matching the buffers scheduled
+    /// in dataToBuffer/loadAndPlayWAV) — mixer nodes auto-convert arbitrary
+    /// input formats. AVAudioUnitTimePitch is a generic effect unit and has no
+    /// such conversion, so it must sit downstream of the mixer at its
+    /// (floating-point) render format, not directly after playerNode. Re-run
+    /// on every device/config change too — the render format can change (e.g.
+    /// switching to a Bluetooth/USB device with a different native sample
+    /// rate), and a connection pinned to the old format would either throw on
+    /// engine.start() or silently glitch instead of following the device.
+    private func connectRenderChain() {
+        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        let renderFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        engine.connect(engine.mainMixerNode, to: timePitch, format: renderFormat)
+        engine.connect(timePitch, to: engine.outputNode, format: renderFormat)
+    }
+
+    @objc private func handleEngineConfigChange(_: Notification) {
         Task { @MainActor [weak self] in
             guard let self, isPlaying else { return }
             do {
+                connectRenderChain()
                 try engine.start()
                 playerNode.play()
             } catch {
@@ -138,7 +178,9 @@ class AudioService: NSObject, ObservableObject {
             }
         }
 
-        if dataToProcess.isEmpty { return }
+        if dataToProcess.isEmpty {
+            return
+        }
 
         // 2. PCM Accumulation with Alignment Fix
         pcmAccumulator.append(dataToProcess)
@@ -167,9 +209,13 @@ class AudioService: NSObject, ObservableObject {
             }
 
             scheduledBufferCount += 1
+            // Capture the generation so that if stop()/seek() bumps it, this
+            // stale stream buffer's handler won't decrement scheduledBufferCount
+            // (it was already zeroed) — matching the seek/audiobook handlers.
+            let gen = audiobookGeneration
             playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, gen == audiobookGeneration else { return }
                     scheduledBufferCount -= 1
                     if !isStreamActive, scheduledBufferCount == 0, isPlaying {
                         playbackCompleted = true
@@ -188,7 +234,9 @@ class AudioService: NSObject, ObservableObject {
     private func startPlayback() {
         guard !hasStartedPlayback else { return }
         do {
-            if !engine.isRunning { try engine.start() }
+            if !engine.isRunning {
+                try engine.start()
+            }
             playerNode.play()
             isPlaying = true
             hasStartedPlayback = true
@@ -255,7 +303,16 @@ class AudioService: NSObject, ObservableObject {
     }
 
     func seek(to percentage: Double) {
-        guard !lastAudioData.isEmpty else { return }
+        // Need at least one full 16-bit sample (2 bytes) to seek into.
+        guard lastAudioData.count >= 2 else { return }
+        // Mirror stop(): bump the generation so completion handlers of buffers
+        // that playerNode.stop() is about to fire (including stream buffers from
+        // playChunk) are invalidated and can't drive scheduledBufferCount
+        // negative — which would break end-of-playback detection. See HARD note
+        // and the matching pattern in stop()/seekAudiobook().
+        audiobookGeneration += 1
+        // Seeking means we're (re)positioning to play, not finished.
+        playbackCompleted = false
         playerNode.stop()
         scheduledBufferCount = 0
 
@@ -263,9 +320,15 @@ class AudioService: NSObject, ObservableObject {
         let targetSample = Int(targetTime * 24000)
         var targetByte = targetSample * 2
 
-        if targetByte >= lastAudioData.count { targetByte = lastAudioData.count - 2 }
-        if targetByte < 0 { targetByte = 0 }
-        if targetByte % 2 != 0 { targetByte -= 1 }
+        if targetByte >= lastAudioData.count {
+            targetByte = lastAudioData.count - 2
+        }
+        if targetByte < 0 {
+            targetByte = 0
+        }
+        if targetByte % 2 != 0 {
+            targetByte -= 1
+        }
 
         let remainingData = lastAudioData.advanced(by: targetByte)
         if let buffer = dataToBuffer(remainingData) {
@@ -273,15 +336,17 @@ class AudioService: NSObject, ObservableObject {
             let gen = audiobookGeneration
             playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
                 Task { @MainActor [weak self] in
-                    guard let self, gen == self.audiobookGeneration else { return }
-                    self.scheduledBufferCount -= 1
+                    guard let self, gen == audiobookGeneration else { return }
+                    scheduledBufferCount -= 1
                 }
             })
 
             pausedTime = targetTime
             currentTime = targetTime
 
-            if !engine.isRunning { try? engine.start() }
+            if !engine.isRunning {
+                try? engine.start()
+            }
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -297,8 +362,17 @@ class AudioService: NSObject, ObservableObject {
         duration = 0
         playbackCompleted = false
         isStreamActive = true
+        // Streaming TTS bakes speed into synthesis server-side; force the live
+        // rate node back to normal so a leftover audiobook speed never bleeds
+        // into a dashboard read. Deliberately NOT in stop() — stop() is also
+        // used to fully halt an audiobook (global hotkey, sleep timer) without
+        // starting a new session, and resetting the rate there would silently
+        // desync the displayed speed from actual playback on the next resume.
+        setPlaybackRate(1.0)
         // Pre-warm hardware: start playerNode now so it's running when first buffer arrives.
-        if !engine.isRunning { try? engine.start() }
+        if !engine.isRunning {
+            try? engine.start()
+        }
         playerNode.play()
         hasStartedPlayback = true
         // BUG FIX: set isPlaying so all guards work and start the timer so progress updates.
@@ -315,16 +389,18 @@ class AudioService: NSObject, ObservableObject {
         // BUG FIX: correct duration to exact actual length now that all data has arrived.
         // Estimated duration (text-length / 12 / speed) often overshoots — without this
         // correction the scrub bar never reaches 100%.
-        if lastAudioData.count > 0 {
+        if !lastAudioData.isEmpty {
             duration = Double(lastAudioData.count / 2) / format.sampleRate
         }
-        if scheduledBufferCount == 0, isPlaying { stop() }
+        if scheduledBufferCount == 0, isPlaying {
+            stop()
+        }
     }
 
     func stop() {
         volumeRampTimer?.invalidate()
         volumeRampTimer = nil
-        audiobookGeneration += 1  // invalidate any in-flight completion handlers
+        audiobookGeneration += 1 // invalidate any in-flight completion handlers
         playerNode.stop()
         timer?.cancel()
         isPlaying = false
@@ -368,7 +444,7 @@ class AudioService: NSObject, ObservableObject {
         }
 
         let steps = 5
-        let stepDuration = 0.01  // 10ms per step
+        let stepDuration = 0.01 // 10ms per step
         let delta = (targetVolume - initialVolume) / Float(steps)
         var step = 0
 
@@ -400,6 +476,7 @@ class AudioService: NSObject, ObservableObject {
     }
 
     // MARK: - Audiobook playback (chunked, file-backed)
+
     //
     // Audiobooks can be hours long (≥300 MB on disk). The original
     // implementation read the entire WAV into one PCM buffer — for a 2 h book
@@ -444,12 +521,14 @@ class AudioService: NSObject, ObservableObject {
         // compat, otherwise leave it empty to avoid the RAM blowup.
         lastAudioData = Data()
 
-        if !engine.isRunning { try engine.start() }
+        if !engine.isRunning {
+            try engine.start()
+        }
         playerNode.volume = volume
 
         // Schedule the first N chunks ahead. As each completes we schedule
         // the next one to keep the lookahead full.
-        for _ in 0..<Self.audiobookChunkLookahead {
+        for _ in 0 ..< Self.audiobookChunkLookahead {
             scheduleNextAudiobookChunk()
         }
         playerNode.play()
@@ -464,7 +543,9 @@ class AudioService: NSObject, ObservableObject {
     /// stop on the last buffer drain.
     private func scheduleNextAudiobookChunk() {
         guard let file = currentAudioFile else { return }
-        if audiobookFrameOffset >= audiobookTotalFrames { return }
+        if audiobookFrameOffset >= audiobookTotalFrames {
+            return
+        }
         let chunkFrames = AVAudioFrameCount(
             min(
                 AVAudioFramePosition(Self.audiobookChunkSeconds * audiobookSampleRate),
@@ -473,8 +554,8 @@ class AudioService: NSObject, ObservableObject {
         )
         guard chunkFrames > 0,
               let buffer = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat,
-                frameCapacity: chunkFrames
+                  pcmFormat: file.processingFormat,
+                  frameCapacity: chunkFrames
               )
         else { return }
         do {
@@ -487,10 +568,10 @@ class AudioService: NSObject, ObservableObject {
         audiobookFrameOffset += AVAudioFramePosition(buffer.frameLength)
 
         scheduledBufferCount += 1
-        let gen = audiobookGeneration  // capture before the async hop
+        let gen = audiobookGeneration // capture before the async hop
         playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, gen == self.audiobookGeneration else { return }
+                guard let self, gen == audiobookGeneration else { return }
                 scheduledBufferCount -= 1
                 // Refill: keep the lookahead window full as long as we have file left.
                 if currentAudioFile != nil, audiobookFrameOffset < audiobookTotalFrames {
@@ -498,7 +579,8 @@ class AudioService: NSObject, ObservableObject {
                 }
                 // End-of-file: when the last buffer drains, mark complete.
                 if scheduledBufferCount == 0, isPlaying,
-                   audiobookFrameOffset >= audiobookTotalFrames {
+                   audiobookFrameOffset >= audiobookTotalFrames
+                {
                     playbackCompleted = true
                     stop()
                 }
@@ -514,17 +596,22 @@ class AudioService: NSObject, ObservableObject {
             return
         }
         let wasPlaying = isPlaying
-        audiobookGeneration += 1  // invalidate stale handlers before stop fires them
+        audiobookGeneration += 1 // invalidate stale handlers before stop fires them
+        // Seeking after the book finished must clear the completed flag, else the
+        // next pause/play is misrouted as "restart from beginning".
+        playbackCompleted = false
         playerNode.stop()
         scheduledBufferCount = 0
         let target = max(0, min(audiobookTotalFrames, AVAudioFramePosition(seconds * audiobookSampleRate)))
         audiobookFrameOffset = target
         currentTime = Double(target) / audiobookSampleRate
         pausedTime = currentTime
-        for _ in 0..<Self.audiobookChunkLookahead {
+        for _ in 0 ..< Self.audiobookChunkLookahead {
             scheduleNextAudiobookChunk()
         }
-        if !engine.isRunning { try? engine.start() }
+        if !engine.isRunning {
+            try? engine.start()
+        }
         if wasPlaying {
             playerNode.play()
             isPlaying = true

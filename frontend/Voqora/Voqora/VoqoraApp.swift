@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct VoqoraApp: App {
-    // 0. App Lifecycle Management
+    /// 0. App Lifecycle Management
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     // 1. Single Sources of Truth (Services)
@@ -191,7 +191,11 @@ struct VoqoraApp: App {
             Button("Stop") { audio.stop() }
             Button("Quit") {
                 dashboardVM.stopHeartbeat()
-                Task { await backend.stop() }
+                // backend.stop() is synchronous (terminates the child + closes
+                // handles inline; its pkill -9 is already backgrounded), so call
+                // it directly before terminate to guarantee ordered shutdown. The
+                // previous `Task { await … }` could be pre-empted by terminate().
+                backend.stop()
                 NSApplication.shared.terminate(nil)
             }
         } label: {

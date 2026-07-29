@@ -1,6 +1,5 @@
 import asyncio
 import concurrent.futures
-import gc
 import os
 import re
 import time
@@ -14,6 +13,7 @@ from kokoro_onnx import Kokoro
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
+from app.services.languages import DEFAULT_VOICE, espeak_lang_for_voice
 
 log = get_logger(__name__)
 
@@ -99,7 +99,6 @@ class TTSEngine:
             cls._executor.shutdown(wait=False, cancel_futures=True)
             cls._executor = None
         cls._lookahead_cache.clear()
-        gc.collect()
         log.info("tts.model_unloaded")
 
     @classmethod
@@ -149,6 +148,7 @@ class TTSEngine:
 
         log.info("tts.lookahead_precompute", extra={"seg_preview": first_seg[:30]})
         loop = asyncio.get_running_loop()
+        lang = espeak_lang_for_voice(voice)
         try:
             audio, _ = await loop.run_in_executor(
                 cls._executor,
@@ -156,7 +156,7 @@ class TTSEngine:
                 first_seg,
                 voice,
                 speed,
-                "en-us",
+                lang,
             )
         except Exception as e:
             log.warning("tts.lookahead_error", extra={"error": str(e)})
@@ -246,7 +246,7 @@ class TTSEngine:
 
         # Split on punctuation to get natural sentence/clause boundaries
         raw_parts = [
-            s.strip() for s in re.split(r"(?<=[.!?|:;,]) +", raw_text) if s.strip()
+            s.strip() for s in re.split(r"(?<=[.!?:;,]) +", raw_text) if s.strip()
         ]
 
         if not raw_parts:
@@ -281,10 +281,24 @@ class TTSEngine:
         if not segments:
             return
 
+        # Guard against an unknown/stale voice ID. model.create() asserts
+        # `voice in self.voices` and would raise per-segment; generate() swallows
+        # that and yields nothing → silent stream. Fall back to the default voice
+        # so playback degrades gracefully instead of failing silently.
+        if voice not in cls._model.voices:
+            log.warning(
+                "tts.unknown_voice_fallback",
+                extra={"requested": voice, "fallback": DEFAULT_VOICE},
+            )
+            voice = DEFAULT_VOICE
+
         # Pause durations tuned for streaming (shorter = more responsive)
         pause_map = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
 
         loop = asyncio.get_running_loop()
+        # Phonemizer language is derived from the voice prefix (e.g. ff_siwis →
+        # fr-fr). Constant for the whole call since one request uses one voice.
+        lang = espeak_lang_for_voice(voice)
 
         for i, seg_text in enumerate(segments):
             cls.touch()  # Keep idle timer alive throughout multi-segment generation
@@ -309,7 +323,7 @@ class TTSEngine:
                         seg_stripped,
                         voice,
                         speed,
-                        "en-us",
+                        lang,
                     )
                 except Exception as e:
                     log.warning(
@@ -328,3 +342,90 @@ class TTSEngine:
             silence = AudioService.get_silence(silence_sec)
 
             yield np.concatenate([audio, silence])
+
+    @classmethod
+    async def generate_with_timing(
+        cls, text: str, voice: str, speed: float
+    ) -> AsyncGenerator[dict, None]:
+        """Audiobook-only sibling of generate() — never called by /speak, prewarm,
+        or the benchmarks under backend/benchmarks/. See generate()'s docstring
+        for the interactive streaming path; this method exists so the audiobook
+        pipeline can capture real per-segment durations without touching that
+        shared, latency-critical path (Sprint 1 design record).
+
+        Duplicates (does not call into) generate()'s pause_map, unknown-voice
+        fallback, and per-segment try/except — keep the two in sync if either's
+        synthesis behavior changes. Unlike generate(), never consults
+        _lookahead_cache (an audiobook page colliding with a live interactive
+        prewarm entry is near-zero-probability; sharing that mutable cache
+        would reintroduce the coupling this method is designed to avoid).
+
+        Yields exactly one dict per element of _split_segments(text), in order —
+        including segments that fail to synthesize — so a caller has perfect
+        positional alignment between segment text and outcome with no
+        possibility of a silent gap:
+            {"index": int, "text": str, "ok": bool,
+             "audio": np.ndarray | None, "duration_sec": float}
+        """
+        if not cls._model or not cls._executor:
+            raise RuntimeError("Model not initialized. Call initialize() first.")
+
+        segments = cls._split_segments(text)
+        if not segments:
+            return
+
+        if voice not in cls._model.voices:
+            log.warning(
+                "tts.unknown_voice_fallback",
+                extra={"requested": voice, "fallback": DEFAULT_VOICE},
+            )
+            voice = DEFAULT_VOICE
+
+        # Pause durations tuned for streaming (shorter = more responsive)
+        pause_map = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
+
+        loop = asyncio.get_running_loop()
+        lang = espeak_lang_for_voice(voice)
+
+        for i, seg_text in enumerate(segments):
+            cls.touch()  # Keep idle timer alive throughout multi-segment generation
+            seg_stripped = seg_text.strip()
+
+            try:
+                audio, _ = await loop.run_in_executor(
+                    cls._executor,
+                    cls._model.create,
+                    seg_stripped,
+                    voice,
+                    speed,
+                    lang,
+                )
+            except Exception as e:
+                log.warning(
+                    "tts.segment_error",
+                    extra={"seg_preview": seg_text[:30], "error": str(e)},
+                )
+                audio = None
+
+            if audio is None:
+                yield {
+                    "index": i,
+                    "text": seg_text,
+                    "ok": False,
+                    "audio": None,
+                    "duration_sec": 0.0,
+                }
+                continue
+
+            last_char = seg_stripped[-1] if seg_stripped else ""
+            silence_sec = pause_map.get(last_char, 0.1) / speed
+            silence = AudioService.get_silence(silence_sec)
+            full_audio = np.concatenate([audio, silence])
+
+            yield {
+                "index": i,
+                "text": seg_text,
+                "ok": True,
+                "audio": full_audio,
+                "duration_sec": len(full_audio) / settings.AUDIO_SAMPLE_RATE,
+            }

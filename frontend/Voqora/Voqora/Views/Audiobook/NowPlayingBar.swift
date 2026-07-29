@@ -16,7 +16,6 @@ struct NowPlayingBar: View {
         }
     }
 
-    @ViewBuilder
     private func content(for book: Audiobook) -> some View {
         VStack(spacing: 0) {
             // Cyan progress underline at the very top
@@ -101,7 +100,9 @@ struct NowPlayingBar: View {
     private func prettyTitle(_ book: Audiobook) -> String {
         var t = book.title
         for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
+            if t.lowercased().hasSuffix(ext) {
+                return String(t.dropLast(ext.count))
+            }
         }
         return t
     }

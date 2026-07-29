@@ -1,7 +1,7 @@
 import AppKit
 
 enum SelectionManager {
-    static func getSelectedText() -> String? {
+    static func getSelectedText() async -> String? {
         // 1. Try Accessibility API
         let systemWideElement = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
@@ -9,9 +9,12 @@ enum SelectionManager {
         let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
 
         if result == .success {
-            var selectedText: AnyObject?
+            // AXUIElement is a CF-bridged type — the compiler statically
+            // guarantees this cast succeeds (a conditional `as?` is a
+            // build error here: "downcast will always succeed").
             // swiftlint:disable:next force_cast
             let element = focusedElement as! AXUIElement
+            var selectedText: AnyObject?
             let textResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedText)
 
             if textResult == .success, let text = selectedText as? String, !text.isEmpty {
@@ -21,10 +24,10 @@ enum SelectionManager {
         }
 
         print("⚠️ SelectionManager: AX failed. Falling back to Clipboard (Cmd+C)...")
-        return getSelectedTextViaClipboard()
+        return await getSelectedTextViaClipboard()
     }
 
-    private static func getSelectedTextViaClipboard() -> String? {
+    private static func getSelectedTextViaClipboard() async -> String? {
         let pasteboard = NSPasteboard.general
         let oldChangeCount = pasteboard.changeCount
 
@@ -51,8 +54,10 @@ enum SelectionManager {
         cmdUp?.post(tap: .cghidEventTap)
 
         // Wait for the OS to process the copy command
-        // Increased to 400ms for reliability with heavy apps like Chrome
-        Thread.sleep(forTimeInterval: 0.4)
+        // Increased to 400ms for reliability with heavy apps like Chrome.
+        // Async sleep — this runs on @MainActor (called from DashboardViewModel.
+        // speakSelection), so a synchronous Thread.sleep would freeze the whole UI.
+        try? await Task.sleep(nanoseconds: 400_000_000)
 
         if pasteboard.changeCount != oldChangeCount,
            let text = pasteboard.string(forType: .string), !text.isEmpty

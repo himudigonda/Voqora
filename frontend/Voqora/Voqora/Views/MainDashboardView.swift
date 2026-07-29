@@ -12,24 +12,32 @@ struct MainDashboardView: View {
     @State private var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
 
     var body: some View {
-        ZStack {
-            // AMBIENCE
-            Circle()
-                .fill(vm.status == .speaking ? AnyShapeStyle(Color.cyan.opacity(colorScheme == .dark ? 0.12 : 0.08)) : AnyShapeStyle(Color.clear))
-                .frame(width: 450, height: 450)
-                .blur(radius: 90)
-                .animation(.easeInOut(duration: 1.2), value: vm.status)
+        // GeometryReader-driven adaptive sizing (the v1.1 design notes Sprint 6, T6.4) —
+        // same "no rigid element fighting for space" principle as
+        // AudiobookPlayerLayout, applied to the dashboard's fixed
+        // circles/paddings so nothing crowds at narrow widths.
+        GeometryReader { geo in
+            let metrics = MainDashboardLayout.metrics(for: geo.size.width)
+            ZStack {
+                // AMBIENCE
+                Circle()
+                    .fill(vm.status == .speaking ? AnyShapeStyle(Color.cyan.opacity(colorScheme == .dark ? 0.12 : 0.08)) : AnyShapeStyle(Color.clear))
+                    .frame(width: metrics.ambientCircleSize, height: metrics.ambientCircleSize)
+                    .blur(radius: 90)
+                    .animation(.easeInOut(duration: 1.2), value: vm.status)
 
-            VStack(spacing: 0) {
-                headerSection
-                if !hasAccessibilityPermission {
-                    accessibilityBanner
+                VStack(spacing: 0) {
+                    headerSection(padding: metrics.headerPadding)
+                    if !hasAccessibilityPermission {
+                        accessibilityBanner
+                    }
+                    Spacer()
+                    visualizerSection(outerSize: metrics.outerRingSize, innerSize: metrics.innerRingSize)
+                    Spacer()
+                    footerSection(sliderPadding: metrics.sliderHorizontalPadding)
                 }
-                Spacer()
-                visualizerSection
-                Spacer()
-                footerSection
             }
+            .clipped()
         }
         .onAppear { hasAccessibilityPermission = AXIsProcessTrusted() }
     }
@@ -68,7 +76,7 @@ struct MainDashboardView: View {
         }
     }
 
-    private var headerSection: some View {
+    private func headerSection(padding: CGFloat) -> some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("VOQORA")
@@ -134,18 +142,18 @@ struct MainDashboardView: View {
                 }
             }
         }
-        .padding(40)
+        .padding(padding)
     }
 
-    private var visualizerSection: some View {
+    private func visualizerSection(outerSize: CGFloat, innerSize: CGFloat) -> some View {
         VStack(spacing: 30) {
             ZStack {
-                Circle().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.05)).frame(width: 260, height: 260)
+                Circle().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.05)).frame(width: outerSize, height: outerSize)
 
                 Circle()
                     .stroke(lineWidth: 1.5)
                     .foregroundStyle(vm.status == .speaking ? AnyShapeStyle(Color.cyan.opacity(0.6)) : AnyShapeStyle(Color.primary.opacity(0.05)))
-                    .frame(width: 200, height: 200)
+                    .frame(width: innerSize, height: innerSize)
                     .scaleEffect(vm.status == .speaking ? 1.08 : 1.0)
                     .animation(
                         vm.status == .speaking
@@ -160,9 +168,22 @@ struct MainDashboardView: View {
             }
 
             VStack(spacing: 12) {
-                Text(vm.currentVoiceDisplay.uppercased()) // Simplified display logic
-                    .font(vm.appFont(size: 14, weight: .bold))
-                    .foregroundStyle(.secondary)
+                // Show errors (e.g. "enable Accessibility", "nothing to play") in
+                // place of the voice name so failures aren't silent; otherwise the
+                // current voice. (Previously the label was always the voice name,
+                // so status errors never reached the user.)
+                if case let .error(msg) = vm.status {
+                    Text(msg)
+                        .font(vm.appFont(size: 13, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 24)
+                } else {
+                    Text(vm.currentVoiceDisplay.uppercased())
+                        .font(vm.appFont(size: 14, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
 
                 let total = audio.duration
                 let current = isEditingSlider ? localProgress * total : audio.currentTime
@@ -173,17 +194,23 @@ struct MainDashboardView: View {
         }
     }
 
-    private var footerSection: some View {
+    private func footerSection(sliderPadding: CGFloat) -> some View {
         VStack(spacing: 30) {
             if vm.status == .speaking || vm.status == .paused || audio.duration > 0 {
                 // Slider Logic (same as before but using 'audio' environment object)
                 Slider(value: $localProgress, in: 0 ... 1, onEditingChanged: { editing in
                     isEditingSlider = editing
                     audio.isDragging = editing
-                    if !editing { audio.seek(to: localProgress) }
+                    if !editing {
+                        audio.seek(to: localProgress)
+                    }
                 })
-                .onReceive(audio.$progress) { p in if !isEditingSlider { localProgress = p } }
-                .padding(.horizontal, 100)
+                .onReceive(audio.$progress) {
+                    p in if !isEditingSlider {
+                        localProgress = p
+                    }
+                }
+                .padding(.horizontal, sliderPadding)
             }
 
             HStack(spacing: 60) {

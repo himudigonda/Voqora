@@ -16,7 +16,7 @@ flowchart LR
     T --> A
     A --> P["Audio stream / audiobook files"]
     P --> M
-    O["Optional Gemini PDF cleanup"] -. explicit user choice .-> A
+    O["Optional Gemini document cleanup + consent"] -. explicit user choice .-> A
     M -. counts-only telemetry when enabled .-> H["Voqora API"]
 ```
 
@@ -44,12 +44,21 @@ Inference is intentionally serialized around the phonemizer/runtime boundary.
 The useful overlap is between playback of one completed segment and generation
 of the next, rather than running unsafe concurrent inference.
 
+The v1.1 candidate adds a backend-owned language/voice catalog. The native app
+groups its 28 curated voices by locale and can use Apple's on-device
+`NLLanguageRecognizer` to select a matching voice before it makes the local
+speech request. The client still sends a voice identifier, and the backend maps
+that identifier to the appropriate eSpeak language configuration.
+
 ## Audiobook path
 
-The audiobook service extracts a document, processes pages, creates audio, and
-persists local metadata needed for progress and resume. Local extraction is the
-default. Optional Gemini cleanup and OCR are invoked only with a user-supplied
-key and an explicit selection of that workflow.
+The audiobook service extracts PDF, DOCX, Markdown, and text documents,
+processes pages, creates audio, and persists local metadata needed for progress
+and resume. It prefers structure present in the source file (PDF bookmarks,
+DOCX heading styles, Markdown headings), then falls back only when needed.
+Local extraction is the default. Optional Gemini cleanup and OCR require a
+user-supplied key and explicit consent. Per-segment timing is persisted with
+audio so the transcript can follow generated speech accurately.
 
 ## Data boundary
 
@@ -58,7 +67,7 @@ key and an explicit selection of that workflow.
 | Speech synthesis | Local bundled service. |
 | Selected text | Sent to the local service for speech. |
 | Audiobook state | Stored locally for resume and playback. |
-| PDF cleanup / OCR | Optional Gemini request when the user provides a key and chooses it. |
+| Document cleanup / OCR | Optional Gemini request only when the user provides a key, confirms consent, and chooses it. |
 | Product telemetry | Optional counts-only events when enabled in Preferences. |
 | Release check | GitHub request only when initiated. |
 

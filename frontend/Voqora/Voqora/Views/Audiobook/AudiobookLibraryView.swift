@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 /// Routes pushed by the library: only the player today, but easy to extend.
 enum AudiobookRoute: Hashable {
-    case player(String)  // book_id
+    case player(String) // book_id
 }
 
 /// Single source-of-truth for which (mutually exclusive) sheet the library is
@@ -15,8 +15,8 @@ enum LibrarySheet: Identifiable {
 
     var id: String {
         switch self {
-        case .upload(let url): return "upload-\(url.absoluteString)"
-        case .completion(let book): return "completion-\(book.bookID)"
+        case let .upload(url): "upload-\(url.absoluteString)"
+        case let .completion(book): "completion-\(book.bookID)"
         }
     }
 }
@@ -33,19 +33,23 @@ struct AudiobookLibraryView: View {
 
     enum SortMode: String, CaseIterable, Identifiable {
         case recent, alpha, duration
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
+
         var label: String {
             switch self {
-            case .recent: return "Recent"
-            case .alpha: return "A→Z"
-            case .duration: return "Duration"
+            case .recent: "Recent"
+            case .alpha: "A→Z"
+            case .duration: "Duration"
             }
         }
+
         var icon: String {
             switch self {
-            case .recent: return "clock"
-            case .alpha: return "textformat"
-            case .duration: return "timer"
+            case .recent: "clock"
+            case .alpha: "textformat"
+            case .duration: "timer"
             }
         }
     }
@@ -56,7 +60,9 @@ struct AudiobookLibraryView: View {
         NavigationStack(path: $path) {
             ZStack {
                 content
-                if hoveringDrop { dropOverlay.transition(.opacity) }
+                if hoveringDrop {
+                    dropOverlay.transition(.opacity)
+                }
             }
             .navigationTitle("Audiobooks")
             .toolbar { toolbarContent }
@@ -69,7 +75,7 @@ struct AudiobookLibraryView: View {
                     .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
                 ]
             ) { result in
-                if case .success(let url) = result {
+                if case let .success(url) = result {
                     guard url.startAccessingSecurityScopedResource() else { return }
                     let tmpURL = FileManager.default.temporaryDirectory
                         .appendingPathComponent(url.lastPathComponent)
@@ -80,6 +86,7 @@ struct AudiobookLibraryView: View {
                         presentEstimate(for: tmpURL)
                     } catch {
                         url.stopAccessingSecurityScopedResource()
+                        bookVM.showToast("Couldn't read '\(url.lastPathComponent)': \(error.localizedDescription)", kind: .error)
                     }
                 }
             }
@@ -89,11 +96,11 @@ struct AudiobookLibraryView: View {
             // VM cleanup so we never orphan a staged book on disk.
             .sheet(item: librarySheetBinding) { sheet in
                 switch sheet {
-                case .upload(let url):
+                case let .upload(url):
                     UploadEstimateModal(pdfURL: url)
                         .environmentObject(vm)
                         .environmentObject(bookVM)
-                case .completion(let book):
+                case let .completion(book):
                     CompletionSummaryModal(book: book, onListenNow: { openPlayer($0) })
                         .environmentObject(vm)
                         .environmentObject(bookVM)
@@ -101,7 +108,7 @@ struct AudiobookLibraryView: View {
             }
             .navigationDestination(for: AudiobookRoute.self) { route in
                 switch route {
-                case .player(let bookID):
+                case let .player(bookID):
                     if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
                         AudiobookPlayerView(book: book)
                             .environmentObject(vm)
@@ -118,15 +125,29 @@ struct AudiobookLibraryView: View {
                 bookVM.startPolling()
             }
             .onDisappear { bookVM.stopPolling() }
-            .onChange(of: bookVM.pendingDeepLink) { _, newValue in
-                guard let bookID = newValue else { return }
-                if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
-                    if !path.contains(.player(bookID)) {
-                        path.append(.player(book.bookID))
-                    }
-                }
-                bookVM.pendingDeepLink = nil
-            }
+            // E13: resolving must retry on the next `books` update too, not
+            // just when `pendingDeepLink` itself changes — otherwise a deep
+            // link that arrives before its target book is loaded is lost
+            // forever instead of resolving once the book appears.
+            .onChange(of: bookVM.pendingDeepLink) { _, _ in resolveDeepLinkIfPossible() }
+            .onChange(of: bookVM.books) { _, _ in resolveDeepLinkIfPossible() }
+        }
+    }
+
+    /// See `AudiobookDeepLinkResolver`'s doc comment (the v1.1 design notes Sprint 7,
+    /// T7.12/E13) for why the resolve-or-stay-armed decision lives there as
+    /// pure logic rather than inline here.
+    private func resolveDeepLinkIfPossible() {
+        let result = AudiobookDeepLinkResolver.resolve(
+            pendingDeepLink: bookVM.pendingDeepLink,
+            books: bookVM.books,
+            currentPath: path
+        )
+        if let route = result.route {
+            path.append(route)
+        }
+        if result.clear {
+            bookVM.pendingDeepLink = nil
         }
     }
 
@@ -135,14 +156,23 @@ struct AudiobookLibraryView: View {
     private var librarySheetBinding: Binding<LibrarySheet?> {
         Binding(
             get: {
-                if let book = bookVM.completionSummary { return .completion(book) }
-                if let url = bookVM.pendingPDF { return .upload(url) }
+                if let book = bookVM.completionSummary {
+                    return .completion(book)
+                }
+                if let url = bookVM.pendingPDF {
+                    return .upload(url)
+                }
                 return nil
             },
             set: { newValue in
-                if newValue != nil { return }
-                if bookVM.completionSummary != nil { bookVM.completionSummary = nil }
-                else if bookVM.pendingPDF != nil { bookVM.cancelUpload() }
+                if newValue != nil {
+                    return
+                }
+                if bookVM.completionSummary != nil {
+                    bookVM.completionSummary = nil
+                } else if bookVM.pendingPDF != nil {
+                    bookVM.cancelUpload()
+                }
             }
         )
     }
@@ -171,7 +201,11 @@ struct AudiobookLibraryView: View {
                         // P7: without contentShape, macOS hit-testing fires only over
                         // visible pixels. This extends hover/click to the full card rect.
                         .contentShape(Rectangle())
-                        .allowsHitTesting(!isProcessing)
+                        // E5: .allowsHitTesting(false) blocked the entire subtree,
+                        // including the card's own .contextMenu "Cancel Processing"
+                        // item — .disabled scopes the block to just this Button's
+                        // own tap action, leaving the context menu reachable.
+                        .disabled(isProcessing)
                     }
                 }
                 .padding(36)
@@ -182,7 +216,7 @@ struct AudiobookLibraryView: View {
     private var skeletonGrid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 32) {
-                ForEach(0..<6, id: \.self) { _ in SkeletonCard() }
+                ForEach(0 ..< 6, id: \.self) { _ in SkeletonCard() }
             }
             .padding(36)
         }
@@ -232,32 +266,17 @@ struct AudiobookLibraryView: View {
         }
     }
 
+    /// E10: delegates to `AudiobookDropHandler`, which iterates every
+    /// provider (not just `.first`) — see its doc comment for why the
+    /// iteration logic itself lives there instead of inline here.
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            var url: URL?
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let u = item as? URL {
-                url = u
-            }
-            let allowed: Set<String> = ["pdf", "txt", "docx", "md"]
-            guard let url, allowed.contains(url.pathExtension.lowercased()) else { return }
-
-            // Acquire security scope, copy to temp, release scope
-            let scoped = url.startAccessingSecurityScopedResource()
-            let tmpURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(url.lastPathComponent)
-            do {
-                let data = try Data(contentsOf: url)
-                if scoped { url.stopAccessingSecurityScopedResource() }
-                try data.write(to: tmpURL)
-                Task { @MainActor in presentEstimate(for: tmpURL) }
-            } catch {
-                if scoped { url.stopAccessingSecurityScopedResource() }
+        AudiobookDropHandler.handle(providers: providers) { url in
+            Task { @MainActor in presentEstimate(for: url) }
+        } onError: { url, error in
+            Task { @MainActor in
+                bookVM.showToast("Couldn't read '\(url.lastPathComponent)': \(error.localizedDescription)", kind: .error)
             }
         }
-        return true
     }
 
     private func presentEstimate(for pdf: URL) {
@@ -332,9 +351,11 @@ struct AudiobookLibraryView: View {
     }
 }
 
-// Allow URL? to drive .sheet(item:)
+/// Allow URL? to drive .sheet(item:)
 extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
+    public var id: String {
+        absoluteString
+    }
 }
 
 private struct SkeletonCard: View {
@@ -344,7 +365,11 @@ private struct SkeletonCard: View {
         VStack(alignment: .leading, spacing: 10) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 180, height: 252)
+                // Same grid-matching fix as AudiobookCardView (the v1.1 design notes
+                // Sprint 6, T6.3) — fixed aspect ratio, flexible width, so
+                // the skeleton doesn't flash a different width than the
+                // real cards that replace it once loaded.
+                .aspectRatio(180.0 / 252.0, contentMode: .fit)
                 .overlay(shimmer)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -356,7 +381,7 @@ private struct SkeletonCard: View {
                 .frame(width: 90, height: 9)
                 .overlay(shimmer)
         }
-        .frame(width: 180, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                 phase = 1.5

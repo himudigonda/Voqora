@@ -3,9 +3,12 @@
 > **Listen to the text you are already reading.**
 
 Voqora is a native Mac app for turning selected text into natural speech and
-turning long PDFs into resumable audiobooks. It is built for the moment when
+turning long documents into resumable audiobooks. It is built for the moment when
 you still need to get through the material, but do not want to keep staring at
 it.
+
+> The latest public release is v1.0.0. This local-only branch contains the
+> unreleased v1.1 product work and must not be published before its release gate.
 
 <p align="center">
   <a href="https://github.com/himudigonda/Voqora/releases/tag/v1.0.0"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
@@ -25,7 +28,8 @@ it.
 3. Select text in a browser, PDF reader, IDE, Notes, or another app.
 4. Press `Command + Shift + .`.
 
-For a long document, open **Audiobooks**, add a PDF, and come back to it when
+For a long document, open **Audiobooks**, add a PDF, DOCX, Markdown, or text
+file, and come back to it when
 you are walking, commuting, or simply done looking at a screen.
 
 ## What Voqora does
@@ -34,8 +38,9 @@ you are walking, commuting, or simply done looking at a screen.
 | --- | --- |
 | Listen to an article, document, or code review | A global shortcut that speaks selected text. |
 | Control speech without changing apps | Global pause, stop, and export shortcuts. |
-| Make long reading portable | A resumable PDF audiobook workflow. |
-| Tune the experience | Voice, speed, volume, local history, and WAV export. |
+| Make long reading portable | A resumable PDF, DOCX, Markdown, or text-file audiobook workflow. |
+| Listen across languages | 28 curated voices in eight supported locales, with local auto-detection. |
+| Tune the experience | Voice previews, speed, volume, local history, and WAV export. |
 | Keep the core speech path on your Mac | A bundled local speech engine for Apple silicon. |
 
 ### Shortcuts
@@ -53,16 +58,22 @@ All four are remappable in Preferences.
 
 ```mermaid
 flowchart LR
-    A["Select text or add a PDF"] --> B["Voqora for macOS"]
+    A["Select text or add a document"] --> B["Voqora for macOS"]
     B --> C["Bundled local speech engine"]
     C --> D["Audio playback or audiobook"]
-    E["Optional PDF cleanup with your Gemini key"] -. only when chosen .-> B
+    E["Optional Gemini cleanup with your key and consent"] -. only when chosen .-> B
 ```
 
 The speech engine runs locally. Voqora does not require an account to speak
-text. Optional PDF cleanup is separate: if you provide a Gemini API key and
-choose that flow, the relevant document material is sent to Gemini for that
-operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
+text. v1.1 adds on-device language recognition: English (US and UK), Spanish,
+French, Italian, Brazilian Portuguese, Hindi, and Mandarin beta map to a
+matching voice when auto-detection is enabled. Japanese is deliberately not
+listed because its real-text phonemization is not yet reliable.
+
+Optional document cleanup is separate: if you provide a Gemini API key, confirm
+the consent control, and choose that flow, the relevant document material is
+sent to Gemini for that operation. See [PRIVACY.md](PRIVACY.md) for the complete
+product boundary.
 
 ## Measured on the launch machine
 

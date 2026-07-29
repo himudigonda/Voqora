@@ -12,8 +12,12 @@ final class CoverColorExtractor {
     private var inFlight: [URL: Task<Color, Never>] = [:]
 
     func dominantColor(for url: URL) async -> Color {
-        if let cached = cache[url] { return cached }
-        if let task = inFlight[url] { return await task.value }
+        if let cached = cache[url] {
+            return cached
+        }
+        if let task = inFlight[url] {
+            return await task.value
+        }
 
         let task = Task<Color, Never> { [weak self] in
             guard let self else { return .cyan }
@@ -21,7 +25,7 @@ final class CoverColorExtractor {
                 let (data, _) = try await URLSession.shared.data(from: url)
                 guard let image = NSImage(data: data) else { return .cyan }
                 let color = Self.computeDominantColor(image)
-                self.cache[url] = color
+                cache[url] = color
                 return color
             } catch {
                 return .cyan
@@ -61,7 +65,9 @@ final class CoverColorExtractor {
             let mx = max(r, g, b)
             let saturation = mx > 0 ? (mx - mn) / mx : 0
             // Skip near-white and near-black so the gradient doesn't get washed out.
-            if mx < 0.15 || (mn > 0.85 && saturation < 0.05) { continue }
+            if mx < 0.15 || (mn > 0.85 && saturation < 0.05) {
+                continue
+            }
             let weight = 0.3 + saturation
             rSum += r * weight
             gSum += g * weight

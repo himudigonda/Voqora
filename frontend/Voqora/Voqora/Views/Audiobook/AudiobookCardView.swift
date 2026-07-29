@@ -16,9 +16,16 @@ struct AudiobookCardView: View {
     /// Live progress fraction derived from SSE state, falling back to book model.
     private var progressFraction: Double {
         switch status {
-        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t):
+        case let .extracting(p, t), let .cleaning(p, t), let .generating(p, t):
             guard t > 0 else { return 0 }
             return Double(p) / Double(t)
+        case .sectioning:
+            // Monolithic phase, no real fraction — explicit rather than
+            // falling through to `default` and returning whatever stale
+            // phase_progress carried over from "cleaning" (the backend
+            // never resets it), which would be misleading if this value
+            // were ever wired into a progress ring.
+            return 0
         default:
             return book.progressFraction
         }
@@ -27,7 +34,9 @@ struct AudiobookCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             cover
-            if status.isProcessing { processingWaveform }
+            if status.isProcessing {
+                processingWaveform
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(prettyTitle)
                     .font(vm.appFont(size: 13, weight: .bold))
@@ -38,7 +47,11 @@ struct AudiobookCardView: View {
             }
             .padding(.horizontal, 2)
         }
-        .frame(width: 180)
+        // the v1.1 design notes Sprint 6, T6.3: match the library grid's actual column
+        // width (GridItem(.adaptive(minimum:200,maximum:240))) instead of a
+        // fixed 180pt — a fixed width smaller than the grid's minimum left a
+        // whitespace/alignment mismatch in every column.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .scaleEffect(hovering && status.isReady ? 1.03 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
         .onHover { hovering = $0 }
@@ -76,21 +89,24 @@ struct AudiobookCardView: View {
     private var prettyTitle: String {
         var t = book.title
         for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
+            if t.lowercased().hasSuffix(ext) {
+                return String(t.dropLast(ext.count))
+            }
         }
         return t
     }
 
-    @ViewBuilder
     private var cover: some View {
         ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 180, height: 252)
+                // Fixed aspect ratio, flexible width — grows/shrinks with the
+                // grid's actual column width instead of a hardcoded 180pt.
+                .aspectRatio(180.0 / 252.0, contentMode: .fit)
                 .overlay {
                     AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { phase in
                         switch phase {
-                        case .success(let image):
+                        case let .success(image):
                             image.resizable().aspectRatio(contentMode: .fill)
                         case .failure, .empty:
                             placeholderCover
@@ -107,7 +123,7 @@ struct AudiobookCardView: View {
                 .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
                 .overlay(stateOverlay)
 
-            if hovering && status.isReady {
+            if hovering, status.isReady {
                 Circle()
                     .fill(.cyan)
                     .frame(width: 44, height: 44)
@@ -119,7 +135,6 @@ struct AudiobookCardView: View {
         }
     }
 
-    @ViewBuilder
     private var placeholderCover: some View {
         ZStack {
             LinearGradient(
@@ -143,7 +158,13 @@ struct AudiobookCardView: View {
     @ViewBuilder
     private var stateOverlay: some View {
         switch status {
-        case .queued:
+        case .queued, .sectioning, .reconnecting:
+            // the v1.1 design notes Sprint 4 (D5/E9): "sectioning" is monolithic — no
+            // per-page progress exists to drive `progressRing`, so it gets
+            // the same indeterminate spinner as `.queued` rather than a
+            // misleading percentage. T7.10/E11: `.reconnecting` has no
+            // progress info either (we've lost the live connection) — same
+            // treatment; the caption text is what actually distinguishes it.
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.4))
                 ProgressView().tint(.cyan).scaleEffect(0.8)
@@ -203,7 +224,7 @@ struct AudiobookCardView: View {
         TimelineView(.animation) { ctx in
             let phase = ctx.date.timeIntervalSinceReferenceDate * 2.9
             HStack(spacing: 3) {
-                ForEach(0..<16, id: \.self) { i in
+                ForEach(0 ..< 16, id: \.self) { i in
                     let height = 4 + 14 * abs(sin(phase + Double(i) * 0.4))
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                         .fill(Color.cyan.opacity(0.85))

@@ -167,15 +167,21 @@ struct VoqoraWindow: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                // Audiobook now-playing bar — hidden when on the player view (`books` tab when book is open)
-                if let playing = bookVM.nowPlaying {
+                // Audiobook now-playing bar — hidden while the player view
+                // itself is on screen. Gated on isNowPlayingBarVisible
+                // (nowPlaying != nil && !isPlayerViewActive), not just
+                // nowPlaying alone: AudiobookPlayerView.onAppear calls
+                // bookVM.play(book), so nowPlaying is non-nil for the whole
+                // time the player is open — isPlayerViewActive is the real
+                // "is the player on screen" signal (the v1.1 design notes Sprint 6, T6.1).
+                if bookVM.isNowPlayingBarVisible, let playing = bookVM.nowPlaying {
                     NowPlayingBar(onTap: {
                         vm.selectedTab = "books"
                         bookVM.openPlayer(for: playing.bookID)
                     })
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .environmentObject(vm)
-                        .environmentObject(bookVM)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .environmentObject(vm)
+                    .environmentObject(bookVM)
                 }
 
                 // Toast / banner — top of detail pane.
@@ -188,7 +194,11 @@ struct VoqoraWindow: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: bookVM.toast?.id)
             }
             .background(adaptiveBackdrop)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.nowPlaying?.bookID)
+            // Keyed on the bar's actual visibility (not just nowPlaying's
+            // bookID) so the transition also animates when isPlayerViewActive
+            // alone flips — e.g. navigating back to the library while the
+            // same book keeps playing (the v1.1 design notes Sprint 6, T6.1).
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.isNowPlayingBarVisible)
         }
         .frame(minWidth: 800, minHeight: 600)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
@@ -200,7 +210,11 @@ struct VoqoraWindow: View {
             "You're Up to Date",
             isPresented: Binding(
                 get: { vm.upToDateNotice != nil },
-                set: { if !$0 { vm.upToDateNotice = nil } }
+                set: {
+                    if !$0 {
+                        vm.upToDateNotice = nil
+                    }
+                }
             ),
             presenting: vm.upToDateNotice
         ) { _ in
@@ -230,6 +244,7 @@ struct VoqoraWindow: View {
                 .environmentObject(onboarding)
                 .environmentObject(permissions)
                 .environmentObject(identity)
+                .environmentObject(vm)
                 .interactiveDismissDisabled(true)
         }
         .onChange(of: onboarding.version) { _, _ in
@@ -317,7 +332,9 @@ struct VoqoraWindow: View {
 
     private func prettyTitleForResume(_ title: String) -> String {
         var t = title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
+        if t.lowercased().hasSuffix(".pdf") {
+            t = String(t.dropLast(4))
+        }
         return t
     }
 
@@ -325,8 +342,11 @@ struct VoqoraWindow: View {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
-            if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-            else if let u = item as? URL { url = u }
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let u = item as? URL {
+                url = u
+            }
             guard let url, url.pathExtension.lowercased() == "pdf" else { return }
             Task { @MainActor in
                 vm.selectedTab = "books"

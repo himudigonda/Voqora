@@ -19,7 +19,9 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let speed: Double
     let error: String?
 
-    var id: String { bookID }
+    var id: String {
+        bookID
+    }
 
     var progressFraction: Double {
         let total = Double(phaseProgress.pageTotal)
@@ -29,25 +31,27 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var displayStatus: ProcessingStatus {
         switch status {
-        case "ready", "queued": return .queued
+        case "ready", "queued": .queued
         case "extracting":
-            return .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "cleaning":
-            return .cleaning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .cleaning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+        case "sectioning":
+            .sectioning
         case "tts":
-            return .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "concatenating":
-            return .generating(page: phaseProgress.pageTotal, total: phaseProgress.pageTotal)
+            .generating(page: phaseProgress.pageTotal, total: phaseProgress.pageTotal)
         case "done":
-            return .ready
+            .ready
         case "needs_key":
-            return .needsKey
+            .needsKey
         case "failed":
-            return .failed(reason: error ?? "Unknown error")
+            .failed(reason: error ?? "Unknown error")
         case "cancelled":
-            return .cancelled
+            .cancelled
         default:
-            return .queued
+            .queued
         }
     }
 
@@ -77,7 +81,10 @@ struct PhaseProgress: Codable, Hashable {
 }
 
 struct AudiobookSection: Identifiable, Codable, Hashable {
-    var id: String { "\(startPage)-\(endPage)" }
+    var id: String {
+        "\(startPage)-\(endPage)"
+    }
+
     let title: String
     let startPage: Int
     let endPage: Int
@@ -156,7 +163,22 @@ enum ProcessingStatus: Hashable {
     case queued
     case extracting(page: Int, total: Int)
     case cleaning(page: Int, total: Int)
+    /// Backend is running real chapter/heading detection (PDF outline / DOCX
+    /// heading styles / Markdown headers / Gemini fallback — the v1.1 design notes §5.2,
+    /// `_phase_section`). Monolithic and non-paginated like `.queued` — the
+    /// backend never emits per-item progress for it — but held from
+    /// `phase_started` to `phase_finished`, which is a real, non-instant
+    /// duration for large documents (D5). Kept distinct from `.queued` so
+    /// the UI doesn't regress to "QUEUED" for that whole window.
+    case sectioning
     case generating(page: Int, total: Int)
+    /// The SSE connection has failed to reconnect N times in a row (the v1.1 design notes
+    /// Sprint 7, T7.10/E11). The book is very likely still processing
+    /// server-side — we just can't confirm live progress right now — so this
+    /// stays `isProcessing == true`. Cleared automatically the next time any
+    /// real event flows through (a fresh snapshot on reconnect, or the next
+    /// phase/page event), never needs an explicit "recovered" transition.
+    case reconnecting
     case ready
     case needsKey
     case failed(reason: String)
@@ -164,26 +186,30 @@ enum ProcessingStatus: Hashable {
 
     var isProcessing: Bool {
         switch self {
-        case .extracting, .cleaning, .generating, .queued: return true
-        default: return false
+        case .extracting, .cleaning, .sectioning, .generating, .queued, .reconnecting: true
+        default: false
         }
     }
 
     var isReady: Bool {
-        if case .ready = self { return true }
+        if case .ready = self {
+            return true
+        }
         return false
     }
 
     var caption: String {
         switch self {
-        case .queued: return "QUEUED"
-        case .extracting(let p, let t): return "EXTRACTING \(p)/\(t)"
-        case .cleaning(let p, let t): return "CLEANING \(p)/\(t)"
-        case .generating(let p, let t): return "GENERATING \(p)/\(t)"
-        case .ready: return "READY"
-        case .needsKey: return "NEEDS KEY — RESUME"
-        case .failed: return "FAILED — TAP TO RETRY"
-        case .cancelled: return "CANCELLED — CLICK TO RESTART"
+        case .queued: "QUEUED"
+        case let .extracting(p, t): "EXTRACTING \(p)/\(t)"
+        case let .cleaning(p, t): "CLEANING \(p)/\(t)"
+        case .sectioning: "DETECTING CHAPTERS"
+        case let .generating(p, t): "GENERATING \(p)/\(t)"
+        case .reconnecting: "RECONNECTING…"
+        case .ready: "READY"
+        case .needsKey: "NEEDS KEY — RESUME"
+        case .failed: "FAILED — TAP TO RETRY"
+        case .cancelled: "CANCELLED — CLICK TO RESTART"
         }
     }
 }
@@ -195,8 +221,12 @@ enum DurationFormatter {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 { return "\(h)h \(m)m" }
-        if m > 0 { return "\(m)m \(s)s" }
+        if h > 0 {
+            return "\(h)h \(m)m"
+        }
+        if m > 0 {
+            return "\(m)m \(s)s"
+        }
         return "\(s)s"
     }
 
@@ -205,7 +235,9 @@ enum DurationFormatter {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
         return String(format: "%d:%02d", m, s)
     }
 }

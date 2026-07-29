@@ -1,7 +1,7 @@
 import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_: Notification) {
         // Synchronous SIGKILL of any lingering VoqoraServer processes
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")

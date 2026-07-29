@@ -42,6 +42,19 @@ final class BackendService: NSObject, @unchecked Sendable {
         // the server is already starting (the previous crash-loop root cause).
         guard shouldStart else { return }
 
+        // start() is called from the @MainActor heartbeat (every 500 ms while the
+        // backend is offline). The pkill + waitUntilExit and Process.run below are
+        // blocking syscalls that were stalling the UI on every cycle. Hop them to a
+        // background queue — _isLaunching is already set, so re-entry stays blocked.
+        // Mirrors stop()'s background-pkill pattern. See HARD-012.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            self?.performLaunch()
+        }
+    }
+
+    /// The blocking portion of start(): stale-process cleanup, process spawn, and
+    /// log wiring. Always runs on a background queue (dispatched from start()).
+    private func performLaunch() {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
@@ -90,7 +103,9 @@ final class BackendService: NSObject, @unchecked Sendable {
 
         pipe.fileHandleForReading.readabilityHandler = { [weak self] readHandle in
             let data = readHandle.availableData
-            if data.isEmpty { return }
+            if data.isEmpty {
+                return
+            }
             // Write via the persistent handle (serialized on stateQueue so
             // concurrent log lines don't interleave inside a single write).
             self?.stateQueue.async {
@@ -107,7 +122,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         // the next heartbeat cycle can call start() again and restart it.
         p.terminationHandler = { [weak self] terminated in
             guard let self else { return }
-            self.stateQueue.sync {
+            stateQueue.sync {
                 if self.process === terminated {
                     self.process = nil
                     self._isLaunching = false

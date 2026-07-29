@@ -361,11 +361,21 @@ class GeminiCleaner:
 
     @classmethod
     async def verify_key(cls, api_key: str) -> bool:
-        """Lightweight key check: tiny generation. Returns True if key works."""
+        """Lightweight key check: lists available models (no generation, zero tokens consumed).
+
+        Uses the models.list API instead of a generation call so no quota is used
+        and latency is minimal.
+
+        Returns True only when the listing call succeeds. ANY failure — a genuinely
+        invalid key OR a transport error (offline, DNS, timeout, transient 5xx) —
+        returns False, because we can't confirm validity. The SDK raises raw
+        google.genai exceptions here (not our typed GeminiAuthError, which only
+        comes from _reraise_typed on the generation path), so there's nothing finer
+        to branch on. Caller treats False as "not verified," not "definitely bad."
+        """
         try:
-            await cls.clean_page(api_key, "Say 'ok'.")
+            client = genai.Client(api_key=api_key)
+            await client.aio.models.list(config={"page_size": 1})
             return True
-        except GeminiAuthError:
-            return False
         except Exception:
             return False

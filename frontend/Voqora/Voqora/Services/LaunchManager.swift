@@ -38,7 +38,7 @@ class LaunchManager: ObservableObject {
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(bundleID)
 
-        let serverURL    = appSupport.appendingPathComponent("VoqoraServer")
+        let serverURL = appSupport.appendingPathComponent("VoqoraServer")
         let executableURL = serverURL.appendingPathComponent("VoqoraServer")
         // Marker file: stores the bundle version that was last extracted.
         let versionMarkerURL = serverURL.appendingPathComponent(".bundle_version")
@@ -53,7 +53,8 @@ class LaunchManager: ObservableObject {
             ?? "unknown"
         if fm.isExecutableFile(atPath: executableURL.path),
            let stored = try? String(contentsOf: versionMarkerURL, encoding: .utf8),
-           stored.trimmingCharacters(in: .whitespacesAndNewlines) == currentVersion {
+           stored.trimmingCharacters(in: .whitespacesAndNewlines) == currentVersion
+        {
             print("✅ Backend v\(currentVersion) already extracted — skipping unzip.")
             isReady = true
             return

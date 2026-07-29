@@ -19,7 +19,10 @@ final class IdentityService: ObservableObject {
     static let shared = IdentityService()
 
     private static let log = Logger(subsystem: "me.himudigonda.Voqora", category: "identity")
-    private static let endpoint = URL(string: "https://www.himudigonda.me/api/voqora/identify")!
+    // No "www." — that host 308-redirects to the bare domain, and URLSession's
+    // default redirect handling drops the POST body on follow, so the request
+    // arrives at the destination with no anon_id (server then 400s).
+    private static let endpoint = URL(string: "https://himudigonda.me/api/voqora/identify")!
     private static let anonKey = "anonymousUserID"
     private static let emailKey = "userIdentityEmail"
 
@@ -33,17 +36,19 @@ final class IdentityService: ObservableObject {
     private init() {
         let defaults = UserDefaults.standard
         if let stored = defaults.string(forKey: Self.anonKey), !stored.isEmpty {
-            self.anonID = stored
+            anonID = stored
         } else {
             let fresh = UUID().uuidString
             defaults.set(fresh, forKey: Self.anonKey)
-            self.anonID = fresh
+            anonID = fresh
         }
-        self.email = defaults.string(forKey: Self.emailKey)
+        email = defaults.string(forKey: Self.emailKey)
     }
 
     /// `true` if the user submitted an email during onboarding or in Preferences.
-    var hasIdentity: Bool { email?.isEmpty == false }
+    var hasIdentity: Bool {
+        email?.isEmpty == false
+    }
 
     /// Submit an email to the backend. On success, persist locally.
     /// Throws `IdentityError` if the email is malformed or the request fails.
@@ -76,14 +81,14 @@ final class IdentityService: ObservableObject {
         guard let http = resp as? HTTPURLResponse else {
             throw IdentityError.server("non-HTTP response")
         }
-        if !(200..<300).contains(http.statusCode) {
+        if !(200 ..< 300).contains(http.statusCode) {
             let snippet = String(data: data.prefix(256), encoding: .utf8) ?? ""
             Self.log.error("identify status=\(http.statusCode, privacy: .public) body=\(snippet, privacy: .public)")
             throw IdentityError.server("Server error \(http.statusCode)")
         }
 
         UserDefaults.standard.set(trimmed, forKey: Self.emailKey)
-        self.email = trimmed
+        email = trimmed
         Self.log.info("identify ok for anon=\(self.anonID.prefix(8), privacy: .public)")
     }
 
@@ -98,8 +103,12 @@ final class IdentityService: ObservableObject {
         let parts = s.split(separator: "@")
         guard parts.count == 2 else { return false }
         let local = parts[0], domain = parts[1]
-        if local.isEmpty || domain.isEmpty { return false }
-        if !domain.contains(".") { return false }
+        if local.isEmpty || domain.isEmpty {
+            return false
+        }
+        if !domain.contains(".") {
+            return false
+        }
         return !s.contains(" ")
     }
 
@@ -110,9 +119,9 @@ final class IdentityService: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .invalidEmail: return "Please enter a valid email address."
-            case .network(let m): return "Network error: \(m)"
-            case .server(let m): return m
+            case .invalidEmail: "Please enter a valid email address."
+            case let .network(m): "Network error: \(m)"
+            case let .server(m): m
             }
         }
     }

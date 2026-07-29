@@ -37,7 +37,9 @@ normal edit-save-verify loop while still testing it before merge.
 
 ## Current validation baseline
 
-The v1.0.0 backend suite has 178 passing tests. The full Swift suite passed
-before the public release build. Subsequent release edits in this repository are
-documentation, packaging, and automation changes; they do not justify spinning
-up the Mac test host again on a busy developer machine.
+The v1.1 candidate's fast backend suite has 384 passing tests and three
+intentional skips. This covers multilingual catalog validation, language
+detection contracts, document extraction, consent/duplicate-start guards,
+retry/reconnect behaviour, transcript timing, and incomplete-audio handling.
+Run the guarded Swift target once for a release candidate after the backend
+proof is green; do not use repeated parallel runs as a substitute for diagnosis.

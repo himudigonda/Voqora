@@ -219,22 +219,42 @@ def test_clean_page_exhausts_retries_then_raises(monkeypatch) -> None:
 # ---------- verify_key ----------
 
 
+def _mock_client(list_side_effect=None, list_return=None):
+    """Build a mock genai.Client whose aio.models.list is an AsyncMock."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    if list_side_effect is not None:
+        client.aio.models.list = AsyncMock(side_effect=list_side_effect)
+    else:
+        client.aio.models.list = AsyncMock(return_value=list_return or MagicMock())
+    return client
+
+
 def test_verify_key_true_on_success() -> None:
-    with patch.object(GeminiCleaner, "clean_page", new=AsyncMock(return_value="ok")):
+    with patch("app.services.gemini_cleaner.genai.Client", return_value=_mock_client()):
         assert asyncio.run(GeminiCleaner.verify_key("good")) is True
 
 
 def test_verify_key_false_on_auth_failure() -> None:
-    with patch.object(
-        GeminiCleaner, "clean_page", new=AsyncMock(side_effect=GeminiAuthError("bad"))
+    with patch(
+        "app.services.gemini_cleaner.genai.Client",
+        return_value=_mock_client(list_side_effect=GeminiAuthError("bad key")),
     ):
         assert asyncio.run(GeminiCleaner.verify_key("bad")) is False
 
 
 def test_verify_key_false_on_any_other_exception() -> None:
-    with patch.object(
-        GeminiCleaner,
-        "clean_page",
-        new=AsyncMock(side_effect=RuntimeError("network")),
+    with patch(
+        "app.services.gemini_cleaner.genai.Client",
+        return_value=_mock_client(list_side_effect=RuntimeError("network timeout")),
     ):
         assert asyncio.run(GeminiCleaner.verify_key("k")) is False
+
+
+def test_verify_key_does_not_call_clean_page() -> None:
+    """Regression: verify_key must not make a generation call (token cost guard)."""
+    with patch("app.services.gemini_cleaner.genai.Client", return_value=_mock_client()):
+        with patch.object(GeminiCleaner, "clean_page", new=AsyncMock()) as mock_clean:
+            asyncio.run(GeminiCleaner.verify_key("good"))
+            mock_clean.assert_not_called()

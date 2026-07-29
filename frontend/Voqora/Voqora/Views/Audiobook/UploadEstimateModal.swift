@@ -13,24 +13,32 @@ struct UploadEstimateModal: View {
     @State private var consentGiven = false
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 0) {
             header
+                .padding(.bottom, 18)
             // S6: re-check stored key whenever the modal becomes visible —
             // covers the case where the user adds/removes a key in
             // Preferences while this modal is open.
             EmptyView().task { bookVM.refreshKeyState() }
             if let est = bookVM.pendingEstimate {
-                cover
-                statsGrid(for: est)
-                Spacer(minLength: 0)
+                // Cover + stats scroll if they're taller than the available space,
+                // so the action buttons below are ALWAYS pinned and visible (they
+                // were getting clipped at the fixed modal height).
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 16) {
+                        cover
+                        statsGrid(for: est)
+                    }
+                    .padding(.bottom, 6)
+                }
                 actions
+                    .padding(.top, 14)
             } else if bookVM.uploadInProgress {
                 loadingState
-                Spacer(minLength: 0)
             } else {
                 errorState
-                Spacer(minLength: 0)
                 actionsCancelOnly
+                    .padding(.top, 14)
             }
         }
         .padding(28)
@@ -65,27 +73,27 @@ struct UploadEstimateModal: View {
         ZStack {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 140, height: 196)
-                .shadow(color: .black.opacity(0.3), radius: 14, y: 8)
+                .frame(width: 116, height: 162)
+                .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
             if let pdf = PDFDocument(url: pdfURL),
-               let page = pdf.page(at: 0) {
+               let page = pdf.page(at: 0)
+            {
                 // S7: PDFPage.thumbnail renders the page properly at the
                 // requested point size, unlike NSImage(data:) on a raw PDF
                 // page-representation blob (which sometimes shows the whole
                 // PDF or renders at low resolution).
-                let nsImage = page.thumbnail(of: NSSize(width: 280, height: 392), for: .cropBox)
+                let nsImage = page.thumbnail(of: NSSize(width: 232, height: 324), for: .cropBox)
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: 140, height: 196)
+                    .frame(width: 116, height: 162)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
                 Image(systemName: "doc.fill")
-                    .font(.system(size: 40))
+                    .font(.system(size: 36))
                     .foregroundStyle(.cyan.opacity(0.5))
             }
         }
-        .padding(.top, 4)
     }
 
     private func statsGrid(for est: AudiobookEstimateResponse) -> some View {
@@ -160,7 +168,7 @@ struct UploadEstimateModal: View {
                         // Calling dismiss() immediately would race with the async
                         // /start call: the sheet binding setter fires cancelUpload()
                         // which deletes the staged book before /start completes.
-                        bookVM.startProcessing()
+                        bookVM.startProcessing(consent: consentGiven)
                     } else {
                         bookVM.showToast(
                             "Set a Gemini API key in Preferences first.",
@@ -225,7 +233,9 @@ struct UploadEstimateModal: View {
     private var prettyTitle: String {
         let n = pdfURL.lastPathComponent
         for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if n.lowercased().hasSuffix(ext) { return String(n.dropLast(ext.count)) }
+            if n.lowercased().hasSuffix(ext) {
+                return String(n.dropLast(ext.count))
+            }
         }
         return n
     }
@@ -237,7 +247,9 @@ struct UploadEstimateModal: View {
     }
 
     private func formatCost(_ usd: Double) -> String {
-        if usd < 0.01 { return "< $0.01" }
+        if usd < 0.01 {
+            return "< $0.01"
+        }
         return String(format: "$%.2f", usd)
     }
 

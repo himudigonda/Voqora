@@ -8,7 +8,6 @@ import XCTest
 /// outbox persistence) are covered by manual HAR captures listed in the
 /// sprint verification section.
 final class MetricsServiceTests: XCTestCase {
-
     // MARK: - Whitelist
 
     func test_whitelist_dropsUnknownKeys() {
@@ -32,11 +31,11 @@ final class MetricsServiceTests: XCTestCase {
         // re-validates against the enum (lib/voqora-validate.js). The
         // rest of these should drop client-side.
         let raw: [String: Any] = [
-            "chars": -5,                 // negative — drop
-            "speed": 3.0,                // out of [0.5, 2.0] — drop
-            "audio_seconds": "twelve",   // wrong type — drop
-            "file_kind": "exe",          // not in pdf/txt/epub — drop
-            "book_id_hash": "tooshort",  // not 64 hex — drop
+            "chars": -5, // negative — drop
+            "speed": 3.0, // out of [0.5, 2.0] — drop
+            "audio_seconds": "twelve", // wrong type — drop
+            "file_kind": "exe", // not in pdf/txt/epub — drop
+            "book_id_hash": "tooshort", // not 64 hex — drop
         ]
         let cleaned = MetricsService.Props.whitelist(raw)
         XCTAssertEqual(cleaned.count, 0, "All values fail client validation; output should be empty.")

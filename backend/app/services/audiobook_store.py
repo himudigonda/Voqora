@@ -6,6 +6,7 @@ Layout under {AUDIOBOOKS_DIR}/{book_id}/:
   pages/{n:03d}.txt             raw extracted
   pages/{n:03d}.clean.txt       LLM-cleaned
   audio_pages/{n:03d}.wav       per-page TTS (resumability granularity)
+  audio_pages/{n:03d}.segments.json  per-segment timing sidecar (Sprint 1)
   audio.wav                     final concatenated
   transcript.json               sections + page→time map (Phase 2)
 
@@ -218,6 +219,14 @@ class AudiobookStore:
     def page_audio_path(cls, book_id: str, n: int) -> str:
         return os.path.join(cls.book_dir(book_id), "audio_pages", f"{n:03d}.wav")
 
+    @classmethod
+    def page_segments_path(cls, book_id: str, n: int) -> str:
+        """Per-page segment-timing sidecar, co-located with its WAV so lifecycle
+        (creation, retry-deletion, whole-book delete) is naturally 1:1 with the page."""
+        return os.path.join(
+            cls.book_dir(book_id), "audio_pages", f"{n:03d}.segments.json"
+        )
+
     # ---------- create ----------
 
     @classmethod
@@ -268,9 +277,23 @@ class AudiobookStore:
 
     @classmethod
     async def update_meta(cls, book_id: str, **patch: Any) -> dict[str, Any]:
-        """Read-modify-write under per-book asyncio.Lock + DB transaction."""
+        """Read-modify-write under per-book asyncio.Lock + DB transaction.
+
+        No-ops (returns {} without writing) if the book has no row anymore —
+        guards against an orphaned background task (e.g. a sibling Gemini
+        clean call that outlived a cancelled pipeline, D2) resurrecting a
+        ghost row after the book was deleted. Every real caller only ever
+        patches a book whose row was already created via write_meta, so this
+        never blocks a legitimate first write.
+        """
         async with cls._lock(book_id):
-            meta = cls.read_meta(book_id) or {}
+            meta = cls.read_meta(book_id)
+            if meta is None:
+                log.warning(
+                    "store.update_meta_on_missing_book",
+                    extra={"book_id": book_id, "patch_keys": sorted(patch.keys())},
+                )
+                return {}
             meta.update(patch)
             cls.write_meta(book_id, meta)
             return meta

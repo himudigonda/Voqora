@@ -8,9 +8,10 @@ enum OnboardingCopy {
     static let welcomeTitle = "Welcome to Voqora"
     static let welcomeBody = """
     Voqora reads any selected text aloud — fast, on-device, with neural \
-    voices. No cloud, no upload, no waiting on a server. Press a global \
-    hotkey and the next sentence starts before the first one finishes \
-    rendering.
+    voices in 8 languages (English, Spanish, French, Italian, Portuguese, \
+    Hindi & more). No cloud, no upload, no waiting on a server. Press a \
+    global hotkey and the next sentence starts before the first one \
+    finishes rendering.
     """
 
     // MARK: - Step 2 — The hotkey
@@ -51,21 +52,37 @@ enum OnboardingCopy {
     static let notifGrantedLabel = "Allowed"
     static let notifDeniedLabel = "Disabled (you can change this in System Settings)"
 
+    // MARK: - Step — Voice & language (personalization)
+
+    static let voiceTitle = "Pick your voice"
+    static let voiceBody = """
+    Voqora speaks 8 languages on-device. Choose the voice it uses by \
+    default, press Hear a sample to listen, and set your speed. You can \
+    change any of this later in Preferences.
+    """
+    static let voiceSampleButton = "Hear a sample"
+    static let voiceStopButton = "Stop"
+    static let voiceSpeedLabel = "Speed"
+    static let voiceAutoDetectTitle = "Auto-detect language"
+    static let voiceAutoDetectBody = "Automatically match the voice to the text's language."
+
     // MARK: - Step 5 — Identity (optional email)
 
-    static let identityTitle = "Help us count returning users"
+    static let identityTitle = "Say hello (optional)"
     static let identityBody = """
-    Voqora is free and we'd love to know if real people keep using it. \
-    Drop your email so anonymous usage counts can be attributed to a \
-    person instead of a random UUID. That's it — no marketing email, no \
-    account, no password. We never read your text or files.
+    Voqora is free and made by one developer. If you'd like, leave your \
+    email — it's just a friendly way to show a real person is using the app, \
+    and that's what keeps the project alive. No newsletters, no account, no \
+    password, and your text and files never leave your Mac.
 
-    Totally optional. Skip if you'd rather stay completely anonymous.
+    Totally optional — skip it and everything works exactly the same.
     """
     static let identityPlaceholder = "you@example.com"
     static let identitySaveButton = "Save email"
     static let identitySkipButton = "Skip"
-    static let identitySavedLabel = "Saved. Thanks!"
+    static let identitySavedLabel = "Got it — thank you!"
+    /// Friendly, non-alarming message when the optional email couldn't be saved.
+    static let identityServerError = "Couldn't reach the server right now — no worries, this step is optional. You can skip it."
 
     // MARK: - Step 6 — Privacy + done
 

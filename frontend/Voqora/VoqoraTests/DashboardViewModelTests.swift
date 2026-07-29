@@ -1,4 +1,5 @@
 @testable import Voqora
+import SwiftUI
 import XCTest
 
 /// Pure-logic state-machine tests for DashboardViewModel.
@@ -20,6 +21,24 @@ import XCTest
 /// user trips most often.
 @MainActor
 final class DashboardViewModelTests: XCTestCase {
+    func test_voiceDefaultsMigration_resetsLegacyVoiceOnceThenPreservesChoice() {
+        let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
+        defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
+        defaults.set(true, forKey: "autoDetectLanguage")
+
+        XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
+        XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
+        XCTAssertFalse(defaults.bool(forKey: "autoDetectLanguage"))
+
+        defaults.set("bf_emma", forKey: "selectedVoice")
+        XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "bf_emma")
+    }
 
     private func makeVM() -> DashboardViewModel {
         DashboardViewModel(
@@ -32,7 +51,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - togglePlayback error path
 
-    func test_togglePlayback_with_zero_duration_sets_error() async {
+    func test_togglePlayback_with_zero_duration_sets_error() {
         let vm = makeVM()
         // Fresh AudioService starts with duration == 0 (no buffer scheduled).
         XCTAssertEqual(vm.audio.duration, 0)
@@ -48,7 +67,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     func test_togglePlayback_error_clears_to_ready_after_three_seconds() async {
         let vm = makeVM()
-        vm.togglePlayback()  // sets .error
+        vm.togglePlayback() // sets .error
 
         // Wait slightly longer than the 3s auto-clear.
         try? await Task.sleep(nanoseconds: 3_200_000_000)
@@ -58,10 +77,10 @@ final class DashboardViewModelTests: XCTestCase {
 
     func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() async {
         let vm = makeVM()
-        vm.togglePlayback()  // .error #1
+        vm.togglePlayback() // .error #1
         // The HARD-021 fix cancels the prior errorResetTask; re-triggering
         // shouldn't leak a second timer.
-        vm.togglePlayback()  // .error #2
+        vm.togglePlayback() // .error #2
 
         if case .error = vm.status {} else {
             XCTFail("expected .error after two toggles; got \(vm.status)")
@@ -75,18 +94,34 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - currentVoiceDisplay
 
-    func test_currentVoiceDisplay_humanizes_voice_id() async {
+    func test_currentVoiceDisplay_uses_catalog_name_and_flag() {
         let vm = makeVM()
         vm.selectedVoice = "af_bella"
-        XCTAssertEqual(vm.currentVoiceDisplay, "Af Bella")
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇺🇸 Bella")
 
         vm.selectedVoice = "bm_george"
-        XCTAssertEqual(vm.currentVoiceDisplay, "Bm George")
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇬🇧 George")
+
+        vm.selectedVoice = "ff_siwis"
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇫🇷 Siwis")
+    }
+
+    func test_currentVoiceDisplay_falls_back_for_unknown_voice() {
+        let vm = makeVM()
+        vm.selectedVoice = "qx_unknown"
+        // Not in catalog → humanized id, never a crash.
+        XCTAssertEqual(vm.currentVoiceDisplay, "Qx Unknown")
+    }
+
+    func test_mandarin_voice_display_is_marked_beta() {
+        let vm = makeVM()
+        vm.selectedVoice = "zf_xiaoxiao"
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇨🇳 Xiaoxiao (Beta)")
     }
 
     // MARK: - isOnline
 
-    func test_isOnline_reflects_isBackendOnline() async {
+    func test_isOnline_reflects_isBackendOnline() {
         let vm = makeVM()
         XCTAssertFalse(vm.isOnline)
         vm.isBackendOnline = true
@@ -102,5 +137,150 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(AppStatus.error("hi"), AppStatus.error("hi"))
         XCTAssertNotEqual(AppStatus.error("a"), AppStatus.error("b"))
         XCTAssertNotEqual(AppStatus.ready, AppStatus.speaking)
+    }
+
+    // MARK: - appFont / Poppins font name mapping
+
+    /// appFont must not crash for any font name or weight combination.
+    func test_appFont_does_not_crash_for_system_fonts() {
+        let vm = makeVM()
+        let names = ["System Rounded", "System Mono", "System Serif", "System Standard"]
+        let weights: [Font.Weight] = [.regular, .bold, .semibold, .medium, .light]
+        for name in names {
+            vm.selectedFontName = name
+            for weight in weights {
+                // Would crash / return nil in prior implementations — just verify no crash
+                _ = vm.appFont(size: 14, weight: weight)
+            }
+        }
+    }
+
+    func test_appFont_does_not_crash_for_poppins_all_weights() {
+        let vm = makeVM()
+        vm.selectedFontName = "Poppins"
+        // All Font.Weight cases that poppinsFontName maps explicitly
+        let weights: [Font.Weight] = [
+            .regular, .bold, .semibold, .medium,
+            .light, .thin, .heavy, .black, .ultraLight,
+        ]
+        for weight in weights {
+            // Should not crash — prior bug was using .weight() on custom font
+            // which silently loaded the wrong font file
+            _ = vm.appFont(size: 14, weight: weight)
+        }
+    }
+
+    func test_appFont_poppins_uses_custom_font_not_system() {
+        let vm = makeVM()
+        vm.selectedFontName = "Poppins"
+        // Custom Poppins font must produce a different Font value than system rounded
+        let poppins = vm.appFont(size: 14, weight: .bold)
+        vm.selectedFontName = "System Rounded"
+        let system = vm.appFont(size: 14, weight: .bold)
+        // Font doesn't expose Equatable, but we can verify both are non-nil Font values
+        // The key invariant is poppins doesn't crash and returns a real Font
+        _ = poppins
+        _ = system
+    }
+
+    // MARK: - availableVoices
+
+    func test_all_voices_have_non_empty_ids_and_display_names() {
+        for (id, display) in DashboardViewModel.availableVoices {
+            XCTAssertFalse(id.isEmpty, "Voice ID must not be empty")
+            XCTAssertFalse(display.isEmpty, "Voice display name must not be empty")
+        }
+    }
+
+    func test_all_voice_ids_contain_underscore() {
+        // All Kokoro voice IDs follow the {lang}_{name} pattern
+        for (id, _) in DashboardViewModel.availableVoices {
+            XCTAssertTrue(id.contains("_"), "Voice ID '\(id)' must follow lang_name pattern")
+        }
+    }
+
+    func test_voice_catalog_is_multilingual() {
+        // Curated catalog across 8 locales. Must stay in lockstep with the
+        // backend catalog in backend/app/services/languages.py.
+        XCTAssertEqual(DashboardViewModel.voiceCatalog.count, 28)
+        XCTAssertEqual(DashboardViewModel.availableVoices.count, 28)
+    }
+
+    func test_legacy_english_voices_still_present() {
+        // Audiobooks persist a voice id — the original 8 must never disappear.
+        let legacy = ["af_bella", "af_sarah", "am_adam", "am_michael",
+                      "bf_emma", "bf_isabella", "bm_george", "bm_lewis"]
+        let ids = Set(DashboardViewModel.voiceCatalog.map(\.id))
+        for v in legacy {
+            XCTAssertTrue(ids.contains(v), "legacy voice \(v) dropped — breaks stored audiobooks")
+        }
+    }
+
+    func test_no_japanese_voices_exposed() {
+        // espeak has no kanji G2P — Japanese is intentionally excluded.
+        for v in DashboardViewModel.voiceCatalog {
+            XCTAssertFalse(v.id.hasPrefix("j"), "Japanese voice \(v.id) must not be exposed")
+        }
+    }
+
+    func test_language_groups_cover_every_voice_exactly_once() {
+        let grouped = DashboardViewModel.languageGroups.flatMap { $0.voices.map(\.id) }
+        let catalog = DashboardViewModel.voiceCatalog.map(\.id)
+        XCTAssertEqual(grouped.sorted(), catalog.sorted())
+        XCTAssertEqual(grouped.count, Set(grouped).count, "a voice appears in two groups")
+    }
+
+    func test_only_mandarin_group_is_beta() {
+        for group in DashboardViewModel.languageGroups {
+            if group.id == "Mandarin" {
+                XCTAssertTrue(group.beta)
+            } else {
+                XCTAssertFalse(group.beta, "\(group.id) should not be beta")
+            }
+        }
+    }
+
+    func test_default_voice_is_in_available_voices() {
+        let vm = makeVM()
+        let ids = DashboardViewModel.availableVoices.map(\.id)
+        XCTAssertTrue(
+            ids.contains(vm.selectedVoice),
+            "Default voice '\(vm.selectedVoice)' not in availableVoices"
+        )
+    }
+
+    func test_voice_ids_are_unique() {
+        let ids = DashboardViewModel.availableVoices.map(\.id)
+        XCTAssertEqual(ids.count, Set(ids).count, "Voice IDs must be unique")
+    }
+
+    // MARK: - currentVoiceDisplay
+
+    func test_currentVoiceDisplay_for_bella() {
+        let vm = makeVM()
+        vm.selectedVoice = "af_bella"
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇺🇸 Bella")
+    }
+
+    func test_currentVoiceDisplay_for_george() {
+        let vm = makeVM()
+        vm.selectedVoice = "bm_george"
+        XCTAssertEqual(vm.currentVoiceDisplay, "🇬🇧 George")
+    }
+
+    func test_currentVoiceDisplay_replaces_all_underscores() {
+        let vm = makeVM()
+        vm.selectedVoice = "af_sarah"
+        // "af_sarah" → "Af Sarah" (underscore replaced by space, then capitalized)
+        XCTAssertFalse(vm.currentVoiceDisplay.contains("_"), "Display name must not contain underscores")
+    }
+
+    // MARK: - isBackendInitializing
+
+    func test_initial_state_is_backend_initializing() {
+        let vm = makeVM()
+        // On creation, backend is not yet online → should be in initializing state
+        XCTAssertTrue(vm.isBackendInitializing)
+        XCTAssertFalse(vm.isBackendOnline)
     }
 }

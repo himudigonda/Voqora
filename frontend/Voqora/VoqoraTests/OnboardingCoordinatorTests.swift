@@ -4,7 +4,6 @@ import XCTest
 /// Tests for OnboardingCoordinator (S1-E3 / G6).
 @MainActor
 final class OnboardingCoordinatorTests: XCTestCase {
-
     override func setUp() async throws {
         // Each test starts with a clean flag + version baseline so the
         // upgrade-reset path doesn't fire spuriously.

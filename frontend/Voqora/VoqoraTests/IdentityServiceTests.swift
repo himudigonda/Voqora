@@ -3,7 +3,6 @@ import XCTest
 
 @MainActor
 final class IdentityServiceTests: XCTestCase {
-
     func test_anonID_isStableAcrossReads() {
         let first = IdentityService.shared.anonID
         let second = IdentityService.shared.anonID
@@ -34,7 +33,7 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertFalse(IdentityService.looksLikeEmail("nope@"))
     }
 
-    func test_clearEmail_resetsState() async {
+    func test_clearEmail_resetsState() {
         // Direct write to UserDefaults to seed state without hitting the network.
         UserDefaults.standard.set("seed@example.com", forKey: "userIdentityEmail")
         // Re-read via a fresh observer of shared singleton's state is awkward;

@@ -197,6 +197,26 @@ async def upload_audiobook(
                 detail="This file has no extractable content. Try a different file.",
             )
 
+        # D9: TextExtractor.split_pages always returns at least one page —
+        # whitespace-only TXT/MD content produces a single page whose text is
+        # "", so page_count alone reads as 1 (not 0) and slips past the check
+        # above. Confirm that lone page actually has content before accepting
+        # the upload. PDFs are exempt: a 0-char PDF page is a real page (an
+        # image-only scan, handled by the is_image_only estimate path above),
+        # not this TXT/MD-specific synthetic-pagination edge case.
+        if not is_pdf and page_count == 1:
+            only_page_text = await loop.run_in_executor(
+                None, TextExtractor.read_text, source_path
+            )
+            only_pages = await loop.run_in_executor(
+                None, TextExtractor.split_pages, only_page_text
+            )
+            if not only_pages or not only_pages[0].strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="This file has no extractable content. Try a different file.",
+                )
+
         # Image-only PDFs → substitute per-page estimate; text files always have text.
         if is_image_only:
             sample_words = 250
@@ -217,14 +237,12 @@ async def upload_audiobook(
             )
 
         book_speed = float(speed) if speed is not None else 1.0
+        # estimate() now includes token_count, so no post-patch needed.
         estimate = AudiobookService.estimate(
             page_count=page_count,
             sample_words=sample_words,
             sample_chars=sample_chars,
             speed=book_speed,
-        )
-        estimate["token_count"] = GeminiCleaner.estimate_tokens(
-            sample_chars * page_count
         )
 
         # HARD-072: hard cap on estimated Gemini cost. Reject at upload time
@@ -257,6 +275,11 @@ async def upload_audiobook(
             estimated=estimate,
         )
         meta["file_ext"] = file_ext
+        # D6: persisted so _phase_clean can distinguish a genuinely blank
+        # page (safe to silence for free) from a scanned/image-only page
+        # that also extracts to "" but still deserves a real OCR attempt —
+        # see audiobook_service.py's _phase_clean for the consuming logic.
+        meta["is_image_only"] = is_image_only
         AudiobookStore.write_meta(book_id, meta)
 
         # Render cover off the request path. Pulled out of an inline closure
@@ -288,12 +311,19 @@ async def upload_audiobook(
 async def start_audiobook(
     book_id: str,
     x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+    x_gemini_consent: str | None = Header(default=None, alias="X-Gemini-Consent"),
 ):
     _validate_book_id(book_id)
     if not x_gemini_api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    if (x_gemini_consent or "").strip().lower() != "true":
+        raise HTTPException(
+            status_code=400, detail="Missing or false X-Gemini-Consent header."
+        )
     if AudiobookStore.read_meta(book_id) is None:
         raise HTTPException(status_code=404, detail="Book not found.")
+    if AudiobookService.is_processing(book_id):
+        raise HTTPException(status_code=409, detail="Book is already processing.")
     await AudiobookService.enqueue(book_id, x_gemini_api_key)
     return {"status": "queued", "book_id": book_id}
 
@@ -355,6 +385,11 @@ def get_audiobook_audio(
         raise HTTPException(status_code=404, detail="Audio not ready.")
 
     file_size = os.path.getsize(path)
+    # A valid WAV is at least a 44-byte header. A smaller file means concat hasn't
+    # produced real audio yet (or the file is corrupt) — return 404 rather than
+    # streaming an empty/garbage body with a 200.
+    if file_size < 44:
+        raise HTTPException(status_code=404, detail="Audio not ready.")
     if not range_header:
         return FileResponse(
             path,
@@ -442,6 +477,11 @@ async def retry_audiobook(
         raise HTTPException(status_code=404, detail="Book not found.")
     if not x_gemini_api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    # D4: mirrors /delete's existing is_processing() guard — without it, a
+    # double-clicked Retry (or an SSE-reconnect re-POST) could double-enqueue
+    # a second concurrent pipeline run on a book that's already processing.
+    if AudiobookService.is_processing(book_id):
+        raise HTTPException(status_code=409, detail="Book is already processing.")
     count = await AudiobookService.retry_failed(book_id, x_gemini_api_key)
     return {"status": "queued", "retried_pages": count, "book_id": book_id}
 

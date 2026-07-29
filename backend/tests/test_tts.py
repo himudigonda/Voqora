@@ -25,6 +25,10 @@ def setup_tts_engine():
     TTSEngine._model = None
     TTSEngine._lookahead_cache.clear()
     yield
+    # Tests in this file freely reassign TTSEngine._model to mocks; reset it
+    # (not just the cache) so a mock doesn't leak into a real-model test in
+    # another file under non-default test invocation ordering.
+    TTSEngine._model = None
     TTSEngine._lookahead_cache.clear()
 
 
@@ -234,3 +238,93 @@ async def test_speed_scaled_pauses():
 
     # We expect fewer samples at 2.0x due to faster playback + shorter pauses
     assert total_samples_2x < total_samples_1x
+
+
+# ---------- generate_with_timing (Sprint 1 — audiobook-only sibling) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_with_timing_yields_dict_per_segment():
+    """Happy path: one dict per segment, in order, with correct shape and
+    strictly increasing cumulative-friendly duration_sec (each > 0)."""
+    mock_model = MagicMock()
+    mock_model.create.return_value = (np.ones(2400, dtype=np.float32), None)
+    TTSEngine._model = mock_model
+
+    text = "Hello world. This is a test! Does it work?"
+    items = []
+    async for item in TTSEngine.generate_with_timing(text, "af_bella", 1.0):
+        items.append(item)
+
+    assert len(items) == 3
+    for expected_index, item in enumerate(items):
+        assert item["index"] == expected_index
+        assert item["ok"] is True
+        assert isinstance(item["audio"], np.ndarray)
+        assert item["duration_sec"] > 0.0
+    assert mock_model.create.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_generate_with_timing_empty_text_yields_nothing():
+    mock_model = MagicMock()
+    TTSEngine._model = mock_model
+
+    items = [item async for item in TTSEngine.generate_with_timing("", "af_bella", 1.0)]
+    assert items == []
+    mock_model.create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_generate_with_timing_marks_failed_segment_at_correct_index():
+    """D1 regression guard: a segment that fails to synthesize (model.create
+    raises) must still be yielded, at its correct positional index, with
+    ok=False — never silently dropped."""
+    mock_model = MagicMock()
+
+    def flaky_create(text, voice, speed, lang):
+        if "This is a test" in text:
+            raise RuntimeError("espeak exploded")
+        return np.ones(2400, dtype=np.float32), None
+
+    mock_model.create.side_effect = flaky_create
+    TTSEngine._model = mock_model
+
+    text = "Hello world. This is a test! Does it work?"
+    items = [
+        item async for item in TTSEngine.generate_with_timing(text, "af_bella", 1.0)
+    ]
+
+    assert len(items) == 3, "every segment must be yielded, including the failed one"
+    assert [item["index"] for item in items] == [0, 1, 2]
+    assert items[0]["ok"] is True
+    assert items[1]["ok"] is False
+    assert items[1]["audio"] is None
+    assert items[1]["duration_sec"] == 0.0
+    assert items[2]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_generate_with_timing_ignores_lookahead_cache():
+    """Design guard: generate_with_timing must never consult/consume
+    _lookahead_cache (sharing that mutable cache with the interactive path
+    would reintroduce the coupling this sibling method is designed to avoid)."""
+    mock_model = MagicMock()
+    mock_model.create.return_value = (np.ones(2400, dtype=np.float32), None)
+    TTSEngine._model = mock_model
+
+    text = "Hello world."
+    first_seg = TTSEngine._split_segments(text)[0]
+    key = (first_seg, "af_bella", round(1.0, 2))
+    cached_audio = np.ones(50, dtype=np.float32) * 0.5
+    TTSEngine._lookahead_cache[key] = cached_audio
+
+    items = [
+        item async for item in TTSEngine.generate_with_timing(text, "af_bella", 1.0)
+    ]
+
+    # model.create must have been called for the "cached" segment — the cache
+    # was never consulted — and the cache entry must remain untouched (not popped).
+    mock_model.create.assert_called_once()
+    assert key in TTSEngine._lookahead_cache
+    assert items[0]["ok"] is True

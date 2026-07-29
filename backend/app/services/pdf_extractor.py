@@ -6,6 +6,7 @@ callers wrap in run_in_executor when invoked from async code.
 
 import io
 import os
+import uuid
 
 import pdfplumber
 from PIL import Image
@@ -81,14 +82,48 @@ class PDFExtractor:
             text = page.extract_text() or ""
         cls._atomic_write(out, text)
 
+    @classmethod
+    def extract_batch(cls, book_id: str, page_numbers: list[int]) -> None:
+        """Extract multiple pages in a single PDF open — O(1) opens vs. O(N).
+
+        Opens the source PDF once and writes raw text files for all specified
+        pages. Skips pages whose output file already exists (safe for resume).
+        Called from _phase_extract before the per-page loop so the loop can
+        focus on cancel/preemption/dedup without repeated PDF open overhead.
+        """
+        if not page_numbers:
+            return
+        pdf_path = AudiobookStore.pdf_path(book_id)
+        with pdfplumber.open(pdf_path) as pdf:
+            for n in page_numbers:
+                out = AudiobookStore.page_raw_path(book_id, n)
+                if os.path.exists(out):
+                    continue
+                try:
+                    text = pdf.pages[n - 1].extract_text() or ""
+                except Exception:
+                    text = ""
+                cls._atomic_write(out, text)
+
     # ---------- cover ----------
 
     @classmethod
     def read_outline(cls, pdf_path: str) -> list[dict] | None:
         """Return a flat list of section dicts from the PDF outline if present.
 
-        Each entry: {"title": str, "start_page": int}. Returns None if the PDF
-        has no outline (so the caller falls back to LLM-based section detection).
+        Each entry: {"title": str, "start_page": int, "level": int}. `level` is
+        the bookmark's zero-based nesting depth (Part/Chapter/Sub-heading),
+        captured so hierarchy isn't silently discarded even though the current
+        caller flattens it into one contiguous section list. Returns None if
+        the PDF has no outline (so the caller falls back to DOCX/MD/LLM-based
+        section detection).
+
+        NOTE: pypdfium2's `PdfBookmark` exposes title/destination via methods
+        (`get_title()`, `get_dest().get_index()`), not plain attributes —
+        `.title`/`.page_index` do not exist on that class and raise
+        AttributeError, which a past version of this method silently mistook
+        for "no outline" via the blanket except below. Confirmed against the
+        installed pypdfium2 by introspecting `dir(pdfium.PdfBookmark)`.
         """
         try:
             import pypdfium2 as pdfium
@@ -102,13 +137,20 @@ class PDFExtractor:
                 page_count = len(doc)
                 sections: list[dict] = []
                 for entry in outline:
-                    title = (entry.title or "").strip()
+                    title = (entry.get_title() or "").strip()
                     if not title:
                         continue
-                    page_idx = entry.page_index
+                    dest = entry.get_dest()
+                    page_idx = dest.get_index() if dest is not None else None
                     if page_idx is None or page_idx < 0 or page_idx >= page_count:
                         continue
-                    sections.append({"title": title, "start_page": page_idx + 1})
+                    sections.append(
+                        {
+                            "title": title,
+                            "start_page": page_idx + 1,
+                            "level": entry.level,
+                        }
+                    )
                 return sections or None
             finally:
                 doc.close()
@@ -170,8 +212,21 @@ class PDFExtractor:
 
     @staticmethod
     def _atomic_write_bytes(path: str, data: bytes) -> None:
+        """D7: the tmp suffix is unique per call (not a fixed `path + ".tmp"`).
+
+        Two independent call sites can render the same book's cover.jpg —
+        api/audiobook.py's upload-time background task and
+        _phase_extract's own render — both idempotency-gated by an
+        `if os.path.exists(out): return` check with a TOCTOU window. A fixed
+        shared tmp path let concurrent writers interleave writes into the
+        same inode (or race each other's os.replace) and corrupt cover.jpg.
+        With a unique tmp path per call, concurrent writers never touch the
+        same file before either os.replace()s — which is itself atomic — so
+        the loser's replace simply overwrites the winner's with an equally
+        complete, valid image; never a half-written mix of both.
+        """
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, path)

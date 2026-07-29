@@ -3,7 +3,6 @@ import XCTest
 
 @MainActor
 final class PermissionsServiceTests: XCTestCase {
-
     func test_init_readsAccessibilityStateImmediately() {
         let svc = PermissionsService()
         // The actual bool depends on the host's AX state — we can't assert

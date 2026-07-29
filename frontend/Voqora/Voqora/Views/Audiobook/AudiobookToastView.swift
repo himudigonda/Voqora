@@ -41,17 +41,17 @@ struct AudiobookToastView: View {
 
     private func iconName(for kind: AudiobookViewModel.Toast.Kind) -> String {
         switch kind {
-        case .error: return "exclamationmark.triangle.fill"
-        case .info: return "info.circle.fill"
-        case .success: return "checkmark.circle.fill"
+        case .error: "exclamationmark.triangle.fill"
+        case .info: "info.circle.fill"
+        case .success: "checkmark.circle.fill"
         }
     }
 
     private func color(for kind: AudiobookViewModel.Toast.Kind) -> Color {
         switch kind {
-        case .error: return .red
-        case .info: return .cyan
-        case .success: return .green
+        case .error: .red
+        case .info: .cyan
+        case .success: .green
         }
     }
 }

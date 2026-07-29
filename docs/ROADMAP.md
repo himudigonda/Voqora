@@ -10,13 +10,15 @@
 
 ## Next public-quality work
 
-1. **Developer ID signing and notarization** - remove the first-launch
+1. **Finish v1.1 release qualification** - validate the private multilingual
+   and audiobook-resilience candidate, then publish a precise release note.
+2. **Developer ID signing and notarization** - remove the first-launch
    friction from the DMG install path.
-2. **Install and first-use diagnostics** - make local-server startup and
+3. **Install and first-use diagnostics** - make local-server startup and
    permission recovery easier to understand.
-3. **Audiobook reliability polish** - improve recovery, progress clarity, and
+4. **Audiobook reliability polish** - improve recovery, progress clarity, and
    feedback for long documents.
-4. **Sharper reading workflows** - continue improving the select-and-listen
+5. **Sharper reading workflows** - continue improving the select-and-listen
    loop before expanding into unrelated product areas.
 
 ## Product principle

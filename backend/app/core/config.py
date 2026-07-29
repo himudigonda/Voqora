@@ -12,7 +12,7 @@ _log = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "Voqora Backend"
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.1.0"
     # Loopback only. The Swift client always connects via localhost; binding to
     # 0.0.0.0 would expose /speak and /audiobook to every device on the LAN
     # with no authentication. See HARD-004.

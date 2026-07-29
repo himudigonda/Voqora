@@ -88,7 +88,9 @@ struct PreferencesView: View {
                     }
                 }
                 .onAppear {
-                    if emailDraft.isEmpty { emailDraft = identity.email ?? "" }
+                    if emailDraft.isEmpty {
+                        emailDraft = identity.email ?? ""
+                    }
                 }
 
                 // Section: Voice Engine
@@ -98,16 +100,22 @@ struct PreferencesView: View {
                             Label("Active Voice", systemImage: "person.wave.2")
                                 .font(vm.appFont(size: 14))
                             Spacer()
-                            Picker("", selection: $vm.selectedVoice) {
-                                ForEach(vm.availableVoices, id: \.id) { voice in
-                                    Text(voice.display).tag(voice.id)
-                                }
-                            }
-                            .frame(width: 150)
-                            .labelsHidden()
+                            GroupedVoicePicker(selection: $vm.selectedVoice)
                         }
 
-                        Text("Kokoro delivers high-quality, expressive voices.")
+                        Toggle(isOn: $vm.autoDetectLanguage) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Label("Auto-detect language", systemImage: "globe")
+                                    .font(vm.appFont(size: 14))
+                                Text("Pick a matching voice automatically from the text's language.")
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .tint(.cyan)
+
+                        Text("Kokoro speaks 8 languages on-device — English, Spanish, French, Italian, Portuguese, Hindi & more.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
 
@@ -197,13 +205,7 @@ struct PreferencesView: View {
                             Label("Default Voice", systemImage: "person.wave.2")
                                 .font(vm.appFont(size: 14))
                             Spacer()
-                            Picker("", selection: $bookVM.defaultBookVoice) {
-                                ForEach(vm.availableVoices, id: \.id) { voice in
-                                    Text(voice.display).tag(voice.id)
-                                }
-                            }
-                            .frame(width: 150)
-                            .labelsHidden()
+                            GroupedVoicePicker(selection: $bookVM.defaultBookVoice)
                         }
 
                         Text("Audiobook generation uses this voice. Clipboard TTS continues to use the live 'Active Voice' above.")
@@ -221,7 +223,7 @@ struct PreferencesView: View {
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(.cyan)
                             }
-                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75...2.0).tint(.cyan)
+                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75 ... 2.0).tint(.cyan)
                         }
 
                         Text("Audiobooks use your selected TTS engine and voice from above. Each PDF is cleaned via Gemini before narration to handle tables, equations, and PDF formatting artifacts.")
@@ -437,6 +439,27 @@ struct PreferencesView: View {
         for name in KeyboardShortcuts.Name.allCases {
             KeyboardShortcuts.reset(name)
         }
+    }
+}
+
+/// A voice picker whose menu is grouped into language sections (with flags),
+/// driven by `DashboardViewModel.languageGroups`. Used for both the live
+/// "Active Voice" and the audiobook "Default Voice" selectors.
+struct GroupedVoicePicker: View {
+    @Binding var selection: String
+
+    var body: some View {
+        Picker("", selection: $selection) {
+            ForEach(DashboardViewModel.languageGroups) { group in
+                Section(group.id) {
+                    ForEach(group.voices) { voice in
+                        Text(voice.display).tag(voice.id)
+                    }
+                }
+            }
+        }
+        .frame(width: 180)
+        .labelsHidden()
     }
 }
 

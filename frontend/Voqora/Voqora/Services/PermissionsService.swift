@@ -18,11 +18,11 @@ final class PermissionsService: ObservableObject {
     @Published private(set) var notificationsStatus: NotificationsStatus = .unknown
 
     enum NotificationsStatus: Equatable {
-        case unknown          // never asked, status not yet read
-        case notDetermined    // never asked
-        case authorized       // granted
-        case denied           // user said no, or system disabled
-        case provisional      // limited (rare on macOS)
+        case unknown // never asked, status not yet read
+        case notDetermined // never asked
+        case authorized // granted
+        case denied // user said no, or system disabled
+        case provisional // limited (rare on macOS)
     }
 
     private var pollTask: Task<Void, Never>?
@@ -70,7 +70,9 @@ final class PermissionsService: ObservableObject {
     /// user can flip the toggle. After the system prompt, polling will detect
     /// the granted state and update `accessibilityGranted`.
     func requestAccessibility() {
-        if accessibilityGranted { return }
+        if accessibilityGranted {
+            return
+        }
         // Show the system prompt (no-op if already prompted before).
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
@@ -87,13 +89,14 @@ final class PermissionsService: ObservableObject {
     // MARK: - Notifications
 
     func refreshNotifications() async {
-        // UNUserNotificationCenter is known to throw NSCalendarDate decoder
-        // exceptions on macOS 27 beta and inside XCTest hosts. Skip both.
+        // UNUserNotificationCenter needs a valid CFBundleIdentifier to talk to
+        // notifyd — it was missing one (see Info.plist fix), which is the most
+        // likely source of the "NSCalendarDate decoder" crash this used to work
+        // around. The old guard was `#available(macOS 26, *)`, which — now that
+        // 26/27 are GA, not beta — silently disabled notifications for every
+        // user on current hardware. Only skip in XCTest hosts, which legitimately
+        // lack a proper app bundle identity.
         guard NSClassFromString("XCTestCase") == nil else {
-            notificationsStatus = .unknown
-            return
-        }
-        if #available(macOS 26, *) {
             notificationsStatus = .unknown
             return
         }
@@ -108,10 +111,9 @@ final class PermissionsService: ObservableObject {
         }
     }
 
-    /// Trigger the system Notifications authorization prompt. No-op on macOS 27 beta or in tests.
+    /// Trigger the system Notifications authorization prompt. No-op in test hosts.
     func requestNotifications() async {
         guard NSClassFromString("XCTestCase") == nil else { return }
-        if #available(macOS 26, *) { return }
         do {
             _ = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])

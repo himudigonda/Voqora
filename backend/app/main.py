@@ -28,12 +28,12 @@ _PARENT_PID = os.getppid()
 async def _parent_watchdog() -> None:
     """Exit if the parent macOS app process disappears (crash, force-kill, etc.).
 
-    Checks every 3 seconds whether the parent PID still exists via signal 0.
+    Checks every 15 seconds whether the parent PID still exists via signal 0.
     When it's gone, calls os._exit(0) — a hard exit that bypasses Python
     shutdown hooks and ensures no zombie server lingers after an app crash.
     """
     while True:
-        await asyncio.sleep(3)
+        await asyncio.sleep(15)
         try:
             os.kill(_PARENT_PID, 0)  # 0 = existence check only, no signal sent
         except ProcessLookupError:

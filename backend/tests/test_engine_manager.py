@@ -95,6 +95,35 @@ async def test_ensure_loaded_no_op_when_already_loaded(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_generate_with_timing_passthrough(monkeypatch):
+    """generate_with_timing mirrors the existing generate() passthrough exactly:
+    forwards args unchanged, yields TTSEngine's items unchanged."""
+    captured_args = {}
+
+    async def fake_generate_with_timing(text, voice, speed):
+        captured_args.update(text=text, voice=voice, speed=speed)
+        yield {
+            "index": 0,
+            "text": text,
+            "ok": True,
+            "audio": None,
+            "duration_sec": 1.0,
+        }
+
+    monkeypatch.setattr(TTSEngine, "generate_with_timing", fake_generate_with_timing)
+
+    items = [
+        item
+        async for item in EngineManager.generate_with_timing("Hello.", "af_bella", 1.0)
+    ]
+
+    assert captured_args == {"text": "Hello.", "voice": "af_bella", "speed": 1.0}
+    assert items == [
+        {"index": 0, "text": "Hello.", "ok": True, "audio": None, "duration_sec": 1.0}
+    ]
+
+
+@pytest.mark.asyncio
 async def test_ensure_loaded_double_load_guard(monkeypatch):
     """Three concurrent cold-start ensure_loaded() coroutines must result in
     exactly ONE TTSEngine.initialize() call. Without the guard, the ONNX

@@ -1,8 +1,29 @@
+import AppKit
+import ApplicationServices
 import Combine
 import SwiftUI
 
 @MainActor
 class DashboardViewModel: ObservableObject {
+    /// A one-time release migration for the new Voqora app identity. A prior
+    /// development build could leave a non-English voice in shared defaults;
+    /// every fresh v1.1 install and every upgrade from that build must begin
+    /// with the same predictable US-English voice.
+    private static let voiceDefaultsMigrationVersion = 1
+    private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
+
+    static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
+        guard defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion else {
+            return false
+        }
+
+        defaults.set("af_bella", forKey: "selectedVoice")
+        defaults.set("af_bella", forKey: "defaultBookVoice")
+        defaults.set(false, forKey: "autoDetectLanguage")
+        defaults.set(voiceDefaultsMigrationVersion, forKey: voiceDefaultsMigrationKey)
+        return true
+    }
+
     // Dependencies
     private let backend: BackendService
     private let system: SystemService
@@ -13,16 +34,21 @@ class DashboardViewModel: ObservableObject {
     @Published var status: AppStatus = .ready
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
-    @Published var isModelLoaded = false        // Model in ONNX session RAM
+    @Published var isModelLoaded = false // Model in ONNX session RAM
     @Published var selectedTab: String? = "home"
 
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
 
-    // Clipboard monitoring for anticipatory pre-warm
+    /// Clipboard monitoring for anticipatory pre-warm
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
 
     @AppStorage("selectedVoice") var selectedVoice = "af_bella"
+    /// When on, the language of the text being spoken is auto-detected (via Apple's
+    /// on-device NLLanguageRecognizer) and a matching voice is chosen automatically.
+    /// Off by default so every new install starts with Bella. Users can opt in
+    /// from onboarding or Preferences when they want matching-language speech.
+    @AppStorage("autoDetectLanguage") var autoDetectLanguage = false
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
     @AppStorage("enableDucking") var enableDucking = true
@@ -52,24 +78,167 @@ class DashboardViewModel: ObservableObject {
         case "System Standard":
             .system(size: size, weight: weight, design: .default)
         case "Poppins":
-            .custom("Poppins-Regular", size: size).weight(weight)
+            .custom(poppinsFontName(weight), size: size)
         default:
             .custom(selectedFontName, size: size).weight(weight)
         }
     }
 
-    static let availableVoices: [(id: String, display: String)] = [
-        ("af_bella", "🇺🇸 Bella"), ("af_sarah", "🇺🇸 Sarah"),
-        ("am_adam", "🇺🇸 Adam"), ("am_michael", "🇺🇸 Michael"),
-        ("bf_emma", "🇬🇧 Emma"), ("bf_isabella", "🇬🇧 Isabella"),
-        ("bm_george", "🇬🇧 George"), ("bm_lewis", "🇬🇧 Lewis"),
+    /// Only Black/Bold/Light/Medium/Regular ship in Resources/Fonts — map every
+    /// other Font.Weight to its nearest bundled file rather than a name that
+    /// doesn't exist (SwiftUI silently falls back to the system font otherwise,
+    /// which broke `.semibold` and `.thin` labels like the dashboard clock).
+    private func poppinsFontName(_ weight: Font.Weight) -> String {
+        switch weight {
+        case .black: "Poppins-Black"
+        case .heavy: "Poppins-Black"
+        case .bold: "Poppins-Bold"
+        case .semibold: "Poppins-Bold"
+        case .medium: "Poppins-Medium"
+        case .light: "Poppins-Light"
+        case .thin: "Poppins-Light"
+        case .ultraLight: "Poppins-Light"
+        default: "Poppins-Regular"
+        }
+    }
+
+    /// A selectable Kokoro voice. Mirrors the backend catalog in
+    /// `backend/app/services/languages.py` (single source of truth for which
+    /// voices render cleanly under espeak-ng). Japanese is intentionally absent —
+    /// espeak has no kanji G2P. See journal.md.
+    struct VoiceOption: Identifiable, Hashable {
+        let id: String // e.g. "ff_siwis"
+        let name: String // "Siwis"
+        let flag: String // "🇫🇷"
+        let language: String // "French"
+        let beta: Bool // true → label "(Beta)"
+
+        /// "🇫🇷 Siwis" or "🇨🇳 Xiaoxiao (Beta)".
+        var display: String {
+            beta ? "\(flag) \(name) (Beta)" : "\(flag) \(name)"
+        }
+    }
+
+    /// One row per language for building a grouped picker.
+    struct LanguageGroup: Identifiable, Hashable {
+        let id: String // language name (stable, unique)
+        let flag: String
+        let beta: Bool
+        let voices: [VoiceOption]
+    }
+
+    /// Full curated catalog, ordered by language. Legacy English voices stay
+    /// first so existing audiobooks (which persist a voice id) keep working.
+    /// `nonisolated`: immutable Sendable data read by nonisolated helpers/tests.
+    nonisolated static let voiceCatalog: [VoiceOption] = [
+        // American English
+        .init(id: "af_bella", name: "Bella", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_sarah", name: "Sarah", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_adam", name: "Adam", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_michael", name: "Michael", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_heart", name: "Heart", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_nicole", name: "Nicole", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_aoede", name: "Aoede", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_kore", name: "Kore", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_fenrir", name: "Fenrir", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_puck", name: "Puck", flag: "🇺🇸", language: "English (US)", beta: false),
+        // British English
+        .init(id: "bf_emma", name: "Emma", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bf_isabella", name: "Isabella", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_george", name: "George", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_lewis", name: "Lewis", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_fable", name: "Fable", flag: "🇬🇧", language: "English (UK)", beta: false),
+        // Spanish
+        .init(id: "ef_dora", name: "Dora", flag: "🇪🇸", language: "Spanish", beta: false),
+        .init(id: "em_alex", name: "Alex", flag: "🇪🇸", language: "Spanish", beta: false),
+        // French
+        .init(id: "ff_siwis", name: "Siwis", flag: "🇫🇷", language: "French", beta: false),
+        // Italian
+        .init(id: "if_sara", name: "Sara", flag: "🇮🇹", language: "Italian", beta: false),
+        .init(id: "im_nicola", name: "Nicola", flag: "🇮🇹", language: "Italian", beta: false),
+        // Brazilian Portuguese
+        .init(id: "pf_dora", name: "Dora", flag: "🇧🇷", language: "Portuguese", beta: false),
+        .init(id: "pm_alex", name: "Alex", flag: "🇧🇷", language: "Portuguese", beta: false),
+        // Hindi
+        .init(id: "hf_alpha", name: "Aanya", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hf_beta", name: "Diya", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hm_omega", name: "Arjun", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hm_psi", name: "Kabir", flag: "🇮🇳", language: "Hindi", beta: false),
+        // Mandarin (Beta)
+        .init(id: "zf_xiaoxiao", name: "Xiaoxiao", flag: "🇨🇳", language: "Mandarin", beta: true),
+        .init(id: "zm_yunyang", name: "Yunyang", flag: "🇨🇳", language: "Mandarin", beta: true),
     ]
 
-    var availableVoices: [(id: String, display: String)] { Self.availableVoices }
+    /// Voices grouped by language, preserving catalog order, for a sectioned picker.
+    static let languageGroups: [LanguageGroup] = {
+        var order: [String] = []
+        var byLang: [String: [VoiceOption]] = [:]
+        for v in voiceCatalog {
+            if byLang[v.language] == nil {
+                order.append(v.language)
+            }
+            byLang[v.language, default: []].append(v)
+        }
+        return order.map { lang in
+            let voices = byLang[lang] ?? []
+            return LanguageGroup(id: lang, flag: voices.first?.flag ?? "",
+                                 beta: voices.first?.beta ?? false, voices: voices)
+        }
+    }()
 
-    /// Computed property for display
+    /// Back-compat flat list of (id, display) tuples (used by older pickers/tests).
+    static let availableVoices: [(id: String, display: String)] =
+        voiceCatalog.map { ($0.id, $0.display) }
+
+    var availableVoices: [(id: String, display: String)] {
+        Self.availableVoices
+    }
+
+    static let voicesByID: [String: VoiceOption] =
+        Dictionary(uniqueKeysWithValues: voiceCatalog.map { ($0.id, $0) })
+
+    /// Voice-id first-letter → espeak language code. MUST mirror the backend
+    /// `_PREFIX_TO_ESPEAK` in languages.py (Japanese intentionally absent).
+    /// `nonisolated` so the pure helpers below (and LanguageDetector) can read it.
+    nonisolated static let voicePrefixToLang: [Character: String] = [
+        "a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr",
+        "h": "hi", "i": "it", "p": "pt-br", "z": "cmn",
+    ]
+
+    /// The espeak language code a voice renders in (derived from its prefix).
+    /// `nonisolated` (pure, reads only immutable static data) so LanguageDetector
+    /// and tests can call it off the main actor.
+    nonisolated static func langCode(forVoice id: String) -> String {
+        guard let first = id.first else { return "en-us" }
+        return voicePrefixToLang[first] ?? "en-us"
+    }
+
+    /// First (default) voice for a given espeak language code, or nil if none.
+    nonisolated static func defaultVoice(forLang code: String) -> String? {
+        voiceCatalog.first { langCode(forVoice: $0.id) == code }?.id
+    }
+
+    /// A native-language pangram-ish sample sentence for previewing a voice,
+    /// so e.g. a French voice is heard reading French rather than accented English.
+    nonisolated static func sampleSentence(forVoice id: String) -> String {
+        switch langCode(forVoice: id) {
+        case "es": "El veloz zorro marrón salta sobre el perro perezoso."
+        case "fr-fr": "Le vif renard brun saute par-dessus le chien paresseux."
+        case "it": "La rapida volpe marrone salta sopra il cane pigro."
+        case "pt-br": "A rápida raposa marrom salta sobre o cão preguiçoso."
+        case "hi": "तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर कूद जाती है।"
+        case "cmn": "敏捷的棕色狐狸跳过了那只懒狗。"
+        default: "The quick brown fox jumps over the lazy dog."
+        }
+    }
+
+    /// Human-friendly display for the currently-selected voice ("🇺🇸 Bella").
+    /// Falls back to a humanized id for any voice not in the catalog.
     var currentVoiceDisplay: String {
-        selectedVoice.replacingOccurrences(of: "_", with: " ").capitalized
+        if let v = Self.voicesByID[selectedVoice] {
+            return v.display
+        }
+        return selectedVoice.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
     /// Computed property for online status
@@ -87,9 +256,17 @@ class DashboardViewModel: ObservableObject {
     /// Cancelled on re-entrance for the same reason. See HARD-021.
     private var errorResetTask: Task<Void, Never>?
 
+    /// True between prepareForStream() and the first audio chunk of a TTS request.
+    /// While true the UI stays in `.thinking` (loading) rather than flipping to
+    /// `.speaking` at 0:00 — important when the model is cold (idle-unloaded) or a
+    /// slow voice is generating, which otherwise looked frozen. Defaults false so
+    /// non-TTS playback (audiobook, seek, resume) is unaffected.
+    private var awaitingFirstChunk = false
+
     private var cancellables = Set<AnyCancellable>()
 
     init(backend: BackendService, system: SystemService, audio: AudioService, history: HistoryManager) {
+        _ = Self.applyVoiceDefaultsMigrationIfNeeded()
         self.backend = backend
         self.system = system
         self.audio = audio
@@ -106,8 +283,14 @@ class DashboardViewModel: ObservableObject {
             .sink { [weak self] isPlaying in
                 guard let self else { return }
                 if isPlaying {
-                    status = .speaking
-                    if enableDucking { system.setMusicVolume(ducked: true) }
+                    // Stay in .thinking until real audio flows, so a cold-model
+                    // reload / slow voice shows "loading", not a frozen 0:00 wave.
+                    if !awaitingFirstChunk {
+                        status = .speaking
+                    }
+                    if enableDucking {
+                        system.setMusicVolume(ducked: true)
+                    }
                     // Cancel any pending unduck — we're playing again.
                     unduckTask?.cancel()
                     unduckTask = nil
@@ -125,8 +308,8 @@ class DashboardViewModel: ObservableObject {
                         unduckTask = Task { [weak self] in
                             try? await Task.sleep(nanoseconds: 1_000_000_000)
                             guard !Task.isCancelled, let self else { return }
-                            if !self.audio.isPlaying {
-                                self.system.setMusicVolume(ducked: false)
+                            if !audio.isPlaying {
+                                system.setMusicVolume(ducked: false)
                             }
                         }
                     }
@@ -141,15 +324,50 @@ class DashboardViewModel: ObservableObject {
             await speak(text: text)
             return
         }
-        guard let text = SelectionManager.getSelectedText(), !text.isEmpty else {
+        // The global-hotkey path reads the current selection via the Accessibility
+        // API. If the grant is missing (common after a reinstall — re-signing changes
+        // the code signature macOS ties the grant to), getSelectedText() returns nil
+        // and the app would silently do nothing. Detect it and guide the user instead.
+        guard AXIsProcessTrusted() else {
+            print("⚠️ DashboardViewModel: Accessibility not granted.")
+            flashError("Enable Accessibility for Voqora in System Settings to read selected text.", seconds: 8)
+            promptForAccessibility()
+            return
+        }
+        guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
             print("⚠️ DashboardViewModel: No text found in selection.")
+            flashError("Select some text first, then press the shortcut.")
             return
         }
         print("🎤 DashboardViewModel: Sending \(text.count) chars to backend...")
         await speak(text: text)
     }
 
-    func speak(text: String) async {
+    /// Show a transient error in the status label, auto-clearing back to .ready.
+    private func flashError(_ message: String, seconds: Double = 4) {
+        status = .error(message)
+        errorResetTask?.cancel()
+        errorResetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            if case .error = status {
+                status = .ready
+            }
+        }
+    }
+
+    /// Show the macOS Accessibility prompt and open the relevant Settings pane.
+    private func promptForAccessibility() {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Speak `text`. When `forcedVoice` is set, that exact voice is used and
+    /// auto-detect is bypassed — used to preview a specific voice (onboarding).
+    func speak(text: String, forcedVoice: String? = nil) async {
         // --- FIX: Cancel the previous stream task if it exists ---
         currentSpeakTask?.cancel()
 
@@ -165,23 +383,36 @@ class DashboardViewModel: ObservableObject {
 
         currentSpeakTask = Task {
             defer {
+                awaitingFirstChunk = false
                 if Task.isCancelled {
-                    if self.status == .thinking { self.status = .ready }
+                    if self.status == .thinking {
+                        self.status = .ready
+                    }
                     self.audio.stop()
                 }
             }
             print("DEBUG [DashboardVM] Starting new speak task")
             status = .thinking
+            // Hold the loading state until the first chunk plays (see the
+            // $isPlaying sink); prepareForStream() flips isPlaying true early.
+            awaitingFirstChunk = true
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true))
             audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
+
+            // forcedVoice wins (voice preview); else auto-detect the text language
+            // and pick a matching voice when enabled; else the explicit choice.
+            let effectiveVoice = forcedVoice
+                ?? (autoDetectLanguage
+                    ? LanguageDetector.voiceForText(cleaned, fallback: selectedVoice)
+                    : selectedVoice)
 
             // This resets the AudioService buffers
             audio.prepareForStream()
 
             let stream = backend.streamAudio(
                 text: cleaned,
-                voice: selectedVoice,
+                voice: effectiveVoice,
                 speed: speechSpeed,
                 volume: speechVolume
             )
@@ -193,18 +424,28 @@ class DashboardViewModel: ObservableObject {
                     return
                 }
 
-                if status == .thinking { status = .speaking }
+                // First real audio chunk → now we're genuinely speaking.
+                awaitingFirstChunk = false
+                if status == .thinking {
+                    status = .speaking
+                }
                 audio.playChunk(chunk, volume: Float(speechVolume))
             }
 
             if !Task.isCancelled {
                 audio.finishStream()
-                history.log(text: cleaned, voice: selectedVoice)
+                // Zero-audio edge case (e.g. a voice produced an empty stream):
+                // the $isPlaying sink only resets .speaking/.paused, so a request
+                // that never emitted a chunk would otherwise stick on .thinking.
+                if status == .thinking {
+                    status = .ready
+                }
+                history.log(text: cleaned, voice: effectiveVoice)
                 // audio_seconds is the rendered length (PCM frames / sample rate),
                 // computed by AudioService after finishStream(). See spec §10.
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
-                    voice: selectedVoice,
+                    voice: effectiveVoice,
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
@@ -223,16 +464,16 @@ class DashboardViewModel: ObservableObject {
             errorResetTask = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                if case let .error(msg) = self.status,
-                   msg == "Nothing to play. Select text and press Cmd+Shift+." {
-                    self.status = .ready
+                if case let .error(msg) = status,
+                   msg == "Nothing to play. Select text and press Cmd+Shift+."
+                {
+                    status = .ready
                 }
             }
         } else {
             audio.togglePause()
         }
     }
-
 
     func startHeartbeat() {
         heartbeatTask = Task {
@@ -261,7 +502,7 @@ class DashboardViewModel: ObservableObject {
                 } else {
                     let launching = backend.isLaunching
                     isBackendInitializing = launching
-                    await backend.start()
+                    backend.start() // sync; spawns on a background queue internally
                 }
 
                 // Poll aggressively (500 ms) while backend is offline/starting up,
@@ -296,12 +537,16 @@ class DashboardViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 let current = NSPasteboard.general.changeCount
-                guard current != self.lastPasteboardChangeCount else { return }
-                self.lastPasteboardChangeCount = current
-                guard self.isBackendOnline else { return }
+                guard current != lastPasteboardChangeCount else { return }
+                lastPasteboardChangeCount = current
+                guard isBackendOnline else { return }
                 let text = NSPasteboard.general.string(forType: .string) ?? ""
-                let voice = self.selectedVoice
-                let speed = self.speechSpeed
+                // Match the voice speak() will actually use, so the lookahead cache
+                // key lines up when auto-detect re-routes to another language.
+                let voice = autoDetectLanguage
+                    ? LanguageDetector.voiceForText(text, fallback: selectedVoice)
+                    : selectedVoice
+                let speed = speechSpeed
                 Task { await self.backend.prewarm(text: text, voice: voice, speed: speed) }
             }
             .store(in: &cancellables)
@@ -309,7 +554,7 @@ class DashboardViewModel: ObservableObject {
         // Signal 2: app focus — only loads the model (no lookahead; unknown text).
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                guard let self, self.isBackendOnline, !self.isModelLoaded else { return }
+                guard let self, isBackendOnline, !self.isModelLoaded else { return }
                 Task { await self.backend.prewarm() }
             }
             .store(in: &cancellables)
@@ -365,8 +610,12 @@ class DashboardViewModel: ObservableObject {
         let v2 = current.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
 
         for i in 0 ..< min(v1.count, v2.count) {
-            if v1[i] > v2[i] { return true }
-            if v1[i] < v2[i] { return false }
+            if v1[i] > v2[i] {
+                return true
+            }
+            if v1[i] < v2[i] {
+                return false
+            }
         }
         return v1.count > v2.count
     }

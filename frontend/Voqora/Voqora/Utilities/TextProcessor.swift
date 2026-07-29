@@ -105,11 +105,11 @@ enum TextProcessor {
         var result = text
 
         // 1. Known ordinals
-        let ordinalMap = ["1st":"first","2nd":"second","3rd":"third","4th":"fourth",
-                          "5th":"fifth","6th":"sixth","7th":"seventh","8th":"eighth",
-                          "9th":"ninth","10th":"tenth","11th":"eleventh","12th":"twelfth",
-                          "13th":"thirteenth","14th":"fourteenth","15th":"fifteenth",
-                          "20th":"twentieth","30th":"thirtieth","100th":"hundredth"]
+        let ordinalMap = ["1st": "first", "2nd": "second", "3rd": "third", "4th": "fourth",
+                          "5th": "fifth", "6th": "sixth", "7th": "seventh", "8th": "eighth",
+                          "9th": "ninth", "10th": "tenth", "11th": "eleventh", "12th": "twelfth",
+                          "13th": "thirteenth", "14th": "fourteenth", "15th": "fifteenth",
+                          "20th": "twentieth", "30th": "thirtieth", "100th": "hundredth"]
         for (k, v) in ordinalMap {
             result = result.replacingOccurrences(of: "\\b\(k)\\b", with: v, options: .regularExpression)
         }
@@ -127,8 +127,8 @@ enum TextProcessor {
             for match in matches.reversed() {
                 guard let range = Range(match.range(at: 1), in: result),
                       let num = Double(result[range]),
-                      let word = spellOutFormatter.string(from: NSNumber(value: num)) else { continue }
-                let fullRange = Range(match.range, in: result)!
+                      let word = spellOutFormatter.string(from: NSNumber(value: num)),
+                      let fullRange = Range(match.range, in: result) else { continue }
                 result.replaceSubrange(fullRange, with: "\(word) percent")
             }
         }
@@ -139,14 +139,15 @@ enum TextProcessor {
             for match in matches.reversed() {
                 guard let dollarsRange = Range(match.range(at: 1), in: result),
                       let dollars = Int(result[dollarsRange]),
-                      let dollarsWord = spellOutFormatter.string(from: NSNumber(value: dollars)) else { continue }
+                      let dollarsWord = spellOutFormatter.string(from: NSNumber(value: dollars)),
+                      let fullRange = Range(match.range, in: result) else { continue }
                 var replacement = "\(dollarsWord) dollar\(dollars == 1 ? "" : "s")"
                 if match.numberOfRanges > 2, let centsRange = Range(match.range(at: 2), in: result),
                    let cents = Int(result[centsRange]), cents > 0,
-                   let centsWord = spellOutFormatter.string(from: NSNumber(value: cents)) {
+                   let centsWord = spellOutFormatter.string(from: NSNumber(value: cents))
+                {
                     replacement += " and \(centsWord) cent\(cents == 1 ? "" : "s")"
                 }
-                let fullRange = Range(match.range, in: result)!
                 result.replaceSubrange(fullRange, with: replacement)
             }
         }
@@ -158,7 +159,8 @@ enum TextProcessor {
                 guard let range = Range(match.range, in: result) else { continue }
                 let stripped = String(result[range]).replacingOccurrences(of: ",", with: "")
                 if let num = Double(stripped),
-                   let word = spellOutFormatter.string(from: NSNumber(value: num)) {
+                   let word = spellOutFormatter.string(from: NSNumber(value: num))
+                {
                     result.replaceSubrange(range, with: word)
                 }
             }
