@@ -104,7 +104,7 @@ fi
 echo "   ✓ Archived: $APP_PATH"
 
 codesign --verify --deep --strict "$APP_PATH"
-echo "   ✓ App code signature is structurally valid."
+echo "   ✓ Archived app code signature is structurally valid."
 
 # ── 5. Stage: app + fonts + backend zip ─────────────────────
 rm -rf "$STAGING_DIR"
@@ -132,6 +132,17 @@ for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
     cp "$NOTICE" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/$NOTICE"
 done
 echo "   ✓ License and third-party notices bundled."
+
+# Fonts and notices are added after Xcode archives the application, so the
+# top-level signature must be refreshed after every staged resource is in its
+# final location. Re-signing only the app bundle preserves the nested
+# framework signatures that Xcode produced while sealing the changed resources.
+STAGED_APP="$STAGING_DIR/${APP_NAME}.app"
+codesign --force --sign "$SIGNING_IDENTITY" \
+    --preserve-metadata=identifier,entitlements,requirements,flags,runtime \
+    "$STAGED_APP"
+codesign --verify --deep --strict "$STAGED_APP"
+echo "   ✓ Final staged app signature seals bundled resources."
 
 # ── 6. Build drag-and-drop DMG ──────────────────────────────
 echo "💿 Building installer DMG..."

@@ -26,6 +26,17 @@ MARKETING_VERSION="$(xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -showBui
 if [ -n "$DMG_PATH" ]; then
     [ -f "$DMG_PATH" ] || fail "DMG not found: $DMG_PATH"
     hdiutil imageinfo "$DMG_PATH" >/dev/null || fail "DMG is not a readable disk image."
+
+    ATTACH_OUTPUT="$(hdiutil attach -nobrowse -readonly "$DMG_PATH")"
+    MOUNT_POINT="$(printf '%s\n' "$ATTACH_OUTPUT" | awk -F '\t' '$3 ~ "^/Volumes/" { print $3; exit }')"
+    [ -n "$MOUNT_POINT" ] || fail "DMG mounted without a readable volume."
+    trap 'hdiutil detach "$MOUNT_POINT" >/dev/null 2>&1 || true' EXIT
+    APP_PATH="$MOUNT_POINT/${APP_NAME}.app"
+    [ -d "$APP_PATH" ] || fail "DMG does not contain ${APP_NAME}.app."
+    [ -L "$MOUNT_POINT/Applications" ] || fail "DMG does not contain an Applications alias."
+    codesign --verify --deep --strict "$APP_PATH" || fail "Mounted app has an invalid code signature."
+    hdiutil detach "$MOUNT_POINT" >/dev/null
+    trap - EXIT
 fi
 
 if [ "${REQUIRE_DISTRIBUTION_SIGNING:-0}" = "1" ]; then

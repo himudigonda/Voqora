@@ -71,7 +71,7 @@ struct VoqoraApp: App {
             system: systemInstance,
             audio: audioInstance,
             history: historyInstance,
-            startsBackgroundWork: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
+            startsBackgroundWork: !RuntimeEnvironment.isRunningTests
         )
 
         // Audiobook VM uses the same shared AudioService for playback

@@ -12,7 +12,7 @@ final class AppUpdater: NSObject, ObservableObject {
     private let controller: SPUStandardUpdaterController?
 
     override init() {
-        if Self.isRunningTests {
+        if RuntimeEnvironment.isRunningTests {
             controller = nil
         } else {
             controller = SPUStandardUpdaterController(
@@ -26,9 +26,5 @@ final class AppUpdater: NSObject, ObservableObject {
 
     func checkForUpdates() {
         controller?.checkForUpdates(nil)
-    }
-
-    private static var isRunningTests: Bool {
-        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
     }
 }
