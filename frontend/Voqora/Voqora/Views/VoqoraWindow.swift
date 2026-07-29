@@ -36,49 +36,7 @@ struct VoqoraWindow: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 24)
 
-                List(selection: $vm.selectedTab) {
-                    Section(header: Text("Library").font(vm.appFont(size: 11, weight: .bold))) {
-                        NavigationLink(value: "home") {
-                            Label("Now Playing", systemImage: "play.circle.fill")
-                                .font(vm.appFont(size: 13))
-                        }
-                        NavigationLink(value: "history") {
-                            Label("The Vault", systemImage: "clock.arrow.circlepath")
-                                .font(vm.appFont(size: 13))
-                        }
-                    }
-                    Section(header: Text("Audiobooks").font(vm.appFont(size: 11, weight: .bold))) {
-                        NavigationLink(value: "books") {
-                            Label("Library", systemImage: "books.vertical.fill")
-                                .font(vm.appFont(size: 13))
-                        }
-                        if let resume = bookVM.continueListeningBook {
-                            Button {
-                                vm.selectedTab = "books"
-                                bookVM.play(resume)
-                                bookVM.openPlayer(for: resume.bookID)
-                            } label: {
-                                HStack {
-                                    Image(systemName: "play.circle")
-                                        .foregroundStyle(.cyan)
-                                    VStack(alignment: .leading, spacing: 0) {
-                                        Text("Continue Listening")
-                                            .font(vm.appFont(size: 13))
-                                        Text(prettyTitleForResume(resume.title))
-                                            .font(vm.appFont(size: 10))
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    Spacer()
-                                }
-                                .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-                .scrollContentBackground(.hidden)
+                sidebarNavigation
 
                 Spacer()
 
@@ -192,26 +150,7 @@ struct VoqoraWindow: View {
         }
         .frame(minWidth: 800, minHeight: 600)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
-        .sheet(isPresented: $vm.showUpdateSheet) {
-            UpdateView()
-                .environmentObject(vm)
-        }
-        .alert(
-            "You're Up to Date",
-            isPresented: Binding(
-                get: { vm.upToDateNotice != nil },
-                set: { if !$0 { vm.upToDateNotice = nil } }
-            ),
-            presenting: vm.upToDateNotice
-        ) { _ in
-            Button("OK", role: .cancel) { vm.upToDateNotice = nil }
-        } message: { msg in
-            Text(msg)
-        }
         .onAppear {
-            // Background check for updates on startup
-            vm.checkForUpdates(manual: false)
-
             // Prepare backend if needed
             Task {
                 await launchManager.prepare()
@@ -277,6 +216,54 @@ struct VoqoraWindow: View {
         case "preferences": PreferencesView()
         default: MainDashboardView()
         }
+    }
+
+    private var sidebarNavigation: some View {
+        List(selection: $vm.selectedTab) {
+            Section("Library") {
+                sidebarLink("Now Playing", icon: "play.circle.fill", value: "home")
+                sidebarLink("The Vault", icon: "clock.arrow.circlepath", value: "history")
+            }
+            Section("Audiobooks") {
+                sidebarLink("Library", icon: "books.vertical.fill", value: "books")
+                if let resume = bookVM.continueListeningBook {
+                    continueListeningButton(for: resume)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+    }
+
+    private func sidebarLink(_ title: String, icon: String, value: String) -> some View {
+        NavigationLink(value: value) {
+            Label(title, systemImage: icon)
+                .font(vm.appFont(size: 13))
+        }
+    }
+
+    private func continueListeningButton(for book: Audiobook) -> some View {
+        Button {
+            vm.selectedTab = "books"
+            bookVM.play(book)
+            bookVM.openPlayer(for: book.bookID)
+        } label: {
+            HStack {
+                Image(systemName: "play.circle")
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Continue Listening")
+                        .font(vm.appFont(size: 13))
+                    Text(prettyTitleForResume(book.title))
+                        .font(vm.appFont(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
     }
 
     private var miniPlayerHUD: some View {

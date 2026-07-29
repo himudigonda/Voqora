@@ -8,6 +8,7 @@ struct PreferencesView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
+    @EnvironmentObject var updater: AppUpdater
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -370,7 +371,7 @@ struct PreferencesView: View {
 
                         HStack {
                             Button {
-                                vm.checkForUpdates()
+                                updater.checkForUpdates()
                             } label: {
                                 Label("Check for Updates...", systemImage: "arrow.triangle.2.circlepath")
                                     .font(vm.appFont(size: 13, weight: .medium))

@@ -11,6 +11,8 @@ if [ ! -f "$DMG_PATH" ]; then
     exit 1
 fi
 
+./scripts/validate_release.sh "$VERSION" "$DMG_PATH"
+
 if ! git remote get-url origin >/dev/null 2>&1; then
     echo "❌ No origin remote is configured." >&2
     exit 1
@@ -32,11 +34,12 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
     exit 1
 fi
 
-echo "🚢 Publishing ${APP_NAME} ${TAG}"
-git push origin HEAD:main
-git tag -a "$TAG" -m "${APP_NAME} ${TAG}"
-git push origin "$TAG"
+if ! rg -F "${APP_NAME}-${VERSION}.dmg" docs/updates/appcast.xml >/dev/null 2>&1; then
+    echo "❌ docs/updates/appcast.xml does not contain ${APP_NAME}-${VERSION}.dmg. Run 'make appcast VERSION=${VERSION}', commit it, then retry." >&2
+    exit 1
+fi
 
+echo "🚢 Publishing ${APP_NAME} ${TAG}"
 NOTES="$(awk -v heading="## [${VERSION}]" '
     index($0, heading) == 1 { capture = 1; next }
     capture && /^## \[/ { exit }
@@ -46,6 +49,10 @@ if [ -z "$NOTES" ]; then
     echo "❌ CHANGELOG.md needs a section beginning '## [${VERSION}]'." >&2
     exit 1
 fi
+
+git push origin HEAD:main
+git tag -a "$TAG" -m "${APP_NAME} ${TAG}"
+git push origin "$TAG"
 
 gh release create "$TAG" "$DMG_PATH" \
     --title "${APP_NAME} ${TAG}" \

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		80E015062F24146E003FB2E4 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015052F24146E003FB2E4 /* KeyboardShortcuts */; };
+		80E015082F24146E003FB2E4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015072F24146E003FB2E4 /* Sparkle */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +65,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				80E015062F24146E003FB2E4 /* KeyboardShortcuts in Frameworks */,
+				80E015082F24146E003FB2E4 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -132,6 +134,7 @@
 			name = Voqora;
 			packageProductDependencies = (
 				80E015052F24146E003FB2E4 /* KeyboardShortcuts */,
+				80E015072F24146E003FB2E4 /* Sparkle */,
 			);
 			productName = Voqora;
 			productReference = 80E014F62F241426003FB2E4 /* Voqora.app */;
@@ -167,6 +170,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				80E015042F24146E003FB2E4 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
+				80E015092F24146E003FB2E4 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 80E014F72F241426003FB2E4 /* Products */;
@@ -392,8 +396,9 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
+				SPARKLE_PUBLIC_ED_KEY = "yIxVL40W7xZ42Rw7IMbdj5G6Df3f8JgY3aT1qr4JlA4=";
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -438,10 +443,11 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = "";
+				SPARKLE_PUBLIC_ED_KEY = "yIxVL40W7xZ42Rw7IMbdj5G6Df3f8JgY3aT1qr4JlA4=";
 				ENABLE_APP_SANDBOX = NO;
-				ENABLE_HARDENED_RUNTIME = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = YES;
 				ENABLE_RESOURCE_ACCESS_CALENDARS = NO;
@@ -517,6 +523,14 @@
 				minimumVersion = 2.4.0;
 			};
 		};
+		80E015092F24146E003FB2E4 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -524,6 +538,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 80E015042F24146E003FB2E4 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */;
 			productName = KeyboardShortcuts;
+		};
+		80E015072F24146E003FB2E4 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 80E015092F24146E003FB2E4 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

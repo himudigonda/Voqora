@@ -1,4 +1,5 @@
 import KeyboardShortcuts
+import Sparkle
 import SwiftUI
 
 @main
@@ -25,6 +26,11 @@ struct VoqoraApp: App {
 
     /// Live AX + Notifications permission status. Observed by onboarding.
     @StateObject private var permissions = PermissionsService()
+
+    /// Native Sparkle 2 lifecycle. It owns background checks, verified
+    /// downloads, replacement, and relaunch instead of the former custom DMG
+    /// downloader.
+    @StateObject private var updater: AppUpdater
 
     /// 3. Backend (Kept private, managed by VM, but we own the instance to stop deinit)
     private let backend: BackendService
@@ -57,13 +63,15 @@ struct VoqoraApp: App {
         let launchInstance = LaunchManager()
         let backendInstance = BackendService()
         let systemInstance = SystemService()
+        let updaterInstance = AppUpdater()
 
         // Create VM with dependency injection
         let vmInstance = DashboardViewModel(
             backend: backendInstance,
             system: systemInstance,
             audio: audioInstance,
-            history: historyInstance
+            history: historyInstance,
+            startsBackgroundWork: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil
         )
 
         // Audiobook VM uses the same shared AudioService for playback
@@ -75,6 +83,7 @@ struct VoqoraApp: App {
         _launchManager = StateObject(wrappedValue: launchInstance)
         _dashboardVM = StateObject(wrappedValue: vmInstance)
         _audiobookVM = StateObject(wrappedValue: audiobookInstance)
+        _updater = StateObject(wrappedValue: updaterInstance)
 
         // Wire mutual exclusion between TTS hotkey playback and audiobook playback
         vmInstance.audiobookVM = audiobookInstance
@@ -182,6 +191,7 @@ struct VoqoraApp: App {
                 .environmentObject(onboarding)
                 .environmentObject(identity)
                 .environmentObject(permissions)
+                .environmentObject(updater)
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])

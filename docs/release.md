@@ -4,16 +4,32 @@ This is the release checklist for the public Voqora line. A release is not just
 a successful archive: the version, source, DMG, installer, notes, and GitHub
 release must all describe the same product.
 
-## 1. Prepare the version
+## 1. Release model
+
+`main` is the only public branch. `develop` contains the private v1.1 work and
+has no remote tracking branch. Never push it until that release is approved.
+
+Voqora uses Sparkle 2 for in-app updates. Every release has two identifiers:
+
+- **Marketing version**: what people see, for example `1.0.0`.
+- **Build number**: the monotonically increasing update identity Sparkle uses.
+
+Do not reissue a released build with the same build number. A correction that
+must keep the visible `1.0.0` label gets the same marketing version and the
+next `CURRENT_PROJECT_VERSION`.
+
+## 2. Prepare the version
 
 Before building:
 
 - Update the top section of `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD`.
 - Update the product version in the Xcode project and backend package metadata.
+- Increment `CURRENT_PROJECT_VERSION` for every distributable build, even if
+  `MARKETING_VERSION` stays the same.
 - Confirm `README.md`, `PRIVACY.md`, and the changelog agree about the release.
 - Ensure the working tree is clean and `gh auth status` succeeds.
 
-## 2. Validate proportionately
+## 3. Validate proportionately
 
 ```bash
 make verify
@@ -23,7 +39,7 @@ make test-swift    # explicit: launches one serial macOS test host
 Use the full Swift command once for a release candidate, not repeatedly during
 ordinary documentation or packaging edits.
 
-## 3. Build and inspect the DMG
+## 4. Build and inspect the DMG
 
 ```bash
 make release VERSION=X.Y.Z
@@ -39,27 +55,55 @@ Inspect the actual mounted DMG:
 3. The app bundle reports the intended bundle identifier and version.
 4. The local server starts and selected text can be spoken.
 
-## 4. Publish
+## 5. Create and publish the signed update feed
+
+After the DMG is built, generate the Sparkle appcast while the update signing
+key is available in the release Mac's Keychain:
+
+```bash
+make appcast VERSION=X.Y.Z
+git add docs/updates/appcast.xml
+git commit -m "release: publish vX.Y.Z update feed"
+```
+
+The feed points to the immutable GitHub release asset URL and is deployed to
+GitHub Pages by `.github/workflows/pages.yml`. Enable **Settings → Pages →
+Source → GitHub Actions** once in the GitHub repository before the first
+release. Confirm `https://himudigonda.github.io/Voqora/appcast.xml` is live
+before publishing the next version.
+
+## 6. Publish
 
 ```bash
 make ship VERSION=X.Y.Z
 ```
 
-The ship script refuses a dirty tree and an existing tag. It pushes `main`,
-creates `vX.Y.Z`, attaches the DMG, and publishes GitHub release notes from the
-matching changelog section.
+The ship script refuses a dirty tree, an unsigned or missing update feed, an
+existing tag, or a version mismatch. It pushes `main`, creates `vX.Y.Z`,
+attaches the DMG, and publishes GitHub release notes from the matching changelog
+section.
 
-## 5. Verify the public result
+## 7. Verify the public result
 
 - Open the GitHub release page in a logged-out browser session.
 - Download the DMG and confirm its SHA-256 matches the build receipt.
+- Open the app and choose **Preferences → Check for Updates**. It should read
+  the signed appcast rather than download and run a DMG installer itself.
 - Check that the repository default branch and release tag contain only Voqora
   branding.
 - Check that the release notes explain what users get, not internal project
   history.
 
-## 6. Signing and notarization
+## 8. Distribution signing and notarization
 
-v1.0.0 is ad-hoc signed. Before a frictionless mass-market release, add a
-Developer ID Application certificate and notarization credentials to the
-release environment, then verify the downloaded DMG on a clean Mac.
+Sparkle verifies each update archive with the app's public EdDSA key. The
+matching private key remains in the release Mac's Keychain and must be backed
+up securely before a second release machine is used.
+
+Developer ID signing and notarization are still a separate Apple requirement.
+Set `DEVELOPER_ID_APPLICATION` and `NOTARYTOOL_PROFILE` in the release
+environment. `create_dmg.sh` uses the Developer ID when present, validates the
+app signature, submits the final DMG to notarytool, and staples the ticket.
+This repository deliberately fails its strict distribution preflight when
+`REQUIRE_DISTRIBUTION_SIGNING=1` and either value is unavailable; it does not
+pretend ad-hoc signing is public-ready.

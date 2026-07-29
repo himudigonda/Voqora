@@ -79,6 +79,7 @@ echo "🏗  Archiving Voqora v${VERSION}..."
 # Start this disposable release archive clean on every build.
 rm -rf "${BUILD_DIR}/${APP_NAME}.xcarchive"
 ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}.log"
+SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:--}"
 if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
@@ -87,7 +88,7 @@ if ! xcodebuild \
     -archivePath "${BUILD_DIR}/${APP_NAME}.xcarchive" \
     MARKETING_VERSION="${VERSION}" \
     archive \
-    CODE_SIGN_IDENTITY="-" \
+    CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     >"${ARCHIVE_LOG}" 2>&1; then
     grep -E "^(error:|warning: |Build |MARKETING)" "${ARCHIVE_LOG}" || true
@@ -101,6 +102,9 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 echo "   ✓ Archived: $APP_PATH"
+
+codesign --verify --deep --strict "$APP_PATH"
+echo "   ✓ App code signature is structurally valid."
 
 # ── 5. Stage: app + fonts + backend zip ─────────────────────
 rm -rf "$STAGING_DIR"
@@ -151,5 +155,15 @@ create-dmg \
 rm -rf "$STAGING_DIR"
 
 DMG_SIZE=$(du -sh "${BUILD_DIR}/${DMG_NAME}.dmg" | cut -f1)
+
+if [ -n "${NOTARYTOOL_PROFILE:-}" ]; then
+    echo "🍎 Submitting DMG for Apple notarization..."
+    xcrun notarytool submit "${BUILD_DIR}/${DMG_NAME}.dmg" \
+        --keychain-profile "$NOTARYTOOL_PROFILE" --wait
+    xcrun stapler staple "${BUILD_DIR}/${DMG_NAME}.dmg"
+    xcrun stapler validate "${BUILD_DIR}/${DMG_NAME}.dmg"
+    echo "   ✓ Notarization ticket stapled."
+fi
+
 echo ""
 echo "✅ DMG Created: ${BUILD_DIR}/${DMG_NAME}.dmg  (${DMG_SIZE})"

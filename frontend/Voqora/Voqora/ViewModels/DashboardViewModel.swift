@@ -3,6 +3,24 @@ import SwiftUI
 
 @MainActor
 class DashboardViewModel: ObservableObject {
+    /// A one-time release migration for the new Voqora app identity. A prior
+    /// development build could leave a non-English voice in shared defaults;
+    /// every fresh v1 install and every upgrade from that build must begin with
+    /// the same predictable US-English voice.
+    private static let voiceDefaultsMigrationVersion = 1
+    private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
+
+    static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
+        guard defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion else {
+            return false
+        }
+
+        defaults.set("af_bella", forKey: "selectedVoice")
+        defaults.set("af_bella", forKey: "defaultBookVoice")
+        defaults.set(voiceDefaultsMigrationVersion, forKey: voiceDefaultsMigrationKey)
+        return true
+    }
+
     // Dependencies
     private let backend: BackendService
     private let system: SystemService
@@ -30,15 +48,6 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
     @AppStorage("telemetryEnabled") var telemetryEnabled = true
     @AppStorage("selectedFontName") var selectedFontName = "System Rounded"
-
-    // Update State
-    @Published var availableUpdate: GitHubRelease?
-    @Published var allRelevantReleases: [GitHubRelease] = []
-    @Published var showUpdateSheet = false
-    @Published var hasUpdate = false
-    /// SwiftUI-driven "you're up to date" toast. Replaces the previous
-    /// `NSAlert.runModal()` which blocked the @MainActor runloop. See HARD-022.
-    @Published var upToDateNotice: String?
 
     /// Helper to get Font
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -89,15 +98,24 @@ class DashboardViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init(backend: BackendService, system: SystemService, audio: AudioService, history: HistoryManager) {
+    init(
+        backend: BackendService,
+        system: SystemService,
+        audio: AudioService,
+        history: HistoryManager,
+        startsBackgroundWork: Bool = true
+    ) {
+        _ = Self.applyVoiceDefaultsMigrationIfNeeded()
         self.backend = backend
         self.system = system
         self.audio = audio
         self.history = history
 
         setupBindings()
-        startHeartbeat()
-        startPrewarmObservers()
+        if startsBackgroundWork {
+            startHeartbeat()
+            startPrewarmObservers()
+        }
     }
 
     private func setupBindings() {
@@ -329,77 +347,9 @@ class DashboardViewModel: ObservableObject {
         selectedFontName = newFont.familyName ?? "System Standard"
     }
 
-    /// --- UPDATE CHECKER ---
-    func checkForUpdates(manual: Bool = true) {
-        Task {
-            // Fetch ALL releases to aggregate changelogs
-            guard let url = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases") else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-
-                let currentVersion = "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-
-                // Filter releases newer than current
-                let newer = releases.filter { $0.tagName != currentVersion && isNewer($0.tagName, than: currentVersion) }
-
-                if let latest = newer.first {
-                    print("🚀 New version available: \(latest.tagName)")
-                    self.availableUpdate = latest
-                    self.allRelevantReleases = newer
-                    self.hasUpdate = true
-                    self.showUpdateSheet = true
-                } else if manual {
-                    // Surface via @Published so the SwiftUI view can render
-                    // an `.alert(item:)` without blocking the runloop.
-                    self.upToDateNotice = "Voqora \(currentVersion) is the latest version."
-                }
-            } catch {
-                print("❌ Update check failed: \(error)")
-            }
-        }
-    }
-
-    private func isNewer(_ version: String, than current: String) -> Bool {
-        let v1 = version.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
-        let v2 = current.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
-
-        for i in 0 ..< min(v1.count, v2.count) {
-            if v1[i] > v2[i] { return true }
-            if v1[i] < v2[i] { return false }
-        }
-        return v1.count > v2.count
-    }
-
     func exportLogs() {
         Task {
             backend.exportLogs()
-        }
-    }
-}
-
-struct GitHubRelease: Codable {
-    let tagName: String
-    let name: String
-    let body: String
-    let htmlUrl: String
-    let assets: [Asset]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case name
-        case body
-        case htmlUrl = "html_url"
-        case assets
-    }
-
-    struct Asset: Codable {
-        let name: String
-        let browserDownloadUrl: URL
-
-        enum CodingKeys: String, CodingKey {
-            case name
-            case browserDownloadUrl = "browser_download_url"
         }
     }
 }

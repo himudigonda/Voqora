@@ -10,7 +10,7 @@ BUILD_DIR = build
 APP_PATH = $(BUILD_DIR)/DerivedData/Build/Products/$(CONFIG)/Voqora.app
 BUNDLE_ID = com.himudigonda.Voqora
 
-.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release ship help
+.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release appcast ship help
 
 # Default: Run the full pipeline
 all: run
@@ -169,9 +169,15 @@ endif
 # See HARD-050.
 release: check-version backend
 	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
+	./scripts/validate_release.sh $(VERSION)
 	chmod +x scripts/create_dmg.sh
 	./scripts/create_dmg.sh $(VERSION)
+	./scripts/validate_release.sh $(VERSION) build/Voqora-$(VERSION).dmg
 	@echo "✅ Release Ready: build/Voqora-$(VERSION).dmg"
+
+appcast: check-version
+	chmod +x scripts/create_appcast.sh
+	./scripts/create_appcast.sh $(VERSION)
 
 ship: release
 	@echo "🚢 Shipping v$(VERSION)..."
@@ -184,7 +190,8 @@ help:
 	@echo "  make nuke      Complete factory reset (removes permissions/app data)"
 	@echo "  make run       Build and launch fresh"
 	@echo "  make release   Rebuild and create a distribution DMG"
-	@echo "  make ship      Full release pipeline: build + git tag + github upload"
+	@echo "  make appcast   Create a signed Sparkle update feed from a built DMG"
+	@echo "  make ship      Publish a preflighted, committed release from main"
 	@echo "  make test      Run fast backend tests only (no macOS app host)"
 	@echo "  make test-swift Run one serial macOS test host"
 	@echo "  make test-ci   Run backend + serial macOS tests"

@@ -3,6 +3,22 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
+## [Unreleased]
+
+### Fixed
+
+- Reissue v1.0.0 with every install starting from the same predictable
+  US-English voice, Bella. This clears a voice left behind by pre-release
+  testing once, then preserves any voice the user chooses afterward.
+
+### Release delivery
+
+- Replaced the bespoke in-app DMG downloader with Sparkle 2, which verifies
+  signed update archives and uses the native macOS update experience.
+- Added a signed appcast generator, GitHub Pages deployment workflow, and
+  release preflight checks for version alignment, update configuration, DMG
+  readability, code signing, and optional notarization.
+
 ## [1.0.0] - 2026-07-28
 
 ### Highlights

@@ -20,13 +20,31 @@ import XCTest
 /// user trips most often.
 @MainActor
 final class DashboardViewModelTests: XCTestCase {
+    func test_voiceDefaultsMigration_resetsLegacyVoiceOnceThenPreservesChoice() {
+        let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
+        defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
+
+        XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
+        XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
+
+        defaults.set("bf_emma", forKey: "selectedVoice")
+        XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "bf_emma")
+    }
+
 
     private func makeVM() -> DashboardViewModel {
         DashboardViewModel(
             backend: BackendService(),
             system: SystemService(),
             audio: AudioService(),
-            history: HistoryManager()
+            history: HistoryManager(),
+            startsBackgroundWork: false
         )
     }
 
