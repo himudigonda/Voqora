@@ -1,0 +1,71 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --frozen
+      - name: Lint
+        working-directory: backend
+        run: |
+          uv run ruff check .
+          uv run black --check .
+      - name: Tests
+        working-directory: backend
+        run: uv run pytest -q
+      - name: Coverage
+        working-directory: backend
+        # 74% is the current verified coverage floor. Coverage below that
+        # level should be investigated before merging.
+        run: uv run pytest --cov=app --cov-report=term --cov-fail-under=74
+
+  swift:
+    name: Swift (serial xcodebuild)
+    # project.pbxproj uses Xcode 26's project format. macos-14 ships Xcode
+    # 15.4 and cannot even open it; macos-26 supplies the matching toolchain.
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-deriveddata-${{ hashFiles('frontend/Voqora/Voqora.xcodeproj/project.pbxproj') }}
+          restore-keys: |
+            ${{ runner.os }}-deriveddata-
+      - name: Stub backend zip (so LaunchManager bundle path resolves)
+        run: |
+          mkdir -p frontend/Voqora/Voqora/Resources
+          touch frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+      - name: Build + test
+        run: |
+          xcodebuild test \
+            -project frontend/Voqora/Voqora.xcodeproj \
+            -scheme Voqora \
+            -destination 'platform=macOS,arch=arm64' \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO

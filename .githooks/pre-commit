@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Voqora pre-commit hook
+echo "🔍 [Pre-commit] Starting quality checks..."
+
+echo "✨ [Pre-commit] Formatting code..."
+make format > /dev/null 2>&1
+
+echo "🧹 [Pre-commit] Linting code..."
+make lint
+LINT_STATUS=$?
+
+if [ $LINT_STATUS -ne 0 ]; then
+    echo "❌ [Pre-commit] Quality check failed. Please fix violations before committing."
+    exit 1
+fi
+
+echo "✅ [Pre-commit] All checks passed!"
+exit 0

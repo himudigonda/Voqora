@@ -1,0 +1,61 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Python and local environments
+backend/.venv/
+backend/venv/
+backend/env/
+backend/__pycache__/
+backend/**/*.py[cod]
+backend/*.spec
+backend/build/
+backend/dist/
+backend/.pytest_cache/
+backend/.hypothesis/
+backend/.coverage
+backend/.coverage_html/
+backend/htmlcov/
+backend/.mutmut-cache/
+backend/mutants/
+
+# Downloaded model assets and generated local backend payload
+backend/kokoro-v1.0.onnx
+backend/voices-v1.0.bin
+backend/kitten-*.onnx
+backend/kitten-*.npz
+backend/kitten-*.json
+frontend/Voqora/Voqora/Resources/VoqoraServer
+frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+
+# Xcode and generated distribution artifacts
+build/
+DerivedData/
+frontend/Voqora/DerivedData/
+*.xcuserdatad/
+*.xcuserstate
+**/*.xcuserdata/
+**/*.xcworkspace/xcuserdata/
+.build/
+.swiftpm/
+scripts/Voqora.icns
+scripts/dmg_background_voqora.png
+
+# Local application output and diagnostics
+history.json
+*.log
+default.profraw
+*.profraw
+backend/*.wav
+backend/benchmarks/pipeline_stats.json
+backend/benchmarks/results.json
+backend/benchmarks/cache_stats.json
+
+# Local secrets
+.env
+.env.*
+*.env
+*.save

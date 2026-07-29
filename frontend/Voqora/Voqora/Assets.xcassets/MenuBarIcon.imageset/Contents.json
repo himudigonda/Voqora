@@ -1,0 +1,92 @@
+{
+    "images": [
+        {
+            "filename": "MenuBarIcon_Dark_1x.png",
+            "idiom": "universal",
+            "scale": "1x"
+        },
+        {
+            "filename": "MenuBarIcon_Dark_2x.png",
+            "idiom": "universal",
+            "scale": "2x"
+        },
+        {
+            "filename": "MenuBarIcon_Dark_3x.png",
+            "idiom": "universal",
+            "scale": "3x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "dark"
+                }
+            ],
+            "filename": "MenuBarIcon_Light_1x.png",
+            "idiom": "universal",
+            "scale": "1x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "dark"
+                }
+            ],
+            "filename": "MenuBarIcon_Light_2x.png",
+            "idiom": "universal",
+            "scale": "2x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "dark"
+                }
+            ],
+            "filename": "MenuBarIcon_Light_3x.png",
+            "idiom": "universal",
+            "scale": "3x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "light"
+                }
+            ],
+            "filename": "MenuBarIcon_Dark_1x.png",
+            "idiom": "universal",
+            "scale": "1x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "light"
+                }
+            ],
+            "filename": "MenuBarIcon_Dark_2x.png",
+            "idiom": "universal",
+            "scale": "2x"
+        },
+        {
+            "appearances": [
+                {
+                    "appearance": "luminosity",
+                    "value": "light"
+                }
+            ],
+            "filename": "MenuBarIcon_Dark_3x.png",
+            "idiom": "universal",
+            "scale": "3x"
+        }
+    ],
+    "info": {
+        "author": "xcode",
+        "version": 1
+    },
+    "properties": {
+        "localizable": true
+    }
+}
