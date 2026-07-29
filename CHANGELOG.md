@@ -3,13 +3,17 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
-## [Unreleased]
+## [1.0.0] - 2026-07-29
 
-### Fixed
+### Final release build
 
 - Reissue v1.0.0 with every install starting from the same predictable
   US-English voice, Bella. This clears a voice left behind by pre-release
   testing once, then preserves any voice the user chooses afterward.
+- Corrected the final DMG bundle signature after adding the bundled speech
+  service, fonts, licence, and third-party notices.
+- Added clear first-launch guidance, including the one-app `xattr` fallback
+  for macOS's downloaded-file quarantine warning.
 
 ### Release delivery
 
@@ -19,7 +23,7 @@ this is the first public release of the product and its source history.
   release preflight checks for version alignment, update configuration, DMG
   readability, code signing, and optional notarization.
 
-## [1.0.0] - 2026-07-28
+### Initial public release
 
 ### Highlights
 

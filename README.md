@@ -73,9 +73,21 @@ keyboard-to-speaker latency promise.
 
 ## Install notes
 
-Voqora v1.0.0 is ad-hoc signed and not Apple-notarized. macOS can ask you to
-approve the first launch in System Settings. This is the remaining distribution
-step before a fully frictionless consumer install.
+Voqora v1.0.0 is free to download, but it is not yet Apple-notarized. After
+dragging it to Applications, try opening it normally. If macOS blocks that
+first launch, open **System Settings -> Privacy & Security**, choose **Open
+Anyway** for Voqora, then open it again.
+
+If that button is missing or macOS keeps showing the same warning, and you
+downloaded the DMG from [this official release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.0), run this once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Voqora.app
+open /Applications/Voqora.app
+```
+
+That command removes macOS's downloaded-file quarantine marker from that one
+installed copy of Voqora. Do not use it on software you do not trust.
 
 ## Build from source
 
