@@ -27,6 +27,9 @@ struct VoqoraApp: App {
     /// Live AX + Notifications permission status. Observed by onboarding.
     @StateObject private var permissions = PermissionsService()
 
+    /// Local-only, explicit bridge from the retired SuperSay app.
+    @StateObject private var legacyMigration: LegacySuperSayMigration
+
     /// Native Sparkle 2 lifecycle. It owns background checks, verified
     /// downloads, replacement, and relaunch instead of the former custom DMG
     /// downloader.
@@ -64,6 +67,7 @@ struct VoqoraApp: App {
         let backendInstance = BackendService()
         let systemInstance = SystemService()
         let updaterInstance = AppUpdater()
+        let legacyMigrationInstance = LegacySuperSayMigration()
 
         // Create VM with dependency injection
         let vmInstance = DashboardViewModel(
@@ -84,6 +88,7 @@ struct VoqoraApp: App {
         _dashboardVM = StateObject(wrappedValue: vmInstance)
         _audiobookVM = StateObject(wrappedValue: audiobookInstance)
         _updater = StateObject(wrappedValue: updaterInstance)
+        _legacyMigration = StateObject(wrappedValue: legacyMigrationInstance)
 
         // Wire mutual exclusion between TTS hotkey playback and audiobook playback
         vmInstance.audiobookVM = audiobookInstance
@@ -192,6 +197,7 @@ struct VoqoraApp: App {
                 .environmentObject(identity)
                 .environmentObject(permissions)
                 .environmentObject(updater)
+                .environmentObject(legacyMigration)
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])

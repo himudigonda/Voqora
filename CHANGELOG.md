@@ -3,6 +3,41 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
+## [1.0.1] - 2026-07-29
+
+### SuperSay transition
+
+- Added a clear, one-way transition path for people who still have the final
+  SuperSay legacy app installed. Voqora detects only the standard Applications
+  locations and offers a choice to import compatible preferences, reveal the
+  legacy app in Finder, or do nothing.
+- Kept the transition respectful and reversible. Voqora never deletes another
+  app, never silently imports preferences, and never copies documents, audio,
+  history, credentials, email, shortcuts, or telemetry choices.
+- Imported preferences are deliberately narrow: a compatible voice, speed,
+  volume, ducking, theme, font, and URL-cleanup setting. Invalid or unsupported
+  values are ignored.
+
+### Honest product measurement
+
+- Added an explicit `product` field to telemetry. Voqora and frozen SuperSay
+  now report separate anonymous installation counts rather than a fabricated
+  combined people count.
+- Added a migration funnel: `migration_detected`, `migration_completed`, and
+  `legacy_app_removed`. Each event is opt-in by behaviour and is recorded at
+  most once per Voqora installation.
+- Updated the public metrics contract and dashboard to show Voqora, legacy
+  SuperSay, and total installations separately. An optional Voqora email is
+  the only future basis for a legitimate identity link.
+
+### Release and quality
+
+- Moved the public marketing version to `1.0.1`. Existing `1.0.0` installs need
+  a higher version to receive a Sparkle update; an equal-version replacement
+  cannot be delivered as an update.
+- Documented the legacy transition, data boundary, and single-host Swift test
+  policy in the public release material.
+
 ## [1.0.0] - 2026-07-29
 
 ### Final release build
@@ -92,4 +127,5 @@ this is the first public release of the product and its source history.
   manual approval on first launch.
 - Optional PDF cleanup depends on a Gemini API key supplied by the user.
 
+[1.0.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.1
 [1.0.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.0

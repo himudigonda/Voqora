@@ -9,12 +9,14 @@ struct PreferencesView: View {
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var updater: AppUpdater
+    @EnvironmentObject var legacyMigration: LegacySuperSayMigration
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
     @State private var emailSubmitting = false
     @State private var emailError: String?
     @State private var emailSaved = false
+    @State private var migrationStatus: String?
 
     var body: some View {
         ScrollView {
@@ -90,6 +92,38 @@ struct PreferencesView: View {
                 }
                 .onAppear {
                     if emailDraft.isEmpty { emailDraft = identity.email ?? "" }
+                }
+
+                if legacyMigration.isLegacyInstalled {
+                    PreferenceSection(title: "SuperSay migration", icon: "arrow.right.circle") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("SuperSay is retired. Voqora is the supported successor.")
+                                .font(vm.appFont(size: 14, weight: .bold))
+                            Text("Import compatible playback and appearance preferences if you want to. Documents, audio, history, credentials, email, shortcuts, and analytics choices are never copied. Voqora will never remove SuperSay automatically.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Button("Import preferences") {
+                                    let count = legacyMigration.importCompatiblePreferences()
+                                    migrationStatus = count > 0
+                                        ? "Imported \(count) compatible preference\(count == 1 ? "" : "s")."
+                                        : "No compatible SuperSay preferences were found."
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.cyan)
+                                Button("Show SuperSay in Finder") {
+                                    legacyMigration.showLegacyAppInFinder()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            if let migrationStatus {
+                                Text(migrationStatus)
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
                 }
 
                 // Section: Voice Engine
@@ -365,7 +399,7 @@ struct PreferencesView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .help("We collect: App Launches, Character Counts, and Export Counts. No text content or personal data is ever recorded or transmitted.")
+                        .help("We collect anonymous activity counts, never text, filenames, audio, or API keys. An email is sent only if you choose to provide one in Identity settings.")
 
                         Divider()
 

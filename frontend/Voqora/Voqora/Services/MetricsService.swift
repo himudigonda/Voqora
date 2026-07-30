@@ -6,7 +6,7 @@ import SwiftUI
 /// Design contract:
 /// - Sends ONLY the keys in `Props.allowedKeys`. Any unknown key is dropped
 ///   on the client *before* HTTP serialization. The server re-enforces this.
-/// - Events are batched (flush every 30s OR when 20 events queue up).
+/// - Launches flush immediately; other events batch every 30s or at 20 events.
 /// - Always anonymous: every request carries `anon_id` (a stable per-install
 ///   UUID owned by `IdentityService`) and never a bearer token. Email-based
 ///   identity is handled separately by `IdentityService.submitEmail`, which
@@ -17,7 +17,7 @@ import SwiftUI
 actor MetricsService {
     static let shared = MetricsService()
 
-    private let endpoint = URL(string: "https://www.himudigonda.me/api/voqora/events")!
+    private let endpoint = URL(string: "https://himudigonda.me/api/voqora/events")!
     private let outboxKey = "metrics_outbox_v2"
     private let outboxCap = 200
     private let flushBatchSize = 20
@@ -29,6 +29,7 @@ actor MetricsService {
     private var userID: String
     private var enabled: Bool
     private var outbox: [Event] = []
+    private var isFlushing = false
 
     /// Static so `Event.serialized()` doesn't reallocate per call.
     /// `ISO8601DateFormatter` is documented as thread-safe by Apple but is
@@ -71,7 +72,7 @@ actor MetricsService {
     // MARK: - Public surface (fire-and-forget, call-site compatible with v1)
 
     nonisolated func trackLaunch() {
-        Task { await self.enqueue(event: "app_launch", props: [:]) }
+        Task { await self.enqueue(event: "app_launch", props: [:], flushImmediately: true) }
     }
 
     nonisolated func trackGeneration(chars: Int, voice: String, speed: Double, audioSeconds: Double) {
@@ -112,6 +113,20 @@ actor MetricsService {
         }
     }
 
+    /// Records a real, local migration state only. These events are used to
+    /// understand the voluntary SuperSay-to-Voqora path, not to infer people.
+    nonisolated func trackMigrationDetected() {
+        Task { await self.enqueue(event: "migration_detected", props: [:]) }
+    }
+
+    nonisolated func trackMigrationCompleted() {
+        Task { await self.enqueue(event: "migration_completed", props: [:]) }
+    }
+
+    nonisolated func trackLegacyAppRemoved() {
+        Task { await self.enqueue(event: "legacy_app_removed", props: [:]) }
+    }
+
     /// Fire-and-forget force-flush. Safe to call from anywhere.
     nonisolated func flush() {
         Task { await self.flushLocked() }
@@ -119,7 +134,11 @@ actor MetricsService {
 
     // MARK: - Core
 
-    private func enqueue(event: String, props rawProps: [String: Any]) async {
+    private func enqueue(
+        event: String,
+        props rawProps: [String: Any],
+        flushImmediately: Bool = false
+    ) async {
         guard enabled else { return }
         guard Event.allowedNames.contains(event) else {
             #if DEBUG
@@ -134,7 +153,7 @@ actor MetricsService {
             outbox.removeFirst(outbox.count - outboxCap)
         }
         persistOutbox()
-        if outbox.count >= flushBatchSize {
+        if flushImmediately || outbox.count >= flushBatchSize {
             await flushLocked()
         }
     }
@@ -145,20 +164,21 @@ actor MetricsService {
             persistOutbox()
             return
         }
-        guard !outbox.isEmpty else { return }
-        let batch = outbox
+        guard !isFlushing, !outbox.isEmpty else { return }
+        isFlushing = true
+        defer { isFlushing = false }
+        let batch = Array(outbox.prefix(flushBatchSize))
         let payload: [String: Any] = [
             "anon_id": userID,
+            "product": "voqora",
             "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
             "platform": "macOS",
             "events": batch.map { $0.serialized() },
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
             #if DEBUG
-            print("⚠️ Metrics: serialization failed; dropping batch")
+            print("⚠️ Metrics: serialization failed; retaining batch")
             #endif
-            outbox.removeAll()
-            persistOutbox()
             return
         }
 
@@ -168,18 +188,21 @@ actor MetricsService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        // Optimistic: clear the outbox once we hand the request off.
-        outbox.removeAll()
-        persistOutbox()
-
-        // URLSession.shared.data(for:) is the async API. Throws on network
-        // failure — counts-only events are safe to lose, so we swallow.
+        // Keep the batch until the server confirms acceptance. The actor guard
+        // prevents concurrent timer/manual flushes from sending duplicates.
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
-            #if DEBUG
-            if let http = response as? HTTPURLResponse {
-                print("📡 Metrics: flushed \(batch.count) events → \(http.statusCode)")
+            guard let http = response as? HTTPURLResponse else { return }
+            guard (200..<300).contains(http.statusCode) else {
+                #if DEBUG
+                print("📡 Metrics: server rejected batch → \(http.statusCode); retaining it")
+                #endif
+                return
             }
+            outbox.removeFirst(min(batch.count, outbox.count))
+            persistOutbox()
+            #if DEBUG
+            print("📡 Metrics: flushed \(batch.count) events → \(http.statusCode)")
             #endif
         } catch {
             #if DEBUG
@@ -245,6 +268,7 @@ extension MetricsService {
         nonisolated static let allowedNames: Set<String> = [
             "app_launch", "generation", "export",
             "audiobook_upload", "audiobook_play", "gemini_clean",
+            "migration_detected", "migration_completed", "legacy_app_removed",
         ]
 
         func serialized() -> [String: Any] {

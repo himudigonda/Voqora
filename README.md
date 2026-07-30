@@ -8,19 +8,19 @@ you still need to get through the material, but do not want to keep staring at
 it.
 
 <p align="center">
-  <a href="https://github.com/himudigonda/Voqora/releases/tag/v1.0.0"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
+  <a href="https://github.com/himudigonda/Voqora/releases/tag/v1.0.1"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/Apple%20Silicon-native-0EA5E9?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7C3AED?style=flat-square" alt="PolyForm Noncommercial"></a>
 </p>
 
 <p align="center">
-  <img src="assets/voqora-installer.jpg" alt="Voqora v1.0.0 installer" width="760">
+  <img src="assets/voqora-installer.jpg" alt="Voqora installer" width="760">
 </p>
 
 ## Start here
 
-1. Download [Voqora v1.0.0](https://github.com/himudigonda/Voqora/releases/tag/v1.0.0).
+1. Download [Voqora v1.0.1](https://github.com/himudigonda/Voqora/releases/tag/v1.0.1).
 2. Drag Voqora to Applications.
 3. Select text in a browser, PDF reader, IDE, Notes, or another app.
 4. Press `Command + Shift + .`.
@@ -64,6 +64,22 @@ text. Optional PDF cleanup is separate: if you provide a Gemini API key and
 choose that flow, the relevant document material is sent to Gemini for that
 operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 
+## Moving from SuperSay
+
+SuperSay is an earlier public product that is now frozen at its final legacy
+release. Voqora is the supported current product.
+
+When Voqora finds `SuperSay.app` in `/Applications` or `~/Applications`, it
+offers an explicit, local-only import of compatible voice, speed, volume,
+ducking, theme, font, and URL-cleanup preferences. It never copies documents,
+audio, history, credentials, email, shortcuts, or analytics choices, and it
+never removes SuperSay automatically. Confirm that Voqora works for you, then
+move SuperSay to Trash yourself when you are ready.
+
+The two products record separate anonymous installation counts. They are not
+presented as a deduplicated count of people. An optional email entered in
+Voqora is the only future basis for a legitimate identity link.
+
 ## Measured on the launch machine
 
 On an Apple M2 Pro with 16 GB memory, a warmed short selection reached first
@@ -73,13 +89,13 @@ keyboard-to-speaker latency promise.
 
 ## Install notes
 
-Voqora v1.0.0 is free to download, but it is not yet Apple-notarized. After
+Voqora v1.0.1 is free to download, but it is not yet Apple-notarized. After
 dragging it to Applications, try opening it normally. If macOS blocks that
 first launch, open **System Settings -> Privacy & Security**, choose **Open
 Anyway** for Voqora, then open it again.
 
 If that button is missing or macOS keeps showing the same warning, and you
-downloaded the DMG from [this official release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.0), run this once in Terminal:
+downloaded the DMG from [this official release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.1), run this once in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Voqora.app

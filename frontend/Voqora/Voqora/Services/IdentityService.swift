@@ -19,7 +19,7 @@ final class IdentityService: ObservableObject {
     static let shared = IdentityService()
 
     private static let log = Logger(subsystem: "me.himudigonda.Voqora", category: "identity")
-    private static let endpoint = URL(string: "https://www.himudigonda.me/api/voqora/identify")!
+    private static let endpoint = URL(string: "https://himudigonda.me/api/voqora/identify")!
     private static let anonKey = "anonymousUserID"
     private static let emailKey = "userIdentityEmail"
 

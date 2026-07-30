@@ -10,9 +10,11 @@ struct VoqoraWindow: View {
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var permissions: PermissionsService
+    @EnvironmentObject var legacyMigration: LegacySuperSayMigration
     @Environment(\.colorScheme) var colorScheme
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
+    @State private var migrationResultMessage: String?
 
     var body: some View {
         NavigationSplitView {
@@ -163,6 +165,32 @@ struct VoqoraWindow: View {
                     showOnboarding = true
                 }
             }
+
+            legacyMigration.evaluate()
+        }
+        .alert("SuperSay is installed", isPresented: $legacyMigration.shouldPresentNotice) {
+            Button("Import preferences") {
+                let imported = legacyMigration.importCompatiblePreferences()
+                migrationResultMessage = imported > 0
+                    ? "Imported \(imported) compatible preference\(imported == 1 ? "" : "s")."
+                    : "No compatible SuperSay preferences were found."
+            }
+            Button("Show in Finder") {
+                legacyMigration.showLegacyAppInFinder()
+            }
+            Button("Not now", role: .cancel) {
+                legacyMigration.deferNotice()
+            }
+        } message: {
+            Text("SuperSay is retired. Voqora is its supported successor. You can import compatible preferences, then move SuperSay to Trash when you are ready. Voqora will not remove it for you.")
+        }
+        .alert("SuperSay migration", isPresented: Binding(
+            get: { migrationResultMessage != nil },
+            set: { if !$0 { migrationResultMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { migrationResultMessage = nil }
+        } message: {
+            Text(migrationResultMessage ?? "")
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView()
