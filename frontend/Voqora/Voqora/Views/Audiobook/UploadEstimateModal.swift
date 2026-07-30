@@ -14,16 +14,27 @@ struct UploadEstimateModal: View {
     @State private var useGeminiCleanup = false
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 18) {
             header
             // S6: re-check stored key whenever the modal becomes visible —
             // covers the case where the user adds/removes a key in
             // Preferences while this modal is open.
             EmptyView().task { bookVM.refreshKeyState() }
             if let est = bookVM.pendingEstimate {
-                cover
-                statsGrid(for: est)
-                Spacer(minLength: 0)
+                // The estimate can be taller than a 640-point sheet once the
+                // privacy choice and Gemini warnings are present. Keep the
+                // primary action anchored and let only the details scroll,
+                // rather than clipping the bottom controls.
+                ScrollView {
+                    VStack(spacing: 18) {
+                        cover
+                        statsGrid(for: est)
+                        processingOptions(for: est)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 1)
+                }
+                .frame(maxHeight: .infinity)
                 actions
             } else if bookVM.uploadInProgress {
                 loadingState
@@ -106,9 +117,9 @@ struct UploadEstimateModal: View {
         }
     }
 
-    private var actions: some View {
+    private func processingOptions(for est: AudiobookEstimateResponse) -> some View {
         VStack(spacing: 10) {
-            if let est = bookVM.pendingEstimate, useGeminiCleanup, est.costWarning {
+            if useGeminiCleanup, est.costWarning {
                 HStack(spacing: 8) {
                     Image(systemName: "dollarsign.circle.fill").foregroundStyle(.orange)
                     Text("This book's estimated Gemini cost is \(formatCost(est.estimatedCostUsd)). Proceed anyway?")
@@ -134,7 +145,7 @@ struct UploadEstimateModal: View {
             .padding(10)
             .background(Color.cyan.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            if let est = bookVM.pendingEstimate, est.isImageOnly, !useGeminiCleanup {
+            if est.isImageOnly, !useGeminiCleanup {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.viewfinder").foregroundStyle(.orange)
                     Text("This scanned PDF needs Gemini OCR. Turn on cleanup to continue.")
@@ -152,49 +163,52 @@ struct UploadEstimateModal: View {
                 }
                 .padding(.bottom, 4)
             }
-            HStack(spacing: 12) {
-                Button { cancel() } label: {
-                    Text("Cancel")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                }
-                .buttonStyle(.bordered)
+        }
+    }
 
-                Button {
-                    if useGeminiCleanup && !bookVM.keyVerified {
-                        bookVM.showToast(
-                            "Set a Gemini API key in Preferences first.",
-                            kind: .error
-                        )
-                    } else {
-                        // Do NOT call dismiss() here — modal dismisses automatically
-                        // when startProcessing() clears pendingDocument on success.
-                        // Calling dismiss() immediately would race with the async
-                        // /start call: the sheet binding setter fires cancelUpload()
-                        // which deletes the staged book before /start completes.
-                        bookVM.startProcessing(useGeminiCleanup: useGeminiCleanup)
+    private var actions: some View {
+        HStack(spacing: 12) {
+            Button { cancel() } label: {
+                Text("Cancel")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+            }
+            .buttonStyle(.bordered)
+
+            Button {
+                if useGeminiCleanup && !bookVM.keyVerified {
+                    bookVM.showToast(
+                        "Set a Gemini API key in Preferences first.",
+                        kind: .error
+                    )
+                } else {
+                    // Do NOT call dismiss() here — modal dismisses automatically
+                    // when startProcessing() clears pendingDocument on success.
+                    // Calling dismiss() immediately would race with the async
+                    // /start call: the sheet binding setter fires cancelUpload()
+                    // which deletes the staged book before /start completes.
+                    bookVM.startProcessing(useGeminiCleanup: useGeminiCleanup)
+                }
+            } label: {
+                if bookVM.startingProcessing {
+                    HStack(spacing: 8) {
+                        ProgressView().tint(.white).scaleEffect(0.75)
+                        Text("Starting…")
                     }
-                } label: {
-                    if bookVM.startingProcessing {
-                        HStack(spacing: 8) {
-                            ProgressView().tint(.white).scaleEffect(0.75)
-                            Text("Starting…")
-                        }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .font(vm.appFont(size: 13, weight: .bold))
+                } else {
+                    Label("Start Processing", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .font(vm.appFont(size: 13, weight: .bold))
-                    } else {
-                        Label("Start Processing", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .font(vm.appFont(size: 13, weight: .bold))
-                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(.cyan)
-                .disabled(bookVM.startingProcessing || requiresGeminiOCR)
-                .keyboardShortcut(.defaultAction)
             }
+            .buttonStyle(.borderedProminent)
+            .tint(.cyan)
+            .disabled(bookVM.startingProcessing || requiresGeminiOCR)
+            .keyboardShortcut(.defaultAction)
         }
     }
 
