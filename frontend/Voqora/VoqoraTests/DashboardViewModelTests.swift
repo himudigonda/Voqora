@@ -175,6 +175,16 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.currentVoiceDisplay, "Bm George")
     }
 
+    func test_selectedVoice_startsBellaThenPersistsAnIntentionalChoice() {
+        let initial = makeVM()
+        XCTAssertEqual(initial.selectedVoice, "af_bella")
+
+        initial.selectedVoice = "bf_emma"
+        let restored = makeVM()
+
+        XCTAssertEqual(restored.selectedVoice, "bf_emma")
+    }
+
     // MARK: - isOnline
 
     func test_isOnline_reflects_isBackendOnline() async {
