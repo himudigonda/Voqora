@@ -11,7 +11,17 @@ if [ ! -f "$DMG_PATH" ]; then
     exit 1
 fi
 
-./scripts/validate_release.sh "$VERSION" "$DMG_PATH"
+# A public upload should not accidentally turn an ad-hoc local candidate into
+# the official download. The normal path requires Developer ID signing and a
+# stapled notarization ticket. The free distribution fallback still exists for
+# deliberate experiments, but it requires an unmistakable opt-in and the
+# resulting support burden is documented rather than hidden.
+if [ "${ALLOW_UNNOTARIZED_PUBLIC_RELEASE:-0}" = "1" ]; then
+    echo "⚠️  Explicitly allowing an unnotarized public DMG. Gatekeeper friction is expected."
+    ./scripts/validate_release.sh "$VERSION" "$DMG_PATH"
+else
+    REQUIRE_DISTRIBUTION_SIGNING=1 ./scripts/validate_release.sh "$VERSION" "$DMG_PATH"
+fi
 bash ./scripts/validate_appcast.sh "$VERSION" "$DMG_PATH" docs/updates/appcast.xml
 
 if ! git remote get-url origin >/dev/null 2>&1; then

@@ -79,7 +79,8 @@ make ship VERSION=X.Y.Z
 ```
 
 The ship script refuses a dirty tree, an unsigned or missing update feed, an
-existing tag, or a version mismatch. It creates `vX.Y.Z` and attaches the DMG
+existing tag, a version mismatch, or a distribution artifact that is not
+Developer ID signed and notarized. It creates `vX.Y.Z` and attaches the DMG
 first. Only after the immutable GitHub asset exists does it push `main`, which
 lets GitHub Pages expose the matching appcast. This prevents a running app from
 seeing an enclosure before the file it names is available. GitHub release notes
@@ -108,6 +109,18 @@ Developer ID signing and notarization are still a separate Apple requirement.
 Set `DEVELOPER_ID_APPLICATION` and `NOTARYTOOL_PROFILE` in the release
 environment. `create_dmg.sh` uses the Developer ID when present, validates the
 app signature, submits the final DMG to notarytool, and staples the ticket.
-This repository deliberately fails its strict distribution preflight when
-`REQUIRE_DISTRIBUTION_SIGNING=1` and either value is unavailable; it does not
-pretend ad-hoc signing is public-ready.
+`make ship` enables that strict preflight by default and additionally verifies
+the mounted app's Developer ID team, the stapled ticket, and Gatekeeper
+assessment. It does not pretend ad-hoc signing is public-ready.
+
+For a deliberately free, non-notarized experimental distribution only, the
+release owner must make that trade-off explicit:
+
+```bash
+ALLOW_UNNOTARIZED_PUBLIC_RELEASE=1 make ship VERSION=X.Y.Z
+```
+
+That escape hatch still requires a valid Sparkle archive signature and all
+normal release checks. It is not a way to bypass those checks, and it means the
+README's macOS **Open Anyway** / scoped `xattr` recovery guidance remains part
+of the user journey.

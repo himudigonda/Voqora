@@ -53,6 +53,10 @@ this is the first public release of the product and its source history.
 - Refined the local installer artwork to use Voqora's dark visual language,
   literal drag-to-Applications instructions, and dedicated high-contrast
   label zones for Finder's app and Applications labels.
+- Hardened the release boundary: `make ship` now requires a Developer ID
+  signature, a stapled notarization ticket, and a passing Gatekeeper check by
+  default. A free non-notarized build is still possible only through an
+  explicit release-owner override, so it cannot be uploaded by accident.
 - No new public release is included in this section. Installer, Gatekeeper,
   Sparkle, website/metrics, and full manual-flow evidence remain release gates
   until they are verified against one immutable candidate artifact.
