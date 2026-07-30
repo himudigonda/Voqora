@@ -41,6 +41,17 @@ if ! rg -F "${APP_NAME}-${VERSION}.dmg" docs/updates/appcast.xml >/dev/null 2>&1
 fi
 
 echo "🚢 Publishing ${APP_NAME} ${TAG}"
+TAG_PUSHED=0
+RELEASE_CREATED=0
+cleanup_failed_pre_release() {
+    # A failed upload should not strand a release-looking tag. Once the GitHub
+    # release exists, preserve it for diagnosis instead of deleting history.
+    if [ "$TAG_PUSHED" = "1" ] && [ "$RELEASE_CREATED" = "0" ]; then
+        git push origin ":refs/tags/${TAG}" >/dev/null 2>&1 || true
+        git tag -d "$TAG" >/dev/null 2>&1 || true
+    fi
+}
+trap cleanup_failed_pre_release ERR
 NOTES="$(awk -v heading="## [${VERSION}]" '
     index($0, heading) == 1 { capture = 1; next }
     capture && /^## \[/ { exit }
@@ -51,12 +62,22 @@ if [ -z "$NOTES" ]; then
     exit 1
 fi
 
-git push origin HEAD:main
 git tag -a "$TAG" -m "${APP_NAME} ${TAG}"
 git push origin "$TAG"
+TAG_PUSHED=1
 
 gh release create "$TAG" "$DMG_PATH" \
     --title "${APP_NAME} ${TAG}" \
     --notes "$NOTES"
+RELEASE_CREATED=1
 
-echo "✅ ${APP_NAME} ${TAG} is live."
+ASSET_URL="https://github.com/himudigonda/Voqora/releases/download/${TAG}/${APP_NAME}-${VERSION}.dmg"
+curl --fail --location --head --retry 5 --retry-delay 2 "$ASSET_URL" >/dev/null
+
+# The appcast already names this immutable release asset. Do not publish the
+# branch that GitHub Pages serves until the asset exists, otherwise a running
+# app can discover a feed enclosure that still returns 404.
+git push origin HEAD:main
+trap - ERR
+
+echo "✅ ${APP_NAME} ${TAG} is live. Wait for the Pages workflow, then verify the live appcast and an installed older build."

@@ -6,7 +6,7 @@ struct UploadEstimateModal: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @Environment(\.dismiss) private var dismiss
 
-    let pdfURL: URL
+    let documentURL: URL
 
     /// An explicit, per-book choice. Text documents stay local unless this is
     /// turned on; image-only PDFs need it because local extraction has no text
@@ -68,7 +68,7 @@ struct UploadEstimateModal: View {
                 .fill(.ultraThinMaterial)
                 .frame(width: 140, height: 196)
                 .shadow(color: .black.opacity(0.3), radius: 14, y: 8)
-            if let pdf = PDFDocument(url: pdfURL),
+            if let pdf = PDFDocument(url: documentURL),
                let page = pdf.page(at: 0) {
                 // S7: PDFPage.thumbnail renders the page properly at the
                 // requested point size, unlike NSImage(data:) on a raw PDF
@@ -168,7 +168,7 @@ struct UploadEstimateModal: View {
                         )
                     } else {
                         // Do NOT call dismiss() here — modal dismisses automatically
-                        // when startProcessing() clears pendingPDF on success.
+                        // when startProcessing() clears pendingDocument on success.
                         // Calling dismiss() immediately would race with the async
                         // /start call: the sheet binding setter fires cancelUpload()
                         // which deletes the staged book before /start completes.
@@ -234,7 +234,7 @@ struct UploadEstimateModal: View {
     }
 
     private var prettyTitle: String {
-        let n = pdfURL.lastPathComponent
+        let n = documentURL.lastPathComponent
         for ext in [".pdf", ".docx", ".txt", ".md"] {
             if n.lowercased().hasSuffix(ext) { return String(n.dropLast(ext.count)) }
         }

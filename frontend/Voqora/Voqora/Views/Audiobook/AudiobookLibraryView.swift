@@ -52,6 +52,16 @@ struct AudiobookLibraryView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 28)]
 
+    private var supportedDocumentTypes: [UTType] {
+        var types: [UTType] = [
+            .pdf,
+            .plainText,
+            .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
+        ]
+        if let markdown = UTType(filenameExtension: "md") { types.append(markdown) }
+        return types
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
@@ -63,24 +73,13 @@ struct AudiobookLibraryView: View {
             .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
             .fileImporter(
                 isPresented: $showImporter,
-                allowedContentTypes: [
-                    .pdf,
-                    .plainText,
-                    .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
-                ]
+                allowedContentTypes: supportedDocumentTypes
             ) { result in
-                if case .success(let url) = result {
-                    guard url.startAccessingSecurityScopedResource() else { return }
-                    let tmpURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent(url.lastPathComponent)
-                    do {
-                        let data = try Data(contentsOf: url)
-                        url.stopAccessingSecurityScopedResource()
-                        try data.write(to: tmpURL)
-                        presentEstimate(for: tmpURL)
-                    } catch {
-                        url.stopAccessingSecurityScopedResource()
-                    }
+                switch result {
+                case .success(let url):
+                    stageAndPresentDocument(url)
+                case .failure(let error):
+                    bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
                 }
             }
             // ONE sheet, driven by a computed binding that prefers the
@@ -90,7 +89,7 @@ struct AudiobookLibraryView: View {
             .sheet(item: librarySheetBinding) { sheet in
                 switch sheet {
                 case .upload(let url):
-                    UploadEstimateModal(pdfURL: url)
+                    UploadEstimateModal(documentURL: url)
                         .environmentObject(vm)
                         .environmentObject(bookVM)
                 case .completion(let book):
@@ -136,13 +135,13 @@ struct AudiobookLibraryView: View {
         Binding(
             get: {
                 if let book = bookVM.completionSummary { return .completion(book) }
-                if let url = bookVM.pendingPDF { return .upload(url) }
+                if let url = bookVM.pendingDocument { return .upload(url) }
                 return nil
             },
             set: { newValue in
                 if newValue != nil { return }
                 if bookVM.completionSummary != nil { bookVM.completionSummary = nil }
-                else if bookVM.pendingPDF != nil { bookVM.cancelUpload() }
+                else if bookVM.pendingDocument != nil { bookVM.cancelUpload() }
             }
         )
     }
@@ -241,23 +240,35 @@ struct AudiobookLibraryView: View {
             } else if let u = item as? URL {
                 url = u
             }
-            let allowed: Set<String> = ["pdf", "txt", "docx", "md"]
-            guard let url, allowed.contains(url.pathExtension.lowercased()) else { return }
-
-            // Acquire security scope, copy to temp, release scope
-            let scoped = url.startAccessingSecurityScopedResource()
-            let tmpURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent(url.lastPathComponent)
-            do {
-                let data = try Data(contentsOf: url)
-                if scoped { url.stopAccessingSecurityScopedResource() }
-                try data.write(to: tmpURL)
-                Task { @MainActor in presentEstimate(for: tmpURL) }
-            } catch {
-                if scoped { url.stopAccessingSecurityScopedResource() }
+            guard let url else {
+                Task { @MainActor in
+                    bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
+                }
+                return
             }
+            let allowed: Set<String> = ["pdf", "txt", "docx", "md"]
+            guard allowed.contains(url.pathExtension.lowercased()) else {
+                Task { @MainActor in
+                    bookVM.showToast("Voqora audiobooks support PDF, TXT, DOCX, and Markdown files.", kind: .info)
+                }
+                return
+            }
+            Task { @MainActor in stageAndPresentDocument(url) }
         }
         return true
+    }
+
+    /// A Finder-selected file can be security-scoped. Copy it before the
+    /// selection callback ends, preserving the filename inside a unique
+    /// temporary folder so two documents with the same name never overwrite each
+    /// other while they wait in the upload queue.
+    private func stageAndPresentDocument(_ sourceURL: URL) {
+        do {
+            let stagedURL = try AudiobookImportStaging.stageDocument(from: sourceURL)
+            presentEstimate(for: stagedURL)
+        } catch {
+            bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
+        }
     }
 
     private func presentEstimate(for pdf: URL) {
@@ -285,7 +296,7 @@ struct AudiobookLibraryView: View {
                     .font(vm.appFont(size: 14, weight: .black))
                     .kerning(3)
                     .foregroundStyle(.cyan)
-                Text("PDF, TXT, DOCX, or MD — up to 400 pages")
+                Text("PDF, TXT, DOCX, or Markdown — up to 400 pages")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -327,7 +338,7 @@ struct AudiobookLibraryView: View {
                     .font(vm.appFont(size: 12, weight: .black))
                     .kerning(2)
                     .foregroundStyle(.secondary)
-                Text("Drop a PDF, TXT, or DOCX anywhere on this window to begin.")
+                Text("Drop a PDF, TXT, DOCX, or Markdown file anywhere on this window to begin.")
                     .font(vm.appFont(size: 14))
                     .foregroundStyle(.secondary)
             }

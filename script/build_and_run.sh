@@ -14,11 +14,13 @@ BUNDLE_ID="com.himudigonda.Voqora"
 cd "$ROOT_DIR"
 
 stop_running_app() {
-  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
-  # The local service is a child of Voqora in normal operation. Stop the
-  # explicitly named child too so a rebuilt bundle cannot accidentally reuse
-  # a previous process already listening on the local port.
-  pkill -x "VoqoraServer" >/dev/null 2>&1 || true
+  # Never kill every installed Voqora copy by display name. A local proof must
+  # only replace the precise candidate it built, otherwise an Applications copy
+  # and a test candidate can fight each other for the shared app-support path.
+  pkill -f "$APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 || true
+  # The bundled service is extracted under this bundle identifier. Target that
+  # exact path rather than every process called VoqoraServer.
+  pkill -f "$HOME/Library/Application Support/$BUNDLE_ID/VoqoraServer/VoqoraServer" >/dev/null 2>&1 || true
 }
 
 build_latest() {

@@ -82,7 +82,7 @@ operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 | Add a normal PDF | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
 | Clean a difficult PDF | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
 | Use product analytics | Sends an optional anonymous event with a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
-| Check for an update | Reads Voqora's signed public update feed. | Upload your reading activity or personal files. |
+| Check for an update | Checks Voqora's public update feed for a newer release. | Upload your reading activity or personal files. |
 
 An optional email in Preferences helps attribute a returning installation, but
 Voqora works fully without it. Installations, download clicks, product events,
@@ -106,10 +106,12 @@ explains the decisions behind them.
 
 ## Measured on the launch machine
 
-On an Apple M2 Pro with 16 GB memory, a warmed short selection reached first
-audio in **0.39 seconds**. Warmed medium text rendered at **3.9x real time**.
-Those are local measurements from the launch machine, not a universal
-keyboard-to-speaker latency promise.
+On an Apple M2 Pro with 16 GB memory, a fresh local benchmark run on 2026-07-30
+measured **458 ms** to first audio for a mixed passage and **2.7x real-time**
+generation. Medium-passage scenarios measured **2.8–2.9x real time**. These
+are engine measurements after normal warm-up, not a universal
+keyboard-to-speaker latency promise. The exact scenario matrix is regenerated
+with `make benchmark` before a release or public performance claim.
 
 ## Install notes
 

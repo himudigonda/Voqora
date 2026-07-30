@@ -333,7 +333,7 @@ extension MetricsService {
             "audio_seconds":  { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
             "pages":          { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "file_kind":      { v in
-                guard let s = v as? String, ["pdf", "txt", "epub"].contains(s) else { return nil }
+                guard let s = v as? String, ["pdf", "txt", "docx", "md"].contains(s) else { return nil }
                 return s
             },
             "book_id_hash":   { v in

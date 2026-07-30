@@ -76,10 +76,12 @@ final class BackendService: NSObject, @unchecked Sendable {
             return
         }
 
-        // Kill any stale instance left over from a previous session / crash
+        // Kill only a stale copy of this exact extracted backend. A generic
+        // `pkill VoqoraServer` can terminate another app build and made local
+        // QA look like the product was spawning or fighting multiple apps.
         let cleanup = Process()
         cleanup.launchPath = "/usr/bin/pkill"
-        cleanup.arguments = ["-f", "VoqoraServer"]
+        cleanup.arguments = ["-f", executableURL.path]
         try? cleanup.run()
         cleanup.waitUntilExit()
 
@@ -166,20 +168,10 @@ final class BackendService: NSObject, @unchecked Sendable {
             processPipe = nil
         }
 
-        // pkill -9 + waitUntilExit was blocking the caller's thread (often the
-        // UI thread on app quit, hanging the window for the duration of pkill).
-        // Hop to a background queue. See HARD-012.
-        DispatchQueue.global(qos: .userInitiated).async {
-            let task = Process()
-            task.launchPath = "/usr/bin/pkill"
-            task.arguments = ["-9", "-f", "VoqoraServer"]
-            do {
-                try task.run()
-                task.waitUntilExit()
-            } catch {
-                // pkill failing typically means the process is already gone — benign.
-            }
-        }
+        // `process?.terminate()` above is intentionally scoped to the child
+        // Voqora started. Never kill every process named VoqoraServer: an
+        // installed app and a local candidate can otherwise tear each other
+        // down during ordinary testing.
     }
 
     func exportLogs() throws -> [URL] {

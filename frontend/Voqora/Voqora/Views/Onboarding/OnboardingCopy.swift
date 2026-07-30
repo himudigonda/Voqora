@@ -7,10 +7,10 @@ enum OnboardingCopy {
 
     static let welcomeTitle = "Welcome to Voqora"
     static let welcomeBody = """
-    Voqora reads any selected text aloud — fast, on-device, with neural \
-    voices. No cloud, no upload, no waiting on a server. Press a global \
-    hotkey and the next sentence starts before the first one finishes \
-    rendering.
+    Voqora reads selected text aloud — fast, on-device, with neural voices. \
+    Normal speech stays on your Mac; your text is not sent to a cloud speech \
+    service. Press a global hotkey and listening begins while the rest of the \
+    passage is still rendering.
     """
 
     // MARK: - Step 2 — The hotkey
@@ -71,10 +71,10 @@ enum OnboardingCopy {
 
     static let privacyTitle = "You're all set"
     static let privacyBody = """
-    Voqora runs fully on your Mac. Your text never leaves this machine. \
-    We collect counts only: launches, characters generated, audio seconds — \
-    nothing about the content itself. You can disable analytics anytime in \
-    Preferences.
+    Normal speech runs on your Mac. If you later choose Gemini cleanup for a \
+    PDF, Voqora tells you before document material leaves the Mac. Anonymous \
+    analytics contain counts only — never your text or files — and can be \
+    disabled in Preferences.
     """
 
     // MARK: - Buttons

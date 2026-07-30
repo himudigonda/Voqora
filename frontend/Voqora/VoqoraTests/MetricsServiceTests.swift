@@ -35,7 +35,7 @@ final class MetricsServiceTests: XCTestCase {
             "chars": -5,                 // negative — drop
             "speed": 3.0,                // out of [0.5, 2.0] — drop
             "audio_seconds": "twelve",   // wrong type — drop
-            "file_kind": "exe",          // not in pdf/txt/epub — drop
+            "file_kind": "exe",          // not an accepted document kind — drop
             "book_id_hash": "tooshort",  // not 64 hex — drop
         ]
         let cleaned = MetricsService.Props.whitelist(raw)
@@ -55,6 +55,13 @@ final class MetricsServiceTests: XCTestCase {
         let cleaned = MetricsService.Props.whitelist(raw)
         XCTAssertEqual(cleaned.count, raw.count, "All valid values should survive.")
         XCTAssertEqual(cleaned["voice"] as? String, "am_adam")
+    }
+
+    func test_whitelist_preservesEverySupportedAudiobookDocumentKind() {
+        for fileKind in ["pdf", "txt", "docx", "md"] {
+            let cleaned = MetricsService.Props.whitelist(["file_kind": fileKind])
+            XCTAssertEqual(cleaned["file_kind"] as? String, fileKind)
+        }
     }
 
     // MARK: - Event names

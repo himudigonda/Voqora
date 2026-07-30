@@ -4,10 +4,10 @@ import OSLog
 
 /// Lightweight identity owner for Voqora analytics.
 ///
-/// Replaces the v1 auth stack (Supabase JWT, Google OAuth, email/password).
-/// There is no real "sign-in" — the only persistent identity is:
+/// There is no sign-in. The only persistent identity is:
 ///   1. An anonymous UUID stored in UserDefaults under `anonymousUserID`
-///      (created on first launch, never rotates, never leaves the device).
+///      (created on first launch and stable for that installation; sent only
+///      with optional product telemetry or an explicitly submitted email).
 ///   2. An optional email address the user enters during onboarding (or in
 ///      Preferences). The email is POSTed to `/api/voqora/identify` so
 ///      analytics can group return-visits by email instead of by UUID.

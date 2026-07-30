@@ -37,7 +37,9 @@ normal edit-save-verify loop while still testing it before merge.
 
 ## Current validation baseline
 
-The v1.0.0 backend suite has 178 passing tests. The full Swift suite passed
-before the public release build. Subsequent release edits in this repository are
-documentation, packaging, and automation changes; they do not justify spinning
-up the Mac test host again on a busy developer machine.
+The current local baseline is 180 backend tests and 64 Swift tests. Re-run only
+the smallest relevant command while iterating; run the full release candidate
+matrix once at the release gate. Documentation, packaging, or automation edits
+that change user-facing distribution behavior still need their specific
+artifact or script verification, even when they do not need the macOS test
+host.

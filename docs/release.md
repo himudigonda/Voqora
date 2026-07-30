@@ -79,16 +79,20 @@ make ship VERSION=X.Y.Z
 ```
 
 The ship script refuses a dirty tree, an unsigned or missing update feed, an
-existing tag, or a version mismatch. It pushes `main`, creates `vX.Y.Z`,
-attaches the DMG, and publishes GitHub release notes from the matching changelog
-section.
+existing tag, or a version mismatch. It creates `vX.Y.Z` and attaches the DMG
+first. Only after the immutable GitHub asset exists does it push `main`, which
+lets GitHub Pages expose the matching appcast. This prevents a running app from
+seeing an enclosure before the file it names is available. GitHub release notes
+come from the matching changelog section.
 
 ## 7. Verify the public result
 
-- Open the GitHub release page in a logged-out browser session.
+- Open the GitHub release page in a logged-out browser session and confirm the
+  exact DMG asset can be downloaded before checking the appcast.
 - Download the DMG and confirm its SHA-256 matches the build receipt.
-- Open the app and choose **Preferences → Check for Updates**. It should read
-  the signed appcast rather than download and run a DMG installer itself.
+- From a separately installed older build, open **Preferences → Check for
+  Updates**. It should accept the signed appcast and offer the newer release
+  rather than download and run a DMG installer itself.
 - Check that the repository default branch and release tag contain only Voqora
   branding.
 - Check that the release notes explain what users get, not internal project

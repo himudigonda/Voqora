@@ -5,6 +5,17 @@ import Foundation
 final class AudiobookService: NSObject, @unchecked Sendable {
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
+    /// Keep multipart metadata aligned with the file kinds the native picker,
+    /// analytics boundary, and backend deliberately support.
+    static func mimeType(forFileExtension fileExtension: String) -> String {
+        switch fileExtension.lowercased() {
+        case "pdf": return "application/pdf"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "txt", "md": return "text/plain; charset=utf-8"
+        default: return "application/octet-stream"
+        }
+    }
+
     /// Local cache root for downloaded audio files.
     private var cacheDir: URL {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
@@ -85,7 +96,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
     // MARK: - Upload
 
-    func upload(pdf: URL, voice: String?, speed: Double?, engine: String?) async throws -> AudiobookEstimateResponse {
+    func upload(document: URL, voice: String?, speed: Double?, engine: String?) async throws -> AudiobookEstimateResponse {
         let url = baseURL.appendingPathComponent("audiobook")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
@@ -94,8 +105,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let boundary = "Boundary-\(UUID().uuidString)"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let pdfData = try Data(contentsOf: pdf)
-        let filename = pdf.lastPathComponent
+        let documentData = try Data(contentsOf: document)
+        let filename = document.lastPathComponent
+        let contentType = Self.mimeType(forFileExtension: document.pathExtension)
 
         var body = Data()
         func appendField(_ name: String, _ value: String) {
@@ -110,8 +122,8 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
-        body.append("Content-Type: application/pdf\r\n\r\n".data(using: .utf8)!)
-        body.append(pdfData)
+        body.append("Content-Type: \(contentType)\r\n\r\n".data(using: .utf8)!)
+        body.append(documentData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)
         req.httpBody = body
 

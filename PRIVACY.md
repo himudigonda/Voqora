@@ -9,7 +9,7 @@ Some features can make external requests:
 | --- | --- |
 | Optional product telemetry | When the telemetry toggle is enabled in Preferences. It sends product-use metadata, not the text selected for speech. |
 | Optional PDF cleaning | Only when you provide a Gemini API key and choose the PDF-cleaning flow. The selected document material is sent to Gemini for that operation. |
-| Release checks | When automatic update checks are enabled or you choose **Check for Updates**. The app reads Voqora's signed public update feed; it does not upload your text, files, or account data. |
+| Release checks | When automatic update checks are enabled or you choose **Check for Updates**. The app checks Voqora's public update feed for a newer release; it does not upload your text, files, or account data. |
 
 Telemetry reports anonymous installations, not a deduplicated count of people.
 If you voluntarily enter an email in Voqora, it is stored separately from

@@ -26,12 +26,12 @@ final class AudiobookViewModel: ObservableObject {
     @Published var hasLoadedOnce: Bool = false
 
     // Upload flow
-    @Published var pendingPDF: URL? = nil
+    @Published var pendingDocument: URL? = nil
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
     @Published var completionSummary: Audiobook? = nil
 
-    /// Queue of PDFs dropped while another upload was already pending.
+    /// Queue of documents dropped while another upload was already pending.
     /// They are processed one after the other.
     private var uploadQueue: [(URL, String, Double, String)] = []
 
@@ -157,39 +157,45 @@ final class AudiobookViewModel: ObservableObject {
 
     /// Drop hook used by the library + global drop. Snapshots the user's current
     /// engine/voice/speed so the book is generated with what they expect.
-    func presentEstimate(for pdf: URL, voice: String, speed: Double, engine: String) {
-        if pendingPDF != nil || uploadInProgress {
+    func presentEstimate(for document: URL, voice: String, speed: Double, engine: String) {
+        if pendingDocument != nil || uploadInProgress {
             // A modal is already up — queue this drop for later.
-            uploadQueue.append((pdf, voice, speed, engine))
-            showToast("Queued '\(pdf.lastPathComponent)'", kind: .info)
+            uploadQueue.append((document, voice, speed, engine))
+            showToast("Queued '\(document.lastPathComponent)'", kind: .info)
             return
         }
-        pendingPDF = pdf
+        pendingDocument = document
         pendingEstimate = nil
+        loadingError = nil
         Task {
             uploadInProgress = true
             defer { uploadInProgress = false }
             do {
-                let estimate = try await service.upload(pdf: pdf, voice: voice, speed: speed, engine: engine)
+                let estimate = try await service.upload(document: document, voice: voice, speed: speed, engine: engine)
                 pendingEstimate = estimate
                 MetricsService.shared.trackAudiobookUpload(
                     pages: estimate.pageCount,
-                    fileKind: "pdf" // backend only accepts PDF today; whitelist allows txt/epub for the future
+                    fileKind: document.pathExtension.lowercased()
                 )
             } catch {
-                showToast(error.localizedDescription, kind: .error)
-                pendingPDF = nil
+                // Keep the estimate sheet open with a readable recovery state
+                // instead of silently closing it after a failed upload.
+                loadingError = error.localizedDescription
+                showToast("Could not read this document. Check the file and try again.", kind: .error)
             }
         }
     }
 
     func cancelUpload() {
+        let stagedDocument = pendingDocument
         if let est = pendingEstimate {
             // Throw away the staged book so it doesn't sit in the library forever.
             Task { try? await service.delete(est.bookID) }
         }
-        pendingPDF = nil
+        pendingDocument = nil
         pendingEstimate = nil
+        loadingError = nil
+        AudiobookImportStaging.discard(stagedDocument)
         // Drain the queue if anything is waiting.
         flushUploadQueue()
     }
@@ -209,6 +215,7 @@ final class AudiobookViewModel: ObservableObject {
             return
         }
         let bookID = est.bookID
+        let stagedDocument = pendingDocument
         startingProcessing = true
         Task {
             defer { startingProcessing = false }
@@ -218,10 +225,11 @@ final class AudiobookViewModel: ObservableObject {
                     apiKey: key,
                     useGeminiCleanup: useGeminiCleanup
                 )
-                // Clear pendingPDF/pendingEstimate to collapse the sheet binding → modal
+                // Clear pendingDocument/pendingEstimate to collapse the sheet binding → modal
                 // dismisses automatically without calling cancelUpload().
-                pendingPDF = nil
+                pendingDocument = nil
                 pendingEstimate = nil
+                AudiobookImportStaging.discard(stagedDocument)
                 await refresh()
                 subscribe(to: bookID)
                 flushUploadQueue()
@@ -229,8 +237,9 @@ final class AudiobookViewModel: ObservableObject {
                 showToast(error.localizedDescription, kind: .error)
                 // /start failed — the book was staged but never started; delete orphan.
                 Task { try? await service.delete(bookID) }
-                pendingPDF = nil
+                pendingDocument = nil
                 pendingEstimate = nil
+                AudiobookImportStaging.discard(stagedDocument)
             }
         }
     }

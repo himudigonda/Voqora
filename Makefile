@@ -50,12 +50,10 @@ app:
 	@echo "✅ Build Successful: $(APP_PATH)"
 
 # --- 🚀 LAUNCH ---
-run: backend app
-	@echo "------------------------------------------------"
-	@echo "🎉 [3/3] Launching Voqora..."
-	@echo "------------------------------------------------"
-	pkill -x "Voqora" || true
-	open $(APP_PATH)
+# Delegate to the exact-bundle runner. It must not kill an installed Voqora
+# copy just because it has the same display name as this local candidate.
+run:
+	@./script/build_and_run.sh run
 
 # --- 🧹 UTILS ---
 
@@ -80,8 +78,13 @@ ifndef CI
 	@printf "⚠️  This wipes ALL local Voqora data (audiobooks, history,\n   accessibility grants). Continue? [y/N] " && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
 endif
 	@echo "🧨 NUKING SYSTEM DATA..."
-	pkill -9 "Voqora" || true
-	pkill -9 "VoqoraServer" || true
+	@# Only stop the exact local candidate/backend this repository owns. An
+	@# installed Voqora copy must be closed by its user before a destructive reset.
+	@if pgrep -f "/Applications/Voqora.app/Contents/MacOS/Voqora" >/dev/null; then \
+		echo "Quit /Applications/Voqora.app before resetting its shared data."; exit 2; \
+	fi
+	pkill -f "$(CURDIR)/$(APP_PATH)/Contents/MacOS/Voqora" || true
+	pkill -f "$$HOME/Library/Application Support/$(BUNDLE_ID)/VoqoraServer/VoqoraServer" || true
 	rm -rf ~/Library/Application\ Support/VoqoraServer
 	rm -rf ~/Library/Application\ Support/$(BUNDLE_ID)
 	@echo "🔐 Resetting macOS Accessibility Database..."

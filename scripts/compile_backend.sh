@@ -45,7 +45,10 @@ if [ "${FORCE_BACKEND_REBUILD:-0}" != "1" ] \
 fi
 
 # 1. Cleanup
-pkill -9 VoqoraServer || true
+# Packaging a zip never needs to terminate a running local server. That server
+# may belong to an installed app or another candidate and has already loaded
+# its own extracted copy. Killing every process by name made an ordinary build
+# disrupt unrelated Voqora sessions.
 rm -rf backend/dist backend/build
 rm -f "$ARCHIVE_PATH" "$ARCHIVE_BUILD_ID_PATH" "$INPUT_BUILD_ID_PATH"
 # Remove any stale PyInstaller spec — it's gitignored, but a previous build's

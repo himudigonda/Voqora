@@ -31,6 +31,30 @@ class LaunchManager: ObservableObject {
         return "archive:\(normalizedID)"
     }
 
+    /// An interrupted first launch can leave an extraction staging directory
+    /// behind. Remove only directories with our exact prefix that have been
+    /// untouched for an hour; a fresh concurrent extraction is never touched.
+    static func removeStaleBackendStagingDirectories(
+        in appSupport: URL,
+        fileManager: FileManager = .default,
+        now: Date = Date(),
+        minimumAge: TimeInterval = 60 * 60
+    ) {
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: appSupport,
+            includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+            options: []
+        ) else { return }
+
+        for entry in entries where entry.lastPathComponent.hasPrefix(".backend-staging-") {
+            let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey])
+            guard values?.isDirectory == true,
+                  let modified = values?.contentModificationDate,
+                  now.timeIntervalSince(modified) >= minimumAge else { continue }
+            try? fileManager.removeItem(at: entry)
+        }
+    }
+
     private func updateLoginItem() throws {
         if isLaunchAtLoginEnabled {
             if SMAppService.mainApp.status != .enabled {
@@ -88,6 +112,7 @@ class LaunchManager: ObservableObject {
         let stagingURL = appSupport.appendingPathComponent(".backend-staging-\(UUID().uuidString)")
         do {
             try fm.createDirectory(at: appSupport, withIntermediateDirectories: true)
+            Self.removeStaleBackendStagingDirectories(in: appSupport, fileManager: fm)
             try fm.createDirectory(at: stagingURL, withIntermediateDirectories: true)
             defer { try? fm.removeItem(at: stagingURL) }
 

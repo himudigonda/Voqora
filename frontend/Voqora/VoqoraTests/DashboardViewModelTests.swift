@@ -115,6 +115,41 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
+    func test_backendStagingCleanup_removesOnlyOldMatchingDirectories() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraLaunchManagerTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let oldStaging = root.appendingPathComponent(".backend-staging-old", isDirectory: true)
+        let newStaging = root.appendingPathComponent(".backend-staging-new", isDirectory: true)
+        let unrelated = root.appendingPathComponent("audiobooks", isDirectory: true)
+        try FileManager.default.createDirectory(at: oldStaging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: newStaging, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: true)
+
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-3_600)],
+            ofItemAtPath: oldStaging.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: now.addingTimeInterval(-30)],
+            ofItemAtPath: newStaging.path
+        )
+
+        LaunchManager.removeStaleBackendStagingDirectories(
+            in: root,
+            fileManager: .default,
+            now: now,
+            minimumAge: 60
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldStaging.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newStaging.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+    }
+
     // MARK: - togglePlayback error path
 
     func test_togglePlayback_with_zero_duration_sets_error() async {

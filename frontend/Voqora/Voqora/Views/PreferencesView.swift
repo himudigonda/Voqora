@@ -435,7 +435,7 @@ struct PreferencesView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Automatically check for updates")
                                     .font(vm.appFont(size: 14, weight: .bold))
-                                Text("Checks the signed Voqora update feed once a day. Voqora always shows you the update before replacing the app.")
+                                Text("Checks Voqora's public update feed once a day. Voqora always shows you the update before replacing the app.")
                                     .font(vm.appFont(size: 11))
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -456,9 +456,14 @@ struct PreferencesView: View {
                             .disabled(!updater.canCheckForUpdates)
 
                             if !updater.canCheckForUpdates {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .help("An update check is already in progress.")
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Preparing update checks…")
+                                        .font(vm.appFont(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .help("Voqora enables this after the update service has finished starting or after a current check completes.")
                             }
 
                             Spacer()
