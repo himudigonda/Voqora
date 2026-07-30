@@ -1,4 +1,5 @@
 import Combine
+import Foundation
 import SwiftUI
 
 @MainActor
@@ -7,7 +8,10 @@ class DashboardViewModel: ObservableObject {
     /// development build could leave a non-English voice in shared defaults;
     /// every fresh v1 install and every upgrade from that build must begin with
     /// the same predictable US-English voice.
-    private static let voiceDefaultsMigrationVersion = 3
+    // Version 6 supersedes the short-lived builds whose `@AppStorage` wrapper
+    // could write a cached legacy voice back after this migration. It resets
+    // only once, then preserves any voice the person chooses.
+    private static let voiceDefaultsMigrationVersion = 6
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
@@ -26,6 +30,7 @@ class DashboardViewModel: ObservableObject {
     private let system: SystemService
     let audio: AudioService
     private let history: HistoryManager
+    private let defaults: UserDefaults
 
     // State
     @Published var status: AppStatus = .ready
@@ -40,7 +45,14 @@ class DashboardViewModel: ObservableObject {
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
 
-    @AppStorage("selectedVoice") var selectedVoice = "af_bella"
+    /// Explicit persistence keeps the visible player voice deterministic. The
+    /// former `@AppStorage` wrapper could restore a stale cached value after a
+    /// migration, so only an actual user selection writes this preference.
+    @Published var selectedVoice: String {
+        didSet {
+            defaults.set(selectedVoice, forKey: "selectedVoice")
+        }
+    }
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
     @AppStorage("enableDucking") var enableDucking = true
@@ -112,9 +124,12 @@ class DashboardViewModel: ObservableObject {
         system: SystemService,
         audio: AudioService,
         history: HistoryManager,
-        startsBackgroundWork: Bool = true
+        startsBackgroundWork: Bool = true,
+        defaults: UserDefaults = .standard
     ) {
-        _ = Self.applyVoiceDefaultsMigrationIfNeeded()
+        self.defaults = defaults
+        _ = Self.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults)
+        self.selectedVoice = defaults.string(forKey: "selectedVoice") ?? "af_bella"
         self.backend = backend
         self.system = system
         self.audio = audio

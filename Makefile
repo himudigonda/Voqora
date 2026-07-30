@@ -128,11 +128,18 @@ test-swift:
 		lock="$(BUILD_DIR)/.swift-test.lock"; \
 		mkdir -p "$(BUILD_DIR)"; \
 		if ! mkdir "$$lock" 2>/dev/null; then \
-			echo "⚠️  A Voqora Swift test run is already active. Wait for it to finish."; exit 2; \
+			if pgrep -x xcodebuild >/dev/null; then \
+				echo "⚠️  A macOS Xcode build is already active. Wait for it to finish."; exit 2; \
+			fi; \
+			if ! rmdir "$$lock" 2>/dev/null; then \
+				echo "⚠️  The Voqora Swift-test lock is not recoverable. Inspect $$lock before retrying."; exit 2; \
+			fi; \
+			mkdir "$$lock"; \
+			echo "ℹ️  Recovered a stale Voqora Swift-test lock."; \
 		fi; \
 		trap 'rmdir "$$lock"' EXIT; \
-		if pgrep -f 'xcodebuild.*Voqora.xcodeproj.*test' >/dev/null; then \
-			echo "⚠️  Another Voqora xcodebuild test process is already active. Refusing to overlap it."; exit 2; \
+		if pgrep -x xcodebuild >/dev/null; then \
+			echo "⚠️  An Xcode build is already active. Refusing to overlap the macOS test host."; exit 2; \
 		fi; \
 		echo "🧪 Running one serial Swift test host..."; \
 		xcodebuild test -project $(PROJECT_PATH) -scheme $(SCHEME) \

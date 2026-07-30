@@ -20,6 +20,21 @@ import XCTest
 /// user trips most often.
 @MainActor
 final class DashboardViewModelTests: XCTestCase {
+    private var testDefaults: UserDefaults!
+    private let testDefaultsSuite = "DashboardViewModelTests.runtime"
+
+    override func setUp() {
+        super.setUp()
+        testDefaults = UserDefaults(suiteName: testDefaultsSuite)!
+        testDefaults.removePersistentDomain(forName: testDefaultsSuite)
+    }
+
+    override func tearDown() {
+        testDefaults.removePersistentDomain(forName: testDefaultsSuite)
+        testDefaults = nil
+        super.tearDown()
+    }
+
     func test_voiceDefaultsMigration_resetsLegacyVoiceOnceThenPreservesChoice() {
         let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
@@ -27,7 +42,9 @@ final class DashboardViewModelTests: XCTestCase {
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
         defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
-        defaults.set(2, forKey: "voiceDefaultsMigrationVersion")
+        // v5 could already be recorded by an early local build without
+        // actually applying the Bella default before the voice model initialized.
+        defaults.set(5, forKey: "voiceDefaultsMigrationVersion")
 
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
@@ -45,7 +62,8 @@ final class DashboardViewModelTests: XCTestCase {
             system: SystemService(),
             audio: AudioService(),
             history: HistoryManager(),
-            startsBackgroundWork: false
+            startsBackgroundWork: false,
+            defaults: testDefaults
         )
     }
 

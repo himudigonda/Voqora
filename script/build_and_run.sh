@@ -30,6 +30,41 @@ launch_app() {
   /usr/bin/open "$APP_PATH"
 }
 
+# `pgrep -x Voqora` is not enough when an older copy happens to live in
+# /Applications. Prove that the process came from the bundle we just built.
+is_exact_app_running() {
+  /usr/bin/pgrep -f "$APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1
+}
+
+# A process is not a usable app until its bundled local service has loaded.
+# This checks the loopback-only health endpoint without emitting user content
+# or talking to a network service.
+is_bundled_backend_ready() {
+  local health
+  health="$(/usr/bin/curl --connect-timeout 1 --max-time 1 --silent --show-error --fail \
+    http://127.0.0.1:10101/health 2>/dev/null)" || return 1
+
+  printf '%s' "$health" | /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' \
+    && printf '%s' "$health" | /usr/bin/grep -Eq '"loaded"[[:space:]]*:[[:space:]]*true'
+}
+
+verify_fresh_launch() {
+  # Cold model loading can take longer than a process spawn, especially after
+  # a fresh backend extraction. Sixty seconds is a clear, bounded diagnosis.
+  for _ in {1..240}; do
+    if is_exact_app_running && is_bundled_backend_ready; then
+      echo "Verified: the freshly built $APP_NAME bundle and its local speech service are ready."
+      return 0
+    fi
+    sleep 0.25
+  done
+
+  echo "The freshly built $APP_NAME bundle did not become ready within 60 seconds." >&2
+  echo "Inspect: $HOME/Library/Application Support/$BUNDLE_ID/frontend.log" >&2
+  echo "Inspect: $HOME/Library/Application Support/$BUNDLE_ID/backend.log" >&2
+  return 1
+}
+
 case "$MODE" in
   run)
     stop_running_app
@@ -57,15 +92,7 @@ case "$MODE" in
     stop_running_app
     build_latest
     launch_app
-    for _ in {1..20}; do
-      if pgrep -x "$APP_NAME" >/dev/null; then
-        echo "Verified: freshly built $APP_NAME is running."
-        exit 0
-      fi
-      sleep 0.25
-    done
-    echo "Voqora did not remain running after launch." >&2
-    exit 1
+    verify_fresh_launch
     ;;
   --clean-build|clean-build)
     stop_running_app
