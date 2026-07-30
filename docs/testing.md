@@ -37,9 +37,19 @@ normal edit-save-verify loop while still testing it before merge.
 
 ## Current validation baseline
 
-The v1.1 candidate's fast backend suite has 384 passing tests and three
-intentional skips. This covers multilingual catalog validation, language
-detection contracts, document extraction, consent/duplicate-start guards,
-retry/reconnect behaviour, transcript timing, and incomplete-audio handling.
-Run the guarded Swift target once for a release candidate after the backend
-proof is green; do not use repeated parallel runs as a substitute for diagnosis.
+The private v1.1 candidate's current fast backend suite has 388 passing tests.
+Its public-v1 baseline includes 183 backend tests and 71 Swift tests; the
+merged private candidate currently has 175 Swift tests. The inherited Swift
+coverage includes the cancellation race that
+prevents a delayed audiobook file from restarting after Stop, deletion, or a
+book switch. The v1.1 backend additions cover multilingual catalog validation,
+language-detection contracts, document extraction, consent/duplicate-start
+guards, retry/reconnect behaviour, transcript timing, and incomplete-audio
+handling.
+
+Re-run only the smallest relevant command while iterating, then run the guarded
+Swift target once and the full release-candidate matrix at the release gate.
+Documentation, packaging, or automation edits that change user-facing
+distribution behavior still need their specific artifact or script verification,
+even when they do not need the macOS test host. Do not use repeated parallel
+runs as a substitute for diagnosis.

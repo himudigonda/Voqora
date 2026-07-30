@@ -68,14 +68,15 @@ enum OnboardingCopy {
 
     // MARK: - Step 5 — Identity (optional email)
 
-    static let identityTitle = "Say hello (optional)"
+    static let identityTitle = "Optional email"
     static let identityBody = """
-    Voqora is free and made by one developer. If you'd like, leave your \
-    email — it's just a friendly way to show a real person is using the app, \
-    and that's what keeps the project alive. No newsletters, no account, no \
-    password, and your text and files never leave your Mac.
+    Voqora works fully without an account. If you choose to add an email, \
+    we use it only to recognise voluntary returning installs in aggregate \
+    adoption metrics. There is no password and no sign-in. We never read \
+    your text or files.
 
-    Totally optional — skip it and everything works exactly the same.
+    Totally optional. You can stay anonymous or remove your email later in \
+    Preferences.
     """
     static let identityPlaceholder = "you@example.com"
     static let identitySaveButton = "Save email"

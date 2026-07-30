@@ -15,6 +15,24 @@ passed.
   automatic language switching off. The user can opt into automatic
   matching-language speech during onboarding or later in Preferences.
 
+### Reliability and release gates
+
+- Reworked Stop into one cancellation-aware product action. The global
+  shortcut, menu-bar item, and in-window controls now cancel an active speech
+  request before stopping audio, so late streamed data cannot restart playback
+  after someone pressed Stop.
+- Preserved audiobook behaviour when the shared player is controlled outside
+  the Audiobooks view. Pause/resume and Stop now retain the book's normal
+  resume-position and listening-event bookkeeping instead of treating it as a
+  disposable selected-text clip.
+- A delayed audiobook-file request can no longer revive playback after Stop,
+  deletion, or a switch to another book. Voqora invalidates the older request
+  before teardown and does not surface its late error as a fresh user action.
+- Unified the document contract across the Library importer, global drag and
+  drop, MIME handling, and metrics. Voqora accepts PDF, TXT, DOCX, and
+  Markdown, stages documents safely before processing, and gives a readable
+  message for an unsupported or unreadable drop instead of ignoring it.
+
 ### Multilingual listening
 
 - Added 28 curated Kokoro voices across eight supported locales: English (US),
@@ -41,6 +59,22 @@ passed.
   visible above backend startup, playback does not claim to be speaking before
   a real audio buffer arrives, and Stop cancels an in-flight stream before it
   can resume audio.
+
+### Distribution and update experience
+
+- Refined the local installer artwork to use Voqora's dark visual language,
+  literal drag-to-Applications instructions, and dedicated high-contrast
+  label zones for Finder's app and Applications labels.
+- Hardened the release boundary: `make ship` now requires a Developer ID
+  signature, a stapled notarization ticket, and a passing Gatekeeper check by
+  default. A free non-notarized build is still possible only through an
+  explicit release-owner override, so it cannot be uploaded by accident.
+- Made update feedback legible in Preferences. Manual checks now show whether
+  Voqora is preparing, checking, up to date, has an update ready, or could not
+  reach the feed, without replacing Sparkle's native update dialog.
+- No new public release is included in this section. Installer, Gatekeeper,
+  Sparkle, website/metrics, and full manual-flow evidence remain release gates
+  until they are verified against one immutable candidate artifact.
 
 ### Audiobooks
 

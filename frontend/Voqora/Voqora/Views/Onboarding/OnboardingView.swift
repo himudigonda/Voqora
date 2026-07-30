@@ -364,7 +364,8 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
-                .disabled(emailDraft.trimmingCharacters(in: .whitespaces).isEmpty || emailSubmitting)
+                .disabled(!canSaveEmail || emailSubmitting)
+                .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
             }
 
             if let err = emailError {
@@ -375,9 +376,15 @@ struct OnboardingView: View {
                     Text(OnboardingCopy.identitySavedLabel).foregroundStyle(.green)
                 }.font(.system(size: 12))
             } else {
-                Text(" ").font(.system(size: 12))
+                Text(emailDraft.isEmpty || canSaveEmail ? " " : "Enter a valid email to enable Save")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var canSaveEmail: Bool {
+        IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private var stepDone: some View {

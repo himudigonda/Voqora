@@ -517,7 +517,7 @@ class DashboardViewModel: ObservableObject {
         currentSpeakTask = nil
         awaitingFirstChunk = false
 
-        if let audiobookVM, audiobookVM.nowPlaying != nil {
+        if let audiobookVM, audiobookVM.nowPlaying != nil || audiobookVM.isPreparingPlayback {
             audiobookVM.stopPlayback()
         } else {
             audio.stop()

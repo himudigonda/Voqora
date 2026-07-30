@@ -8,8 +8,8 @@ import Sparkle
 /// verification, replacement, and relaunch. The UI intentionally uses
 /// Sparkle's native controller rather than reimplementing installer logic.
 @MainActor
-final class AppUpdater: NSObject, ObservableObject {
-    private let controller: SPUStandardUpdaterController?
+final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
+    private var controller: SPUStandardUpdaterController?
     private var observations: [NSKeyValueObservation] = []
 
     /// Mirror Sparkle's persisted user choices so Preferences can explain what
@@ -17,23 +17,30 @@ final class AppUpdater: NSObject, ObservableObject {
     /// framework.
     @Published private(set) var automaticallyChecksForUpdates = false
     @Published private(set) var canCheckForUpdates = false
+    @Published private(set) var isCheckingForUpdates = false
+    /// Short, user-facing state for Preferences. Sparkle still presents its
+    /// native update sheet; this text only keeps a failed or completed check
+    /// from looking like a button that silently did nothing.
+    @Published private(set) var updateStatusMessage: String?
 
     override init() {
+        super.init()
         if RuntimeEnvironment.isRunningTests {
             controller = nil
         } else {
             controller = SPUStandardUpdaterController(
                 startingUpdater: true,
-                updaterDelegate: nil,
+                updaterDelegate: self,
                 userDriverDelegate: nil
             )
         }
-        super.init()
         observeUpdaterState()
     }
 
     func checkForUpdates() {
         guard canCheckForUpdates else { return }
+        isCheckingForUpdates = true
+        updateStatusMessage = nil
         controller?.checkForUpdates(nil)
     }
 
@@ -57,5 +64,29 @@ final class AppUpdater: NSObject, ObservableObject {
                 }
             },
         ]
+    }
+
+    // MARK: - Sparkle lifecycle
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        isCheckingForUpdates = false
+        updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+        isCheckingForUpdates = false
+        updateStatusMessage = "Voqora is up to date."
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        isCheckingForUpdates = false
+        updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+    }
+
+    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+        isCheckingForUpdates = false
+        if error != nil {
+            updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+        }
     }
 }
