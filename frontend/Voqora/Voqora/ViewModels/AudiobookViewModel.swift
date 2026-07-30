@@ -19,6 +19,10 @@ final class AudiobookViewModel: ObservableObject {
     /// Keeping it here makes the stop/delete race deterministic to exercise
     /// without changing the production service contract.
     private let localAudioURL: @MainActor (String) async throws -> URL
+    /// The view model owns the lifetime of a processing-event stream. Keeping
+    /// the stream factory injectable means that lifecycle tests do not need a
+    /// live loopback backend merely to exercise cancellation and replacement.
+    private let processingEvents: @MainActor (String) -> AsyncStream<[String: Any]>
 
     // Library
     @Published var books: [Audiobook] = []
@@ -122,13 +126,17 @@ final class AudiobookViewModel: ObservableObject {
     init(
         service: AudiobookService? = nil,
         audio: AudioService,
-        localAudioURL: (@MainActor (String) async throws -> URL)? = nil
+        localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
+        processingEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil
     ) {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
         self.audio = audio
         self.localAudioURL = localAudioURL ?? { bookID in
             try await resolvedService.ensureLocalAudio(for: bookID)
+        }
+        self.processingEvents = processingEvents ?? { bookID in
+            resolvedService.subscribe(to: bookID)
         }
         self.keyVerified = KeychainService.has(.geminiAPIKey)
         if let stored = KeychainService.get(.geminiAPIKey) {
@@ -352,12 +360,9 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     /// Internal (not private) so `AudiobookViewModelTests` can drive the
-    /// double-subscribe race directly (the v1.1 design notes Sprint 7, T7.8/E8) — same
-    /// "no protocol seam for AudiobookService" limitation noted on
-    /// `applyStatus`, so exercising this via real SSE traffic end-to-end
-    /// isn't reliable in a unit test.
+    /// double-subscribe race directly (the v1.1 design notes Sprint 7, T7.8/E8).
     func subscribe(to bookID: String) {
-        sseTasks[bookID]?.cancel()
+        cancelSubscription(for: bookID)
         let generation = UUID()
         sseGeneration[bookID] = generation
         sseTasks[bookID] = Task { [weak self] in
@@ -374,7 +379,7 @@ final class AudiobookViewModel: ObservableObject {
                 }
             }
             guard let self else { return }
-            for await event in service.subscribe(to: bookID) {
+            for await event in processingEvents(bookID) {
                 let type = event["type"] as? String ?? ""
                 if type == "snapshot" {
                     if let status = event["status"] as? String {
@@ -418,6 +423,14 @@ final class AudiobookViewModel: ObservableObject {
     /// (the v1.1 design notes Sprint 7, T7.8/E8).
     func hasActiveSSETask(for bookID: String) -> Bool {
         sseTasks[bookID] != nil
+    }
+
+    /// Stop observing server-side processing for one book. This is used when
+    /// replacing a subscription and after a confirmed deletion so a stale
+    /// event cannot revive state for a book the user has removed.
+    func cancelSubscription(for bookID: String) {
+        sseGeneration.removeValue(forKey: bookID)
+        sseTasks.removeValue(forKey: bookID)?.cancel()
     }
 
     /// Try the in-memory `books` list first, then a direct GET, with up to 3
@@ -795,6 +808,7 @@ final class AudiobookViewModel: ObservableObject {
                 lastPlayedBookID = ""
             }
             // P5: drop processing-state entry so it doesn't leak.
+            cancelSubscription(for: book.bookID)
             processingState.removeValue(forKey: book.bookID)
             await refresh()
         }

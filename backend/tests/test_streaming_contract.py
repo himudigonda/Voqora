@@ -7,7 +7,9 @@ contract under test is the HTTP layer.
 
 from __future__ import annotations
 
+import io
 import struct
+import wave
 from unittest.mock import patch
 
 import numpy as np
@@ -56,6 +58,29 @@ def test_speak_returns_wav_riff_header(_mock_gen, _mock_load) -> None:
     content = response.content
     assert content.startswith(b"RIFF"), "first chunk must be a valid RIFF header"
     assert content[8:12] == b"WAVE", "must declare WAVE format"
+    # The response is streamed, so its declared body size is intentionally
+    # open-ended. Zero-length RIFF/data chunks look valid by prefix but are
+    # rejected by AVFoundation as an empty WAV.
+    assert struct.unpack_from("<I", content, 4)[0] == 0xFFFFFFFF
+    assert struct.unpack_from("<I", content, 40)[0] == 0xFFFFFFFF
+
+
+@patch.object(EngineManager, "ensure_loaded")
+@patch.object(EngineManager, "generate", side_effect=_mock_generate)
+def test_speak_stream_is_accepted_by_a_wav_parser(_mock_gen, _mock_load) -> None:
+    response = _client().post(
+        "/speak",
+        json={
+            "text": "Parser contract.",
+            "voice": "af_bella",
+            "speed": 1.0,
+            "volume": 1.0,
+        },
+    )
+    with wave.open(io.BytesIO(response.content), "rb") as parsed:
+        assert parsed.getnchannels() == 1
+        assert parsed.getframerate() == 24000
+        assert parsed.getsampwidth() == 2
 
 
 @patch.object(EngineManager, "ensure_loaded")

@@ -17,6 +17,7 @@ struct PreferencesView: View {
     @State private var emailError: String?
     @State private var emailSaved = false
     @State private var emailRemoving = false
+    @State private var emailRemovalQueued = false
     @State private var migrationStatus: String?
 
     var body: some View {
@@ -69,6 +70,11 @@ struct PreferencesView: View {
 
                         if let err = emailError {
                             Text(err).font(vm.appFont(size: 11)).foregroundStyle(.red)
+                        } else if emailRemovalQueued || identity.hasPendingRemoval {
+                            Text("Email removed from this Mac. Voqora will retry removing the optional server contact when it is online.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         } else if emailSaved {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
@@ -526,6 +532,7 @@ struct PreferencesView: View {
     private func submitEmail() {
         emailError = nil
         emailSaved = false
+        emailRemovalQueued = false
         let candidate = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !candidate.isEmpty else { return }
         emailSubmitting = true
@@ -556,12 +563,9 @@ struct PreferencesView: View {
         emailRemoving = true
         Task {
             defer { emailRemoving = false }
-            do {
-                try await identity.removeEmail()
-                emailDraft = ""
-            } catch {
-                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
-            }
+            let result = await identity.removeEmail()
+            emailDraft = ""
+            emailRemovalQueued = result == .queuedForRetry
         }
     }
 }

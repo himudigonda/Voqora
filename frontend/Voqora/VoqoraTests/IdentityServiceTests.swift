@@ -3,16 +3,35 @@ import XCTest
 
 @MainActor
 final class IdentityServiceTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var service: IdentityService!
+    private var suiteName = ""
+
+    override func setUp() {
+        super.setUp()
+        suiteName = "IdentityServiceTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        service = IdentityService(defaults: defaults)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        service = nil
+        defaults = nil
+        super.tearDown()
+    }
+
     func test_anonID_isStableAcrossReads() {
-        let first = IdentityService.shared.anonID
-        let second = IdentityService.shared.anonID
+        let first = service.anonID
+        let second = service.anonID
         XCTAssertEqual(first, second, "anonID must be stable for the install lifetime")
         XCTAssertFalse(first.isEmpty)
     }
 
     func test_anonID_persistsInUserDefaults() {
-        let id = IdentityService.shared.anonID
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "anonymousUserID"), id)
+        let id = service.anonID
+        XCTAssertEqual(defaults.string(forKey: "anonymousUserID"), id)
     }
 
     // MARK: - Email validation (pure)
@@ -35,11 +54,41 @@ final class IdentityServiceTests: XCTestCase {
 
     func test_clearEmail_resetsState() {
         // Direct write to UserDefaults to seed state without hitting the network.
-        UserDefaults.standard.set("seed@example.com", forKey: "userIdentityEmail")
-        // Re-read via a fresh observer of shared singleton's state is awkward;
-        // instead exercise the clear path through the public API and verify UD.
-        IdentityService.shared.clearEmail()
-        XCTAssertNil(UserDefaults.standard.string(forKey: "userIdentityEmail"))
-        XCTAssertNil(IdentityService.shared.email)
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        service.clearEmail()
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+        XCTAssertNil(service.email)
+    }
+
+    func test_removeEmailClearsThisMacAfterRemoteSuccess() async {
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        service = IdentityService(defaults: defaults, sendRequest: { _ in (Data(), response) })
+
+        let result = await service.removeEmail()
+
+        XCTAssertEqual(result, .removedRemotely)
+        XCTAssertNil(service.email)
+        XCTAssertFalse(service.hasPendingRemoval)
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+    }
+
+    func test_removeEmailOfflineClearsThisMacAndQueuesRemoteRetry() async {
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        service = IdentityService(defaults: defaults, sendRequest: { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+
+        let result = await service.removeEmail()
+
+        XCTAssertEqual(result, .queuedForRetry)
+        XCTAssertNil(service.email)
+        XCTAssertTrue(service.hasPendingRemoval)
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
     }
 }

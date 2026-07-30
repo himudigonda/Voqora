@@ -12,6 +12,7 @@ import XCTest
 /// (mirroring real pre-Sprint-1 transcript.json files found on disk at
 /// ~/Library/Application Support/com.himudigonda.Voqora/audiobooks/*/transcript.json)
 /// and a new-shape fixture, proving the old one does not throw.
+@MainActor
 final class AudiobookServiceTests: XCTestCase {
     private let decoder = JSONDecoder()
 

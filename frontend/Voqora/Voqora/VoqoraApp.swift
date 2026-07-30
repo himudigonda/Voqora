@@ -117,6 +117,10 @@ struct VoqoraApp: App {
             setupShortcuts(vm: vmInstance)
 
             MetricsService.shared.trackLaunch()
+            // A privacy removal made while offline is honoured locally first.
+            // Retry the separate server-side contact removal quietly on launch;
+            // it never gates first use or the local speech path.
+            Task { await identityInstance.retryPendingRemoval() }
             // Start the periodic flush driver (previously embedded inside the
             // singleton init; now externalized so the actor can stay isolated).
             Task { @MainActor in

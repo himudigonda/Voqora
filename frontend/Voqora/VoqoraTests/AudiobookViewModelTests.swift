@@ -17,6 +17,23 @@ import XCTest
 /// completion note.
 @MainActor
 final class AudiobookViewModelTests: XCTestCase {
+    /// A deliberately open stream for subscription-lifecycle tests. It keeps
+    /// the test off the real loopback backend while preserving the same
+    /// cancellation semantics as a production SSE stream.
+    private final class HeldEventStreams {
+        private var continuations: [AsyncStream<[String: Any]>.Continuation] = []
+
+        func stream(for _: String) -> AsyncStream<[String: Any]> {
+            AsyncStream { continuation in
+                continuations.append(continuation)
+            }
+        }
+
+        deinit {
+            continuations.forEach { $0.finish() }
+        }
+    }
+
     private func makeVM() -> AudiobookViewModel {
         AudiobookViewModel(audio: AudioService())
     }
@@ -441,7 +458,8 @@ final class AudiobookViewModelTests: XCTestCase {
     /// first (superseded) task's unconditional deferred cleanup, even though
     /// a second, still-live task was the real current subscription.
     func test_doubleSubscribe_doesNotDesyncSSETaskDict() async {
-        let vm = makeVM()
+        let streams = HeldEventStreams()
+        let vm = AudiobookViewModel(audio: AudioService(), processingEvents: streams.stream)
         let bookID = "book-e8-\(UUID().uuidString)"
 
         vm.subscribe(to: bookID)
@@ -450,15 +468,18 @@ final class AudiobookViewModelTests: XCTestCase {
         // Immediate double-subscribe — cancels the first task, installs a second.
         vm.subscribe(to: bookID)
 
-        // AsyncStream iteration ends promptly on Task cancellation (next()
-        // returns nil), so this doesn't depend on real network timing —
-        // just enough of a window for the first task's deferred cleanup to run.
-        try? await Task.sleep(nanoseconds: 500_000_000)
+        // Let the superseded task observe cancellation and run its deferred
+        // cleanup. No wall-clock sleep or loopback network request is needed.
+        await Task.yield()
+        await Task.yield()
 
         XCTAssertTrue(
             vm.hasActiveSSETask(for: bookID),
             "E8: the first (superseded) task's deferred cleanup must not clear the dict slot the second, still-live task owns"
         )
+
+        vm.cancelSubscription(for: bookID)
+        XCTAssertFalse(vm.hasActiveSSETask(for: bookID))
     }
 
     // MARK: - T7.10/E11: stalled/reconnecting state
