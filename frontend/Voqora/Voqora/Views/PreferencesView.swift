@@ -278,7 +278,7 @@ struct PreferencesView: View {
                             Slider(value: $bookVM.defaultBookSpeed, in: 0.75...2.0).tint(.cyan)
                         }
 
-                        Text("Audiobooks use your selected TTS engine and voice from above. Each PDF is cleaned via Gemini before narration to handle tables, equations, and PDF formatting artifacts.")
+                        Text("Text-based documents are narrated locally by default. You can opt into Gemini cleanup for a difficult document, and scanned PDFs need Gemini OCR before they can be narrated.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
                     }

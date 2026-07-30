@@ -7,7 +7,7 @@ class DashboardViewModel: ObservableObject {
     /// development build could leave a non-English voice in shared defaults;
     /// every fresh v1 install and every upgrade from that build must begin with
     /// the same predictable US-English voice.
-    private static let voiceDefaultsMigrationVersion = 2
+    private static let voiceDefaultsMigrationVersion = 3
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {

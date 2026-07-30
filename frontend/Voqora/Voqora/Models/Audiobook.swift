@@ -17,7 +17,13 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let engine: String
     let voice: String
     let speed: Double
+    let usesGeminiCleanup: Bool?
     let error: String?
+
+    /// Books created before this field existed always used Gemini cleanup.
+    /// Treat an absent value as that legacy behavior so an interrupted old
+    /// book cannot silently change its document-processing boundary on resume.
+    var requiresGeminiCleanup: Bool { usesGeminiCleanup ?? true }
 
     var id: String { bookID }
 
@@ -62,7 +68,9 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case pageToTime = "page_to_time"
         case totalAudioSeconds = "total_audio_seconds"
         case failedPages = "failed_pages"
-        case estimated, actual, engine, voice, speed, error
+        case estimated, actual, engine, voice, speed
+        case usesGeminiCleanup = "uses_gemini_cleanup"
+        case error
     }
 }
 

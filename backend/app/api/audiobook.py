@@ -227,18 +227,10 @@ async def upload_audiobook(
             sample_chars * page_count
         )
 
-        # HARD-072: hard cap on estimated Gemini cost. Reject at upload time
-        # so the user can't accidentally start a multi-dollar job.
-        if estimate["cost_usd"] > settings.MAX_GEMINI_COST_USD_PER_BOOK:
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"Estimated Gemini cost ${estimate['cost_usd']:.2f} exceeds "
-                    f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap. "
-                    "Split the document into smaller files or raise the cap "
-                    "in settings."
-                ),
-            )
+        # This is a transparent *optional* Gemini estimate. The cap is
+        # enforced only if the user explicitly enables cleanup at /start;
+        # local narration must never reject a document for a cloud cost it
+        # will not incur.
 
         state = EngineManager.state()
         book_engine = engine or state.get("engine", "kokoro")
@@ -288,13 +280,30 @@ async def upload_audiobook(
 async def start_audiobook(
     book_id: str,
     x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+    x_voqora_gemini_cleanup: str | None = Header(
+        default=None, alias="X-Voqora-Gemini-Cleanup"
+    ),
 ):
     _validate_book_id(book_id)
-    if not x_gemini_api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
-    if AudiobookStore.read_meta(book_id) is None:
+    meta = AudiobookStore.read_meta(book_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
-    await AudiobookService.enqueue(book_id, x_gemini_api_key)
+    uses_gemini_cleanup = (x_voqora_gemini_cleanup or "").lower() == "true"
+    if uses_gemini_cleanup and not x_gemini_api_key:
+        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    estimated_cost = float((meta.get("estimated") or {}).get("cost_usd") or 0)
+    if uses_gemini_cleanup and estimated_cost > settings.MAX_GEMINI_COST_USD_PER_BOOK:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Estimated Gemini cost ${estimated_cost:.2f} exceeds "
+                f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
+            ),
+        )
+    await AudiobookStore.update_meta(
+        book_id, uses_gemini_cleanup=uses_gemini_cleanup
+    )
+    await AudiobookService.enqueue(book_id, x_gemini_api_key or "")
     return {"status": "queued", "book_id": book_id}
 
 
@@ -438,11 +447,13 @@ async def retry_audiobook(
 ):
     """Re-process failed pages (or the whole book if state is `failed`)."""
     _validate_book_id(book_id)
-    if AudiobookStore.read_meta(book_id) is None:
+    meta = AudiobookStore.read_meta(book_id)
+    if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
-    if not x_gemini_api_key:
+    uses_gemini_cleanup = bool(meta.get("uses_gemini_cleanup", True))
+    if uses_gemini_cleanup and not x_gemini_api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
-    count = await AudiobookService.retry_failed(book_id, x_gemini_api_key)
+    count = await AudiobookService.retry_failed(book_id, x_gemini_api_key or "")
     return {"status": "queued", "retried_pages": count, "book_id": book_id}
 
 

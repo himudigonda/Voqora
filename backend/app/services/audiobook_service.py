@@ -276,10 +276,14 @@ class AudiobookService:
             }:
                 continue
             book_id = meta["book_id"]
-            if status == "cleaning":
+            # Books created before this flag existed used Gemini for every
+            # page, so preserve that historical behavior for a resumable old
+            # job. New books always persist an explicit false by default.
+            uses_gemini_cleanup = bool(meta.get("uses_gemini_cleanup", True))
+            if status == "cleaning" and uses_gemini_cleanup:
                 # Needs the API key the user re-supplies via Resume.
                 await AudiobookStore.update_meta(book_id, status="needs_key")
-            elif status in {"tts", "concatenating"}:
+            elif status in {"tts", "concatenating"} or not uses_gemini_cleanup:
                 # No key needed; safe to auto-resume.
                 # Use empty key — TTS phase doesn't read it.
                 await cls.enqueue(book_id, api_key="")
@@ -468,7 +472,7 @@ class AudiobookService:
                         "end_page": sections[0]["start_page"] - 1,
                     },
                 )
-        else:
+        elif bool(meta.get("uses_gemini_cleanup", True)):
             # Path B: ask Gemini.
             cleaned_pages: list[str] = []
             for n in range(1, page_count + 1):
@@ -522,6 +526,7 @@ class AudiobookService:
         meta = AudiobookStore.read_meta(book_id) or {}
         file_ext = meta.get("file_ext", "pdf")
         is_pdf = file_ext == "pdf"
+        uses_gemini_cleanup = bool(meta.get("uses_gemini_cleanup", True))
         page_count = int(meta.get("page_count") or 0)
         failed: list[int] = list(meta.get("failed_pages") or [])
 
@@ -553,7 +558,12 @@ class AudiobookService:
                     raw_text = f.read()
 
                 try:
-                    if is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
+                    if not uses_gemini_cleanup:
+                        # The local-first default: normal extracted text is
+                        # narrated as-is. Image-only pages remain blank until
+                        # the user explicitly enables Gemini OCR for the book.
+                        cleaned = raw_text or "-"
+                    elif is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
                         # Image page (PDF only) — render and OCR+clean via Gemini vision.
                         source_path = AudiobookStore.source_file_path(book_id, file_ext)
                         image_bytes = await asyncio.get_running_loop().run_in_executor(

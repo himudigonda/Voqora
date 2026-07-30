@@ -302,6 +302,9 @@ class AudiobookStore:
             "engine": engine,
             "voice": voice,
             "speed": speed,
+            # Local narration is the default. A user can opt into Gemini
+            # cleanup/OCR for one book at a time before processing starts.
+            "uses_gemini_cleanup": False,
             "error": None,
         }
 

@@ -295,7 +295,7 @@ def test_audiobook_upload_rejects_oversize_file(monkeypatch):
     assert "MB" in response.json()["detail"]
 
 
-def test_start_requires_api_key_header():
+def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemini(monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -308,7 +308,26 @@ def test_start_requires_api_key_header():
             bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
         ),
     )
+    enqueued: list[tuple[str, str]] = []
+
+    async def fake_enqueue(book_id: str, api_key: str) -> None:
+        enqueued.append((book_id, api_key))
+
+    monkeypatch.setattr(
+        AudiobookService,
+        "enqueue",
+        classmethod(lambda cls, book_id, api_key: fake_enqueue(book_id, api_key)),
+    )
+
     response = client.post(f"/audiobook/{bid}/start")
+    assert response.status_code == 200
+    assert enqueued == [(bid, "")]
+    assert AudiobookStore.read_meta(bid)["uses_gemini_cleanup"] is False
+
+    response = client.post(
+        f"/audiobook/{bid}/start",
+        headers={"X-Voqora-Gemini-Cleanup": "true"},
+    )
     assert response.status_code == 400
     assert "X-Gemini-Api-Key" in response.json()["detail"]
 
@@ -323,6 +342,7 @@ async def test_resume_in_progress_flips_cleaning_to_needs_key():
         bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
     )
     meta["status"] = "cleaning"
+    meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(bid, meta)
 
     await AudiobookService.resume_in_progress()
@@ -579,7 +599,7 @@ async def test_retry_failed_clears_pages_and_enqueues(monkeypatch):
     assert new_meta["error"] is None
 
 
-def test_retry_endpoint_requires_api_key():
+def test_retry_endpoint_requires_api_key_only_for_a_gemini_book():
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -592,6 +612,12 @@ def test_retry_endpoint_requires_api_key():
             bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
         ),
     )
+    response = client.post(f"/audiobook/{bid}/retry")
+    assert response.status_code == 200
+
+    meta = AudiobookStore.read_meta(bid)
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
     response = client.post(f"/audiobook/{bid}/retry")
     assert response.status_code == 400
 
@@ -869,6 +895,7 @@ async def test_clean_phase_uses_ocr_for_image_pages(monkeypatch):
     meta = AudiobookStore.initial_meta(
         bid, "Scan.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
     )
+    meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(bid, meta)
     AudiobookStore.save_source(bid, b"%PDF-1.4\n" + b"x" * 200, "pdf")
 
@@ -1091,6 +1118,7 @@ async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
     meta = AudiobookStore.initial_meta(
         bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
     )
+    meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(bid, meta)
 
     raw_text = "Raw page text that should survive the Gemini timeout."
@@ -1115,3 +1143,38 @@ async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
     with open(clean_path, encoding="utf-8") as f:
         result = f.read()
     assert result == raw_text, "fallback content must equal the original raw text"
+
+
+@pytest.mark.asyncio
+async def test_local_clean_phase_never_calls_gemini(monkeypatch):
+    """The default audiobook path copies normal extracted text locally."""
+    from app.services import audiobook_service as _svc
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Local.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Local.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    raw_text = "This page stays on the Mac."
+    raw_path = AudiobookStore.page_raw_path(bid, 1)
+    os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+    with open(raw_path, "w", encoding="utf-8") as f:
+        f.write(raw_text)
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "clean_page",
+        AsyncMock(side_effect=AssertionError("Gemini must not be called")),
+    )
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "ocr_page",
+        AsyncMock(side_effect=AssertionError("Gemini OCR must not be called")),
+    )
+
+    _svc.AudiobookService.initialize()
+    await _svc.AudiobookService._phase_clean(bid, api_key="")
+
+    with open(AudiobookStore.page_clean_path(bid, 1), encoding="utf-8") as f:
+        assert f.read() == raw_text

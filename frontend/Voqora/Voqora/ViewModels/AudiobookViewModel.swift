@@ -200,10 +200,11 @@ final class AudiobookViewModel: ObservableObject {
         presentEstimate(for: next.0, voice: next.1, speed: next.2, engine: next.3)
     }
 
-    func startProcessing() {
+    func startProcessing(useGeminiCleanup: Bool) {
         guard let est = pendingEstimate else { return }
         guard !startingProcessing else { return }
-        guard let key = KeychainService.get(.geminiAPIKey) else {
+        let key = KeychainService.get(.geminiAPIKey)
+        guard !useGeminiCleanup || key != nil else {
             showToast("Set a Gemini API key in Preferences first.", kind: .error)
             return
         }
@@ -212,7 +213,11 @@ final class AudiobookViewModel: ObservableObject {
         Task {
             defer { startingProcessing = false }
             do {
-                try await service.start(bookID, apiKey: key)
+                try await service.start(
+                    bookID,
+                    apiKey: key,
+                    useGeminiCleanup: useGeminiCleanup
+                )
                 // Clear pendingPDF/pendingEstimate to collapse the sheet binding → modal
                 // dismisses automatically without calling cancelUpload().
                 pendingPDF = nil
@@ -254,7 +259,8 @@ final class AudiobookViewModel: ObservableObject {
     // MARK: - Retry / Resume
 
     func retry(_ book: Audiobook) {
-        guard let key = KeychainService.get(.geminiAPIKey) else {
+        let key = KeychainService.get(.geminiAPIKey)
+        guard !book.requiresGeminiCleanup || key != nil else {
             showToast("Set a Gemini API key in Preferences first.", kind: .error)
             return
         }

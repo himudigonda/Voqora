@@ -8,9 +8,10 @@ struct UploadEstimateModal: View {
 
     let pdfURL: URL
 
-    /// HARD-072: explicit consent before document content is sent to Google
-    /// Gemini for cleaning. Must be ticked before Start Processing is enabled.
-    @State private var consentGiven = false
+    /// An explicit, per-book choice. Text documents stay local unless this is
+    /// turned on; image-only PDFs need it because local extraction has no text
+    /// to narrate.
+    @State private var useGeminiCleanup = false
 
     var body: some View {
         VStack(spacing: 24) {
@@ -99,15 +100,15 @@ struct UploadEstimateModal: View {
                 StatTile(label: "AUDIO", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont)
             }
             HStack(spacing: 12) {
-                StatTile(label: "TOKENS", value: numberFormat(est.estimatedTokenCount), icon: "number", appFont: vm.appFont)
-                StatTile(label: "EST. COST", value: formatCost(est.estimatedCostUsd), icon: "dollarsign.circle", appFont: vm.appFont)
+                StatTile(label: "GEMINI TOKENS", value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF", icon: "number", appFont: vm.appFont)
+                StatTile(label: "GEMINI COST", value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF", icon: "dollarsign.circle", appFont: vm.appFont)
             }
         }
     }
 
     private var actions: some View {
         VStack(spacing: 10) {
-            if let est = bookVM.pendingEstimate, est.costWarning {
+            if let est = bookVM.pendingEstimate, useGeminiCleanup, est.costWarning {
                 HStack(spacing: 8) {
                     Image(systemName: "dollarsign.circle.fill").foregroundStyle(.orange)
                     Text("This book's estimated Gemini cost is \(formatCost(est.estimatedCostUsd)). Proceed anyway?")
@@ -119,14 +120,11 @@ struct UploadEstimateModal: View {
                 .background(Color.orange.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            // HARD-072: explicit Gemini consent. Document content (page text,
-            // page images for OCR) is sent to Google's Gemini API for cleaning.
-            // We make this visible and gated so users opt in deliberately.
-            Toggle(isOn: $consentGiven) {
+            Toggle(isOn: $useGeminiCleanup) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Send document content to Google Gemini for cleaning")
+                    Text("Use Gemini cleanup for this book")
                         .font(vm.appFont(size: 11, weight: .medium))
-                    Text("Required. Per-page text (and per-page images for scanned PDFs) is sent transiently. See PRIVACY.md for details.")
+                    Text("Optional for text PDFs. When enabled, page text and scanned-page images are sent transiently to Google Gemini for cleanup or OCR.")
                         .font(vm.appFont(size: 10))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)
@@ -136,7 +134,16 @@ struct UploadEstimateModal: View {
             .padding(10)
             .background(Color.cyan.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            if !bookVM.hasStoredKey {
+            if let est = bookVM.pendingEstimate, est.isImageOnly, !useGeminiCleanup {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.viewfinder").foregroundStyle(.orange)
+                    Text("This scanned PDF needs Gemini OCR. Turn on cleanup to continue.")
+                        .font(vm.appFont(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 4)
+            }
+            if useGeminiCleanup && !bookVM.hasStoredKey {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
                     Text("Set a Gemini API key in Preferences first.")
@@ -154,18 +161,18 @@ struct UploadEstimateModal: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    if bookVM.keyVerified {
+                    if useGeminiCleanup && !bookVM.keyVerified {
+                        bookVM.showToast(
+                            "Set a Gemini API key in Preferences first.",
+                            kind: .error
+                        )
+                    } else {
                         // Do NOT call dismiss() here — modal dismisses automatically
                         // when startProcessing() clears pendingPDF on success.
                         // Calling dismiss() immediately would race with the async
                         // /start call: the sheet binding setter fires cancelUpload()
                         // which deletes the staged book before /start completes.
-                        bookVM.startProcessing()
-                    } else {
-                        bookVM.showToast(
-                            "Set a Gemini API key in Preferences first.",
-                            kind: .error
-                        )
+                        bookVM.startProcessing(useGeminiCleanup: useGeminiCleanup)
                     }
                 } label: {
                     if bookVM.startingProcessing {
@@ -185,7 +192,7 @@ struct UploadEstimateModal: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.cyan)
-                .disabled(bookVM.startingProcessing || !consentGiven)
+                .disabled(bookVM.startingProcessing || requiresGeminiOCR)
                 .keyboardShortcut(.defaultAction)
             }
         }
@@ -196,6 +203,10 @@ struct UploadEstimateModal: View {
             Text("Close").frame(maxWidth: .infinity).padding(.vertical, 8)
         }
         .buttonStyle(.bordered)
+    }
+
+    private var requiresGeminiOCR: Bool {
+        (bookVM.pendingEstimate?.isImageOnly ?? false) && !useGeminiCleanup
     }
 
     private var loadingState: some View {

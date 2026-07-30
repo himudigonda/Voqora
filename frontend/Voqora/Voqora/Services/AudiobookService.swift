@@ -123,11 +123,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return try JSONDecoder().decode(AudiobookEstimateResponse.self, from: data)
     }
 
-    func retry(_ id: String, apiKey: String) async throws -> Int {
+    func retry(_ id: String, apiKey: String?) async throws -> Int {
         let url = baseURL.appendingPathComponent("audiobook/\(id)/retry")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
+        if let apiKey, !apiKey.isEmpty {
+            req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
+        }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw AudiobookServiceError.uploadFailed("Retry failed")
@@ -138,11 +140,16 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
     // MARK: - Start
 
-    func start(_ id: String, apiKey: String) async throws {
+    func start(_ id: String, apiKey: String?, useGeminiCleanup: Bool) async throws {
         let url = baseURL.appendingPathComponent("audiobook/\(id)/start")
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
-        req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
+        if useGeminiCleanup {
+            req.setValue("true", forHTTPHeaderField: "X-Voqora-Gemini-Cleanup")
+            if let apiKey, !apiKey.isEmpty {
+                req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
+            }
+        }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Failed to start processing"
