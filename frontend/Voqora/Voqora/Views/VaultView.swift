@@ -6,6 +6,7 @@ struct VaultView: View {
     @State private var searchText = ""
     @State private var showOnlyFavorites = false
     @State private var selectedEntry: HistoryEntry? = nil
+    @State private var showClearHistoryConfirmation = false
 
     /// Group entries by day
     private var groupedEntries: [(Date, [HistoryEntry])] {
@@ -51,6 +52,22 @@ struct VaultView: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        .overlay(alignment: .top) {
+            if let persistenceError = history.persistenceError {
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text(persistenceError)
+                        .font(dashboardVM.appFont(size: 11, weight: .medium))
+                    Spacer()
+                    Button("Try again") { history.retryPersistence() }
+                        .buttonStyle(.bordered)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.orange.opacity(0.12))
+            }
+        }
         .navigationTitle("Vault")
         .searchable(text: $searchText, placement: .sidebar, prompt: "Search spoken text...")
         .sheet(item: $selectedEntry) { entry in
@@ -66,7 +83,7 @@ struct VaultView: View {
                     .help("Show starred snippets only")
 
                     Button(role: .destructive) {
-                        history.clearHistory()
+                        showClearHistoryConfirmation = true
                     } label: {
                         Label("Clear All", systemImage: "trash.slash")
                     }
@@ -74,6 +91,17 @@ struct VaultView: View {
                     .disabled(history.history.isEmpty)
                 }
             }
+        }
+        .confirmationDialog(
+            "Clear all spoken history?",
+            isPresented: $showClearHistoryConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Clear History", role: .destructive) {
+                history.clearHistory()
+            }
+        } message: {
+            Text("This removes your saved spoken-text history from this Mac.")
         }
     }
 }

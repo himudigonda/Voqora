@@ -26,6 +26,9 @@ struct VoqoraApp: App {
     /// Live AX + Notifications permission status. Observed by onboarding.
     @StateObject private var permissions = PermissionsService()
 
+    /// One app-lifetime Sparkle owner for scheduled and manual signed updates.
+    @StateObject private var updater: AppUpdater
+
     /// 3. Backend (Kept private, managed by VM, but we own the instance to stop deinit)
     private let backend: BackendService
 
@@ -68,6 +71,7 @@ struct VoqoraApp: App {
 
         // Audiobook VM uses the same shared AudioService for playback
         let audiobookInstance = AudiobookViewModel(audio: audioInstance)
+        let updaterInstance = AppUpdater()
 
         // Assign to StateObjects
         _audio = StateObject(wrappedValue: audioInstance)
@@ -75,6 +79,7 @@ struct VoqoraApp: App {
         _launchManager = StateObject(wrappedValue: launchInstance)
         _dashboardVM = StateObject(wrappedValue: vmInstance)
         _audiobookVM = StateObject(wrappedValue: audiobookInstance)
+        _updater = StateObject(wrappedValue: updaterInstance)
 
         // Wire mutual exclusion between TTS hotkey playback and audiobook playback
         vmInstance.audiobookVM = audiobookInstance
@@ -162,7 +167,7 @@ struct VoqoraApp: App {
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
             print("⌨️ KeyboardShortcuts: exportAudio triggered")
             Task { @MainActor in
-                audio.exportToDesktop()
+                vm.exportLastClip()
             }
         }
 
@@ -182,6 +187,7 @@ struct VoqoraApp: App {
                 .environmentObject(onboarding)
                 .environmentObject(identity)
                 .environmentObject(permissions)
+                .environmentObject(updater)
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])

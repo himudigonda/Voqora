@@ -549,7 +549,8 @@ final class AudiobookViewModel: ObservableObject {
         currentTranscript = nil
         playGeneration += 1
         let generation = playGeneration
-        Task {
+        Task { [weak self] in
+            guard let self else { return }
             defer { isLoadingAudio = false }
             do {
                 audio.stop()

@@ -2,10 +2,55 @@
 set -euo pipefail
 echo "🚀 STARTING BACKEND BUILD..."
 
+RESOURCE_DIR="frontend/Voqora/Voqora/Resources"
+ARCHIVE_PATH="$RESOURCE_DIR/VoqoraServer.zip"
+ARCHIVE_BUILD_ID_PATH="$RESOURCE_DIR/VoqoraServer.build-id"
+INPUT_BUILD_ID_PATH="$RESOURCE_DIR/VoqoraServer.inputs.sha256"
+
+# Rebuilding the frozen service takes significant CPU and memory. Reuse a
+# package only when the exact runtime inputs, lockfile and archive digest all
+# match. Set FORCE_BACKEND_REBUILD=1 for a clean release-candidate build.
+compute_input_build_id() {
+    {
+        printf '%s\n' 'compile-script'
+        shasum -a 256 "$0"
+        printf '%s\n' 'runtime-source'
+        # BSD sort on macOS does not support GNU's `-z`; Python source names
+        # in this project are newline-free, so a normal stable line sort is
+        # both portable and deterministic here.
+        find backend/app -type f -name '*.py' -print | LC_ALL=C sort | while IFS= read -r file; do
+            shasum -a 256 "$file"
+        done
+        printf '%s\n' 'dependency-lock'
+        shasum -a 256 backend/pyproject.toml backend/uv.lock
+        printf '%s\n' 'pinned-runtime-assets'
+        printf '%s\n' 'kokoro-v1.0.onnx:7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef3636a6c5'
+        printf '%s\n' 'voices-v1.0.bin:bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d'
+    } | shasum -a 256 | awk '{print $1}'
+}
+
+INPUT_BUILD_ID="$(compute_input_build_id)"
+if [ "${FORCE_BACKEND_REBUILD:-0}" != "1" ] \
+    && [ -f "$ARCHIVE_PATH" ] \
+    && [ -f "$ARCHIVE_BUILD_ID_PATH" ] \
+    && [ -f "$INPUT_BUILD_ID_PATH" ]; then
+    STORED_INPUT_BUILD_ID="$(tr -d '[:space:]' < "$INPUT_BUILD_ID_PATH")"
+    STORED_ARCHIVE_BUILD_ID="$(tr -d '[:space:]' < "$ARCHIVE_BUILD_ID_PATH")"
+    CURRENT_ARCHIVE_BUILD_ID="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
+    if [ "$STORED_INPUT_BUILD_ID" = "$INPUT_BUILD_ID" ] \
+        && [ "$STORED_ARCHIVE_BUILD_ID" = "$CURRENT_ARCHIVE_BUILD_ID" ]; then
+        echo "✅ Backend package inputs are unchanged — reusing verified bundle."
+        exit 0
+    fi
+fi
+
 # 1. Cleanup
-pkill -9 VoqoraServer || true
+# Packaging a zip never needs to terminate a running local server. That server
+# may belong to an installed app or another candidate and has already loaded
+# its own extracted copy. Killing every process by name made an ordinary build
+# disrupt unrelated Voqora sessions.
 rm -rf backend/dist backend/build
-rm -f frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+rm -f "$ARCHIVE_PATH" "$ARCHIVE_BUILD_ID_PATH" "$INPUT_BUILD_ID_PATH"
 # Remove any stale PyInstaller spec — it's gitignored, but a previous build's
 # .spec may still hold the previous machine's `espeakng_loader` absolute path.
 # We regenerate from CLI flags below so the dynamic ESPEAK_PATH is used. See HARD-051.
@@ -80,7 +125,10 @@ PYINSTALLER_FLAGS=(
     --collect-all 'pdfminer'
     --collect-all 'pypdfium2'
     --collect-all 'pypdfium2_raw'
-    --collect-all 'google.genai'
+    # Keep Gemini's runtime package data without recursively collecting its
+    # bundled test suite. `--collect-all` asks PyInstaller to analyse hundreds
+    # of SDK test modules, wasting CPU and bloating every local server bundle.
+    --collect-data 'google.genai'
     --collect-all 'PIL'
     --hidden-import 'uvicorn.loops.asyncio'
     --hidden-import 'uvicorn.protocols.http.h11_impl'
@@ -133,11 +181,19 @@ fi
 # 5. ZIP AND MOVE
 echo "📦 Zipping backend..."
 cd dist
-zip -r -q VoqoraServer.zip VoqoraServer
+# `zip -r` is interrupt-prone for this large universal payload on macOS.
+# `ditto` ships with macOS, produces a standards-compatible zip archive, and
+# has been materially more reliable for the bundled server payload.
+ditto -c -k --sequesterRsrc --keepParent VoqoraServer VoqoraServer.zip
 cd ..
 
 echo "📦 Installing to Resources..."
-mkdir -p ../frontend/Voqora/Voqora/Resources/
-mv dist/VoqoraServer.zip ../frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+mkdir -p "../$RESOURCE_DIR"
+mv dist/VoqoraServer.zip "../$ARCHIVE_PATH"
+# The app uses this compact archive identity to decide whether its extracted
+# local server is current. A version number alone is insufficient while
+# developing or rebuilding a release candidate with the same app version.
+shasum -a 256 "../$ARCHIVE_PATH" | awk '{print $1}' > "../$ARCHIVE_BUILD_ID_PATH"
+printf '%s\n' "$INPUT_BUILD_ID" > "../$INPUT_BUILD_ID_PATH"
 
 echo "✅ Backend build complete."

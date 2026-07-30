@@ -34,7 +34,7 @@ final class MetricsServiceTests: XCTestCase {
             "chars": -5, // negative — drop
             "speed": 3.0, // out of [0.5, 2.0] — drop
             "audio_seconds": "twelve", // wrong type — drop
-            "file_kind": "exe", // not in pdf/txt/epub — drop
+            "file_kind": "exe", // not in pdf/txt/docx/md — drop
             "book_id_hash": "tooshort", // not 64 hex — drop
         ]
         let cleaned = MetricsService.Props.whitelist(raw)
@@ -60,11 +60,20 @@ final class MetricsServiceTests: XCTestCase {
 
     func test_eventNames_allowedSetIsClosed() {
         let known = MetricsService.Event.allowedNames
-        XCTAssertEqual(known.count, 6)
+        XCTAssertEqual(known.count, 9)
         XCTAssertTrue(known.contains("generation"))
         XCTAssertTrue(known.contains("app_launch"))
         XCTAssertTrue(known.contains("audiobook_upload"))
+        XCTAssertTrue(known.contains("migration_detected"))
         XCTAssertFalse(known.contains("anything_else"))
+    }
+
+    func test_whitelist_acceptsEverySupportedDocumentKind() {
+        for kind in ["pdf", "txt", "docx", "md"] {
+            let cleaned = MetricsService.Props.whitelist(["file_kind": kind])
+            XCTAssertEqual(cleaned["file_kind"] as? String, kind)
+        }
+        XCTAssertNil(MetricsService.Props.whitelist(["file_kind": "epub"])["file_kind"])
     }
 
     // MARK: - Outbox persistence

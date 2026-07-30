@@ -36,6 +36,9 @@ class DashboardViewModel: ObservableObject {
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false // Model in ONNX session RAM
     @Published var selectedTab: String? = "home"
+    /// A file-action confirmation is deliberately separate from playback state.
+    /// Saving a clip must not make a still-playing session look idle or failed.
+    @Published private(set) var actionFeedback: String?
 
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
@@ -56,15 +59,6 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
     @AppStorage("telemetryEnabled") var telemetryEnabled = true
     @AppStorage("selectedFontName") var selectedFontName = "System Rounded"
-
-    // Update State
-    @Published var availableUpdate: GitHubRelease?
-    @Published var allRelevantReleases: [GitHubRelease] = []
-    @Published var showUpdateSheet = false
-    @Published var hasUpdate = false
-    /// SwiftUI-driven "you're up to date" toast. Replaces the previous
-    /// `NSAlert.runModal()` which blocked the @MainActor runloop. See HARD-022.
-    @Published var upToDateNotice: String?
 
     /// Helper to get Font
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -255,6 +249,7 @@ class DashboardViewModel: ObservableObject {
     /// Auto-clear timer for the "Nothing to play" error pill in togglePlayback.
     /// Cancelled on re-entrance for the same reason. See HARD-021.
     private var errorResetTask: Task<Void, Never>?
+    private var actionFeedbackTask: Task<Void, Never>?
 
     /// True between prepareForStream() and the first audio chunk of a TTS request.
     /// While true the UI stays in `.thinking` (loading) rather than flipping to
@@ -417,19 +412,27 @@ class DashboardViewModel: ObservableObject {
                 volume: speechVolume
             )
 
-            for await chunk in stream {
-                // Check if this task was cancelled while we were waiting for a chunk
-                if Task.isCancelled {
-                    print("DEBUG [DashboardVM] Task cancelled, exiting loop")
-                    return
-                }
+            do {
+                for try await chunk in stream {
+                    // Check if this task was cancelled while we were waiting for a chunk
+                    if Task.isCancelled {
+                        print("DEBUG [DashboardVM] Task cancelled, exiting loop")
+                        return
+                    }
 
-                // First real audio chunk → now we're genuinely speaking.
-                awaitingFirstChunk = false
-                if status == .thinking {
-                    status = .speaking
+                    // First real audio chunk → now we're genuinely speaking.
+                    awaitingFirstChunk = false
+                    if status == .thinking {
+                        status = .speaking
+                    }
+                    audio.playChunk(chunk, volume: Float(speechVolume))
                 }
-                audio.playChunk(chunk, volume: Float(speechVolume))
+            } catch {
+                guard !Task.isCancelled else { return }
+                awaitingFirstChunk = false
+                audio.stop()
+                status = .error("Voqora could not generate audio. Check that the local engine is ready and try again.")
+                return
             }
 
             if !Task.isCancelled {
@@ -519,6 +522,15 @@ class DashboardViewModel: ObservableObject {
         heartbeatTask = nil
     }
 
+    func exportLastClip() {
+        do {
+            let url = try audio.exportToDesktop()
+            showActionFeedback("Saved \(url.lastPathComponent) to Desktop")
+        } catch {
+            flashError(error.localizedDescription)
+        }
+    }
+
     /// Pre-warm the model before the user speaks, hiding the ~1.3 s cold-reload cost.
     ///
     /// Two signals trigger this:
@@ -574,81 +586,23 @@ class DashboardViewModel: ObservableObject {
         selectedFontName = newFont.familyName ?? "System Standard"
     }
 
-    /// --- UPDATE CHECKER ---
-    func checkForUpdates(manual: Bool = true) {
-        Task {
-            // Fetch ALL releases to aggregate changelogs
-            guard let url = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases") else { return }
-            do {
-                let (data, _) = try await URLSession.shared.data(from: url)
-                let releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
-
-                let currentVersion = "v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-
-                // Filter releases newer than current
-                let newer = releases.filter { $0.tagName != currentVersion && isNewer($0.tagName, than: currentVersion) }
-
-                if let latest = newer.first {
-                    print("🚀 New version available: \(latest.tagName)")
-                    self.availableUpdate = latest
-                    self.allRelevantReleases = newer
-                    self.hasUpdate = true
-                    self.showUpdateSheet = true
-                } else if manual {
-                    // Surface via @Published so the SwiftUI view can render
-                    // an `.alert(item:)` without blocking the runloop.
-                    self.upToDateNotice = "Voqora \(currentVersion) is the latest version."
-                }
-            } catch {
-                print("❌ Update check failed: \(error)")
-            }
-        }
-    }
-
-    private func isNewer(_ version: String, than current: String) -> Bool {
-        let v1 = version.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
-        let v2 = current.replacingOccurrences(of: "v", with: "").split(separator: ".").compactMap { Int($0) }
-
-        for i in 0 ..< min(v1.count, v2.count) {
-            if v1[i] > v2[i] {
-                return true
-            }
-            if v1[i] < v2[i] {
-                return false
-            }
-        }
-        return v1.count > v2.count
-    }
-
     func exportLogs() {
-        Task {
-            backend.exportLogs()
+        do {
+            let urls = try backend.exportLogs()
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            showActionFeedback("Saved \(urls.count) debug log\(urls.count == 1 ? "" : "s") to Desktop")
+        } catch {
+            flashError(error.localizedDescription)
         }
     }
-}
 
-struct GitHubRelease: Codable {
-    let tagName: String
-    let name: String
-    let body: String
-    let htmlUrl: String
-    let assets: [Asset]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case name
-        case body
-        case htmlUrl = "html_url"
-        case assets
-    }
-
-    struct Asset: Codable {
-        let name: String
-        let browserDownloadUrl: URL
-
-        enum CodingKeys: String, CodingKey {
-            case name
-            case browserDownloadUrl = "browser_download_url"
+    private func showActionFeedback(_ message: String) {
+        actionFeedbackTask?.cancel()
+        actionFeedback = message
+        actionFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.actionFeedback = nil
         }
     }
 }

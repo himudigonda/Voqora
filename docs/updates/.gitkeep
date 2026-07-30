@@ -1,0 +1,2 @@
+# Sparkle appcasts are generated here by `make appcast VERSION=X.Y.Z`.
+# The directory is deployed to GitHub Pages by the update-feed workflow.

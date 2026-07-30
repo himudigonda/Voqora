@@ -30,6 +30,8 @@ backend/kitten-*.npz
 backend/kitten-*.json
 frontend/Voqora/Voqora/Resources/VoqoraServer
 frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
+frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
 
 # Xcode and generated distribution artifacts
 build/

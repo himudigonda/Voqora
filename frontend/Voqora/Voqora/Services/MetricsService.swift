@@ -114,6 +114,20 @@ actor MetricsService {
         }
     }
 
+    /// Migration events are recorded only after the corresponding local action.
+    /// They describe an app transition, never an inferred person or account.
+    nonisolated func trackMigrationDetected() {
+        Task { await self.enqueue(event: "migration_detected", props: [:]) }
+    }
+
+    nonisolated func trackMigrationCompleted() {
+        Task { await self.enqueue(event: "migration_completed", props: [:]) }
+    }
+
+    nonisolated func trackLegacyAppRemoved() {
+        Task { await self.enqueue(event: "legacy_app_removed", props: [:]) }
+    }
+
     /// Fire-and-forget force-flush. Safe to call from anywhere.
     nonisolated func flush() {
         Task { await self.flushLocked() }
@@ -249,6 +263,7 @@ extension MetricsService {
         nonisolated static let allowedNames: Set<String> = [
             "app_launch", "generation", "export",
             "audiobook_upload", "audiobook_play", "gemini_clean",
+            "migration_detected", "migration_completed", "legacy_app_removed",
         ]
 
         func serialized() -> [String: Any] {
@@ -283,7 +298,7 @@ extension MetricsService {
             "audio_seconds": { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
             "pages": { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "file_kind": { v in
-                guard let s = v as? String, ["pdf", "txt", "epub"].contains(s) else { return nil }
+                guard let s = v as? String, ["pdf", "txt", "docx", "md"].contains(s) else { return nil }
                 return s
             },
             "book_id_hash": { v in

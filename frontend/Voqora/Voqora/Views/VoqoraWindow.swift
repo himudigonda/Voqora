@@ -202,30 +202,7 @@ struct VoqoraWindow: View {
         }
         .frame(minWidth: 800, minHeight: 600)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
-        .sheet(isPresented: $vm.showUpdateSheet) {
-            UpdateView()
-                .environmentObject(vm)
-        }
-        .alert(
-            "You're Up to Date",
-            isPresented: Binding(
-                get: { vm.upToDateNotice != nil },
-                set: {
-                    if !$0 {
-                        vm.upToDateNotice = nil
-                    }
-                }
-            ),
-            presenting: vm.upToDateNotice
-        ) { _ in
-            Button("OK", role: .cancel) { vm.upToDateNotice = nil }
-        } message: { msg in
-            Text(msg)
-        }
         .onAppear {
-            // Background check for updates on startup
-            vm.checkForUpdates(manual: false)
-
             // Prepare backend if needed
             Task {
                 await launchManager.prepare()

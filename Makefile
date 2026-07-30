@@ -10,7 +10,7 @@ BUILD_DIR = build
 APP_PATH = $(BUILD_DIR)/DerivedData/Build/Products/$(CONFIG)/Voqora.app
 BUNDLE_ID = com.himudigonda.Voqora
 
-.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release ship help
+.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release appcast ship help
 
 # Default: Run the full pipeline
 all: run
@@ -50,12 +50,10 @@ app:
 	@echo "✅ Build Successful: $(APP_PATH)"
 
 # --- 🚀 LAUNCH ---
-run: backend app
-	@echo "------------------------------------------------"
-	@echo "🎉 [3/3] Launching Voqora..."
-	@echo "------------------------------------------------"
-	pkill -x "Voqora" || true
-	open $(APP_PATH)
+# Delegate to the exact-bundle runner. It must not kill an installed Voqora
+# copy just because it has the same display name as this local candidate.
+run:
+	@./script/build_and_run.sh run
 
 # --- 🧹 UTILS ---
 
@@ -67,6 +65,8 @@ clean:
 	rm -rf frontend/Voqora/DerivedData
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
+	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 	@echo "✨ Local build folders cleared."
 
@@ -78,8 +78,13 @@ ifndef CI
 	@printf "⚠️  This wipes ALL local Voqora data (audiobooks, history,\n   accessibility grants). Continue? [y/N] " && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
 endif
 	@echo "🧨 NUKING SYSTEM DATA..."
-	pkill -9 "Voqora" || true
-	pkill -9 "VoqoraServer" || true
+	@# Only stop the exact local candidate/backend this repository owns. An
+	@# installed Voqora copy must be closed by its user before a destructive reset.
+	@if pgrep -f "/Applications/Voqora.app/Contents/MacOS/Voqora" >/dev/null; then \
+		echo "Quit /Applications/Voqora.app before resetting its shared data."; exit 2; \
+	fi
+	pkill -f "$(CURDIR)/$(APP_PATH)/Contents/MacOS/Voqora" || true
+	pkill -f "$$HOME/Library/Application Support/$(BUNDLE_ID)/VoqoraServer/VoqoraServer" || true
 	rm -rf ~/Library/Application\ Support/VoqoraServer
 	rm -rf ~/Library/Application\ Support/$(BUNDLE_ID)
 	@echo "🔐 Resetting macOS Accessibility Database..."
@@ -126,11 +131,18 @@ test-swift:
 		lock="$(BUILD_DIR)/.swift-test.lock"; \
 		mkdir -p "$(BUILD_DIR)"; \
 		if ! mkdir "$$lock" 2>/dev/null; then \
-			echo "⚠️  A Voqora Swift test run is already active. Wait for it to finish."; exit 2; \
+			if pgrep -x xcodebuild >/dev/null; then \
+				echo "⚠️  A macOS Xcode build is already active. Wait for it to finish."; exit 2; \
+			fi; \
+			if ! rmdir "$$lock" 2>/dev/null; then \
+				echo "⚠️  The Voqora Swift-test lock is not recoverable. Inspect $$lock before retrying."; exit 2; \
+			fi; \
+			mkdir "$$lock"; \
+			echo "ℹ️  Recovered a stale Voqora Swift-test lock."; \
 		fi; \
 		trap 'rmdir "$$lock"' EXIT; \
-		if pgrep -f 'xcodebuild.*Voqora.xcodeproj.*test' >/dev/null; then \
-			echo "⚠️  Another Voqora xcodebuild test process is already active. Refusing to overlap it."; exit 2; \
+		if pgrep -x xcodebuild >/dev/null; then \
+			echo "⚠️  An Xcode build is already active. Refusing to overlap the macOS test host."; exit 2; \
 		fi; \
 		echo "🧪 Running one serial Swift test host..."; \
 		xcodebuild test -project $(PROJECT_PATH) -scheme $(SCHEME) \
@@ -169,11 +181,19 @@ endif
 # See HARD-050.
 release: check-version backend
 	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
+	./scripts/validate_release.sh $(VERSION)
 	chmod +x scripts/create_dmg.sh
 	./scripts/create_dmg.sh $(VERSION)
+	./scripts/validate_release.sh $(VERSION) build/Voqora-$(VERSION).dmg
 	@echo "✅ Release Ready: build/Voqora-$(VERSION).dmg"
 
-ship: release
+appcast: check-version
+	chmod +x scripts/create_appcast.sh
+	./scripts/create_appcast.sh $(VERSION)
+
+## `ship` never rebuilds. The appcast is signed for a particular byte stream,
+## so rebuilds after `make appcast` would invalidate the update in transit.
+ship: check-version
 	@echo "🚢 Shipping v$(VERSION)..."
 	chmod +x scripts/ship.sh
 	./scripts/ship.sh $(VERSION)
@@ -184,7 +204,8 @@ help:
 	@echo "  make nuke      Complete factory reset (removes permissions/app data)"
 	@echo "  make run       Build and launch fresh"
 	@echo "  make release   Rebuild and create a distribution DMG"
-	@echo "  make ship      Full release pipeline: build + git tag + github upload"
+	@echo "  make appcast   Create a signed Sparkle update feed from a built DMG"
+	@echo "  make ship      Upload the already-verified, appcast-signed DMG from main"
 	@echo "  make test      Run fast backend tests only (no macOS app host)"
 	@echo "  make test-swift Run one serial macOS test host"
 	@echo "  make test-ci   Run backend + serial macOS tests"

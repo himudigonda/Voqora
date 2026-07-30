@@ -4,6 +4,20 @@ import Foundation
 
 /// A thread-safe service to manage the Python backend process and handle streaming requests.
 final class BackendService: NSObject, @unchecked Sendable {
+    enum LogExportError: LocalizedError {
+        case noLogsAvailable
+        case couldNotSave
+
+        var errorDescription: String? {
+            switch self {
+            case .noLogsAvailable:
+                return "There are no Voqora logs available to export yet."
+            case .couldNotSave:
+                return "Voqora could not save the debug logs to your Desktop."
+            }
+        }
+    }
+
     private var process: Process?
     private var processPipe: Pipe?
     /// Persistent log handle. Held for the lifetime of the backend process so
@@ -18,7 +32,14 @@ final class BackendService: NSObject, @unchecked Sendable {
     }
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
-    private var continuations: [Int: AsyncStream<Data>.Continuation] = [:]
+    private var continuations: [Int: AsyncThrowingStream<Data, Error>.Continuation] = [:]
+
+    enum StreamError: Error, Equatable {
+        case requestEncodingFailed
+        case rejectedResponse(statusCode: Int)
+        case unexpectedResponse
+        case emptyAudio
+    }
 
     /// Shared session for streaming this is a
     private lazy var session: URLSession = {
@@ -68,10 +89,12 @@ final class BackendService: NSObject, @unchecked Sendable {
             return
         }
 
-        // Kill any stale instance left over from a previous session / crash
+        // Kill only a stale copy of this exact extracted backend. A generic
+        // `pkill VoqoraServer` can terminate another app build and made local
+        // QA look like the product was spawning or fighting multiple apps.
         let cleanup = Process()
         cleanup.launchPath = "/usr/bin/pkill"
-        cleanup.arguments = ["-f", "VoqoraServer"]
+        cleanup.arguments = ["-f", executableURL.path]
         try? cleanup.run()
         cleanup.waitUntilExit()
 
@@ -160,23 +183,13 @@ final class BackendService: NSObject, @unchecked Sendable {
             processPipe = nil
         }
 
-        // pkill -9 + waitUntilExit was blocking the caller's thread (often the
-        // UI thread on app quit, hanging the window for the duration of pkill).
-        // Hop to a background queue. See HARD-012.
-        DispatchQueue.global(qos: .userInitiated).async {
-            let task = Process()
-            task.launchPath = "/usr/bin/pkill"
-            task.arguments = ["-9", "-f", "VoqoraServer"]
-            do {
-                try task.run()
-                task.waitUntilExit()
-            } catch {
-                // pkill failing typically means the process is already gone — benign.
-            }
-        }
+        // `process?.terminate()` above is intentionally scoped to the child
+        // Voqora started. Never kill every process named VoqoraServer: an
+        // installed app and a local candidate can otherwise tear each other
+        // down during ordinary testing.
     }
 
-    func exportLogs() {
+    func exportLogs() throws -> [URL] {
         let fileManager = FileManager.default
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
@@ -185,20 +198,37 @@ final class BackendService: NSObject, @unchecked Sendable {
         let logsToExport = ["backend.log", "frontend.log"]
         let timestamp = Int(Date().timeIntervalSince1970)
 
-        for logName in logsToExport {
-            let sourceURL = appSupport.appendingPathComponent(logName)
-            let destinationURL = desktop.appendingPathComponent("Voqora_\(logName)_\(timestamp).txt")
+        var exportedURLs: [URL] = []
+        do {
+            for logName in logsToExport {
+                let sourceURL = appSupport.appendingPathComponent(logName)
+                guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
 
-            if fileManager.fileExists(atPath: sourceURL.path) {
-                try? fileManager.copyItem(at: sourceURL, to: destinationURL)
-                print("✅ Exported \(logName) to Desktop")
-            } else {
-                print("⚠️ Could not find \(logName) at \(sourceURL.path)")
+                let destinationURL = uniqueLogExportURL(
+                    named: "Voqora_\(logName)_\(timestamp)",
+                    in: desktop,
+                    fileManager: fileManager
+                )
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                exportedURLs.append(destinationURL)
             }
+        } catch {
+            for url in exportedURLs { try? fileManager.removeItem(at: url) }
+            throw LogExportError.couldNotSave
         }
 
-        // Show in Finder
-        NSWorkspace.shared.activateFileViewerSelecting([desktop])
+        guard !exportedURLs.isEmpty else { throw LogExportError.noLogsAvailable }
+        return exportedURLs
+    }
+
+    private func uniqueLogExportURL(named stem: String, in directory: URL, fileManager: FileManager) -> URL {
+        var suffix = 1
+        var url = directory.appendingPathComponent("\(stem).txt")
+        while fileManager.fileExists(atPath: url.path) {
+            suffix += 1
+            url = directory.appendingPathComponent("\(stem)_\(suffix).txt")
+        }
+        return url
     }
 
     struct HealthStatus {
@@ -241,8 +271,8 @@ final class BackendService: NSObject, @unchecked Sendable {
         _ = try? await URLSession.shared.data(for: request)
     }
 
-    func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncStream<Data> {
-        AsyncStream { continuation in
+    func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
             let url = baseURL.appendingPathComponent("speak")
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -269,13 +299,46 @@ final class BackendService: NSObject, @unchecked Sendable {
                     }
                 }
             } catch {
-                continuation.finish()
+                continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
+    }
+
+    /// A local /speak response is useful only when it is a successful WAV
+    /// stream. Without this guard, a JSON error body could be handed to the
+    /// audio decoder and then be reported as a successful generation.
+    static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+        else {
+            return false
+        }
+        return contentType.hasPrefix("audio/wav")
     }
 }
 
 extension BackendService: URLSessionDataDelegate {
+    func urlSession(
+        _: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard Self.isExpectedAudioResponse(response) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            stateQueue.async {
+                self.continuations[dataTask.taskIdentifier]?.finish(
+                    throwing: statusCode.map(StreamError.rejectedResponse) ?? .unexpectedResponse
+                )
+                self.continuations.removeValue(forKey: dataTask.taskIdentifier)
+            }
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
     func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let id = dataTask.taskIdentifier
         // Use async dispatch to avoid blocking the URLSession delegate queue
@@ -284,10 +347,14 @@ extension BackendService: URLSessionDataDelegate {
         }
     }
 
-    func urlSession(_: URLSession, task: URLSessionTask, didCompleteWithError _: Error?) {
+    func urlSession(_: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let id = task.taskIdentifier
         stateQueue.sync {
-            continuations[id]?.finish()
+            if let error {
+                continuations[id]?.finish(throwing: error)
+            } else {
+                continuations[id]?.finish()
+            }
             continuations.removeValue(forKey: id)
         }
     }

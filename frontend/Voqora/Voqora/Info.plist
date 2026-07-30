@@ -33,6 +33,14 @@
 	<string>Voqora needs to control other apps to adjust music volume while speaking.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://himudigonda.github.io/Voqora/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>LSEnvironment</key>
 	<dict>
 		<key>LLVM_PROFILE_FILE</key>

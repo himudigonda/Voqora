@@ -4,6 +4,20 @@ import Combine
 
 @MainActor
 class AudioService: NSObject, ObservableObject {
+    enum ExportError: LocalizedError {
+        case noAudioAvailable
+        case couldNotSave
+
+        var errorDescription: String? {
+            switch self {
+            case .noAudioAvailable:
+                return "There is no generated audio to save yet."
+            case .couldNotSave:
+                return "Voqora could not save the audio clip to your Desktop."
+            }
+        }
+    }
+
     @Published var isPlaying = false
     @Published var progress: Double = 0.0
     @Published var currentTime: TimeInterval = 0
@@ -104,9 +118,15 @@ class AudioService: NSObject, ObservableObject {
     /// See HARD-020.
     private var volumeRampToken: UUID?
 
-    override init() {
+    init(startingEngine: Bool = !RuntimeEnvironment.isRunningTests) {
         super.init()
-        setupEngine()
+        // XCTest hosts the app target. Starting Core Audio there can leave an
+        // orphaned audio process after pure logic tests have finished. Unit
+        // tests do not exercise playback hardware, so keep that dependency
+        // explicit and leave the production default unchanged.
+        if startingEngine {
+            setupEngine()
+        }
     }
 
     private func setupEngine() {
@@ -361,6 +381,13 @@ class AudioService: NSObject, ObservableObject {
         pausedTime = 0
         duration = 0
         playbackCompleted = false
+        // `stop()` deliberately preserves the last completed clip so it can be
+        // exported. A new speech request is the point at which that clip must
+        // be discarded.
+        lastAudioData = Data()
+        pcmAccumulator = Data()
+        headerAccumulator = Data()
+        estimatedDuration = 0
         isStreamActive = true
         // Streaming TTS bakes speed into synthesis server-side; force the live
         // rate node back to normal so a leftover audiobook speed never bleeds
@@ -412,7 +439,6 @@ class AudioService: NSObject, ObservableObject {
         isStreamActive = false
         hasStrippedHeader = false
         scheduledBufferCount = 0
-        lastAudioData = Data()
         pcmAccumulator = Data()
         headerAccumulator = Data()
         estimatedDuration = 0
@@ -632,10 +658,37 @@ class AudioService: NSObject, ObservableObject {
         return Double(lastAudioData.count / 2) / format.sampleRate
     }
 
-    func exportToDesktop() {
-        guard !lastAudioData.isEmpty else { return }
+    func exportToDesktop() throws -> URL {
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+        let timestamp = Int(Date().timeIntervalSince1970)
+        do {
+            let exportedURL = try Self.writeWAV(
+                pcmData: lastAudioData,
+                to: desktop,
+                timestamp: timestamp
+            )
+            // Record an export only after the atomic file write has succeeded.
+            MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
+            return exportedURL
+        } catch let error as ExportError {
+            throw error
+        } catch {
+            throw ExportError.couldNotSave
+        }
+    }
+
+    /// Writes a complete WAV for a rendered PCM stream. Kept deterministic so
+    /// the app can test export bytes and name collisions without touching a
+    /// person's Desktop or needing an audio device.
+    static func writeWAV(
+        pcmData: Data,
+        to directory: URL,
+        timestamp: Int,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        guard !pcmData.isEmpty else { throw ExportError.noAudioAvailable }
         let headerSize = 44
-        let totalSize = lastAudioData.count + headerSize - 8
+        let totalSize = pcmData.count + headerSize - 8
         var header = Data()
         header.append("RIFF".data(using: .ascii)!)
         header.append(contentsOf: withUnsafeBytes(of: UInt32(totalSize)) { Data($0) })
@@ -648,12 +701,35 @@ class AudioService: NSObject, ObservableObject {
         header.append(contentsOf: withUnsafeBytes(of: UInt16(2)) { Data($0) })
         header.append(contentsOf: withUnsafeBytes(of: UInt16(16)) { Data($0) })
         header.append("data".data(using: .ascii)!)
-        header.append(contentsOf: withUnsafeBytes(of: UInt32(lastAudioData.count)) { Data($0) })
+        header.append(contentsOf: withUnsafeBytes(of: UInt32(pcmData.count)) { Data($0) })
 
-        let wavData = header + lastAudioData
-        let filename = "Voqora_\(Int(Date().timeIntervalSince1970)).wav"
-        let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
-        try? wavData.write(to: desktopURL)
-        MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
+        let wavData = header + pcmData
+        let exportURL = uniqueWAVExportURL(
+            in: directory,
+            timestamp: timestamp,
+            fileManager: fileManager
+        )
+        do {
+            try wavData.write(to: exportURL, options: .atomic)
+        } catch {
+            throw ExportError.couldNotSave
+        }
+        return exportURL
+    }
+
+    private static func uniqueWAVExportURL(
+        in directory: URL,
+        timestamp: Int,
+        fileManager: FileManager
+    ) -> URL {
+        let stem = "Voqora_\(timestamp)"
+        var suffix = 1
+        var url = directory.appendingPathComponent("\(stem).wav")
+
+        while fileManager.fileExists(atPath: url.path) {
+            suffix += 1
+            url = directory.appendingPathComponent("\(stem)_\(suffix).wav")
+        }
+        return url
     }
 }

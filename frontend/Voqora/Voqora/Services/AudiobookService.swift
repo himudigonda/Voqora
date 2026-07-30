@@ -190,7 +190,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let mimeType = switch pdf.pathExtension.lowercased() {
         case "pdf": "application/pdf"
         case "txt": "text/plain"
-        case "epub": "application/epub+zip"
         case "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         case "md": "text/markdown"
         default: "application/octet-stream"

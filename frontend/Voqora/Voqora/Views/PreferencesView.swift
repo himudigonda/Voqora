@@ -8,12 +8,16 @@ struct PreferencesView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
+    @EnvironmentObject var updater: AppUpdater
+    @EnvironmentObject var legacyMigration: LegacySuperSayMigration
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
     @State private var emailSubmitting = false
     @State private var emailError: String?
     @State private var emailSaved = false
+    @State private var emailRemoving = false
+    @State private var migrationStatus: String?
 
     var body: some View {
         ScrollView {
@@ -28,28 +32,33 @@ struct PreferencesView: View {
                 }
                 .padding(.bottom, 8)
 
-                // Section: Identity (analytics-only, optional)
+                // Section: Optional identity
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Help us count returning users")
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Optional email")
                             .font(vm.appFont(size: 14, weight: .bold))
-                        Text("Optional. We never read your text or files. Your email is only used to attribute anonymous usage counts to a real person so we can share honest growth numbers.")
+                        Text("Add an email only if you want us to recognise the same person across installs. We never collect your text or files, and you can remove your email at any time.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        HStack(spacing: 8) {
-                            TextField("you@example.com", text: $emailDraft)
+                        Text("Email address")
+                            .font(vm.appFont(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .center, spacing: 10) {
+                            TextField("name@example.com", text: $emailDraft)
                                 .textFieldStyle(.roundedBorder)
+                                .textContentType(.emailAddress)
                                 .disableAutocorrection(true)
                                 .font(vm.appFont(size: 13))
                             Button {
                                 submitEmail()
                             } label: {
                                 if emailSubmitting {
-                                    ProgressView().scaleEffect(0.6).frame(width: 60)
+                                    ProgressView().scaleEffect(0.6).frame(width: 96)
                                 } else {
-                                    Text(identity.hasIdentity ? "Update" : "Save").frame(width: 60)
+                                    Text(identity.hasIdentity ? "Update email" : "Save email").frame(width: 96)
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -66,30 +75,75 @@ struct PreferencesView: View {
                             }
                         } else if let current = identity.email {
                             HStack {
-                                Text("Current: \(current)").font(vm.appFont(size: 11)).foregroundStyle(.secondary)
+                                Text("Email saved for this Mac")
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Remove") { identity.clearEmail(); emailDraft = "" }
+                                Button(emailRemoving ? "Removing…" : "Remove") {
+                                    removeEmail()
+                                }
                                     .buttonStyle(.plain)
                                     .font(vm.appFont(size: 11))
                                     .foregroundStyle(.red)
+                                    .disabled(emailRemoving)
                             }
+                            .accessibilityLabel("Saved email: \(current)")
+                        } else {
+                            Text("No email saved. Voqora works fully without one.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
                         }
-
-                        Divider().padding(.vertical, 4)
-
-                        Button {
-                            onboarding.reset()
-                        } label: {
-                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
-                                .font(vm.appFont(size: 12))
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
                     }
                 }
                 .onAppear {
                     if emailDraft.isEmpty {
                         emailDraft = identity.email ?? ""
+                    }
+                }
+
+                PreferenceSection(title: "Setup", icon: "checklist") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Need to review permissions or the first-use guide?")
+                            .font(vm.appFont(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button {
+                            onboarding.reset()
+                        } label: {
+                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                if legacyMigration.isLegacyInstalled {
+                    PreferenceSection(title: "SuperSay migration", icon: "arrow.right.circle") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("SuperSay is retired. Voqora is the supported successor.")
+                                .font(vm.appFont(size: 14, weight: .bold))
+                            Text("Import compatible playback and appearance preferences if you want to. Documents, audio, history, credentials, email, shortcuts, and analytics choices are never copied. Voqora will never remove SuperSay automatically.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            HStack {
+                                Button("Import preferences") {
+                                    let count = legacyMigration.importCompatiblePreferences()
+                                    migrationStatus = count > 0
+                                        ? "Imported \(count) compatible preference\(count == 1 ? "" : "s")."
+                                        : "No compatible SuperSay preferences were found."
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.cyan)
+                                Button("Show SuperSay in Finder") {
+                                    legacyMigration.showLegacyAppInFinder()
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                            if let migrationStatus {
+                                Text(migrationStatus)
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
@@ -226,7 +280,7 @@ struct PreferencesView: View {
                             Slider(value: $bookVM.defaultBookSpeed, in: 0.75 ... 2.0).tint(.cyan)
                         }
 
-                        Text("Audiobooks use your selected TTS engine and voice from above. Each PDF is cleaned via Gemini before narration to handle tables, equations, and PDF formatting artifacts.")
+                        Text("Text-based documents are narrated locally by default. You can opt into Gemini cleanup for a difficult document, and scanned PDFs need Gemini OCR before they can be narrated.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
                     }
@@ -357,7 +411,13 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: $vm.telemetryEnabled) {
+                        Toggle(isOn: Binding(
+                            get: { vm.telemetryEnabled },
+                            set: { enabled in
+                                vm.telemetryEnabled = enabled
+                                Task { await MetricsService.shared.setEnabled(enabled) }
+                            }
+                        )) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Anonymous Analytics")
                                     .font(vm.appFont(size: 14, weight: .bold))
@@ -366,18 +426,47 @@ struct PreferencesView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
-                        .help("We collect: App Launches, Character Counts, and Export Counts. No text content or personal data is ever recorded or transmitted.")
+                        .help("We collect anonymous activity counts, never text, filenames, audio, or API keys. An email is sent only if you choose to provide one in Identity settings.")
+
+                        Divider()
+
+                        Toggle(isOn: Binding(
+                            get: { updater.automaticallyChecksForUpdates },
+                            set: { updater.setAutomaticallyChecksForUpdates($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Automatically check for updates")
+                                    .font(vm.appFont(size: 14, weight: .bold))
+                                Text("Checks Voqora's signed public update feed automatically. Voqora always shows you the update before replacing the app.")
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
 
                         Divider()
 
                         HStack {
                             Button {
-                                vm.checkForUpdates()
+                                updater.checkForUpdates()
                             } label: {
                                 Label("Check for Updates...", systemImage: "arrow.triangle.2.circlepath")
                                     .font(vm.appFont(size: 13, weight: .medium))
                             }
                             .buttonStyle(.plain)
+                            .disabled(!updater.canCheckForUpdates)
+
+                            if !updater.canCheckForUpdates {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Preparing update checks…")
+                                        .font(vm.appFont(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .help("Voqora enables this after the update service has finished starting or after a current check completes.")
+                            }
 
                             Spacer()
 
@@ -389,7 +478,7 @@ struct PreferencesView: View {
                         Divider()
 
                         Button {
-                            audio.exportToDesktop()
+                            vm.exportLastClip()
                         } label: {
                             Label("Export Last Clip to Desktop", systemImage: "square.and.arrow.down")
                                 .font(vm.appFont(size: 13, weight: .bold))
@@ -438,6 +527,21 @@ struct PreferencesView: View {
     private func resetShortcuts() {
         for name in KeyboardShortcuts.Name.allCases {
             KeyboardShortcuts.reset(name)
+        }
+    }
+
+    private func removeEmail() {
+        emailError = nil
+        emailSaved = false
+        emailRemoving = true
+        Task {
+            defer { emailRemoving = false }
+            do {
+                try await identity.removeEmail()
+                emailDraft = ""
+            } catch {
+                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+            }
         }
     }
 }

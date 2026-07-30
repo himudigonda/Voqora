@@ -302,7 +302,6 @@ struct AudiobookLibraryView: View {
                 Image(systemName: "arrow.down.doc.fill")
                     .font(.system(size: 72, weight: .ultraLight))
                     .foregroundStyle(.cyan)
-                    .symbolEffect(.bounce, options: .repeating)
                 Text("DROP TO ADD AUDIOBOOK")
                     .font(vm.appFont(size: 14, weight: .black))
                     .kerning(3)

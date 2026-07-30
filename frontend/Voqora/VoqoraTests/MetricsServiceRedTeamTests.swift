@@ -139,7 +139,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             "speed": Double.infinity, // out of [0.5,2.0] → drop
             "audio_seconds": -1.0, // negative → drop
             "pages": "9999999999", // wrong type → drop
-            "file_kind": "exe", // not in {pdf,txt,epub} → drop
+            "file_kind": "exe", // not in {pdf,txt,docx,md} → drop
             "book_id_hash": "G".paddedToFiftyFour(), // non-hex → drop
             "seconds_played": Double.nan, // NaN handling
         ]
