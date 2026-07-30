@@ -166,6 +166,15 @@ final class DashboardViewModelTests: XCTestCase {
         }
     }
 
+    func test_stopPlayback_returnsTheTTSStateToReady() {
+        let vm = makeVM()
+        vm.status = .thinking
+
+        vm.stopPlayback()
+
+        XCTAssertEqual(vm.status, .ready)
+    }
+
     func test_togglePlayback_error_current_reset_returns_to_ready() async {
         let vm = makeVM()
         vm.togglePlayback()  // sets .error

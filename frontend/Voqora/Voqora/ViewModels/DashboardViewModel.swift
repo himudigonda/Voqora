@@ -289,10 +289,38 @@ class DashboardViewModel: ObservableObject {
     }
 
     func togglePlayback() {
+        // The shared audio engine can be playing an audiobook while this view
+        // is visible. Delegate to the book model so it persists the resume
+        // point instead of treating a book like an anonymous TTS clip.
+        if let audiobookVM, audiobookVM.nowPlaying != nil {
+            audiobookVM.togglePlayback()
+            return
+        }
         if audio.duration == 0 {
             showTransientError("Nothing to play. Select text and press Cmd+Shift+.")
         } else {
             audio.togglePause()
+        }
+    }
+
+    /// Stops the current product playback decisively. Cancelling the request
+    /// before touching the audio engine is important: otherwise an in-flight
+    /// TTS stream can append another buffer and resume after the user pressed
+    /// the global Stop shortcut.
+    func stopPlayback() {
+        speakGeneration &+= 1
+        currentSpeakTask?.cancel()
+        currentSpeakTask = nil
+
+        if let audiobookVM, audiobookVM.nowPlaying != nil {
+            audiobookVM.stopPlayback()
+        } else {
+            audio.stop()
+        }
+
+        clearActionFeedback()
+        if status == .speaking || status == .paused || status == .thinking {
+            status = .ready
         }
     }
 

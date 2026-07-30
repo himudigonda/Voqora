@@ -71,6 +71,10 @@ class AudioService: NSObject, ObservableObject {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
+    /// Test-only instances deliberately skip Core Audio setup. Keep every
+    /// playback entry point aware of that rather than letting one helper try
+    /// to start an unconfigured graph.
+    private var engineConfigured = false
 
     private var lastAudioData = Data()
     private var headerAccumulator = Data()
@@ -110,6 +114,7 @@ class AudioService: NSObject, ObservableObject {
     private func setupEngine() {
         engine.attach(playerNode)
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        engineConfigured = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
@@ -207,6 +212,7 @@ class AudioService: NSObject, ObservableObject {
 
     private func startPlayback() {
         guard !hasStartedPlayback else { return }
+        guard engineConfigured else { return }
         do {
             if !engine.isRunning { try engine.start() }
             playerNode.play()
@@ -267,7 +273,7 @@ class AudioService: NSObject, ObservableObject {
                 progress = 0
             }
             playbackCompleted = false
-            try? engine.start()
+            if engineConfigured { try? engine.start() }
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -324,13 +330,12 @@ class AudioService: NSObject, ObservableObject {
         headerAccumulator = Data()
         estimatedDuration = 0
         isStreamActive = true
-        // Pre-warm hardware: start playerNode now so it's running when first buffer arrives.
-        if !engine.isRunning { try? engine.start() }
-        playerNode.play()
-        hasStartedPlayback = true
-        // BUG FIX: set isPlaying so all guards work and start the timer so progress updates.
-        isPlaying = true
-        startTimer()
+        // Pre-warm the engine, but do not claim playback has started until a
+        // real buffer has been scheduled. Otherwise a slow or failed request
+        // makes the product show “Speaking 0:00” while nothing is audible.
+        if engineConfigured, !engine.isRunning { try? engine.start() }
+        hasStartedPlayback = false
+        isPlaying = false
     }
 
     func finishStream() {

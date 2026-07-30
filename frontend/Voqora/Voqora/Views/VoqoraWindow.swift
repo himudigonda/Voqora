@@ -113,7 +113,7 @@ struct VoqoraWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
 
-                // Global drop overlay shown across any non-Audiobooks tab when a PDF is hovering.
+                // Global drop overlay shown across any non-Audiobooks tab when a supported document is hovering.
                 if globalDropHovering && vm.selectedTab != "books" {
                     globalDropOverlay
                         .transition(.opacity)
@@ -325,7 +325,7 @@ struct VoqoraWindow: View {
                 Button { vm.togglePlayback() } label: {
                     Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                 }
-                Button { audio.stop() } label: {
+                Button { vm.stopPlayback() } label: {
                     Image(systemName: "stop.fill")
                 }
             }

@@ -3,6 +3,57 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
+## [Unreleased]
+
+### First-use reliability
+
+- Fixed the first-run ordering so onboarding is always the first surface on a
+  fresh profile. The local engine may continue preparing behind it, but it no
+  longer hides the permission guide or makes the app look frozen.
+- The onboarding welcome screen now uses the actual Voqora app icon and
+  higher-contrast copy. A prior development preference is reset once to
+  **Bella** on launch, then later voice choices remain entirely the user's.
+- The app now tells the truth about a pending speech request: it stays in
+  **Thinking** until a real audio buffer arrives rather than displaying
+  **Speaking 0:00** before anything can be heard.
+
+### Playback and document flow
+
+- Reworked Stop into one cancellation-aware product action. The global
+  shortcut, menu-bar item, and in-window controls now cancel an active speech
+  request before stopping audio, so late streamed data cannot restart playback
+  after someone pressed Stop.
+- Preserved audiobook behaviour when the shared player is controlled outside
+  the Audiobooks view. Pause/resume and Stop now retain the book's normal
+  resume-position and listening-event bookkeeping instead of treating it as a
+  disposable selected-text clip.
+- Unified the document contract across the Library importer, global drag and
+  drop, MIME handling, and metrics. Voqora accepts PDF, TXT, DOCX, and
+  Markdown, stages documents safely before processing, and gives a readable
+  message for an unsupported or unreadable drop instead of ignoring it.
+
+### Stability and development ergonomics
+
+- Removed broad process-name termination from app shutdown and reset tooling.
+  Voqora now stops only the backend child it started, while a destructive reset
+  refuses to run until every local candidate is closed.
+- Kept the Swift suite to one serial host and prevented test-only audio
+  services from starting an unconfigured Core Audio graph. This removes a
+  source of noisy macOS test-host failures without launching product windows or
+  background backends.
+- Added focused regressions for first-run Bella migration, actual audio-start
+  state, owned-backend shutdown, document-format agreement, and safe Stop
+  behaviour.
+
+### Distribution status
+
+- Refined the local installer artwork to use Voqora's dark visual language,
+  literal drag-to-Applications instructions, and dedicated high-contrast
+  label zones for Finder's app and Applications labels.
+- No new public release is included in this section. Installer, Gatekeeper,
+  Sparkle, website/metrics, and full manual-flow evidence remain release gates
+  until they are verified against one immutable candidate artifact.
+
 ## [1.0.2] - 2026-07-29
 
 ### First-run recovery

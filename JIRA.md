@@ -60,7 +60,7 @@ an instruction from disappearing between work sessions.
 
 ### Reconciliation rule
 
-Rows R-01 through R-40 and VQ-001 through VQ-050 are both release gates.
+Rows R-01 through R-40 and VQ-001 through VQ-052 are both release gates.
 Before a release, each must be explicitly `Done`, `Blocked` with an accepted
 owner decision, or `Not applicable` with a written reason. Nothing is inferred
 from a green unit-test run or a prettier screenshot.
@@ -139,6 +139,8 @@ from a green unit-test run or a prettier screenshot.
 | VQ-048 | Global document intake | Dropping a supported document anywhere in the app uses the same safe staging, error copy, estimate flow, MIME type, and metrics contract as the Library importer. | Shared-contract regression test plus manual Finder drop. | Partial: the global drop path now accepts only PDF, TXT, DOCX, and Markdown, stages the source before switching views, and gives a readable error instead of silently ignoring it. Interactive Finder proof remains. |
 | VQ-049 | First-run brand and voice | A first launch always shows the actual Voqora mark and Bella, rather than a generic symbol or stale multilingual profile. | Isolated-default test plus fresh Release visual. | Partial: migration v7 resets prior stale v6 defaults to `af_bella`, preserves later user choices, and the current local Release candidate visibly showed the bundled app icon. Clean-DMG proof remains. |
 | VQ-050 | Process-safe exit and reset | Menu-bar quit, app termination, and data reset stop only the backend started by this exact app, and never kill a parallel copy by name. | AppDelegate regression test, source audit, and multi-copy/manual candidate proof. | Partial: the app now owns a single shutdown callback, the menu exit stops its child synchronously, and `make nuke` refuses to proceed while a candidate/backend runs. Multi-copy proof remains. |
+| VQ-051 | Stop semantics | Global Stop, menu-bar Stop, and in-window Stop cancel an active speech stream before stopping output, so a late network chunk cannot restart audio. | Cancellation-aware unit coverage and Accessibility/manual shortcut pass. | Partial: all stop affordances now enter `DashboardViewModel.stopPlayback()`, which advances the request generation, cancels the task, preserves audiobook resume bookkeeping, then stops output. A real global-hotkey proof remains. |
+| VQ-052 | Honest speaking state | The dashboard says “Speaking” only after actual audio is buffered, not while an engine request is merely pending. | Audio-service state regression test and slow-response manual observation. | Partial: `prepareForStream()` now keeps the state in “Thinking” until `startPlayback()` receives a buffer, and the headless regression test keeps Core Audio unconfigured. A throttled-backend visual pass remains. |
 
 ## Current stop-the-line findings
 

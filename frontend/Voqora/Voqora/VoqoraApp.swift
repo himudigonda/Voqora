@@ -114,7 +114,7 @@ struct VoqoraApp: App {
             // Don't trigger permission prompts here — the onboarding wizard
             // gates them behind explicit buttons. SystemService still drives
             // ducking + AppleScript permissions on first hotkey use.
-            setupShortcuts(vm: vmInstance, audio: audioInstance)
+            setupShortcuts(vm: vmInstance)
 
             MetricsService.shared.trackLaunch()
             // Start the periodic flush driver (previously embedded inside the
@@ -145,7 +145,7 @@ struct VoqoraApp: App {
         }
     }
 
-    private func setupShortcuts(vm: DashboardViewModel, audio: AudioService) {
+    private func setupShortcuts(vm: DashboardViewModel) {
         print("⌨️ KeyboardShortcuts: Initializing registration...")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
@@ -165,7 +165,7 @@ struct VoqoraApp: App {
         KeyboardShortcuts.onKeyUp(for: .stopText) {
             print("⌨️ KeyboardShortcuts: stopText triggered")
             Task { @MainActor in
-                audio.stop()
+                vm.stopPlayback()
             }
         }
 
@@ -209,7 +209,7 @@ struct VoqoraApp: App {
 
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             Button("Speak Selection") { Task { await dashboardVM.speakSelection() } }
-            Button("Stop") { audio.stop() }
+            Button("Stop") { dashboardVM.stopPlayback() }
             Button("Quit") {
                 dashboardVM.stopHeartbeat()
                 // Stop only the child process this app owns before macOS
