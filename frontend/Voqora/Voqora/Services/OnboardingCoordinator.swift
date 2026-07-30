@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import ApplicationServices
 
 /// Single source of truth for first-launch onboarding state.
 ///
@@ -10,22 +11,28 @@ import SwiftUI
 @MainActor
 final class OnboardingCoordinator: ObservableObject {
     /// Bump when onboarding flow changes shape; existing users see it again once.
-    /// v2 (Jun 2026): replaced 5-step sign-in nudge with 6-step permission wizard.
-    private static let currentVersion = 2
+    /// v3: re-runs the permission-led first-use flow for the public Voqora
+    /// release after the legacy identity change.
+    private static let currentVersion = 3
 
     @AppStorage("hasOnboarded") private var hasOnboarded: Bool = false
     @AppStorage("onboardingVersion") private var storedVersion: Int = 0
 
     @Published private(set) var version: Int = 0
+    private let accessibilityTrusted: () -> Bool
 
-    init() {
+    init(accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() }) {
+        self.accessibilityTrusted = accessibilityTrusted
         if storedVersion < Self.currentVersion {
             hasOnboarded = false
             storedVersion = Self.currentVersion
         }
     }
 
-    var needsOnboarding: Bool { !hasOnboarded }
+    /// A completed wizard is not sufficient if macOS later revokes or never
+    /// granted Accessibility. The selected-text shortcut cannot work without
+    /// it, so surface the guided flow again instead of leaving a dead dashboard.
+    var needsOnboarding: Bool { !hasOnboarded || !accessibilityTrusted() }
 
     func markCompleted() {
         hasOnboarded = true

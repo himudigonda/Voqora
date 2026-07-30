@@ -27,6 +27,7 @@ final class DashboardViewModelTests: XCTestCase {
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
         defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
+        defaults.set(1, forKey: "voiceDefaultsMigrationVersion")
 
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
