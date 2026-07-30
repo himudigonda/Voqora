@@ -86,6 +86,10 @@ this is the first public release of the product and its source history.
   Voqora is validating product demand. macOS may require **Open Anyway** or
   the documented one-app quarantine command after download. The update archive
   is still verified by Sparkle before installation.
+- Early-access builds use Sparkle's in-process downloader rather than its
+  separately signed helper. This keeps future updates reliable without a
+  Developer ID signing identity; the signed appcast and archive verification
+  remain in place.
 
 ## [1.0.2] - 2026-07-29
 
