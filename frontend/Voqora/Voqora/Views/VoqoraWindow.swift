@@ -154,6 +154,9 @@ struct VoqoraWindow: View {
             // Prepare backend if needed
             Task {
                 await launchManager.prepare()
+                if launchManager.isReady {
+                    vm.startBackgroundWork()
+                }
             }
 
             // First-launch onboarding is the highest-priority surface. It
@@ -224,7 +227,12 @@ struct VoqoraWindow: View {
 
                             Button("Try Again") {
                                 launchManager.error = nil
-                                Task { await launchManager.prepare() }
+                                Task {
+                                    await launchManager.prepare()
+                                    if launchManager.isReady {
+                                        vm.startBackgroundWork()
+                                    }
+                                }
                             }
                             .buttonStyle(.borderedProminent)
                         } else {

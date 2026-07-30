@@ -88,6 +88,10 @@ class DashboardViewModel: ObservableObject {
 
     private var currentSpeakTask: Task<Void, Never>?
     private var heartbeatTask: Task<Void, Never>?
+    /// Startup work must begin only after LaunchManager has installed the
+    /// bundled server. Starting it while that directory is being replaced
+    /// creates a launch/kill/poll loop on a fresh install.
+    private(set) var backgroundWorkStarted = false
     /// Background timer for the "1s after playback ended, restore music
     /// volume" behavior. Cancelled on re-entrance so a quick stop/start
     /// doesn't unduck mid-playback. See HARD-021.
@@ -114,9 +118,18 @@ class DashboardViewModel: ObservableObject {
 
         setupBindings()
         if startsBackgroundWork {
-            startHeartbeat()
-            startPrewarmObservers()
+            startBackgroundWork()
         }
+    }
+
+    /// Starts the backend health loop and prewarm observers once. VoqoraApp
+    /// calls this only after LaunchManager has extracted the bundled server;
+    /// repeated view appearances are harmless.
+    func startBackgroundWork() {
+        guard !backgroundWorkStarted else { return }
+        backgroundWorkStarted = true
+        startHeartbeat()
+        startPrewarmObservers()
     }
 
     private func setupBindings() {
@@ -271,6 +284,7 @@ class DashboardViewModel: ObservableObject {
 
 
     func startHeartbeat() {
+        guard heartbeatTask == nil else { return }
         heartbeatTask = Task {
             var wasOnline = false
             while !Task.isCancelled {

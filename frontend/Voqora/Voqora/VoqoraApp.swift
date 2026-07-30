@@ -75,7 +75,10 @@ struct VoqoraApp: App {
             system: systemInstance,
             audio: audioInstance,
             history: historyInstance,
-            startsBackgroundWork: !RuntimeEnvironment.isRunningTests
+            // LaunchManager owns unpacking the bundled local server. Starting
+            // the health loop before it is ready starts a process which the
+            // extractor immediately replaces on fresh installs.
+            startsBackgroundWork: false
         )
 
         // Audiobook VM uses the same shared AudioService for playback

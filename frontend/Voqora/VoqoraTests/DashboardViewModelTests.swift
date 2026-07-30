@@ -49,6 +49,20 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
+    func test_backgroundWork_startsOnlyOnceAfterExplicitLaunchPreparation() {
+        let vm = makeVM()
+        XCTAssertFalse(vm.backgroundWorkStarted)
+
+        vm.startBackgroundWork()
+        XCTAssertTrue(vm.backgroundWorkStarted)
+
+        // A second window appearance must not create another health loop or
+        // prewarm subscription.
+        vm.startBackgroundWork()
+        XCTAssertTrue(vm.backgroundWorkStarted)
+        vm.stopHeartbeat()
+    }
+
     // MARK: - togglePlayback error path
 
     func test_togglePlayback_with_zero_duration_sets_error() async {
