@@ -27,6 +27,9 @@ this is the first public release of the product and its source history.
   the Audiobooks view. Pause/resume and Stop now retain the book's normal
   resume-position and listening-event bookkeeping instead of treating it as a
   disposable selected-text clip.
+- A delayed audiobook-file request can no longer revive playback after Stop,
+  deletion, or a switch to another book. Voqora invalidates the older request
+  before teardown and does not surface its late error as a fresh user action.
 - Unified the document contract across the Library importer, global drag and
   drop, MIME handling, and metrics. Voqora accepts PDF, TXT, DOCX, and
   Markdown, stages documents safely before processing, and gives a readable

@@ -15,6 +15,10 @@ final class AudiobookViewModel: ObservableObject {
     // Dependencies
     private let service: AudiobookService
     let audio: AudioService
+    /// Narrow seam around the only long-running step in audiobook playback.
+    /// Keeping it here makes the stop/delete race deterministic to exercise
+    /// without changing the production service contract.
+    private let localAudioURL: @MainActor (String) async throws -> URL
 
     // Library
     @Published var books: [Audiobook] = []
@@ -86,9 +90,17 @@ final class AudiobookViewModel: ObservableObject {
 
     private var completionObserver: AnyCancellable?
 
-    init(service: AudiobookService? = nil, audio: AudioService) {
-        self.service = service ?? AudiobookService()
+    init(
+        service: AudiobookService? = nil,
+        audio: AudioService,
+        localAudioURL: (@MainActor (String) async throws -> URL)? = nil
+    ) {
+        let resolvedService = service ?? AudiobookService()
+        self.service = resolvedService
         self.audio = audio
+        self.localAudioURL = localAudioURL ?? { bookID in
+            try await resolvedService.ensureLocalAudio(for: bookID)
+        }
         self.keyVerified = KeychainService.has(.geminiAPIKey)
         if let stored = KeychainService.get(.geminiAPIKey) {
             self.draftKey = stored
@@ -377,6 +389,15 @@ final class AudiobookViewModel: ObservableObject {
 
     /// Set true while a play() is in flight; prevents double-click race (S3).
     @Published private(set) var isLoadingAudio: Bool = false
+    /// Each play/stop action receives a generation. A delayed local-file fetch
+    /// from an older action must never resurrect audio after the user stopped,
+    /// deleted, or switched books.
+    private(set) var playbackGeneration = 0
+    private var pendingPlaybackBookID: String?
+
+    /// True while a local audiobook file is being prepared but has not yet
+    /// become `nowPlaying`. Global Stop uses this so it can cancel that gap too.
+    var isPreparingPlayback: Bool { pendingPlaybackBookID != nil }
 
     func play(_ book: Audiobook) {
         guard !isLoadingAudio else { return }
@@ -394,17 +415,37 @@ final class AudiobookViewModel: ObservableObject {
             }
         }
 
+        if nowPlaying != nil {
+            // Switching books must use the normal teardown path so the prior
+            // resume point and listening metrics are not silently discarded.
+            stopPlayback()
+        }
+
         isLoadingAudio = true
         currentTranscript = nil
+        playbackGeneration &+= 1
+        let generation = playbackGeneration
+        pendingPlaybackBookID = book.bookID
         Task { [weak self] in
             guard let self else { return }
-            defer { self.isLoadingAudio = false }
+            defer {
+                if generation == self.playbackGeneration {
+                    self.isLoadingAudio = false
+                    self.pendingPlaybackBookID = nil
+                }
+            }
             do {
                 self.audio.stop()
-                let url = try await self.service.ensureLocalAudio(for: book.bookID)
+                let url = try await self.localAudioURL(book.bookID)
+                // The user may have stopped, deleted, or selected another
+                // book while the file request was in flight.
+                guard generation == self.playbackGeneration else { return }
+                try self.audio.loadAndPlayWAV(at: url)
+                // Only commit user-visible playback state after loading
+                // succeeded. A corrupted local audio file must not leave a
+                // misleading "now playing" book with nothing loaded.
                 self.nowPlaying = book
                 self.lastPlayedBookID = book.bookID
-                try self.audio.loadAndPlayWAV(at: url)
                 // Restore saved position (skip trivially short seeks < 2 s)
                 let savedTime = UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
                 if savedTime > 2.0 { self.audio.seekAudiobook(toSeconds: savedTime) }
@@ -416,6 +457,7 @@ final class AudiobookViewModel: ObservableObject {
                     self.currentTranscript = result
                 }
             } catch {
+                guard generation == self.playbackGeneration else { return }
                 showToast("Could not load audio: \(error.localizedDescription)", kind: .error)
             }
         }
@@ -435,6 +477,12 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func stopPlayback() {
+        // Invalidate an in-flight local-file request before touching audio.
+        // Without this, a delayed request can schedule a new buffer after
+        // the user explicitly pressed Stop.
+        playbackGeneration &+= 1
+        pendingPlaybackBookID = nil
+        isLoadingAudio = false
         let nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 5.0
         if let book = nowPlaying, audio.currentTime > 1.0, !audio.playbackCompleted, !nearEnd {
             UserDefaults.standard.set(audio.currentTime, forKey: "bookPos_\(book.bookID)")
@@ -580,6 +628,12 @@ final class AudiobookViewModel: ObservableObject {
     // MARK: - Delete
 
     func delete(_ book: Audiobook) {
+        // A loading book has no `nowPlaying` value yet, so invalidate it here
+        // as well. Otherwise its request could finish after deletion and start
+        // audio for a book that no longer exists in the library.
+        if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
+            stopPlayback()
+        }
         Task {
             do {
                 try await service.delete(book.bookID)
@@ -595,9 +649,6 @@ final class AudiobookViewModel: ObservableObject {
             // P5: drop processing-state entry so it doesn't leak.
             processingState.removeValue(forKey: book.bookID)
             await refresh()
-            if nowPlaying?.bookID == book.bookID {
-                stopPlayback()
-            }
         }
     }
 
