@@ -124,7 +124,7 @@ struct UploadEstimateModal: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use Gemini cleanup for this book")
                         .font(vm.appFont(size: 11, weight: .medium))
-                    Text("Optional for text PDFs. When enabled, page text and scanned-page images are sent transiently to Google Gemini for cleanup or OCR.")
+                    Text("Optional for text documents. When enabled, page text and scanned-PDF images are sent transiently to Google Gemini for cleanup or OCR.")
                         .font(vm.appFont(size: 10))
                         .foregroundStyle(.secondary)
                         .lineLimit(3)

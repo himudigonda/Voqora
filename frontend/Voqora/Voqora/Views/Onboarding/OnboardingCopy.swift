@@ -72,7 +72,7 @@ enum OnboardingCopy {
     static let privacyTitle = "You're all set"
     static let privacyBody = """
     Normal speech runs on your Mac. If you later choose Gemini cleanup for a \
-    PDF, Voqora tells you before document material leaves the Mac. Anonymous \
+    document, Voqora tells you before document material leaves the Mac. Anonymous \
     analytics contain counts only — never your text or files — and can be \
     disabled in Preferences.
     """

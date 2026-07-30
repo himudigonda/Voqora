@@ -3,7 +3,7 @@
 > **Listen to the text you are already reading.**
 
 Voqora is a native Mac app for turning selected text into natural speech and
-turning long PDFs into resumable audiobooks. It is built for the moment when
+turning long documents into resumable audiobooks. It is built for the moment when
 you still need to get through the material, but do not want to keep staring at
 it.
 
@@ -35,7 +35,8 @@ Voqora as it exists today.
 3. Select text in a browser, PDF reader, IDE, Notes, or another app.
 4. Press `Command + Shift + .`.
 
-For a long document, open **Audiobooks**, add a PDF, and come back to it when
+For a long document, open **Audiobooks**, add a PDF, TXT, DOCX, or Markdown
+file, and come back to it when
 you are walking, commuting, or simply done looking at a screen.
 
 ## What Voqora does
@@ -44,7 +45,7 @@ you are walking, commuting, or simply done looking at a screen.
 | --- | --- |
 | Listen to an article, document, or code review | A global shortcut that speaks selected text. |
 | Control speech without changing apps | Global pause, stop, and export shortcuts. |
-| Make long reading portable | A resumable PDF audiobook workflow. |
+| Make long reading portable | A resumable document-to-audiobook workflow. |
 | Tune the experience | Voice, speed, volume, local history, and WAV export. |
 | Keep the core speech path on your Mac | A bundled local speech engine for Apple silicon. |
 
@@ -63,14 +64,14 @@ All four are remappable in Preferences.
 
 ```mermaid
 flowchart LR
-    A["Select text or add a PDF"] --> B["Voqora for macOS"]
+    A["Select text or add a document"] --> B["Voqora for macOS"]
     B --> C["Bundled local speech engine"]
     C --> D["Audio playback or audiobook"]
-    E["Optional PDF cleanup with your Gemini key"] -. only when chosen .-> B
+    E["Optional document cleanup with your Gemini key"] -. only when chosen .-> B
 ```
 
 The speech engine runs locally. Voqora does not require an account to speak
-text. Optional PDF cleanup is separate: if you provide a Gemini API key and
+text. Optional document cleanup is separate: if you provide a Gemini API key and
 choose that flow, the relevant document material is sent to Gemini for that
 operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 
@@ -79,8 +80,8 @@ operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 | What you do | What Voqora does | What it does not do by default |
 | --- | --- | --- |
 | Speak selected text | Sends it to the bundled local speech service on your Mac. | Upload it to a hosted text-to-speech API. |
-| Add a normal PDF | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
-| Clean a difficult PDF | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
+| Add a PDF, TXT, DOCX, or Markdown file | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
+| Clean a difficult document | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
 | Use product analytics | Sends an optional anonymous event with a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
 | Check for an update | Checks Voqora's public update feed for a newer release. | Upload your reading activity or personal files. |
 

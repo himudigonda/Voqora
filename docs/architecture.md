@@ -8,7 +8,7 @@ speech pipeline close to the ONNX runtime it needs.
 
 ```mermaid
 flowchart LR
-    U["Selected text or PDF"] --> M["Voqora for macOS"]
+    U["Selected text or document"] --> M["Voqora for macOS"]
     M --> L["LaunchManager"]
     L --> S["Bundled VoqoraServer"]
     S --> A["FastAPI on 127.0.0.1:10101"]
@@ -16,7 +16,7 @@ flowchart LR
     T --> A
     A --> P["Audio stream / audiobook files"]
     P --> M
-    O["Optional Gemini PDF cleanup"] -. explicit user choice .-> A
+    O["Optional Gemini document cleanup"] -. explicit user choice .-> A
     M -. counts-only telemetry when enabled .-> H["Voqora API"]
 ```
 
@@ -58,7 +58,7 @@ key and an explicit selection of that workflow.
 | Speech synthesis | Local bundled service. |
 | Selected text | Sent to the local service for speech. |
 | Audiobook state | Stored locally for resume and playback. |
-| PDF cleanup / OCR | Optional Gemini request when the user provides a key and chooses it. |
+| Document cleanup / PDF OCR | Optional Gemini request when the user provides a key and chooses it. |
 | Product telemetry | Optional counts-only events when enabled in Preferences. |
 | Release check | GitHub request only when initiated. |
 

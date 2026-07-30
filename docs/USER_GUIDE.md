@@ -57,10 +57,10 @@ change the global shortcuts. Voqora includes eight Kokoro voice options:
 There is no universally right voice or speed. Voqora starts with Bella. Adjust
 the voice and speed until you can follow a paragraph without wanting to rewind it.
 
-## Turn a PDF into an audiobook
+## Turn a document into an audiobook
 
 1. Open **Audiobooks**.
-2. Add the PDF you want to finish.
+2. Add the PDF, TXT, DOCX, or Markdown file you want to finish.
 3. Review the creation step and start processing.
 4. Return to the book when it is ready, then use its progress and playback
    controls to continue where you left off.
@@ -68,12 +68,13 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 Voqora stores audiobook state locally. Close the app and return later without
 starting the document from the beginning.
 
-### Optional PDF cleanup
+### Optional document cleanup
 
-Most text PDFs can be handled locally. If a document is poorly extracted or
-scanned, you can choose optional cleanup with a Gemini API key you provide.
-That operation sends the relevant document material to Gemini. It is separate
-from the core selected-text speech flow and can be skipped.
+Most text-based documents can be handled locally. If extraction is poor, you
+can choose optional cleanup with a Gemini API key you provide. A scanned PDF
+needs Gemini OCR before it can be narrated. That operation sends the relevant
+document material to Gemini. It is separate from the core selected-text speech
+flow and can be skipped.
 
 ## History and export
 
@@ -94,7 +95,7 @@ Check that Voqora has the macOS permission it requests to read selected text
 from other apps. Then confirm the shortcut has not been claimed by another
 utility in Preferences.
 
-### A PDF needs cleaner text
+### A document needs cleaner text
 
 Try the local flow first. If the document is scanned or extraction is poor,
 use the optional Gemini-cleanup path only if you are comfortable sending that

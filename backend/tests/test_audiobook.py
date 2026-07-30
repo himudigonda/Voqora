@@ -840,6 +840,46 @@ def test_upload_rejects_unsupported_extension():
     assert response.status_code == 400
 
 
+@pytest.mark.parametrize(
+    ("filename", "content_type"),
+    [
+        ("notes.txt", "text/plain"),
+        ("chapter.md", "text/markdown"),
+        ("outline.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ],
+)
+def test_upload_accepts_every_supported_text_document_kind(
+    monkeypatch, filename, content_type
+):
+    """The API contract, native picker, analytics labels, and backend must
+    agree on TXT, Markdown, and DOCX instead of leaving them as UI-only types.
+    Extraction is mocked here; TextExtractor routing has its own real-file test.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import text_extractor as _te
+
+    monkeypatch.setattr(_te.TextExtractor, "page_count", classmethod(lambda cls, _: 1))
+    monkeypatch.setattr(
+        _te.TextExtractor, "sample_word_count", classmethod(lambda cls, _: 10)
+    )
+    monkeypatch.setattr(
+        _te.TextExtractor, "sample_char_count", classmethod(lambda cls, _: 50)
+    )
+    monkeypatch.setattr(
+        _te.TextExtractor, "render_cover", classmethod(lambda cls, _: None)
+    )
+
+    response = TestClient(app).post(
+        "/audiobook", files={"file": (filename, b"document content", content_type)}
+    )
+    assert response.status_code == 200, response.text
+    meta = AudiobookStore.read_meta(response.json()["book_id"])
+    assert meta is not None
+    assert meta["file_ext"] == filename.rsplit(".", 1)[1]
+
+
 def test_upload_accepts_image_only_pdf(monkeypatch):
     """Image-only PDFs are now accepted; OCR handles them during the clean phase.
     The response should return is_image_only=True so the UI can show an OCR badge."""
