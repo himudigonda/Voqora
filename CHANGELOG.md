@@ -57,6 +57,9 @@ this is the first public release of the product and its source history.
   signature, a stapled notarization ticket, and a passing Gatekeeper check by
   default. A free non-notarized build is still possible only through an
   explicit release-owner override, so it cannot be uploaded by accident.
+- Made update feedback legible in Preferences. Manual checks now show whether
+  Voqora is preparing, checking, up to date, has an update ready, or could not
+  reach the feed, without replacing Sparkle's native update dialog.
 - No new public release is included in this section. Installer, Gatekeeper,
   Sparkle, website/metrics, and full manual-flow evidence remain release gates
   until they are verified against one immutable candidate artifact.

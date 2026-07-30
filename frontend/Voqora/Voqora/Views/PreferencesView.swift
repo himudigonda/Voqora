@@ -37,7 +37,7 @@ struct PreferencesView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Optional email")
                             .font(vm.appFont(size: 14, weight: .bold))
-                        Text("Add an email only if you want us to recognise the same person across installs. We never collect your text or files, and you can remove your email at any time.")
+                        Text("Voqora works without an account. Add an email only if you want voluntary returning installs to be recognised in aggregate adoption metrics. We never collect your text or files, and you can remove your email at any time.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -63,7 +63,8 @@ struct PreferencesView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(.cyan)
-                            .disabled(emailDraft.trimmingCharacters(in: .whitespaces).isEmpty || emailSubmitting)
+                            .disabled(!canSaveEmail || emailSubmitting)
+                            .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
                         }
 
                         if let err = emailError {
@@ -89,7 +90,9 @@ struct PreferencesView: View {
                             }
                             .accessibilityLabel("Saved email: \(current)")
                         } else {
-                            Text("No email saved. Voqora works fully without one.")
+                            Text(emailDraft.isEmpty || canSaveEmail
+                                ? "No email saved. Voqora works fully without one."
+                                : "Enter a valid email to enable Save.")
                                 .font(vm.appFont(size: 11))
                                 .foregroundStyle(.secondary)
                         }
@@ -455,7 +458,15 @@ struct PreferencesView: View {
                             .buttonStyle(.plain)
                             .disabled(!updater.canCheckForUpdates)
 
-                            if !updater.canCheckForUpdates {
+                            if updater.isCheckingForUpdates {
+                                HStack(spacing: 6) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Checking for updates…")
+                                        .font(vm.appFont(size: 11))
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else if !updater.canCheckForUpdates {
                                 HStack(spacing: 6) {
                                     ProgressView()
                                         .controlSize(.small)
@@ -464,6 +475,11 @@ struct PreferencesView: View {
                                         .foregroundStyle(.secondary)
                                 }
                                 .help("Voqora enables this after the update service has finished starting or after a current check completes.")
+                            } else if let message = updater.updateStatusMessage {
+                                Text(message)
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
                             Spacer()
@@ -520,6 +536,10 @@ struct PreferencesView: View {
                 emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
             }
         }
+    }
+
+    private var canSaveEmail: Bool {
+        IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func resetShortcuts() {

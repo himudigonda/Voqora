@@ -53,14 +53,15 @@ enum OnboardingCopy {
 
     // MARK: - Step 5 — Identity (optional email)
 
-    static let identityTitle = "Help us count returning users"
+    static let identityTitle = "Optional email"
     static let identityBody = """
-    Voqora is free and we'd love to know if real people keep using it. \
-    Drop your email so anonymous usage counts can be attributed to a \
-    person instead of a random UUID. That's it — no marketing email, no \
-    account, no password. We never read your text or files.
+    Voqora works fully without an account. If you choose to add an email, \
+    we use it only to recognise voluntary returning installs in aggregate \
+    adoption metrics. There is no password and no sign-in. We never read \
+    your text or files.
 
-    Totally optional. Skip if you'd rather stay completely anonymous.
+    Totally optional. You can stay anonymous or remove your email later in \
+    Preferences.
     """
     static let identityPlaceholder = "you@example.com"
     static let identitySaveButton = "Save email"
