@@ -87,6 +87,9 @@ class DashboardViewModel: ObservableObject {
     }
 
     private var currentSpeakTask: Task<Void, Never>?
+    /// Monotonic token for user speech requests. A cancelled older request
+    /// must never stop or overwrite audio that belongs to the newer one.
+    private var speakGeneration = 0
     private var heartbeatTask: Task<Void, Never>?
     /// Startup work must begin only after LaunchManager has installed the
     /// bundled server. Starting it while that directory is being replaced
@@ -189,7 +192,10 @@ class DashboardViewModel: ObservableObject {
             return
         }
 
-        // --- FIX: Cancel the previous stream task if it exists ---
+        // The newest selection always wins. The generation token prevents the
+        // cancelled task's deferred cleanup from stopping the new playback.
+        speakGeneration &+= 1
+        let generation = speakGeneration
         currentSpeakTask?.cancel()
 
         // Mutual exclusion: a hotkey TTS request always interrupts audiobook playback.
@@ -202,11 +208,15 @@ class DashboardViewModel: ObservableObject {
             avm.currentTranscript = nil
         }
 
-        currentSpeakTask = Task {
+        currentSpeakTask = Task { [weak self] in
+            guard let self else { return }
             defer {
-                if Task.isCancelled {
+                if Task.isCancelled, generation == self.speakGeneration {
                     if self.status == .thinking { self.status = .ready }
                     self.audio.stop()
+                }
+                if generation == self.speakGeneration {
+                    self.currentSpeakTask = nil
                 }
             }
             print("DEBUG [DashboardVM] Starting new speak task")
@@ -218,25 +228,31 @@ class DashboardViewModel: ObservableObject {
             // This resets the AudioService buffers
             audio.prepareForStream()
 
-            let stream = backend.streamAudio(
-                text: cleaned,
-                voice: selectedVoice,
-                speed: speechSpeed,
-                volume: speechVolume
-            )
+            do {
+                let stream = backend.streamAudio(
+                    text: cleaned,
+                    voice: selectedVoice,
+                    speed: speechSpeed,
+                    volume: speechVolume
+                )
+                var receivedAudio = false
 
-            for await chunk in stream {
-                // Check if this task was cancelled while we were waiting for a chunk
-                if Task.isCancelled {
-                    print("DEBUG [DashboardVM] Task cancelled, exiting loop")
+                for try await chunk in stream {
+                    guard !Task.isCancelled, generation == self.speakGeneration else {
+                        return
+                    }
+                    if status == .thinking { status = .speaking }
+                    audio.playChunk(chunk, volume: Float(speechVolume))
+                    receivedAudio = true
+                }
+
+                guard !Task.isCancelled, generation == self.speakGeneration else { return }
+                guard receivedAudio else {
+                    audio.stop()
+                    showTransientError("Voqora could not generate audio. Try again.")
                     return
                 }
 
-                if status == .thinking { status = .speaking }
-                audio.playChunk(chunk, volume: Float(speechVolume))
-            }
-
-            if !Task.isCancelled {
                 audio.finishStream()
                 history.log(text: cleaned, voice: selectedVoice)
                 // audio_seconds is the rendered length (PCM frames / sample rate),
@@ -247,6 +263,10 @@ class DashboardViewModel: ObservableObject {
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
+            } catch {
+                guard !Task.isCancelled, generation == self.speakGeneration else { return }
+                audio.stop()
+                showTransientError("Voqora could not reach the local speech engine. Try again.")
             }
         }
     }

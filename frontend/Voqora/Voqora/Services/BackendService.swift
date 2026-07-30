@@ -18,7 +18,14 @@ final class BackendService: NSObject, @unchecked Sendable {
     }
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
-    private var continuations: [Int: AsyncStream<Data>.Continuation] = [:]
+    private var continuations: [Int: AsyncThrowingStream<Data, Error>.Continuation] = [:]
+
+    enum StreamError: Error, Equatable {
+        case requestEncodingFailed
+        case rejectedResponse(statusCode: Int)
+        case unexpectedResponse
+        case emptyAudio
+    }
 
     /// Shared session for streaming this is a
     private lazy var session: URLSession = {
@@ -226,8 +233,8 @@ final class BackendService: NSObject, @unchecked Sendable {
         _ = try? await URLSession.shared.data(for: request)
     }
 
-    func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncStream<Data> {
-        AsyncStream { continuation in
+    func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncThrowingStream<Data, Error> {
+        AsyncThrowingStream { continuation in
             let url = baseURL.appendingPathComponent("speak")
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
@@ -254,13 +261,46 @@ final class BackendService: NSObject, @unchecked Sendable {
                     }
                 }
             } catch {
-                continuation.finish()
+                continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
+    }
+
+    /// A local /speak response is useful only when it is a successful WAV
+    /// stream. Without this guard, a JSON error body could be handed to the
+    /// audio decoder and then be reported as a successful generation.
+    static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode),
+              let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
+        else {
+            return false
+        }
+        return contentType.hasPrefix("audio/wav")
     }
 }
 
 extension BackendService: URLSessionDataDelegate {
+    func urlSession(
+        _: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard Self.isExpectedAudioResponse(response) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode
+            stateQueue.async {
+                self.continuations[dataTask.taskIdentifier]?.finish(
+                    throwing: statusCode.map(StreamError.rejectedResponse) ?? .unexpectedResponse
+                )
+                self.continuations.removeValue(forKey: dataTask.taskIdentifier)
+            }
+            completionHandler(.cancel)
+            return
+        }
+        completionHandler(.allow)
+    }
+
     func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let id = dataTask.taskIdentifier
         // Use async dispatch to avoid blocking the URLSession delegate queue
@@ -269,10 +309,14 @@ extension BackendService: URLSessionDataDelegate {
         }
     }
 
-    func urlSession(_: URLSession, task: URLSessionTask, didCompleteWithError _: Error?) {
+    func urlSession(_: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let id = task.taskIdentifier
         stateQueue.sync {
-            continuations[id]?.finish()
+            if let error {
+                continuations[id]?.finish(throwing: error)
+            } else {
+                continuations[id]?.finish()
+            }
             continuations.removeValue(forKey: id)
         }
     }

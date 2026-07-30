@@ -6,10 +6,11 @@ surface lives in `app/api/audiobook.py`.
 
 import os
 import time
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -21,18 +22,40 @@ router = APIRouter()
 log = get_logger(__name__)
 
 
+VoiceName = Literal[
+    "af_bella",
+    "af_sarah",
+    "am_adam",
+    "am_michael",
+    "bf_emma",
+    "bf_isabella",
+    "bm_george",
+    "bm_lewis",
+]
+
+
 class SpeakRequest(BaseModel):
-    text: str
-    voice: str = "af_bella"
-    speed: float = 1.0
-    volume: float = 1.0
+    # Keep one request bounded. Long documents belong in the audiobook flow,
+    # where progress, cancellation, and recovery are explicit.
+    text: str = Field(min_length=1, max_length=50_000)
+    voice: VoiceName = "af_bella"
+    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    volume: float = Field(default=1.0, ge=0.0, le=1.5)
     lang: str = "en-us"
+
+    @field_validator("text")
+    @classmethod
+    def require_meaningful_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("text must not be blank")
+        return value
 
 
 class PrewarmRequest(BaseModel):
     text: str | None = None
-    voice: str | None = None
-    speed: float | None = None
+    voice: VoiceName | None = None
+    speed: float | None = Field(default=None, ge=0.5, le=2.0)
 
 
 class EngineRequest(BaseModel):

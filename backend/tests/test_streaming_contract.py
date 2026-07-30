@@ -103,6 +103,20 @@ def test_speak_rejects_malformed_payload_without_leaking_internals(
     assert "/users/" not in body, "must not leak filesystem paths"
 
 
+def test_speak_rejects_invalid_runtime_values_before_inference() -> None:
+    invalid_payloads = [
+        {"text": "   ", "voice": "af_bella", "speed": 1.0, "volume": 1.0},
+        {"text": "Hello", "voice": "not-a-voice", "speed": 1.0, "volume": 1.0},
+        {"text": "Hello", "voice": "af_bella", "speed": 0.1, "volume": 1.0},
+        {"text": "Hello", "voice": "af_bella", "speed": 1.0, "volume": 2.0},
+    ]
+
+    for payload in invalid_payloads:
+        response = _client().post("/speak", json=payload)
+        assert response.status_code == 422
+        assert "traceback" not in response.text.lower()
+
+
 # ---------- mid-stream failure (HARD-043) ----------
 
 

@@ -63,6 +63,25 @@ final class DashboardViewModelTests: XCTestCase {
         vm.stopHeartbeat()
     }
 
+    func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() {
+        let ok = HTTPURLResponse(
+            url: URL(string: "http://127.0.0.1:10101/speak")!,
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "audio/wav"]
+        )!
+        let serverError = HTTPURLResponse(
+            url: URL(string: "http://127.0.0.1:10101/speak")!,
+            statusCode: 500,
+            httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"]
+        )!
+
+        XCTAssertTrue(BackendService.isExpectedAudioResponse(ok))
+        XCTAssertFalse(BackendService.isExpectedAudioResponse(serverError))
+        XCTAssertFalse(BackendService.isExpectedAudioResponse(nil))
+    }
+
     // MARK: - togglePlayback error path
 
     func test_togglePlayback_with_zero_duration_sets_error() async {
