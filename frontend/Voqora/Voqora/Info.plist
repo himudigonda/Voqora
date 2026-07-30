@@ -34,7 +34,7 @@
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
 	<!--
 	 Sparkle's embedded downloader XPC service needs a stable Developer ID
 	 identity. Early-access builds are intentionally ad-hoc signed, so use

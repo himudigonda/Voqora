@@ -8,7 +8,6 @@ struct PreferencesView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
-    @EnvironmentObject var updater: AppUpdater
     @EnvironmentObject var legacyMigration: LegacySuperSayMigration
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
@@ -437,56 +436,17 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: Binding(
-                            get: { updater.automaticallyChecksForUpdates },
-                            set: { updater.setAutomaticallyChecksForUpdates($0) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Automatically check for updates")
-                                    .font(vm.appFont(size: 14, weight: .bold))
-                                Text("Checks Voqora's public update feed once a day. Voqora always shows you the update before replacing the app.")
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .toggleStyle(.switch)
-
-                        Divider()
-
                         HStack {
-                            Button {
-                                updater.checkForUpdates()
-                            } label: {
-                                Label("Check for Updates...", systemImage: "arrow.triangle.2.circlepath")
+                            Link(destination: URL(string: "https://github.com/himudigonda/Voqora/releases/latest")!) {
+                                Label("Get the Latest Voqora", systemImage: "arrow.down.circle")
                                     .font(vm.appFont(size: 13, weight: .medium))
                             }
                             .buttonStyle(.plain)
-                            .disabled(!updater.canCheckForUpdates)
 
-                            if updater.isCheckingForUpdates {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Checking for updates…")
-                                        .font(vm.appFont(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                            } else if !updater.canCheckForUpdates {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Preparing update checks…")
-                                        .font(vm.appFont(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .help("Voqora enables this after the update service has finished starting or after a current check completes.")
-                            } else if let message = updater.updateStatusMessage {
-                                Text(message)
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                            Text("Early access uses manual updates from GitHub Releases.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
 
                             Spacer()
 

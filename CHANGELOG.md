@@ -90,6 +90,10 @@ this is the first public release of the product and its source history.
   separately signed helper. This keeps future updates reliable without a
   Developer ID signing identity; the signed appcast and archive verification
   remain in place.
+- Automatic in-app replacement is intentionally disabled for this
+  non-notarized early-access release. Preferences opens the canonical GitHub
+  Releases page instead, so people receive a straightforward manual install
+  path rather than a button that can fail at macOS's trust boundary.
 
 ## [1.0.2] - 2026-07-29
 

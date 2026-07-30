@@ -2,11 +2,11 @@ import Combine
 import Foundation
 import Sparkle
 
-/// Owns Sparkle's standard updater for the lifetime of the app.
+/// Owns Voqora's future Sparkle updater configuration.
 ///
-/// Sparkle handles scheduled checks, signed appcast parsing, archive
-/// verification, replacement, and relaunch. The UI intentionally uses
-/// Sparkle's native controller rather than reimplementing installer logic.
+/// Non-notarized early-access builds intentionally use the GitHub Releases
+/// page for manual installs. Sparkle remains wired for the notarized release
+/// channel, but is not started until that trust boundary exists.
 @MainActor
 final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     /// Sparkle's public `SUNoUpdateError` value. Keep this isolated behind a
@@ -29,15 +29,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     override init() {
         super.init()
-        if RuntimeEnvironment.isRunningTests {
-            controller = nil
-        } else {
-            controller = SPUStandardUpdaterController(
-                startingUpdater: true,
-                updaterDelegate: self,
-                userDriverDelegate: nil
-            )
-        }
+        controller = nil
         observeUpdaterState()
     }
 
