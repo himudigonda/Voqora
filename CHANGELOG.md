@@ -86,10 +86,9 @@ this is the first public release of the product and its source history.
   Voqora is validating product demand. macOS may require **Open Anyway** or
   the documented one-app quarantine command after download. The update archive
   is still verified by Sparkle before installation.
-- Early-access builds use Sparkle's in-process downloader rather than its
-  separately signed helper. This keeps future updates reliable without a
-  Developer ID signing identity; the signed appcast and archive verification
-  remain in place.
+- The project retains its signed Sparkle feed tooling for a future notarized
+  release channel. It is intentionally not started by this non-notarized
+  early-access build.
 - Automatic in-app replacement is intentionally disabled for this
   non-notarized early-access release. Preferences opens the canonical GitHub
   Releases page instead, so people receive a straightforward manual install
