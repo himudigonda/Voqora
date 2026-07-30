@@ -179,7 +179,9 @@ appcast: check-version
 	chmod +x scripts/create_appcast.sh
 	./scripts/create_appcast.sh $(VERSION)
 
-ship: release
+## `ship` never rebuilds. The appcast is signed for a particular byte stream,
+## so rebuilds after `make appcast` would invalidate the update in transit.
+ship: check-version
 	@echo "🚢 Shipping v$(VERSION)..."
 	chmod +x scripts/ship.sh
 	./scripts/ship.sh $(VERSION)
@@ -191,7 +193,7 @@ help:
 	@echo "  make run       Build and launch fresh"
 	@echo "  make release   Rebuild and create a distribution DMG"
 	@echo "  make appcast   Create a signed Sparkle update feed from a built DMG"
-	@echo "  make ship      Publish a preflighted, committed release from main"
+	@echo "  make ship      Upload the already-verified, appcast-signed DMG from main"
 	@echo "  make test      Run fast backend tests only (no macOS app host)"
 	@echo "  make test-swift Run one serial macOS test host"
 	@echo "  make test-ci   Run backend + serial macOS tests"

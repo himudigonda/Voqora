@@ -12,6 +12,7 @@ if [ ! -f "$DMG_PATH" ]; then
 fi
 
 ./scripts/validate_release.sh "$VERSION" "$DMG_PATH"
+bash ./scripts/validate_appcast.sh "$VERSION" "$DMG_PATH" docs/updates/appcast.xml
 
 if ! git remote get-url origin >/dev/null 2>&1; then
     echo "❌ No origin remote is configured." >&2
