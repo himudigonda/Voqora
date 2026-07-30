@@ -22,18 +22,30 @@ final class IdentityService: ObservableObject {
     private static let endpoint = URL(string: "https://himudigonda.me/api/voqora/identify")!
     private static let anonKey = "anonymousUserID"
     private static let emailKey = "userIdentityEmail"
+    private static let pendingRemovalKey = "userIdentityRemovalPending"
 
     /// Current email if the user provided one. `nil` means anonymous.
     @Published private(set) var email: String?
+    /// A user may remove their optional email while offline. Their Mac must
+    /// honour that request immediately, while this marker lets the app retry
+    /// deleting the separate remote contact when a connection is available.
+    @Published private(set) var hasPendingRemoval: Bool
 
     /// Stable per-install UUID used as `anon_id` server-side. Read once
     /// at init and cached; never changes for the lifetime of an install.
     let anonID: String
 
     private let defaults: UserDefaults
+    private let sendRequest: (URLRequest) async throws -> (Data, URLResponse)
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        sendRequest: @escaping (URLRequest) async throws -> (Data, URLResponse) = {
+            try await URLSession.shared.data(for: $0)
+        }
+    ) {
         self.defaults = defaults
+        self.sendRequest = sendRequest
         if let stored = defaults.string(forKey: Self.anonKey), !stored.isEmpty {
             self.anonID = stored
         } else {
@@ -42,6 +54,7 @@ final class IdentityService: ObservableObject {
             self.anonID = fresh
         }
         self.email = defaults.string(forKey: Self.emailKey)
+        self.hasPendingRemoval = defaults.bool(forKey: Self.pendingRemovalKey)
     }
 
     /// `true` if the user submitted an email during onboarding or in Preferences.
@@ -68,25 +81,26 @@ final class IdentityService: ObservableObject {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, resp): (Data, URLResponse)
+        let response: URLResponse
         do {
-            (data, resp) = try await URLSession.shared.data(for: req)
+            response = try await sendRequest(req).1
         } catch {
             Self.log.error("identify network failure: \(error.localizedDescription, privacy: .public)")
             throw IdentityError.network(error.localizedDescription)
         }
-        guard let http = resp as? HTTPURLResponse else {
+        guard let http = response as? HTTPURLResponse else {
             throw IdentityError.server("non-HTTP response")
         }
         if !(200..<300).contains(http.statusCode) {
-            let snippet = String(data: data.prefix(256), encoding: .utf8) ?? ""
-            Self.log.error("identify status=\(http.statusCode, privacy: .public) body=\(snippet, privacy: .public)")
+            Self.log.error("identify status=\(http.statusCode, privacy: .public)")
             throw IdentityError.server("Server error \(http.statusCode)")
         }
 
         defaults.set(trimmed, forKey: Self.emailKey)
+        defaults.removeObject(forKey: Self.pendingRemovalKey)
         self.email = trimmed
-        Self.log.info("identify ok for anon=\(self.anonID.prefix(8), privacy: .public)")
+        hasPendingRemoval = false
+        Self.log.info("optional identity saved")
     }
 
     /// Clear the local email only. Primarily useful for tests and recovery;
@@ -97,26 +111,56 @@ final class IdentityService: ObservableObject {
         email = nil
     }
 
-    /// Remove the optional contact from the product backend and this Mac.
-    /// The anonymous event history remains anonymous activity history; it is
-    /// not an identity record and is never rewritten into a person count.
-    func removeEmail() async throws {
+    enum RemovalResult: Equatable {
+        case removedRemotely
+        case queuedForRetry
+    }
+
+    /// Remove the optional email from this Mac first, then attempt the
+    /// independent remote-contact removal. A failed network request cannot
+    /// force someone to retain their local email. The anonymous event history
+    /// remains anonymous activity history; it is not rewritten into a person
+    /// count.
+    func removeEmail() async -> RemovalResult {
+        clearEmail()
+        defaults.set(true, forKey: Self.pendingRemovalKey)
+        hasPendingRemoval = true
+        return await retryPendingRemoval() ? .removedRemotely : .queuedForRetry
+    }
+
+    /// Retry a previously requested remote-contact removal. This is quiet on
+    /// startup because an unavailable analytics endpoint must never interrupt
+    /// reading or onboarding.
+    @discardableResult
+    func retryPendingRemoval() async -> Bool {
+        guard hasPendingRemoval else { return true }
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "DELETE"
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["anon_id": anonID])
+        guard let requestBody = try? JSONSerialization.data(withJSONObject: ["anon_id": anonID]) else {
+            return false
+        }
+        request.httpBody = requestBody
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let responseData: Data
+        let response: URLResponse
+        do {
+            (responseData, response) = try await sendRequest(request)
+        } catch {
+            return false
+        }
         guard let http = response as? HTTPURLResponse else {
-            throw IdentityError.server("non-HTTP response")
+            return false
         }
         guard (200..<300).contains(http.statusCode) else {
-            let snippet = String(data: data.prefix(256), encoding: .utf8) ?? ""
-            Self.log.error("identity delete status=\(http.statusCode, privacy: .public) body=\(snippet, privacy: .public)")
-            throw IdentityError.server("Server error \(http.statusCode)")
+            _ = responseData
+            Self.log.error("identity delete status=\(http.statusCode, privacy: .public)")
+            return false
         }
-        clearEmail()
+        defaults.removeObject(forKey: Self.pendingRemovalKey)
+        hasPendingRemoval = false
+        return true
     }
 
     static func looksLikeEmail(_ s: String) -> Bool {

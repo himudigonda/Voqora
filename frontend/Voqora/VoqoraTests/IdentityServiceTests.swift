@@ -61,4 +61,36 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
         XCTAssertNil(service.email)
     }
+
+    func test_removeEmailClearsThisMacAfterRemoteSuccess() async {
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        let response = HTTPURLResponse(
+            url: URL(string: "https://example.com")!,
+            statusCode: 204,
+            httpVersion: nil,
+            headerFields: nil
+        )!
+        service = IdentityService(defaults: defaults, sendRequest: { _ in (Data(), response) })
+
+        let result = await service.removeEmail()
+
+        XCTAssertEqual(result, .removedRemotely)
+        XCTAssertNil(service.email)
+        XCTAssertFalse(service.hasPendingRemoval)
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+    }
+
+    func test_removeEmailOfflineClearsThisMacAndQueuesRemoteRetry() async {
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        service = IdentityService(defaults: defaults, sendRequest: { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+
+        let result = await service.removeEmail()
+
+        XCTAssertEqual(result, .queuedForRetry)
+        XCTAssertNil(service.email)
+        XCTAssertTrue(service.hasPendingRemoval)
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+    }
 }
