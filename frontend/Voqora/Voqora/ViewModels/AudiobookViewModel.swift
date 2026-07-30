@@ -381,19 +381,20 @@ final class AudiobookViewModel: ObservableObject {
 
         isLoadingAudio = true
         currentTranscript = nil
-        Task {
-            defer { isLoadingAudio = false }
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.isLoadingAudio = false }
             do {
-                audio.stop()
-                let url = try await service.ensureLocalAudio(for: book.bookID)
-                nowPlaying = book
-                lastPlayedBookID = book.bookID
-                try audio.loadAndPlayWAV(at: url)
+                self.audio.stop()
+                let url = try await self.service.ensureLocalAudio(for: book.bookID)
+                self.nowPlaying = book
+                self.lastPlayedBookID = book.bookID
+                try self.audio.loadAndPlayWAV(at: url)
                 // Restore saved position (skip trivially short seeks < 2 s)
                 let savedTime = UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
-                if savedTime > 2.0 { audio.seekAudiobook(toSeconds: savedTime) }
-                transcriptTask?.cancel()
-                transcriptTask = Task { [weak self] in
+                if savedTime > 2.0 { self.audio.seekAudiobook(toSeconds: savedTime) }
+                self.transcriptTask?.cancel()
+                self.transcriptTask = Task { [weak self] in
                     guard let self else { return }
                     let result = try? await self.service.transcript(for: book.bookID)
                     guard !Task.isCancelled else { return }
