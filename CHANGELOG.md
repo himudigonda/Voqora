@@ -76,13 +76,16 @@ this is the first public release of the product and its source history.
 - Made update feedback legible in Preferences. Manual checks now show whether
   Voqora is preparing, checking, up to date, has an update ready, or could not
   reach the feed, without replacing Sparkle's native update dialog.
-- No new public release is included in this section. Installer, Gatekeeper,
-  Sparkle, website/metrics, and full manual-flow evidence remain release gates
-  until they are verified against one immutable candidate artifact.
 - Metrics now fail closed when the remote overview is on an older schema, so
   the website and private dashboard cannot present missing fields as zero
-  adoption. The matching schema, website, and dashboard deployment remains a
-  separate release gate.
+  adoption.
+
+### Early-access distribution
+
+- This release is deliberately distributed without Apple notarization while
+  Voqora is validating product demand. macOS may require **Open Anyway** or
+  the documented one-app quarantine command after download. The update archive
+  is still verified by Sparkle before installation.
 
 ## [1.0.2] - 2026-07-29
 
