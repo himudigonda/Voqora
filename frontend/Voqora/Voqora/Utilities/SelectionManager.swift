@@ -1,16 +1,19 @@
 import AppKit
 
+@MainActor
 enum SelectionManager {
-    static func getSelectedText() -> String? {
+    static func getSelectedText() async -> String? {
         // 1. Try Accessibility API
         let systemWideElement = AXUIElementCreateSystemWide()
         var focusedElement: AnyObject?
 
         let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
 
-        if result == .success {
+        if result == .success, let focusedElement {
             var selectedText: AnyObject?
-            // swiftlint:disable:next force_cast
+            // AXUIElementCopyAttributeValue documents this attribute as an
+            // AXUIElement when the call succeeds. Swift bridges that Core
+            // Foundation type as AnyObject and rejects a conditional cast.
             let element = focusedElement as! AXUIElement
             let textResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedText)
 
@@ -21,10 +24,10 @@ enum SelectionManager {
         }
 
         print("⚠️ SelectionManager: AX failed. Falling back to Clipboard (Cmd+C)...")
-        return getSelectedTextViaClipboard()
+        return await getSelectedTextViaClipboard()
     }
 
-    private static func getSelectedTextViaClipboard() -> String? {
+    private static func getSelectedTextViaClipboard() async -> String? {
         let pasteboard = NSPasteboard.general
         let oldChangeCount = pasteboard.changeCount
 
@@ -50,9 +53,9 @@ enum SelectionManager {
         cUp?.post(tap: .cghidEventTap)
         cmdUp?.post(tap: .cghidEventTap)
 
-        // Wait for the OS to process the copy command
-        // Increased to 400ms for reliability with heavy apps like Chrome
-        Thread.sleep(forTimeInterval: 0.4)
+        // Let the receiving app process Command-C without blocking Voqora's
+        // main actor or freezing the window while the fallback is in flight.
+        try? await Task.sleep(nanoseconds: 400_000_000)
 
         if pasteboard.changeCount != oldChangeCount,
            let text = pasteboard.string(forType: .string), !text.isEmpty

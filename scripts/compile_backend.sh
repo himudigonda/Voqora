@@ -80,7 +80,10 @@ PYINSTALLER_FLAGS=(
     --collect-all 'pdfminer'
     --collect-all 'pypdfium2'
     --collect-all 'pypdfium2_raw'
-    --collect-all 'google.genai'
+    # Keep Gemini's runtime package data without recursively collecting its
+    # bundled test suite. `--collect-all` asks PyInstaller to analyse hundreds
+    # of SDK test modules, wasting CPU and bloating every local server bundle.
+    --collect-data 'google.genai'
     --collect-all 'PIL'
     --hidden-import 'uvicorn.loops.asyncio'
     --hidden-import 'uvicorn.protocols.http.h11_impl'

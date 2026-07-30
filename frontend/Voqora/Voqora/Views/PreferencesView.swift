@@ -32,28 +32,33 @@ struct PreferencesView: View {
                 }
                 .padding(.bottom, 8)
 
-                // Section: Identity (analytics-only, optional)
+                // Section: Optional identity
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Help us count returning users")
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Optional email")
                             .font(vm.appFont(size: 14, weight: .bold))
-                        Text("Optional. We never read your text or files. Your email is only used to attribute anonymous usage counts to a real person so we can share honest growth numbers.")
+                        Text("Add an email only if you want us to recognise the same person across installs. We never collect your text or files, and you can remove your email at any time.")
                             .font(vm.appFont(size: 11))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        HStack(spacing: 8) {
-                            TextField("you@example.com", text: $emailDraft)
+                        Text("Email address")
+                            .font(vm.appFont(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack(alignment: .center, spacing: 10) {
+                            TextField("name@example.com", text: $emailDraft)
                                 .textFieldStyle(.roundedBorder)
+                                .textContentType(.emailAddress)
                                 .disableAutocorrection(true)
                                 .font(vm.appFont(size: 13))
                             Button {
                                 submitEmail()
                             } label: {
                                 if emailSubmitting {
-                                    ProgressView().scaleEffect(0.6).frame(width: 60)
+                                    ProgressView().scaleEffect(0.6).frame(width: 96)
                                 } else {
-                                    Text(identity.hasIdentity ? "Update" : "Save").frame(width: 60)
+                                    Text(identity.hasIdentity ? "Update email" : "Save email").frame(width: 96)
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -70,7 +75,9 @@ struct PreferencesView: View {
                             }
                         } else if let current = identity.email {
                             HStack {
-                                Text("Current: \(current)").font(vm.appFont(size: 11)).foregroundStyle(.secondary)
+                                Text("Email saved for this Mac")
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
                                 Spacer()
                                 Button(emailRemoving ? "Removing…" : "Remove") {
                                     removeEmail()
@@ -80,22 +87,30 @@ struct PreferencesView: View {
                                     .foregroundStyle(.red)
                                     .disabled(emailRemoving)
                             }
+                            .accessibilityLabel("Saved email: \(current)")
+                        } else {
+                            Text("No email saved. Voqora works fully without one.")
+                                .font(vm.appFont(size: 11))
+                                .foregroundStyle(.secondary)
                         }
-
-                        Divider().padding(.vertical, 4)
-
-                        Button {
-                            onboarding.reset()
-                        } label: {
-                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
-                                .font(vm.appFont(size: 12))
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
                     }
                 }
                 .onAppear {
                     if emailDraft.isEmpty { emailDraft = identity.email ?? "" }
+                }
+
+                PreferenceSection(title: "Setup", icon: "checklist") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Need to review permissions or the first-use guide?")
+                            .font(vm.appFont(size: 12))
+                            .foregroundStyle(.secondary)
+                        Button {
+                            onboarding.reset()
+                        } label: {
+                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
                 }
 
                 if legacyMigration.isLegacyInstalled {
@@ -394,7 +409,13 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: $vm.telemetryEnabled) {
+                        Toggle(isOn: Binding(
+                            get: { vm.telemetryEnabled },
+                            set: { enabled in
+                                vm.telemetryEnabled = enabled
+                                Task { await MetricsService.shared.setEnabled(enabled) }
+                            }
+                        )) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Anonymous Analytics")
                                     .font(vm.appFont(size: 14, weight: .bold))

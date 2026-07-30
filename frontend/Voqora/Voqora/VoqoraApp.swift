@@ -115,8 +115,8 @@ struct VoqoraApp: App {
         if path.contains("/Volumes/") {
             let alert = NSAlert()
             alert.messageText = "Move to Applications"
-            alert.informativeText = "Voqora needs to be in your Applications folder to work correctly. Would you like to move it now?"
-            alert.addButton(withTitle: "Move to Applications")
+            alert.informativeText = "Drag Voqora into Applications in the installer window, then open it from Applications. Running it from the disk image prevents reliable updates."
+            alert.addButton(withTitle: "Open Applications")
             alert.addButton(withTitle: "Quit")
 
             if alert.runModal() == .alertFirstButtonReturn {

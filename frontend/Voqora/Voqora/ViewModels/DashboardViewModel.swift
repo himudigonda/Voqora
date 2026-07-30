@@ -95,6 +95,7 @@ class DashboardViewModel: ObservableObject {
     /// Auto-clear timer for the "Nothing to play" error pill in togglePlayback.
     /// Cancelled on re-entrance for the same reason. See HARD-021.
     private var errorResetTask: Task<Void, Never>?
+    private(set) var errorResetGeneration = 0
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -159,8 +160,9 @@ class DashboardViewModel: ObservableObject {
             await speak(text: text)
             return
         }
-        guard let text = SelectionManager.getSelectedText(), !text.isEmpty else {
+        guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
             print("⚠️ DashboardViewModel: No text found in selection.")
+            showTransientError("Select text in any app, then press Cmd+Shift+.")
             return
         }
         print("🎤 DashboardViewModel: Sending \(text.count) chars to backend...")
@@ -168,6 +170,12 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speak(text: String) async {
+        guard isBackendOnline else {
+            backend.start()
+            showTransientError("Voqora is still starting. Try again in a moment.")
+            return
+        }
+
         // --- FIX: Cancel the previous stream task if it exists ---
         currentSpeakTask?.cancel()
 
@@ -232,22 +240,32 @@ class DashboardViewModel: ObservableObject {
 
     func togglePlayback() {
         if audio.duration == 0 {
-            // Show the error message in the UI pill
-            status = .error("Nothing to play. Select text and press Cmd+Shift+.")
-
-            // Auto-clear the error and return to "READY" after 3 seconds.
-            // Cancellable so a quick re-toggle doesn't trip the stale reset.
-            errorResetTask?.cancel()
-            errorResetTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                if case let .error(msg) = self.status,
-                   msg == "Nothing to play. Select text and press Cmd+Shift+." {
-                    self.status = .ready
-                }
-            }
+            showTransientError("Nothing to play. Select text and press Cmd+Shift+.")
         } else {
             audio.togglePause()
+        }
+    }
+
+    private func showTransientError(_ message: String) {
+        status = .error(message)
+        // Auto-clear the error and return to READY after three seconds.
+        // Cancellable so an earlier error cannot overwrite later app state.
+        errorResetTask?.cancel()
+        errorResetGeneration &+= 1
+        let resetGeneration = errorResetGeneration
+        errorResetTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.resetPlaybackError(for: resetGeneration)
+        }
+    }
+
+    /// Applies an error reset only when it belongs to the latest playback
+    /// attempt. This makes a stale timer harmless after quick repeated taps.
+    func resetPlaybackError(for generation: Int) {
+        guard generation == errorResetGeneration else { return }
+        if case .error = status {
+            status = .ready
         }
     }
 
@@ -279,7 +297,7 @@ class DashboardViewModel: ObservableObject {
                 } else {
                     let launching = backend.isLaunching
                     isBackendInitializing = launching
-                    await backend.start()
+                    backend.start()
                 }
 
                 // Poll aggressively (500 ms) while backend is offline/starting up,

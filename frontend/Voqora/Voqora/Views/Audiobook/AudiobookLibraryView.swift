@@ -280,10 +280,7 @@ struct AudiobookLibraryView: View {
             Color.primary.opacity(0.18).ignoresSafeArea()
                 .background(.ultraThinMaterial)
             VStack(spacing: 24) {
-                Image(systemName: "arrow.down.doc.fill")
-                    .font(.system(size: 72, weight: .ultraLight))
-                    .foregroundStyle(.cyan)
-                    .symbolEffect(.bounce, options: .repeating)
+                dropIcon
                 Text("DROP TO ADD AUDIOBOOK")
                     .font(vm.appFont(size: 14, weight: .black))
                     .kerning(3)
@@ -302,6 +299,20 @@ struct AudiobookLibraryView: View {
             .padding(60)
         }
         .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
+    }
+
+    @ViewBuilder
+    private var dropIcon: some View {
+        if #available(macOS 15.0, *) {
+            Image(systemName: "arrow.down.doc.fill")
+                .font(.system(size: 72, weight: .ultraLight))
+                .foregroundStyle(.cyan)
+                .symbolEffect(.bounce, options: .repeating)
+        } else {
+            Image(systemName: "arrow.down.doc.fill")
+                .font(.system(size: 72, weight: .ultraLight))
+                .foregroundStyle(.cyan)
+        }
     }
 
     // MARK: - Empty state

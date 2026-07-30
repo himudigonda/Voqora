@@ -65,12 +65,11 @@ final class DashboardViewModelTests: XCTestCase {
         }
     }
 
-    func test_togglePlayback_error_clears_to_ready_after_three_seconds() async {
+    func test_togglePlayback_error_current_reset_returns_to_ready() async {
         let vm = makeVM()
         vm.togglePlayback()  // sets .error
 
-        // Wait slightly longer than the 3s auto-clear.
-        try? await Task.sleep(nanoseconds: 3_200_000_000)
+        vm.resetPlaybackError(for: vm.errorResetGeneration)
 
         XCTAssertEqual(vm.status, .ready)
     }
@@ -78,17 +77,24 @@ final class DashboardViewModelTests: XCTestCase {
     func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() async {
         let vm = makeVM()
         vm.togglePlayback()  // .error #1
+        let firstGeneration = vm.errorResetGeneration
         // The HARD-021 fix cancels the prior errorResetTask; re-triggering
         // shouldn't leak a second timer.
         vm.togglePlayback()  // .error #2
+        let secondGeneration = vm.errorResetGeneration
 
         if case .error = vm.status {} else {
             XCTFail("expected .error after two toggles; got \(vm.status)")
         }
 
-        // The 3s clear from the second call must still fire and bring us
-        // back to .ready. (If the first task had clobbered, we'd be stuck.)
-        try? await Task.sleep(nanoseconds: 3_300_000_000)
+        // A stale reset may wake up, but cannot clear a newer error.
+        vm.resetPlaybackError(for: firstGeneration)
+        if case .error = vm.status {} else {
+            XCTFail("the cancelled reset cleared the second error too early")
+        }
+
+        // The current reset must still return to .ready.
+        vm.resetPlaybackError(for: secondGeneration)
         XCTAssertEqual(vm.status, .ready)
     }
 

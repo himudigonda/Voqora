@@ -517,7 +517,7 @@ struct AudiobookPlayerView: View {
     }
 
     private var prettyTitle: String {
-        var t = book.title
+        let t = book.title
         for ext in [".pdf", ".docx", ".txt", ".md"] {
             if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
         }
