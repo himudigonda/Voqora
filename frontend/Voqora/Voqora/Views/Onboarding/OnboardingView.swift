@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Seven-step first-launch wizard.
@@ -154,16 +155,17 @@ struct OnboardingView: View {
 
     private var stepWelcome: some View {
         VStack(spacing: 22) {
-            Image(systemName: "waveform")
-                .font(.system(size: 64, weight: .black))
-                .foregroundStyle(.cyan.gradient)
-                .symbolEffect(.pulse)
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 76, height: 76)
             Text(OnboardingCopy.welcomeTitle)
                 .font(.system(size: 32, weight: .bold))
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.welcomeBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -177,8 +179,8 @@ struct OnboardingView: View {
             Text(OnboardingCopy.hotkeyTitle)
                 .font(.system(size: 26, weight: .bold))
             Text(OnboardingCopy.hotkeyBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -192,8 +194,8 @@ struct OnboardingView: View {
             Text(OnboardingCopy.axTitle)
                 .font(.system(size: 24, weight: .bold))
             Text(OnboardingCopy.axBody)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 14))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -292,8 +294,8 @@ struct OnboardingView: View {
             Text(OnboardingCopy.notifTitle)
                 .font(.system(size: 24, weight: .bold))
             Text(OnboardingCopy.notifBody)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 14))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -341,8 +343,8 @@ struct OnboardingView: View {
                 .font(.system(size: 22, weight: .bold))
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.identityBody)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 14))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -386,8 +388,8 @@ struct OnboardingView: View {
             Text(OnboardingCopy.privacyTitle)
                 .font(.system(size: 28, weight: .bold))
             Text(OnboardingCopy.privacyBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 15))
+                .foregroundStyle(.primary.opacity(0.78))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }

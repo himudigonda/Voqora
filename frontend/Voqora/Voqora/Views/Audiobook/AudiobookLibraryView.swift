@@ -56,6 +56,16 @@ struct AudiobookLibraryView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 28)]
 
+    private var supportedDocumentTypes: [UTType] {
+        var types: [UTType] = [
+            .pdf,
+            .plainText,
+            .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
+        ]
+        if let markdown = UTType(filenameExtension: "md") { types.append(markdown) }
+        return types
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             ZStack {
@@ -69,25 +79,13 @@ struct AudiobookLibraryView: View {
             .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
             .fileImporter(
                 isPresented: $showImporter,
-                allowedContentTypes: [
-                    .pdf,
-                    .plainText,
-                    .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
-                ]
+                allowedContentTypes: supportedDocumentTypes
             ) { result in
-                if case let .success(url) = result {
-                    guard url.startAccessingSecurityScopedResource() else { return }
-                    let tmpURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent(url.lastPathComponent)
-                    do {
-                        let data = try Data(contentsOf: url)
-                        url.stopAccessingSecurityScopedResource()
-                        try data.write(to: tmpURL)
-                        presentEstimate(for: tmpURL)
-                    } catch {
-                        url.stopAccessingSecurityScopedResource()
-                        bookVM.showToast("Couldn't read '\(url.lastPathComponent)': \(error.localizedDescription)", kind: .error)
-                    }
+                switch result {
+                case .success(let url):
+                    stageAndPresentDocument(url)
+                case .failure(let error):
+                    bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
                 }
             }
             // ONE sheet, driven by a computed binding that prefers the
@@ -279,6 +277,17 @@ struct AudiobookLibraryView: View {
         }
     }
 
+    /// Finder grants can be security-scoped and duplicate filenames are common.
+    /// Stage each accepted document before handing it to the asynchronous book
+    /// pipeline, then let that pipeline own the narrow cleanup path.
+    private func stageAndPresentDocument(_ sourceURL: URL) {
+        do {
+            presentEstimate(for: try AudiobookImportStaging.stageDocument(from: sourceURL))
+        } catch {
+            bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
+        }
+    }
+
     private func presentEstimate(for pdf: URL) {
         // Prefer the audiobook-specific defaults from Preferences; fall back to
         // the user's live clipboard-TTS voice if they haven't set one.
@@ -334,7 +343,7 @@ struct AudiobookLibraryView: View {
                     .font(vm.appFont(size: 12, weight: .black))
                     .kerning(2)
                     .foregroundStyle(.secondary)
-                Text("Drop a PDF, TXT, or DOCX anywhere on this window to begin.")
+                Text("Drop a PDF, TXT, DOCX, or Markdown file anywhere on this window to begin.")
                     .font(vm.appFont(size: 14))
                     .foregroundStyle(.secondary)
             }

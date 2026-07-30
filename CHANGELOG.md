@@ -37,6 +37,10 @@ passed.
   generated, rather than presenting an apparently frozen playback state.
 - Preserved the no-account product model: optional email attribution remains
   optional and does not unlock or gate any reading feature.
+- Carry forward the v1 reliability baseline: first-run onboarding remains
+  visible above backend startup, playback does not claim to be speaking before
+  a real audio buffer arrives, and Stop cancels an in-flight stream before it
+  can resume audio.
 
 ### Audiobooks
 
@@ -65,6 +69,12 @@ passed.
   retries, cancellation, and partial-output boundaries.
 - Kept the public v1.0.0 branch and release untouched while this candidate is
   developed locally.
+- Reuse the public document-intake contract in every entry point: PDF, TXT,
+  DOCX, and Markdown files are staged into unique local directories before
+  asynchronous processing, so same-named Finder files cannot collide.
+- Keep the local speech engine lifecycle process-owned and test-safe: no
+  global process termination, no duplicate heartbeat loops, and no background
+  clipboard polling or reading.
 
 ## [1.0.0] - 2026-07-28
 

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -10,23 +11,22 @@ struct VoqoraWindow: View {
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var permissions: PermissionsService
+    @EnvironmentObject var legacyMigration: LegacySuperSayMigration
     @Environment(\.colorScheme) var colorScheme
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
+    @State private var migrationResultMessage: String?
 
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
                 // APP BRANDING HEADER
                 HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(.cyan.gradient)
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "waveform")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(.white)
-                    }
+                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 36, height: 36)
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Voqora")
@@ -153,9 +153,9 @@ struct VoqoraWindow: View {
                 // MAIN CONTENT
                 detailContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalPDFDrop)
+                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
 
-                // Global drop overlay shown across any non-Audiobooks tab when a PDF is hovering.
+                // Global drop overlay shown across any non-Audiobooks tab when a supported document is hovering.
                 if globalDropHovering && vm.selectedTab != "books" {
                     globalDropOverlay
                         .transition(.opacity)
@@ -203,36 +203,59 @@ struct VoqoraWindow: View {
         .frame(minWidth: 800, minHeight: 600)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
-            // Prepare backend if needed
             Task {
                 await launchManager.prepare()
+                if launchManager.isReady {
+                    vm.startBackgroundWork()
+                }
             }
 
-            // First-launch onboarding (S1-E1). Defer one runloop so the
-            // window has fully appeared before the sheet animates in.
             if onboarding.needsOnboarding {
                 DispatchQueue.main.async {
                     showOnboarding = true
                 }
+            } else {
+                legacyMigration.evaluate()
             }
         }
-        .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
-                .environmentObject(onboarding)
-                .environmentObject(permissions)
-                .environmentObject(identity)
-                .environmentObject(vm)
-                .interactiveDismissDisabled(true)
+        .alert("SuperSay is installed", isPresented: $legacyMigration.shouldPresentNotice) {
+            Button("Import preferences") {
+                let imported = legacyMigration.importCompatiblePreferences()
+                migrationResultMessage = imported > 0
+                    ? "Imported \(imported) compatible preference\(imported == 1 ? "" : "s")."
+                    : "No compatible SuperSay preferences were found."
+            }
+            Button("Show in Finder") { legacyMigration.showLegacyAppInFinder() }
+            Button("Not now", role: .cancel) { legacyMigration.deferNotice() }
+        } message: {
+            Text("SuperSay is retired. Voqora is its supported successor. You can import compatible preferences, then move SuperSay to Trash when you are ready. Voqora will not remove it for you.")
+        }
+        .alert("SuperSay migration", isPresented: Binding(
+            get: { migrationResultMessage != nil },
+            set: { if !$0 { migrationResultMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { migrationResultMessage = nil }
+        } message: {
+            Text(migrationResultMessage ?? "")
         }
         .onChange(of: onboarding.version) { _, _ in
             if !onboarding.needsOnboarding {
                 showOnboarding = false
+                legacyMigration.evaluate()
             } else {
                 showOnboarding = true
             }
         }
         .overlay {
-            if !launchManager.isReady {
+            // Onboarding stays above startup state. A native sheet below the
+            // startup curtain can look like a frozen first launch.
+            if showOnboarding {
+                OnboardingView()
+                    .environmentObject(onboarding)
+                    .environmentObject(permissions)
+                    .environmentObject(identity)
+                    .environmentObject(vm)
+            } else if !launchManager.isReady {
                 ZStack {
                     adaptiveBackdrop
 
@@ -246,7 +269,12 @@ struct VoqoraWindow: View {
 
                             Button("Try Again") {
                                 launchManager.error = nil
-                                Task { await launchManager.prepare() }
+                                Task {
+                                    await launchManager.prepare()
+                                    if launchManager.isReady {
+                                        vm.startBackgroundWork()
+                                    }
+                                }
                             }
                             .buttonStyle(.borderedProminent)
                         } else {
@@ -291,7 +319,7 @@ struct VoqoraWindow: View {
                 Button { vm.togglePlayback() } label: {
                     Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                 }
-                Button { audio.stop() } label: {
+                Button { vm.stopPlayback() } label: {
                     Image(systemName: "stop.fill")
                 }
             }
@@ -315,7 +343,7 @@ struct VoqoraWindow: View {
         return t
     }
 
-    private func handleGlobalPDFDrop(_ providers: [NSItemProvider]) -> Bool {
+    private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
@@ -324,17 +352,31 @@ struct VoqoraWindow: View {
             } else if let u = item as? URL {
                 url = u
             }
-            guard let url, url.pathExtension.lowercased() == "pdf" else { return }
+            guard let url else {
+                Task { @MainActor in
+                    bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
+                }
+                return
+            }
             Task { @MainActor in
-                vm.selectedTab = "books"
-                let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
-                let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
-                bookVM.presentEstimate(
-                    for: url,
-                    voice: voice,
-                    speed: speed,
-                    engine: "kokoro"
-                )
+                guard AudiobookImportStaging.supports(url) else {
+                    bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
+                    return
+                }
+                do {
+                    let stagedURL = try AudiobookImportStaging.stageDocument(from: url)
+                    vm.selectedTab = "books"
+                    let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
+                    let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
+                    bookVM.presentEstimate(
+                        for: stagedURL,
+                        voice: voice,
+                        speed: speed,
+                        engine: "kokoro"
+                    )
+                } catch {
+                    bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
+                }
             }
         }
         return true
@@ -352,7 +394,7 @@ struct VoqoraWindow: View {
                     .font(vm.appFont(size: 13, weight: .black))
                     .kerning(3)
                     .foregroundStyle(.cyan)
-                Text("Will switch to Audiobooks and start an estimate.")
+                Text("\(AudiobookImportStaging.supportedFormatsDescription) files will switch to Audiobooks and start an estimate.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(.secondary)
             }

@@ -1,9 +1,10 @@
 import KeyboardShortcuts
+import Sparkle
 import SwiftUI
 
 @main
 struct VoqoraApp: App {
-    /// 0. App Lifecycle Management
+    // 0. App Lifecycle Management
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     // 1. Single Sources of Truth (Services)
@@ -18,60 +19,77 @@ struct VoqoraApp: App {
     @StateObject private var audiobookVM: AudiobookViewModel
 
     /// First-launch + onboarding state.
-    @StateObject private var onboarding = OnboardingCoordinator()
+    @StateObject private var onboarding: OnboardingCoordinator
 
     /// Anonymous identity (anon_id + optional email) for analytics.
-    @StateObject private var identity = IdentityService.shared
+    @StateObject private var identity: IdentityService
 
     /// Live AX + Notifications permission status. Observed by onboarding.
     @StateObject private var permissions = PermissionsService()
 
-    /// One app-lifetime Sparkle owner for scheduled and manual signed updates.
+    /// Local-only, explicit bridge from the retired SuperSay app.
+    @StateObject private var legacyMigration: LegacySuperSayMigration
+
+    /// Native Sparkle 2 lifecycle. It owns background checks, verified
+    /// downloads, replacement, and relaunch instead of the former custom DMG
+    /// downloader.
     @StateObject private var updater: AppUpdater
 
     /// 3. Backend (Kept private, managed by VM, but we own the instance to stop deinit)
     private let backend: BackendService
 
     init() {
-        // 1. REDIRECT FRONTEND LOGS TO FILE
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
+        let runningTests = RuntimeEnvironment.isRunningTests
+        if !runningTests {
+            // 1. REDIRECT FRONTEND LOGS TO FILE
+            let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
 
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+            // Ensure directory exists
+            try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
-        let logURL = appSupport.appendingPathComponent("frontend.log")
+            let logURL = appSupport.appendingPathComponent("frontend.log")
 
-        // Clear old log
-        try? "".write(to: logURL, atomically: true, encoding: .utf8)
+            // Clear old log
+            try? "".write(to: logURL, atomically: true, encoding: .utf8)
 
-        // Redirect stdout and stderr to the log file, then disable buffering so every
-        // print() line lands immediately (no partial logs on crash or low-volume runs).
-        freopen(logURL.path, "a+", stdout)
-        freopen(logURL.path, "a+", stderr)
-        setbuf(stdout, nil)
-        setbuf(stderr, nil)
+            // Redirect stdout and stderr to the log file, then disable buffering so every
+            // print() line lands immediately (no partial logs on crash or low-volume runs).
+            freopen(logURL.path, "a+", stdout)
+            freopen(logURL.path, "a+", stderr)
+            setbuf(stdout, nil)
 
-        print("--- Voqora Frontend Log Started: \(Date()) ---")
+            print("--- Voqora Frontend Log Started: \(Date()) ---")
+        }
 
         // Create instances
-        let audioInstance = AudioService()
+        let audioInstance = AudioService(startingEngine: !runningTests)
         let historyInstance = HistoryManager()
         let launchInstance = LaunchManager()
         let backendInstance = BackendService()
         let systemInstance = SystemService()
+        let updaterInstance = AppUpdater()
+        let legacyMigrationInstance = LegacySuperSayMigration()
+        let testDefaults = runningTests ? RuntimeEnvironment.testDefaults() : nil
+        let onboardingInstance = OnboardingCoordinator(defaults: testDefaults ?? .standard)
+        let identityInstance = runningTests
+            ? IdentityService(defaults: testDefaults!)
+            : IdentityService.shared
 
         // Create VM with dependency injection
         let vmInstance = DashboardViewModel(
             backend: backendInstance,
             system: systemInstance,
             audio: audioInstance,
-            history: historyInstance
+            history: historyInstance,
+            // LaunchManager owns unpacking the bundled local server. Starting
+            // the health loop before it is ready starts a process which the
+            // extractor immediately replaces on fresh installs.
+            startsBackgroundWork: false
         )
 
         // Audiobook VM uses the same shared AudioService for playback
         let audiobookInstance = AudiobookViewModel(audio: audioInstance)
-        let updaterInstance = AppUpdater()
 
         // Assign to StateObjects
         _audio = StateObject(wrappedValue: audioInstance)
@@ -79,26 +97,33 @@ struct VoqoraApp: App {
         _launchManager = StateObject(wrappedValue: launchInstance)
         _dashboardVM = StateObject(wrappedValue: vmInstance)
         _audiobookVM = StateObject(wrappedValue: audiobookInstance)
+        _onboarding = StateObject(wrappedValue: onboardingInstance)
+        _identity = StateObject(wrappedValue: identityInstance)
         _updater = StateObject(wrappedValue: updaterInstance)
+        _legacyMigration = StateObject(wrappedValue: legacyMigrationInstance)
 
         // Wire mutual exclusion between TTS hotkey playback and audiobook playback
         vmInstance.audiobookVM = audiobookInstance
 
         backend = backendInstance
-
-        // Don't trigger permission prompts here — the onboarding wizard
-        // gates them behind explicit buttons. SystemService still drives
-        // ducking + AppleScript permissions on first hotkey use.
-        setupShortcuts(vm: vmInstance, audio: audioInstance)
-
-        MetricsService.shared.trackLaunch()
-        // Start the periodic flush driver (previously embedded inside the
-        // singleton init; now externalized so the actor can stay isolated).
-        Task { @MainActor in
-            MetricsFlushDriver.shared.start()
+        appDelegate.stopOwnedBackend = { [backendInstance] in
+            backendInstance.stop()
         }
-        registerCustomFonts()
-        checkRunningLocation()
+
+        if !runningTests {
+            // Don't trigger permission prompts here — the onboarding wizard
+            // gates them behind explicit buttons. SystemService still drives
+            // ducking + AppleScript permissions on first hotkey use.
+            setupShortcuts(vm: vmInstance)
+
+            MetricsService.shared.trackLaunch()
+            // Start the periodic flush driver (previously embedded inside the
+            // singleton init; now externalized so the actor can stay isolated).
+            Task { @MainActor in
+                MetricsFlushDriver.shared.start()
+            }
+            checkRunningLocation()
+        }
     }
 
     private func checkRunningLocation() {
@@ -106,8 +131,8 @@ struct VoqoraApp: App {
         if path.contains("/Volumes/") {
             let alert = NSAlert()
             alert.messageText = "Move to Applications"
-            alert.informativeText = "Voqora needs to be in your Applications folder to work correctly. Would you like to move it now?"
-            alert.addButton(withTitle: "Move to Applications")
+            alert.informativeText = "Drag Voqora into Applications in the installer window, then open it from Applications. Running it from the disk image prevents reliable updates."
+            alert.addButton(withTitle: "Open Applications")
             alert.addButton(withTitle: "Quit")
 
             if alert.runModal() == .alertFirstButtonReturn {
@@ -120,27 +145,7 @@ struct VoqoraApp: App {
         }
     }
 
-    private func registerCustomFonts() {
-        guard let fontFolder = Bundle.main.resourceURL?.appendingPathComponent("Fonts") else {
-            print("📝 FontLoader: Could not locate Fonts directory in bundle.")
-            return
-        }
-        guard let files = try? FileManager.default.contentsOfDirectory(at: fontFolder, includingPropertiesForKeys: nil) else {
-            print("📝 FontLoader: No bundled fonts found or directory inaccessible.")
-            return
-        }
-
-        for url in files where ["ttf", "otf"].contains(url.pathExtension.lowercased()) {
-            var error: Unmanaged<CFError>?
-            if !CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
-                print("⚠️ FontLoader: Failed to register font at \(url.path): \(error?.takeRetainedValue().localizedDescription ?? "Unknown error")")
-            } else {
-                print("✅ FontLoader: Registered \(url.lastPathComponent)")
-            }
-        }
-    }
-
-    private func setupShortcuts(vm: DashboardViewModel, audio: AudioService) {
+    private func setupShortcuts(vm: DashboardViewModel) {
         print("⌨️ KeyboardShortcuts: Initializing registration...")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
@@ -160,7 +165,7 @@ struct VoqoraApp: App {
         KeyboardShortcuts.onKeyUp(for: .stopText) {
             print("⌨️ KeyboardShortcuts: stopText triggered")
             Task { @MainActor in
-                audio.stop()
+                vm.stopPlayback()
             }
         }
 
@@ -178,29 +183,38 @@ struct VoqoraApp: App {
 
     var body: some Scene {
         WindowGroup(id: "dashboard") {
-            VoqoraWindow()
-                .environmentObject(dashboardVM)
-                .environmentObject(audio)
-                .environmentObject(history)
-                .environmentObject(launchManager)
-                .environmentObject(audiobookVM)
-                .environmentObject(onboarding)
-                .environmentObject(identity)
-                .environmentObject(permissions)
-                .environmentObject(updater)
+            Group {
+                if RuntimeEnvironment.isRunningTests {
+                    // The test target is app-hosted so it can import internal
+                    // Swift symbols. It must not also run the product window
+                    // lifecycle.
+                    EmptyView()
+                } else {
+                    VoqoraWindow()
+                        .environmentObject(dashboardVM)
+                        .environmentObject(audio)
+                        .environmentObject(history)
+                        .environmentObject(launchManager)
+                        .environmentObject(audiobookVM)
+                        .environmentObject(onboarding)
+                        .environmentObject(identity)
+                        .environmentObject(permissions)
+                        .environmentObject(updater)
+                        .environmentObject(legacyMigration)
+                }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])
 
         MenuBarExtra(isInserted: $showMenuBarIcon) {
             Button("Speak Selection") { Task { await dashboardVM.speakSelection() } }
-            Button("Stop") { audio.stop() }
+            Button("Stop") { dashboardVM.stopPlayback() }
             Button("Quit") {
                 dashboardVM.stopHeartbeat()
-                // backend.stop() is synchronous (terminates the child + closes
-                // handles inline; its pkill -9 is already backgrounded), so call
-                // it directly before terminate to guarantee ordered shutdown. The
-                // previous `Task { await … }` could be pre-empted by terminate().
+                // Stop only the child process this app owns before macOS
+                // tears the process down. A detached Task can be pre-empted
+                // by termination and leave a local server behind.
                 backend.stop()
                 NSApplication.shared.terminate(nil)
             }

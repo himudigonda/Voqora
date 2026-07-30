@@ -18,7 +18,7 @@ an instruction from disappearing between work sessions.
 | ID | Requested outcome | State today |
 | --- | --- | --- |
 | R-01 | Treat Voqora as a new public product, not a flimsy rename announcement. | Partial: source and product copy are Voqora-first; public surfaces still need a final audit. |
-| R-02 | Keep the v1.1 multilingual/experimental work private until next week. | Done locally: `develop` is a local-only branch at `df72663`; its multilingual implementation is absent from `main`. It must not be pushed, merged, or included in v1. |
+| R-02 | Keep the v1.1 multilingual/experimental work private until next week. | Done locally: `develop` is a local-only branch at `32388f2`; its multilingual implementation is absent from `main`. It must not be pushed, merged, or included in v1. |
 | R-03 | Keep public main and private successor work cleanly separated. | Done locally: public work is on `main`; `main...develop` shows the successor-only multilingual code and voice assets. `main` is intentionally ahead of its public remote while this release gate remains open. |
 | R-04 | Do not make another release until development, QA, GTM, and evidence are complete. | Active rule. No new release is being made. |
 | R-05 | Freeze SuperSay as a public legacy product with no experimental work. | Partial: Voqora has an explicit successor path; legacy repository/archive and public banner still need inspection. |
@@ -29,11 +29,11 @@ an instruction from disappearing between work sessions.
 | R-10 | Remove Google sign-in/auth residue and make the product usable without an account. | Partial: current identity is optional email only; repository-wide residue audit is open. |
 | R-11 | Start every fresh Voqora install with Bella, not Chinese or a stale voice. | Partial: migration and isolated-default tests reset unsupported voices to `af_bella`; the exact local Release candidate showed Bella. A downloaded candidate DMG still needs the same clean-profile proof. |
 | R-12 | Repair onboarding, permission prompting, and the stuck/blank first-run screen. | Partial: root cause fixed and live local first-run shown; clean installed-DMG permission completion remains. |
-| R-13 | Use the real Voqora icon in the app, not a placeholder. | Implemented in source; candidate visual pass remains. |
+| R-13 | Use the real Voqora icon in the app, not a placeholder. | Partial: current first-run candidate uses the bundled Voqora icon and readable copy. A mounted-DMG visual proof remains. |
 | R-14 | Make the DMG feel like Voqora’s product UI, with visible text and a literal drag instruction. | Partial: artwork and copy redesigned locally; no candidate DMG has been built or visually inspected. |
 | R-15 | Make installer behavior truthful and easy: drag to Applications, then open. | Implemented locally; candidate-DMG test remains. |
 | R-16 | Fix the update path, settings toggle, manual check UI, signature failure, and release-cycle automation. | Partial: local pipeline now publishes an immutable GitHub DMG before Pages exposes its appcast, and Preferences has an honest preparation state. The live feed remains behind the current tag and an installed older-to-newer update has not succeeded yet. |
-| R-17 | Keep testing from launching many apps or consuming runaway CPU. | Done for the harness: one serial Swift host ran 64 tests, 183 backend tests ran headlessly, and no Voqora candidate or backend process remained. Local run tooling and the app now target only their exact backend paths, not every similarly named process. |
+| R-17 | Keep testing from launching many apps or consuming runaway CPU. | Done for the harness: one serial Swift host ran 64 tests, 183 backend tests ran headlessly, and no Voqora candidate or backend process remained. Local run tooling, reset tooling, and app shutdown now require an exact owned process or an explicit user quit; none kills every similarly named process. |
 | R-18 | Test every real app flow, not only unit tests. | Open: this is the core remaining release-readiness work. |
 | R-19 | Ensure selected-text reading, pause/resume/stop, no-selection feedback, history, and WAV export are solid. | Partial: exact bundled backend produced a valid 24 kHz WAV; tests cover empty export rejection, unique filenames, history persistence, and no-playback feedback. Accessibility-authorised selected-text and full GUI export remain manual gates. |
 | R-20 | Ensure document audiobook import, processing, errors, resume, cancellation, and optional Gemini cleanup are solid. | Partial: local-first default and Gemini-only-on-explicit-choice are covered by focused backend tests. Fixture-driven PDF, TXT, DOCX, and Markdown import, cancellation, resume, corrupt-file, and user-visible error passes remain. |
@@ -60,7 +60,7 @@ an instruction from disappearing between work sessions.
 
 ### Reconciliation rule
 
-Rows R-01 through R-40 and VQ-001 through VQ-042 are both release gates.
+Rows R-01 through R-40 and VQ-001 through VQ-052 are both release gates.
 Before a release, each must be explicitly `Done`, `Blocked` with an accepted
 owner decision, or `Not applicable` with a written reason. Nothing is inferred
 from a green unit-test run or a prettier screenshot.
@@ -136,6 +136,11 @@ from a green unit-test run or a prettier screenshot.
 | VQ-045 | Audiobook input contract | The UI offers only the document types the public backend accepts and does not silently discard an invalid or unreadable choice. | File-import and drop-path manual proof. | Partial: app accepts PDF, TXT, DOCX, and Markdown, stages each in a unique temporary folder, sends its correct MIME type and metric label, and leaves a readable error state on upload failure. Interactive Finder/import proof remains. |
 | VQ-046 | Claim discipline | First-use, project-card, README, blog, and privacy copy distinguish normal local speech from optional external PDF cleanup, telemetry, and unverified updater delivery. | Source-to-surface audit. | Partial: misleading “no cloud/no upload” onboarding copy and premature updater-validation claim were corrected locally. Public render audit remains. |
 | VQ-047 | Metrics deployment contract | Website API, Supabase views, and dashboard must declare a compatible metric version before showing adoption figures. | Deliberately stale-payload test plus live post-deploy receipt. | Partial: the website now declares `2026-07-30.1`; the dashboard rejects a missing or different version and incomplete fields rather than silently showing zeros. Production migration/deploy is deliberately deferred until final validation. |
+| VQ-048 | Global document intake | Dropping a supported document anywhere in the app uses the same safe staging, error copy, estimate flow, MIME type, and metrics contract as the Library importer. | Shared-contract regression test plus manual Finder drop. | Partial: the global drop path now accepts only PDF, TXT, DOCX, and Markdown, stages the source before switching views, and gives a readable error instead of silently ignoring it. Interactive Finder proof remains. |
+| VQ-049 | First-run brand and voice | A first launch always shows the actual Voqora mark and Bella, rather than a generic symbol or stale multilingual profile. | Isolated-default test plus fresh Release visual. | Partial: migration v7 resets prior stale v6 defaults to `af_bella`, preserves later user choices, and the current local Release candidate visibly showed the bundled app icon. Clean-DMG proof remains. |
+| VQ-050 | Process-safe exit and reset | Menu-bar quit, app termination, and data reset stop only the backend started by this exact app, and never kill a parallel copy by name. | AppDelegate regression test, source audit, and multi-copy/manual candidate proof. | Partial: the app now owns a single shutdown callback, the menu exit stops its child synchronously, and `make nuke` refuses to proceed while a candidate/backend runs. Multi-copy proof remains. |
+| VQ-051 | Stop semantics | Global Stop, menu-bar Stop, and in-window Stop cancel an active speech stream before stopping output, so a late network chunk cannot restart audio. | Cancellation-aware unit coverage and Accessibility/manual shortcut pass. | Partial: all stop affordances now enter `DashboardViewModel.stopPlayback()`, which advances the request generation, cancels the task, preserves audiobook resume bookkeeping, then stops output. A real global-hotkey proof remains. |
+| VQ-052 | Honest speaking state | The dashboard says “Speaking” only after actual audio is buffered, not while an engine request is merely pending. | Audio-service state regression test and slow-response manual observation. | Partial: `prepareForStream()` now keeps the state in “Thinking” until `startPlayback()` receives a buffer, and the headless regression test keeps Core Audio unconfigured. A throttled-backend visual pass remains. |
 
 ## Current stop-the-line findings
 
@@ -166,7 +171,7 @@ for a public result.
 
 | Surface | Current evidence | What it proves | What it does **not** prove | Gate |
 | --- | --- | --- | --- | --- |
-| Branch boundary | `main...develop` diff; `develop` is local-only at `df72663` | v1.1 multilingual files are absent from v1 `main` | That a later remote push cannot expose it | Audit remotes before every publish |
+| Branch boundary | `main...develop` diff; `develop` is local-only at `32388f2` | v1.1 multilingual files are absent from v1 `main` | That a later remote push cannot expose it | Audit remotes before every publish |
 | Release app build | `make app` built `build/DerivedData/Build/Products/Release/Voqora.app` | Current Swift source compiles into the named Release bundle | A mounted/downloaded DMG works | Build a final candidate only after version decision |
 | Swift tests | `make test-swift`: 64 passed, serial host, no candidate Voqora app/backend process left | Pure services, onboarding state, telemetry shaping, history/export helpers compile and pass | Accessibility, Finder, Sparkle, or real user journeys | Manual release matrix |
 | Backend tests | `make test-backend`: 183 passed | Local speech and API logic pass headlessly | Packaged app/backend wiring and actual model UX | Exact candidate launch and manual speech pass |

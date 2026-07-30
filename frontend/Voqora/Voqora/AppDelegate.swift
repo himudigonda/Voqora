@@ -1,17 +1,11 @@
 import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Installed by `VoqoraApp` with the exact `BackendService` instance this
+    /// app launched. Never terminate a server merely because it shares a name.
+    var stopOwnedBackend: (() -> Void)?
+
     func applicationWillTerminate(_: Notification) {
-        // Synchronous SIGKILL of any lingering VoqoraServer processes
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
-        task.arguments = ["-9", "-f", "VoqoraServer"]
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
-            // Silently ignore if pkill fails (process may not exist)
-            return
-        }
+        stopOwnedBackend?()
     }
 }

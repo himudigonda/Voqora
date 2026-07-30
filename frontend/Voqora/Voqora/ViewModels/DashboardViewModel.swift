@@ -9,7 +9,10 @@ class DashboardViewModel: ObservableObject {
     /// development build could leave a non-English voice in shared defaults;
     /// every fresh v1.1 install and every upgrade from that build must begin
     /// with the same predictable US-English voice.
-    private static let voiceDefaultsMigrationVersion = 1
+    /// v8 is deliberately higher than the public v1 migration so the private
+    /// multilingual branch preserves the same predictable Bella-first start
+    /// rather than reviving a voice from a development build.
+    private static let voiceDefaultsMigrationVersion = 8
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
@@ -42,9 +45,6 @@ class DashboardViewModel: ObservableObject {
 
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
-
-    /// Clipboard monitoring for anticipatory pre-warm
-    private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
 
     @AppStorage("selectedVoice") var selectedVoice = "af_bella"
     /// When on, the language of the text being spoken is auto-detected (via Apple's
@@ -241,6 +241,8 @@ class DashboardViewModel: ObservableObject {
     }
 
     private var currentSpeakTask: Task<Void, Never>?
+    /// A cancelled request must not be able to stop or overwrite newer audio.
+    private var speakGeneration = 0
     private var heartbeatTask: Task<Void, Never>?
     /// Background timer for the "1s after playback ended, restore music
     /// volume" behavior. Cancelled on re-entrance so a quick stop/start
@@ -249,6 +251,7 @@ class DashboardViewModel: ObservableObject {
     /// Auto-clear timer for the "Nothing to play" error pill in togglePlayback.
     /// Cancelled on re-entrance for the same reason. See HARD-021.
     private var errorResetTask: Task<Void, Never>?
+    private(set) var errorResetGeneration = 0
     private var actionFeedbackTask: Task<Void, Never>?
 
     /// True between prepareForStream() and the first audio chunk of a TTS request.
@@ -260,7 +263,13 @@ class DashboardViewModel: ObservableObject {
 
     private var cancellables = Set<AnyCancellable>()
 
-    init(backend: BackendService, system: SystemService, audio: AudioService, history: HistoryManager) {
+    init(
+        backend: BackendService,
+        system: SystemService,
+        audio: AudioService,
+        history: HistoryManager,
+        startsBackgroundWork: Bool = !RuntimeEnvironment.isRunningTests
+    ) {
         _ = Self.applyVoiceDefaultsMigrationIfNeeded()
         self.backend = backend
         self.system = system
@@ -268,6 +277,17 @@ class DashboardViewModel: ObservableObject {
         self.history = history
 
         setupBindings()
+        if startsBackgroundWork {
+            startBackgroundWork()
+        }
+    }
+
+    /// Start backend work once the bundled server is available. Starting while
+    /// LaunchManager replaces its files causes an avoidable launch/kill loop
+    /// on fresh installs, and running it in unit tests needlessly heats up the
+    /// machine.
+    func startBackgroundWork() {
+        guard heartbeatTask == nil else { return }
         startHeartbeat()
         startPrewarmObservers()
     }
@@ -340,15 +360,22 @@ class DashboardViewModel: ObservableObject {
 
     /// Show a transient error in the status label, auto-clearing back to .ready.
     private func flashError(_ message: String, seconds: Double = 4) {
+        clearActionFeedback()
         status = .error(message)
         errorResetTask?.cancel()
+        errorResetGeneration &+= 1
+        let generation = errorResetGeneration
         errorResetTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
-            if case .error = status {
-                status = .ready
-            }
+            resetPlaybackError(for: generation)
         }
+    }
+
+    /// Makes stale status timers harmless after quick repeated actions.
+    func resetPlaybackError(for generation: Int) {
+        guard generation == errorResetGeneration else { return }
+        if case .error = status { status = .ready }
     }
 
     /// Show the macOS Accessibility prompt and open the relevant Settings pane.
@@ -363,7 +390,17 @@ class DashboardViewModel: ObservableObject {
     /// Speak `text`. When `forcedVoice` is set, that exact voice is used and
     /// auto-detect is bypassed — used to preview a specific voice (onboarding).
     func speak(text: String, forcedVoice: String? = nil) async {
-        // --- FIX: Cancel the previous stream task if it exists ---
+        clearActionFeedback()
+        guard isBackendOnline else {
+            backend.start()
+            flashError("Voqora is still starting. Try again in a moment.")
+            return
+        }
+
+        // The newest request always wins. The generation token keeps a
+        // cancelled older request from stopping the newer playback in defer.
+        speakGeneration &+= 1
+        let generation = speakGeneration
         currentSpeakTask?.cancel()
 
         // Mutual exclusion: a hotkey TTS request always interrupts audiobook playback.
@@ -376,14 +413,18 @@ class DashboardViewModel: ObservableObject {
             avm.currentTranscript = nil
         }
 
-        currentSpeakTask = Task {
+        currentSpeakTask = Task { [weak self] in
+            guard let self else { return }
             defer {
                 awaitingFirstChunk = false
-                if Task.isCancelled {
+                if Task.isCancelled, generation == self.speakGeneration {
                     if self.status == .thinking {
                         self.status = .ready
                     }
                     self.audio.stop()
+                }
+                if generation == self.speakGeneration {
+                    self.currentSpeakTask = nil
                 }
             }
             print("DEBUG [DashboardVM] Starting new speak task")
@@ -415,7 +456,7 @@ class DashboardViewModel: ObservableObject {
             do {
                 for try await chunk in stream {
                     // Check if this task was cancelled while we were waiting for a chunk
-                    if Task.isCancelled {
+                    guard !Task.isCancelled, generation == self.speakGeneration else {
                         print("DEBUG [DashboardVM] Task cancelled, exiting loop")
                         return
                     }
@@ -428,14 +469,14 @@ class DashboardViewModel: ObservableObject {
                     audio.playChunk(chunk, volume: Float(speechVolume))
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, generation == self.speakGeneration else { return }
                 awaitingFirstChunk = false
                 audio.stop()
                 status = .error("Voqora could not generate audio. Check that the local engine is ready and try again.")
                 return
             }
 
-            if !Task.isCancelled {
+            if !Task.isCancelled, generation == self.speakGeneration {
                 audio.finishStream()
                 // Zero-audio edge case (e.g. a voice produced an empty stream):
                 // the $isPlaying sink only resets .speaking/.paused, so a request
@@ -457,28 +498,39 @@ class DashboardViewModel: ObservableObject {
     }
 
     func togglePlayback() {
+        if let audiobookVM, audiobookVM.nowPlaying != nil {
+            audiobookVM.togglePlayback()
+            return
+        }
         if audio.duration == 0 {
-            // Show the error message in the UI pill
-            status = .error("Nothing to play. Select text and press Cmd+Shift+.")
-
-            // Auto-clear the error and return to "READY" after 3 seconds.
-            // Cancellable so a quick re-toggle doesn't trip the stale reset.
-            errorResetTask?.cancel()
-            errorResetTask = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard !Task.isCancelled, let self else { return }
-                if case let .error(msg) = status,
-                   msg == "Nothing to play. Select text and press Cmd+Shift+."
-                {
-                    status = .ready
-                }
-            }
+            flashError("Nothing to play. Select text and press Cmd+Shift+.", seconds: 3)
         } else {
             audio.togglePause()
         }
     }
 
+    /// Stops streams before the audio engine so a late network chunk cannot
+    /// make playback resume after the user explicitly pressed Stop.
+    func stopPlayback() {
+        speakGeneration &+= 1
+        currentSpeakTask?.cancel()
+        currentSpeakTask = nil
+        awaitingFirstChunk = false
+
+        if let audiobookVM, audiobookVM.nowPlaying != nil {
+            audiobookVM.stopPlayback()
+        } else {
+            audio.stop()
+        }
+
+        clearActionFeedback()
+        if status == .speaking || status == .paused || status == .thinking {
+            status = .ready
+        }
+    }
+
     func startHeartbeat() {
+        guard heartbeatTask == nil else { return }
         heartbeatTask = Task {
             var wasOnline = false
             while !Task.isCancelled {
@@ -490,12 +542,7 @@ class DashboardViewModel: ObservableObject {
                 // Detect backend crash: was online, now offline
                 if wasOnline && !isNowOnline {
                     print("⚠️ DashboardViewModel: Backend crash detected, cancelling stream")
-                    currentSpeakTask?.cancel()
-                    currentSpeakTask = nil
-                    if status == .speaking || status == .thinking {
-                        status = .ready
-                    }
-                    audio.stop()
+                    stopPlayback()
                 }
 
                 wasOnline = isNowOnline
@@ -531,39 +578,12 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    /// Pre-warm the model before the user speaks, hiding the ~1.3 s cold-reload cost.
-    ///
-    /// Two signals trigger this:
-    /// 1. The clipboard changes — user just copied text and will likely press the hotkey.
-    /// 2. The app becomes active — user switched to Voqora to type/speak directly.
-    ///
-    /// In both cases the backend starts loading the ONNX model in the background.
-    /// By the time the user actually presses the hotkey (typically 0.5–3 s later),
-    /// the model is already warm and /speak returns audio with normal ~300 ms latency.
+    /// Pre-warm only when Voqora becomes active. The app does not poll or read
+    /// the clipboard in the background: it waits for an explicit shortcut or
+    /// document action before touching user text.
     private func startPrewarmObservers() {
-        // Signal 1: clipboard change — always prewarm (model load + lookahead cache).
-        // No !isModelLoaded guard: even when warm, we want to pre-compute the first
-        // audio segment so /speak finds it cached and streams it in <20ms.
-        Timer.publish(every: 1.0, on: .main, in: .common)
-            .autoconnect()
-            .sink { [weak self] _ in
-                guard let self else { return }
-                let current = NSPasteboard.general.changeCount
-                guard current != lastPasteboardChangeCount else { return }
-                lastPasteboardChangeCount = current
-                guard isBackendOnline else { return }
-                let text = NSPasteboard.general.string(forType: .string) ?? ""
-                // Match the voice speak() will actually use, so the lookahead cache
-                // key lines up when auto-detect re-routes to another language.
-                let voice = autoDetectLanguage
-                    ? LanguageDetector.voiceForText(text, fallback: selectedVoice)
-                    : selectedVoice
-                let speed = speechSpeed
-                Task { await self.backend.prewarm(text: text, voice: voice, speed: speed) }
-            }
-            .store(in: &cancellables)
-
-        // Signal 2: app focus — only loads the model (no lookahead; unknown text).
+        // App focus only loads the model. No lookahead is possible because
+        // Voqora intentionally has no text until the user asks it to speak.
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 guard let self, isBackendOnline, !self.isModelLoaded else { return }
@@ -604,5 +624,11 @@ class DashboardViewModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             self.actionFeedback = nil
         }
+    }
+
+    private func clearActionFeedback() {
+        actionFeedbackTask?.cancel()
+        actionFeedbackTask = nil
+        actionFeedback = nil
     }
 }

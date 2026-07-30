@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 /// isolation.
 enum AudiobookDropHandler {
     /// File extensions accepted for audiobook upload.
-    static let allowedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
+    static let allowedExtensions = AudiobookImportStaging.supportedExtensions
 
     /// Loads the file URL for every provider in `providers` (not just the
     /// first), copies each into a security-scope-safe temp location, and
@@ -40,22 +40,11 @@ enum AudiobookDropHandler {
                     url = u
                 }
                 guard let url, allowedExtensions.contains(url.pathExtension.lowercased()) else { return }
-
-                // Acquire security scope, copy to temp, release scope.
-                let scoped = url.startAccessingSecurityScopedResource()
-                let tmpURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(url.lastPathComponent)
                 do {
-                    let data = try Data(contentsOf: url)
-                    if scoped {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                    try data.write(to: tmpURL)
-                    onURL(tmpURL)
+                    // A unique Voqora-owned directory prevents two Finder
+                    // files with the same name from overwriting each other.
+                    onURL(try AudiobookImportStaging.stageDocument(from: url))
                 } catch {
-                    if scoped {
-                        url.stopAccessingSecurityScopedResource()
-                    }
                     onError(url, error)
                 }
             }

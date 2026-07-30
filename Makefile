@@ -78,13 +78,16 @@ ifndef CI
 	@printf "⚠️  This wipes ALL local Voqora data (audiobooks, history,\n   accessibility grants). Continue? [y/N] " && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
 endif
 	@echo "🧨 NUKING SYSTEM DATA..."
-	@# Only stop the exact local candidate/backend this repository owns. An
-	@# installed Voqora copy must be closed by its user before a destructive reset.
+	@# A reset must never kill an app merely because it shares Voqora's bundle
+	@# identifier. Require every local/installed copy and the shared backend to
+	@# be stopped first, then remove data only after the user acknowledged it.
 	@if pgrep -f "/Applications/Voqora.app/Contents/MacOS/Voqora" >/dev/null; then \
 		echo "Quit /Applications/Voqora.app before resetting its shared data."; exit 2; \
 	fi
-	pkill -f "$(CURDIR)/$(APP_PATH)/Contents/MacOS/Voqora" || true
-	pkill -f "$$HOME/Library/Application Support/$(BUNDLE_ID)/VoqoraServer/VoqoraServer" || true
+	@if pgrep -f "$(CURDIR)/$(APP_PATH)/Contents/MacOS/Voqora" >/dev/null || \
+		pgrep -f "$$HOME/Library/Application Support/$(BUNDLE_ID)/VoqoraServer/VoqoraServer" >/dev/null; then \
+		echo "Quit every local Voqora candidate before resetting shared data."; exit 2; \
+	fi
 	rm -rf ~/Library/Application\ Support/VoqoraServer
 	rm -rf ~/Library/Application\ Support/$(BUNDLE_ID)
 	@echo "🔐 Resetting macOS Accessibility Database..."

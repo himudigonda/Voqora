@@ -93,6 +93,10 @@ class AudioService: NSObject, ObservableObject {
     /// the currentTime/scrubbing math below needs to account for rate.
     private let timePitch = AVAudioUnitTimePitch()
     private let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
+    /// Test-only instances intentionally skip Core Audio setup. Every
+    /// playback entry point checks this so logic tests never attempt to start
+    /// an unconfigured graph or leave audio helper processes behind.
+    private var engineConfigured = false
 
     private var lastAudioData = Data()
     private var headerAccumulator = Data()
@@ -133,6 +137,7 @@ class AudioService: NSObject, ObservableObject {
         engine.attach(playerNode)
         engine.attach(timePitch)
         connectRenderChain()
+        engineConfigured = true
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
@@ -253,6 +258,7 @@ class AudioService: NSObject, ObservableObject {
 
     private func startPlayback() {
         guard !hasStartedPlayback else { return }
+        guard engineConfigured else { return }
         do {
             if !engine.isRunning {
                 try engine.start()
@@ -315,7 +321,7 @@ class AudioService: NSObject, ObservableObject {
                 progress = 0
             }
             playbackCompleted = false
-            try? engine.start()
+            if engineConfigured { try? engine.start() }
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -364,7 +370,7 @@ class AudioService: NSObject, ObservableObject {
             pausedTime = targetTime
             currentTime = targetTime
 
-            if !engine.isRunning {
+            if engineConfigured, !engine.isRunning {
                 try? engine.start()
             }
             playerNode.play()
@@ -396,15 +402,14 @@ class AudioService: NSObject, ObservableObject {
         // starting a new session, and resetting the rate there would silently
         // desync the displayed speed from actual playback on the next resume.
         setPlaybackRate(1.0)
-        // Pre-warm hardware: start playerNode now so it's running when first buffer arrives.
-        if !engine.isRunning {
+        // Pre-warm hardware, but do not claim playback has begun before a
+        // real buffer arrives. A cold or failed request must not look like a
+        // frozen "Speaking 0:00" session.
+        if engineConfigured, !engine.isRunning {
             try? engine.start()
         }
-        playerNode.play()
-        hasStartedPlayback = true
-        // BUG FIX: set isPlaying so all guards work and start the timer so progress updates.
-        isPlaying = true
-        startTimer()
+        hasStartedPlayback = false
+        isPlaying = false
     }
 
     func finishStream() {

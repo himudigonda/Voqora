@@ -65,30 +65,39 @@ final class DashboardViewModelTests: XCTestCase {
         }
     }
 
-    func test_togglePlayback_error_clears_to_ready_after_three_seconds() async {
+    func test_togglePlayback_error_reset_only_applies_to_latest_action() {
         let vm = makeVM()
-        vm.togglePlayback() // sets .error
+        vm.togglePlayback()
+        let firstGeneration = vm.errorResetGeneration
+        vm.togglePlayback()
+        let secondGeneration = vm.errorResetGeneration
 
-        // Wait slightly longer than the 3s auto-clear.
-        try? await Task.sleep(nanoseconds: 3_200_000_000)
+        XCTAssertGreaterThan(secondGeneration, firstGeneration)
+        vm.resetPlaybackError(for: firstGeneration)
+        if case .error = vm.status {} else {
+            XCTFail("a stale reset must not clear the latest error")
+        }
 
+        vm.resetPlaybackError(for: secondGeneration)
         XCTAssertEqual(vm.status, .ready)
     }
 
-    func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() async {
+    func test_togglePlayback_twice_in_a_row_replaces_prior_reset() {
         let vm = makeVM()
-        vm.togglePlayback() // .error #1
-        // The HARD-021 fix cancels the prior errorResetTask; re-triggering
-        // shouldn't leak a second timer.
-        vm.togglePlayback() // .error #2
+        vm.togglePlayback()
+        let firstGeneration = vm.errorResetGeneration
+        vm.togglePlayback()
+        let secondGeneration = vm.errorResetGeneration
 
         if case .error = vm.status {} else {
             XCTFail("expected .error after two toggles; got \(vm.status)")
         }
 
-        // The 3s clear from the second call must still fire and bring us
-        // back to .ready. (If the first task had clobbered, we'd be stuck.)
-        try? await Task.sleep(nanoseconds: 3_300_000_000)
+        vm.resetPlaybackError(for: firstGeneration)
+        if case .error = vm.status {} else {
+            XCTFail("the replaced timer must not clear the second action")
+        }
+        vm.resetPlaybackError(for: secondGeneration)
         XCTAssertEqual(vm.status, .ready)
     }
 
