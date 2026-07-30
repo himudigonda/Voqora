@@ -19,6 +19,9 @@ legacy app's preferences or contents, and it never removes SuperSay itself.
 Telemetry reports anonymous installations, not a deduplicated count of people.
 If you voluntarily enter an email in Voqora, it is stored separately from
 anonymous events and is the only possible future basis for linking identity.
+Use **Preferences → Identity → Remove** to delete that optional contact from
+the product backend and this Mac. Removing it does not change the separate,
+anonymous event history.
 
 Voqora does not require an account to speak text. Review the relevant source
 before using an optional integration with material that should not leave your

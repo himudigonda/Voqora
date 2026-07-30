@@ -147,6 +147,8 @@ actor MetricsService {
             return
         }
         let cleanedProps = Props.whitelist(rawProps)
+        // The identifier is generated before persistence, so a retry after a
+        // lost HTTP response is the same event, not a second launch/action.
         let evt = Event(name: event, props: cleanedProps, timestamp: Date())
         outbox.append(evt)
         if outbox.count > outboxCap {
@@ -261,9 +263,22 @@ final class MetricsFlushDriver {
 
 extension MetricsService {
     struct Event {
+        let id: String
         let name: String
         let props: [String: Any]
         let timestamp: Date
+
+        init(
+            id: String = UUID().uuidString,
+            name: String,
+            props: [String: Any],
+            timestamp: Date
+        ) {
+            self.id = id
+            self.name = name
+            self.props = props
+            self.timestamp = timestamp
+        }
 
         nonisolated static let allowedNames: Set<String> = [
             "app_launch", "generation", "export",
@@ -273,6 +288,7 @@ extension MetricsService {
 
         func serialized() -> [String: Any] {
             return [
+                "event_id": id,
                 "event": name,
                 "ts": MetricsService.isoFormatter.string(from: timestamp),
                 "props": props,
@@ -289,7 +305,20 @@ extension MetricsService {
             } else {
                 ts = Date()
             }
-            return Event(name: name, props: Props.whitelist(props), timestamp: ts)
+            // Pre-idempotency outbox entries remain safe to deliver: assign a
+            // fresh ID once and persist it with the next outbox write.
+            let id = raw["event_id"] as? String
+            return Event(
+                id: Self.isValidID(id) ? id! : UUID().uuidString,
+                name: name,
+                props: Props.whitelist(props),
+                timestamp: ts
+            )
+        }
+
+        private nonisolated static func isValidID(_ value: String?) -> Bool {
+            guard let value else { return false }
+            return UUID(uuidString: value) != nil
         }
     }
 

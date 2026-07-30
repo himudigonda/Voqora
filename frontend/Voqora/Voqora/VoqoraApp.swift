@@ -207,7 +207,7 @@ struct VoqoraApp: App {
             Button("Stop") { audio.stop() }
             Button("Quit") {
                 dashboardVM.stopHeartbeat()
-                Task { await backend.stop() }
+                Task { backend.stop() }
                 NSApplication.shared.terminate(nil)
             }
         } label: {

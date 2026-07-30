@@ -10,6 +10,13 @@ import Sparkle
 @MainActor
 final class AppUpdater: NSObject, ObservableObject {
     private let controller: SPUStandardUpdaterController?
+    private var observations: [NSKeyValueObservation] = []
+
+    /// Mirror Sparkle's persisted user choices so Preferences can explain what
+    /// will happen instead of hiding update behaviour behind a background
+    /// framework.
+    @Published private(set) var automaticallyChecksForUpdates = false
+    @Published private(set) var canCheckForUpdates = false
 
     override init() {
         if RuntimeEnvironment.isRunningTests {
@@ -22,9 +29,33 @@ final class AppUpdater: NSObject, ObservableObject {
             )
         }
         super.init()
+        observeUpdaterState()
     }
 
     func checkForUpdates() {
+        guard canCheckForUpdates else { return }
         controller?.checkForUpdates(nil)
+    }
+
+    func setAutomaticallyChecksForUpdates(_ enabled: Bool) {
+        guard let updater = controller?.updater else { return }
+        updater.automaticallyChecksForUpdates = enabled
+        automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
+    }
+
+    private func observeUpdaterState() {
+        guard let updater = controller?.updater else { return }
+        observations = [
+            updater.observe(\.automaticallyChecksForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
+                MainActor.assumeIsolated {
+                    self?.automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
+                }
+            },
+            updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
+                MainActor.assumeIsolated {
+                    self?.canCheckForUpdates = updater.canCheckForUpdates
+                }
+            },
+        ]
     }
 }

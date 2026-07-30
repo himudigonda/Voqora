@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -21,14 +22,11 @@ struct VoqoraWindow: View {
             VStack(alignment: .leading, spacing: 0) {
                 // APP BRANDING HEADER
                 HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(.cyan.gradient)
-                            .frame(width: 32, height: 32)
-                        Image(systemName: "waveform")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(.white)
-                    }
+                    Image(nsImage: NSApplication.shared.applicationIconImage)
+                        .resizable()
+                        .interpolation(.high)
+                        .scaledToFit()
+                        .frame(width: 36, height: 36)
 
                     VStack(alignment: .leading, spacing: 0) {
                         Text("Voqora")
@@ -158,15 +156,16 @@ struct VoqoraWindow: View {
                 await launchManager.prepare()
             }
 
-            // First-launch onboarding (S1-E1). Defer one runloop so the
-            // window has fully appeared before the sheet animates in.
+            // First-launch onboarding is the highest-priority surface. It
+            // must not compete with a backend loading curtain or the legacy
+            // migration alert, otherwise a fresh install can look frozen.
             if onboarding.needsOnboarding {
                 DispatchQueue.main.async {
                     showOnboarding = true
                 }
+            } else {
+                legacyMigration.evaluate()
             }
-
-            legacyMigration.evaluate()
         }
         .alert("SuperSay is installed", isPresented: $legacyMigration.shouldPresentNotice) {
             Button("Import preferences") {
@@ -192,22 +191,26 @@ struct VoqoraWindow: View {
         } message: {
             Text(migrationResultMessage ?? "")
         }
-        .sheet(isPresented: $showOnboarding) {
-            OnboardingView()
-                .environmentObject(onboarding)
-                .environmentObject(permissions)
-                .environmentObject(identity)
-                .interactiveDismissDisabled(true)
-        }
         .onChange(of: onboarding.version) { _, _ in
             if !onboarding.needsOnboarding {
                 showOnboarding = false
+                legacyMigration.evaluate()
             } else {
                 showOnboarding = true
             }
         }
         .overlay {
-            if !launchManager.isReady {
+            // Keep onboarding in the same window and above startup state.
+            // A native sheet can otherwise be visually hidden by this overlay
+            // while the local engine warms up, which is indistinguishable
+            // from a frozen first launch.
+            if showOnboarding {
+                OnboardingView()
+                    .environmentObject(onboarding)
+                    .environmentObject(permissions)
+                    .environmentObject(identity)
+                    .transition(.opacity)
+            } else if !launchManager.isReady {
                 ZStack {
                     adaptiveBackdrop
 

@@ -81,9 +81,17 @@ final class MetricsServiceTests: XCTestCase {
         )
         let serialized = evt.serialized()
         let restored = MetricsService.Event.fromSerialized(serialized)
+        XCTAssertEqual(restored?.id, evt.id)
         XCTAssertEqual(restored?.name, "generation")
         XCTAssertEqual(restored?.props["chars"] as? Int, 10)
         XCTAssertEqual(restored?.props["voice"] as? String, "af_bella")
+    }
+
+    func test_legacyOutboxEventGetsStableIDWhenRestored() {
+        let payload: [String: Any] = ["event": "app_launch", "props": [:]]
+        let restored = MetricsService.Event.fromSerialized(payload)
+        XCTAssertNotNil(UUID(uuidString: restored?.id ?? ""))
+        XCTAssertNotNil(restored?.serialized()["event_id"] as? String)
     }
 
     func test_event_fromSerialized_dropsUnknownEventName() {

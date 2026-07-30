@@ -8,19 +8,25 @@ you still need to get through the material, but do not want to keep staring at
 it.
 
 <p align="center">
-  <a href="https://github.com/himudigonda/Voqora/releases/tag/v1.0.1"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
+  <a href="https://github.com/himudigonda/Voqora/releases/latest"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS 14 or later">
   <img src="https://img.shields.io/badge/Apple%20Silicon-native-0EA5E9?style=flat-square&logo=apple&logoColor=white" alt="Apple Silicon">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial-7C3AED?style=flat-square" alt="PolyForm Noncommercial"></a>
 </p>
 
 <p align="center">
-  <img src="assets/voqora-installer.jpg" alt="Voqora installer" width="760">
+  <img src="assets/voqora-hero.png" alt="Voqora playing selected text with the Bella voice" width="900">
 </p>
 
 ## Start here
 
-1. Download [Voqora v1.0.1](https://github.com/himudigonda/Voqora/releases/tag/v1.0.1).
+<p>
+  <a href="https://github.com/himudigonda/Voqora"><strong>Explore the project on GitHub</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://himudigonda.me/api/voqora/download?source=github_readme"><strong>Download Voqora for Mac</strong></a>
+</p>
+
+1. Download the [latest Voqora release](https://github.com/himudigonda/Voqora/releases/latest).
 2. Drag Voqora to Applications.
 3. Select text in a browser, PDF reader, IDE, Notes, or another app.
 4. Press `Command + Shift + .`.
@@ -89,13 +95,13 @@ keyboard-to-speaker latency promise.
 
 ## Install notes
 
-Voqora v1.0.1 is free to download, but it is not yet Apple-notarized. After
+Voqora is free to download, but the current release is not yet Apple-notarized. After
 dragging it to Applications, try opening it normally. If macOS blocks that
 first launch, open **System Settings -> Privacy & Security**, choose **Open
 Anyway** for Voqora, then open it again.
 
 If that button is missing or macOS keeps showing the same warning, and you
-downloaded the DMG from [this official release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.1), run this once in Terminal:
+downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run this once in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Voqora.app

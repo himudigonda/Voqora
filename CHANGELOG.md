@@ -3,6 +3,39 @@
 All notable changes to Voqora are documented here. Voqora starts at v1.0.0:
 this is the first public release of the product and its source history.
 
+## [1.0.2] - 2026-07-29
+
+### First-run recovery
+
+- Fixed a startup layering bug that could hide the required onboarding behind
+  the local-engine loading curtain. A fresh install now shows setup first and
+  defers the legacy migration notice until setup is complete.
+- Made the first-use flow explicit about what is required: Accessibility is
+  needed for selected-text speech; notifications and email are optional.
+- Uses the actual Voqora app icon in the sidebar instead of a placeholder.
+
+### Updates, measurement, and control
+
+- Added visible update controls in Preferences: a clear automatic-checks
+  toggle and a manual **Check for Updates** action backed by Sparkle's signed
+  appcast flow.
+- Made client event delivery retry-safe with a persisted event ID. The product
+  database now keeps raw activity events, canonical anonymous installations,
+  optional email contacts, and download-page clicks as separate concepts.
+- Added a product-owned removal path for the optional email contact. Removing
+  it deletes that contact from the backend and the Mac without pretending to
+  rewrite anonymous activity history.
+
+### Public surface
+
+- Replaced the installer artwork used as a hero with the actual Voqora product
+  screen across the repository, website blog, and project page.
+- Made the GitHub project the primary destination and added a clearly labelled
+  **Download Voqora for Mac** path to the official GitHub release page.
+- Tightened the public release documentation: every Sparkle update must carry
+  a newer marketing version and build number. Released files are never
+  silently replaced in place.
+
 ## [1.0.1] - 2026-07-29
 
 ### SuperSay transition
@@ -129,4 +162,5 @@ this is the first public release of the product and its source history.
 - Optional PDF cleanup depends on a Gemini API key supplied by the user.
 
 [1.0.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.1
+[1.0.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.2
 [1.0.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.0

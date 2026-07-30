@@ -87,10 +87,34 @@ final class IdentityService: ObservableObject {
         Self.log.info("identify ok for anon=\(self.anonID.prefix(8), privacy: .public)")
     }
 
-    /// Clear the local email (does not remove server-side record).
+    /// Clear the local email only. Primarily useful for tests and recovery;
+    /// normal product UI calls `removeEmail()` so the optional server-side
+    /// contact is removed too.
     func clearEmail() {
         UserDefaults.standard.removeObject(forKey: Self.emailKey)
         email = nil
+    }
+
+    /// Remove the optional contact from the product backend and this Mac.
+    /// The anonymous event history remains anonymous activity history; it is
+    /// not an identity record and is never rewritten into a person count.
+    func removeEmail() async throws {
+        var request = URLRequest(url: Self.endpoint)
+        request.httpMethod = "DELETE"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["anon_id": anonID])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw IdentityError.server("non-HTTP response")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let snippet = String(data: data.prefix(256), encoding: .utf8) ?? ""
+            Self.log.error("identity delete status=\(http.statusCode, privacy: .public) body=\(snippet, privacy: .public)")
+            throw IdentityError.server("Server error \(http.statusCode)")
+        }
+        clearEmail()
     }
 
     static func looksLikeEmail(_ s: String) -> Bool {

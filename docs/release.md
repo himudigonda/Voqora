@@ -6,17 +6,17 @@ release must all describe the same product.
 
 ## 1. Release model
 
-`main` is the only public branch. `develop` contains the private v1.1 work and
-has no remote tracking branch. Never push it until that release is approved.
+`main` is the only public branch. Keep unreleased work isolated from `main` and
+do not publish it until the release is approved.
 
 Voqora uses Sparkle 2 for in-app updates. Every release has two identifiers:
 
 - **Marketing version**: what people see, for example `1.0.0`.
-- **Build number**: the monotonically increasing update identity Sparkle uses.
+- **Build number**: the monotonically increasing bundle identity Sparkle uses.
 
-Do not reissue a released build with the same build number. A correction that
-must keep the visible `1.0.0` label gets the same marketing version and the
-next `CURRENT_PROJECT_VERSION`.
+Every public update needs a semantically newer marketing version and a higher
+build number. Do not replace a released asset in place: Sparkle will not treat
+an equal-version build as a new update.
 
 ## 2. Prepare the version
 
@@ -24,8 +24,8 @@ Before building:
 
 - Update the top section of `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD`.
 - Update the product version in the Xcode project and backend package metadata.
-- Increment `CURRENT_PROJECT_VERSION` for every distributable build, even if
-  `MARKETING_VERSION` stays the same.
+- Increment both the public version and `CURRENT_PROJECT_VERSION` for every
+  distributable update.
 - Confirm `README.md`, `PRIVACY.md`, and the changelog agree about the release.
 - Ensure the working tree is clean and `gh auth status` succeeds.
 

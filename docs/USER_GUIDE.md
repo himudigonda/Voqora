@@ -2,8 +2,8 @@
 
 ## What you need
 
-Voqora v1.0.0 targets Apple-silicon Macs running macOS 14 or newer. Download
-the DMG from the [release page](https://github.com/himudigonda/Voqora/releases/tag/v1.0.0),
+Voqora targets Apple-silicon Macs running macOS 14 or newer. Download
+the DMG from the [release page](https://github.com/himudigonda/Voqora/releases/latest),
 drag Voqora to Applications, and open it.
 
 The current build is not Apple-notarized. If macOS blocks the first launch,
@@ -19,6 +19,11 @@ open /Applications/Voqora.app
 
 This clears the downloaded-file quarantine marker only from the installed
 Voqora app. Do not run it on software from an untrusted source.
+
+On first launch, Voqora opens a short setup flow before the speech engine is
+ready. It explains the shortcut, takes you to the macOS Accessibility setting,
+and waits for you to grant it. Accessibility is required for speaking selected
+text from other apps. Notifications and an optional email are clearly optional.
 
 ## Speak selected text
 
@@ -49,8 +54,8 @@ change the global shortcuts. Voqora includes eight Kokoro voice options:
 | `bf_emma` | `bf_isabella` |
 | `bm_george` | `bm_lewis` |
 
-There is no universally right voice or speed. Start with the default voice and
-adjust until you can follow a paragraph without wanting to rewind it.
+There is no universally right voice or speed. Voqora starts with Bella. Adjust
+the voice and speed until you can follow a paragraph without wanting to rewind it.
 
 ## Turn a PDF into an audiobook
 

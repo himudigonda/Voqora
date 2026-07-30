@@ -16,6 +16,7 @@ struct PreferencesView: View {
     @State private var emailSubmitting = false
     @State private var emailError: String?
     @State private var emailSaved = false
+    @State private var emailRemoving = false
     @State private var migrationStatus: String?
 
     var body: some View {
@@ -71,10 +72,13 @@ struct PreferencesView: View {
                             HStack {
                                 Text("Current: \(current)").font(vm.appFont(size: 11)).foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Remove") { identity.clearEmail(); emailDraft = "" }
+                                Button(emailRemoving ? "Removing…" : "Remove") {
+                                    removeEmail()
+                                }
                                     .buttonStyle(.plain)
                                     .font(vm.appFont(size: 11))
                                     .foregroundStyle(.red)
+                                    .disabled(emailRemoving)
                             }
                         }
 
@@ -403,6 +407,23 @@ struct PreferencesView: View {
 
                         Divider()
 
+                        Toggle(isOn: Binding(
+                            get: { updater.automaticallyChecksForUpdates },
+                            set: { updater.setAutomaticallyChecksForUpdates($0) }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Automatically check for updates")
+                                    .font(vm.appFont(size: 14, weight: .bold))
+                                Text("Checks the signed Voqora update feed once a day. Voqora always shows you the update before replacing the app.")
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .toggleStyle(.switch)
+
+                        Divider()
+
                         HStack {
                             Button {
                                 updater.checkForUpdates()
@@ -411,6 +432,13 @@ struct PreferencesView: View {
                                     .font(vm.appFont(size: 13, weight: .medium))
                             }
                             .buttonStyle(.plain)
+                            .disabled(!updater.canCheckForUpdates)
+
+                            if !updater.canCheckForUpdates {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .help("An update check is already in progress.")
+                            }
 
                             Spacer()
 
@@ -471,6 +499,21 @@ struct PreferencesView: View {
     private func resetShortcuts() {
         for name in KeyboardShortcuts.Name.allCases {
             KeyboardShortcuts.reset(name)
+        }
+    }
+
+    private func removeEmail() {
+        emailError = nil
+        emailSaved = false
+        emailRemoving = true
+        Task {
+            defer { emailRemoving = false }
+            do {
+                try await identity.removeEmail()
+                emailDraft = ""
+            } catch {
+                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+            }
         }
     }
 }
