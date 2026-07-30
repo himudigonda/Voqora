@@ -15,6 +15,10 @@ cd "$ROOT_DIR"
 
 stop_running_app() {
   pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  # The local service is a child of Voqora in normal operation. Stop the
+  # explicitly named child too so a rebuilt bundle cannot accidentally reuse
+  # a previous process already listening on the local port.
+  pkill -x "VoqoraServer" >/dev/null 2>&1 || true
 }
 
 build_latest() {
@@ -63,8 +67,13 @@ case "$MODE" in
     echo "Voqora did not remain running after launch." >&2
     exit 1
     ;;
+  --clean-build|clean-build)
+    stop_running_app
+    FORCE_BACKEND_REBUILD=1 build_latest
+    launch_app
+    ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--clean-build]" >&2
     exit 2
     ;;
 esac

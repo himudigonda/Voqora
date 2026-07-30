@@ -82,6 +82,21 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(BackendService.isExpectedAudioResponse(nil))
     }
 
+    func test_backendMarker_usesArchiveIdentity_andPreservesOlderBuildFallback() {
+        XCTAssertEqual(
+            LaunchManager.backendMarker(bundleVersion: "1.0.2", archiveBuildID: "abc123\n"),
+            "archive:abc123"
+        )
+        XCTAssertEqual(
+            LaunchManager.backendMarker(bundleVersion: "1.0.2", archiveBuildID: "  "),
+            "version:1.0.2"
+        )
+        XCTAssertEqual(
+            LaunchManager.backendMarker(bundleVersion: "1.0.2", archiveBuildID: nil),
+            "version:1.0.2"
+        )
+    }
+
     // MARK: - togglePlayback error path
 
     func test_togglePlayback_with_zero_duration_sets_error() async {

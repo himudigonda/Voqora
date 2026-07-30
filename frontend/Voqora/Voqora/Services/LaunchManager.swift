@@ -20,6 +20,16 @@ class LaunchManager: ObservableObject {
         isLaunchAtLoginEnabled = SMAppService.mainApp.status == .enabled
     }
 
+    /// Identifies the exact bundled backend archive when available. Older
+    /// signed builds did not carry a build-id file, so they retain the
+    /// version-only marker until they are replaced by a newer build.
+    static func backendMarker(bundleVersion: String, archiveBuildID: String?) -> String {
+        guard let archiveBuildID else { return "version:\(bundleVersion)" }
+        let normalizedID = archiveBuildID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedID.isEmpty else { return "version:\(bundleVersion)" }
+        return "archive:\(normalizedID)"
+    }
+
     private func updateLoginItem() throws {
         if isLaunchAtLoginEnabled {
             if SMAppService.mainApp.status != .enabled {
@@ -40,7 +50,9 @@ class LaunchManager: ObservableObject {
 
         let serverURL    = appSupport.appendingPathComponent("VoqoraServer")
         let executableURL = serverURL.appendingPathComponent("VoqoraServer")
-        // Marker file: stores the bundle version that was last extracted.
+        // Marker file: stores the exact bundled backend archive identity that
+        // was last extracted. This prevents a local rebuild from quietly
+        // talking to a stale server with the same marketing version.
         let versionMarkerURL = serverURL.appendingPathComponent(".bundle_version")
 
         guard let zipURL = Bundle.main.url(forResource: "VoqoraServer", withExtension: "zip") else {
@@ -51,10 +63,17 @@ class LaunchManager: ObservableObject {
         // ─── Fast path: skip the 60-120 s zip extraction when binary is already current ───
         let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
             ?? "unknown"
+        let archiveBuildID = Bundle.main
+            .url(forResource: "VoqoraServer", withExtension: "build-id")
+            .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+        let expectedMarker = Self.backendMarker(
+            bundleVersion: currentVersion,
+            archiveBuildID: archiveBuildID
+        )
         if fm.isExecutableFile(atPath: executableURL.path),
            let stored = try? String(contentsOf: versionMarkerURL, encoding: .utf8),
-           stored.trimmingCharacters(in: .whitespacesAndNewlines) == currentVersion {
-            print("✅ Backend v\(currentVersion) already extracted — skipping unzip.")
+           stored.trimmingCharacters(in: .whitespacesAndNewlines) == expectedMarker {
+            print("✅ Current bundled backend already extracted — skipping unzip.")
             isReady = true
             return
         }
@@ -110,11 +129,12 @@ class LaunchManager: ObservableObject {
                     )
                 }
 
-                // Stamp version ONLY after every prior step succeeded.
+                // Stamp the exact archive identity ONLY after every prior step
+                // succeeded. A partial unzip must never win the fast path.
                 // Previously the marker was written unconditionally; a partial
                 // unzip would then take the fast path on next launch and hand
                 // a non-executable binary to BackendService. See HARD-011.
-                try currentVersion.write(
+                try expectedMarker.write(
                     to: URL(fileURLWithPath: versionMarkerPath),
                     atomically: true,
                     encoding: .utf8

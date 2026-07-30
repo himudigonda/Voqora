@@ -67,6 +67,8 @@ clean:
 	rm -rf frontend/Voqora/DerivedData
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
+	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 	@echo "✨ Local build folders cleared."
 
