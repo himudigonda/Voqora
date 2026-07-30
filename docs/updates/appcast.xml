@@ -88,13 +88,16 @@
   Voqora is validating product demand. macOS may require **Open Anyway** or
   the documented one-app quarantine command after download. The update archive
   is still verified by Sparkle before installation.
-- Early-access builds use Sparkle's in-process downloader rather than its
-  separately signed helper. This keeps future updates reliable without a
-  Developer ID signing identity; the signed appcast and archive verification
-  remain in place.
+- The project retains its signed Sparkle feed tooling for a future notarized
+  release channel. It is intentionally not started by this non-notarized
+  early-access build.
+- Automatic in-app replacement is intentionally disabled for this
+  non-notarized early-access release. Preferences opens the canonical GitHub
+  Releases page instead, so people receive a straightforward manual install
+  path rather than a button that can fail at macOS's trust boundary.
 
 ]]></description>
-            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.0.3/Voqora-1.0.3.dmg" length="429434755" type="application/octet-stream" sparkle:edSignature="rqSq0clddunnPHKjNgkISdqYE3kUU4AwTuUvzFC74/kmuxc85MGAvqAIPizlrWsG2kkZhKYiYqYW23doWO1pBw=="/>
+            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.0.3/Voqora-1.0.3.dmg" length="429487506" type="application/octet-stream" sparkle:edSignature="NdLWQMapJVn9+gT2LheQ6AXlA9Eqafl51ZI4o/KgnHQyAqydzLar4qaMQzvAUMVCvMMfV5N/OnNFDSnb1/u3CA=="/>
         </item>
         <item>
             <title>1.0.1</title>
