@@ -5,6 +5,8 @@ this is the first public release of the product and its source history.
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-07-30
+
 ### First-use reliability
 
 - Fixed the first-run ordering so onboarding is always the first surface on a
@@ -242,4 +244,5 @@ this is the first public release of the product and its source history.
 
 [1.0.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.1
 [1.0.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.2
+[1.0.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.3
 [1.0.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.0

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Kept in lockstep with the public app version. The release preflight
     # verifies this runtime declaration and `pyproject.toml` against Xcode so
     # support logs and packaged components never report a stale product build.
-    VERSION: str = "1.0.2"
+    VERSION: str = "1.0.3"
     # Loopback only. The Swift client always connects via localhost; binding to
     # 0.0.0.0 would expose /speak and /audiobook to every device on the LAN
     # with no authentication. See HARD-004.
