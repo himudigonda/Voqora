@@ -3,19 +3,26 @@ import Foundation
 
 class HistoryManager: ObservableObject {
     @Published var history: [HistoryEntry] = []
+    @Published private(set) var persistenceError: String?
 
-    private var url: URL {
+    private static func defaultStorageURL() -> URL {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(bundleID)
             .appendingPathComponent("history.json")
     }
+    private let storageURL: URL
 
-    init() {
-        // Ensure directory exists
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
-        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    init(storageURL: URL? = nil) {
+        self.storageURL = storageURL ?? Self.defaultStorageURL()
+        do {
+            try FileManager.default.createDirectory(
+                at: self.storageURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+        } catch {
+            persistenceError = "History could not be prepared on this Mac."
+        }
         loadHistory()
     }
 
@@ -42,17 +49,28 @@ class HistoryManager: ObservableObject {
         }
     }
 
+    func retryPersistence() {
+        saveHistory()
+    }
+
     private func saveHistory() {
-        if let encoded = try? JSONEncoder().encode(history) {
-            try? encoded.write(to: url)
+        do {
+            let encoded = try JSONEncoder().encode(history)
+            try encoded.write(to: storageURL, options: .atomic)
+            persistenceError = nil
+        } catch {
+            persistenceError = "History could not be saved. Your current session is still available."
         }
     }
 
     private func loadHistory() {
-        if let data = try? Data(contentsOf: url),
-           let decoded = try? JSONDecoder().decode([HistoryEntry].self, from: data)
-        {
+        guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: storageURL)
+            let decoded = try JSONDecoder().decode([HistoryEntry].self, from: data)
             history = decoded
+        } catch {
+            persistenceError = "Existing history could not be loaded. New speech still works."
         }
     }
 }
