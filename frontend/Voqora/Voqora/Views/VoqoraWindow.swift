@@ -125,8 +125,10 @@ struct VoqoraWindow: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                // Audiobook now-playing bar — hidden when on the player view (`books` tab when book is open)
-                if let playing = bookVM.nowPlaying {
+                // A full player and a compact player bar must never compete
+                // for the same audiobook. The view lifecycle, rather than
+                // `nowPlaying` alone, tells us whether the full player is up.
+                if bookVM.isNowPlayingBarVisible, let playing = bookVM.nowPlaying {
                     NowPlayingBar(onTap: {
                         vm.selectedTab = "books"
                         bookVM.openPlayer(for: playing.bookID)
@@ -146,7 +148,7 @@ struct VoqoraWindow: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: bookVM.toast?.id)
             }
             .background(adaptiveBackdrop)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.nowPlaying?.bookID)
+            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.isNowPlayingBarVisible)
         }
         .frame(minWidth: 800, minHeight: 600)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))

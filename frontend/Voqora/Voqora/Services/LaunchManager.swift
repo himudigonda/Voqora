@@ -55,6 +55,31 @@ class LaunchManager: ObservableObject {
         }
     }
 
+    /// Promote a fully validated staged backend without first removing the
+    /// working copy. `replaceItemAt` keeps the prior server in place if the
+    /// filesystem rejects the final replacement, which is materially safer
+    /// than delete-then-move during an update or an interrupted first launch.
+    static func installValidatedBackend(
+        from stagedServerURL: URL,
+        to serverURL: URL,
+        fileManager: FileManager = .default
+    ) throws {
+        guard fileManager.fileExists(atPath: stagedServerURL.path) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+
+        if fileManager.fileExists(atPath: serverURL.path) {
+            _ = try fileManager.replaceItemAt(
+                serverURL,
+                withItemAt: stagedServerURL,
+                backupItemName: nil,
+                options: .usingNewMetadataOnly
+            )
+        } else {
+            try fileManager.moveItem(at: stagedServerURL, to: serverURL)
+        }
+    }
+
     private func updateLoginItem() throws {
         if isLaunchAtLoginEnabled {
             if SMAppService.mainApp.status != .enabled {
@@ -161,13 +186,14 @@ class LaunchManager: ObservableObject {
             }.value
 
             // The existing backend remains intact until the complete archive
-            // has passed extraction and executable checks. This avoids leaving
-            // the player pointed at a half-written server after an interrupted
-            // first launch or update.
-            if fm.fileExists(atPath: serverURL.path) {
-                try fm.removeItem(at: serverURL)
-            }
-            try fm.moveItem(at: stagedServerURL, to: serverURL)
+            // has passed extraction and executable checks. The final handoff
+            // replaces it atomically where the filesystem supports it instead
+            // of deleting it before the new server has a final home.
+            try Self.installValidatedBackend(
+                from: stagedServerURL,
+                to: serverURL,
+                fileManager: fm
+            )
 
             // Stamp the exact archive identity only after the fully validated
             // backend is in its final location. A partial extraction can never

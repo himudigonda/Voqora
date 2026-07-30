@@ -16,6 +16,10 @@ this is the first public release of the product and its source history.
 - The app now tells the truth about a pending speech request: it stays in
   **Thinking** until a real audio buffer arrives rather than displaying
   **Speaking 0:00** before anything can be heard.
+- Existing public profiles affected by the earlier hidden-onboarding path are
+  guided through the repaired setup once. This preserves their content and
+  deliberate preferences while repairing an unsupported stored voice to
+  **Bella**.
 
 ### Playback and document flow
 
@@ -50,6 +54,13 @@ this is the first public release of the product and its source history.
 - Added focused regressions for first-run Bella migration, actual audio-start
   state, owned-backend shutdown, document-format agreement, and safe Stop
   behaviour.
+- A staged local-speech backend now replaces the previous backend atomically:
+  a failed staging step leaves the known working copy in place.
+- If the app-owned local speech engine exits during startup, Voqora now says
+  that it is retrying instead of leaving a generic offline/blank-looking state.
+- The local run helper now refuses to overlap an installed/candidate Voqora or
+  shared backend instead of terminating user processes. Packaging uses a
+  bounded Xcode build-job count as well.
 
 ### Distribution status
 
@@ -66,6 +77,10 @@ this is the first public release of the product and its source history.
 - No new public release is included in this section. Installer, Gatekeeper,
   Sparkle, website/metrics, and full manual-flow evidence remain release gates
   until they are verified against one immutable candidate artifact.
+- Metrics now fail closed when the remote overview is on an older schema, so
+  the website and private dashboard cannot present missing fields as zero
+  adoption. The matching schema, website, and dashboard deployment remains a
+  separate release gate.
 
 ## [1.0.2] - 2026-07-29
 

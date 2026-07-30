@@ -95,12 +95,19 @@ struct MainDashboardView: View {
                         Circle()
                             .fill(Color.red)
                             .frame(width: 6, height: 6)
-                        Text("OFFLINE")
+                        Text(vm.backendRecoveryMessage == nil ? "OFFLINE" : "RETRYING LOCAL ENGINE")
                             .font(vm.appFont(size: 9, weight: .bold))
                             .foregroundStyle(.red)
                     }
                 }
                 .id("\(vm.isBackendOnline)-\(vm.isBackendInitializing)")
+
+                if let recovery = vm.backendRecoveryMessage {
+                    Text(recovery + " Voqora is retrying automatically.")
+                        .font(vm.appFont(size: 10))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Spacer()

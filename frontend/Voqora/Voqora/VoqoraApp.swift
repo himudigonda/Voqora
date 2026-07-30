@@ -116,16 +116,18 @@ struct VoqoraApp: App {
             // ducking + AppleScript permissions on first hotkey use.
             setupShortcuts(vm: vmInstance)
 
-            MetricsService.shared.trackLaunch()
+            if !RuntimeEnvironment.disablesTelemetry {
+                MetricsService.shared.trackLaunch()
+                // Start the periodic flush driver (previously embedded inside the
+                // singleton init; now externalized so the actor can stay isolated).
+                Task { @MainActor in
+                    MetricsFlushDriver.shared.start()
+                }
+            }
             // A privacy removal made while offline is honoured locally first.
             // Retry the separate server-side contact removal quietly on launch;
-            // it never gates first use or the local speech path.
+            // it never depends on the anonymous-telemetry choice.
             Task { await identityInstance.retryPendingRemoval() }
-            // Start the periodic flush driver (previously embedded inside the
-            // singleton init; now externalized so the actor can stay isolated).
-            Task { @MainActor in
-                MetricsFlushDriver.shared.start()
-            }
             checkRunningLocation()
         }
     }

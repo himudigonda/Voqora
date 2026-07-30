@@ -35,7 +35,7 @@ final class DashboardViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_voiceDefaultsMigration_resetsLegacyVoiceOnceThenPreservesChoice() {
+    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() {
         let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -46,6 +46,16 @@ final class DashboardViewModelTests: XCTestCase {
         // actually applying the Bella default before the voice model initialized.
         defaults.set(6, forKey: "voiceDefaultsMigrationVersion")
 
+        XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
+        XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
+
+        // A short-lived pre-release could persist the migration marker before
+        // storing Bella. The marker must not leave this public-only build
+        // displaying a voice it cannot actually offer.
+        defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
+        defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
+        defaults.set(8, forKey: "voiceDefaultsMigrationVersion")
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
         XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
@@ -65,6 +75,27 @@ final class DashboardViewModelTests: XCTestCase {
             startsBackgroundWork: false,
             defaults: testDefaults
         )
+    }
+
+    func test_fastFailedBackendDoesNotRetainDeadProcessOwnership() {
+        let temporarySupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voqora-backend-fast-exit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporarySupport) }
+
+        let backend = BackendService(
+            executableOverride: URL(fileURLWithPath: "/usr/bin/false"),
+            applicationSupportOverride: temporarySupport
+        )
+        backend.start()
+
+        let exited = expectation(description: "fast failing backend releases ownership")
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+            XCTAssertFalse(backend.hasOwnedProcess)
+            XCTAssertFalse(backend.isLaunching)
+            XCTAssertEqual(backend.lastLaunchFailure, "The local speech engine stopped unexpectedly.")
+            exited.fulfill()
+        }
+        wait(for: [exited], timeout: 2)
     }
 
     func test_backgroundWork_startsOnlyOnceAfterExplicitLaunchPreparation() {
@@ -98,6 +129,21 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertTrue(BackendService.isExpectedAudioResponse(ok))
         XCTAssertFalse(BackendService.isExpectedAudioResponse(serverError))
         XCTAssertFalse(BackendService.isExpectedAudioResponse(nil))
+    }
+
+    func test_speechFailureCopyDistinguishesValidationFromConnectivity() {
+        XCTAssertEqual(
+            DashboardViewModel.speechFailureMessage(for: BackendService.StreamError.rejectedResponse(statusCode: 422)),
+            "That selection is empty or too long. Try a shorter passage."
+        )
+        XCTAssertEqual(
+            DashboardViewModel.speechFailureMessage(for: BackendService.StreamError.rejectedResponse(statusCode: 503)),
+            "Voqora's local speech engine is still warming up. Try again in a moment."
+        )
+        XCTAssertEqual(
+            DashboardViewModel.speechFailureMessage(for: BackendService.StreamError.unexpectedResponse),
+            "Voqora could not reach the local speech engine. Try again."
+        )
     }
 
     func test_backendMarker_usesArchiveIdentity_andPreservesOlderBuildFallback() {
@@ -148,6 +194,40 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: oldStaging.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: newStaging.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelated.path))
+    }
+
+    func test_installValidatedBackend_replacesOnlyAfterStagedServerExists() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraBackendInstallTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let installed = root.appendingPathComponent("VoqoraServer", isDirectory: true)
+        let installedExecutable = installed.appendingPathComponent("VoqoraServer")
+        try FileManager.default.createDirectory(at: installed, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: installedExecutable)
+
+        let missingStaged = root.appendingPathComponent("missing", isDirectory: true)
+        XCTAssertThrowsError(
+            try LaunchManager.installValidatedBackend(
+                from: missingStaged,
+                to: installed,
+                fileManager: .default
+            )
+        )
+        XCTAssertEqual(try String(contentsOf: installedExecutable, encoding: .utf8), "old")
+
+        let staged = root.appendingPathComponent("staged", isDirectory: true)
+        let stagedExecutable = staged.appendingPathComponent("VoqoraServer")
+        try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+        try Data("new".utf8).write(to: stagedExecutable)
+
+        try LaunchManager.installValidatedBackend(from: staged, to: installed, fileManager: .default)
+        XCTAssertEqual(
+            try String(contentsOf: installed.appendingPathComponent("VoqoraServer"), encoding: .utf8),
+            "new"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
     }
 
     // MARK: - togglePlayback error path

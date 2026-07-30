@@ -127,34 +127,10 @@ class _NonSerializable:
 def test_logging_formatter_emits_valid_json_for_arbitrary_extras(
     extras: dict[str, object],
 ) -> None:
-    # Reserved LogRecord keys must not be overwritten via extra=.
-    reserved = {
-        "name",
-        "msg",
-        "args",
-        "levelname",
-        "levelno",
-        "pathname",
-        "filename",
-        "module",
-        "exc_info",
-        "exc_text",
-        "stack_info",
-        "lineno",
-        "funcName",
-        "created",
-        "msecs",
-        "relativeCreated",
-        "thread",
-        "threadName",
-        "processName",
-        "process",
-        "message",
-        "asctime",
-    }
-    assume(not (set(extras.keys()) & reserved))
-
-    set_correlation_id("test-cid-properties")
+    # Do not generate framework or formatter-control keys. The explicit
+    # formatter contract tracks stdlib additions such as ``taskName``; the
+    # property test must verify arbitrary metadata rather than a field that
+    # product code deliberately ignores or protects.
     record = logging.LogRecord(
         name="voqora.test",
         level=logging.INFO,
@@ -164,6 +140,14 @@ def test_logging_formatter_emits_valid_json_for_arbitrary_extras(
         args=None,
         exc_info=None,
     )
+    reserved = (
+        set(record.__dict__)
+        | _JsonFormatter._SKIPPED_RECORD_KEYS
+        | _JsonFormatter._PROTECTED_KEYS
+    )
+    assume(not (set(extras.keys()) & reserved))
+
+    set_correlation_id("test-cid-properties")
     for k, v in extras.items():
         setattr(record, k, v)
 

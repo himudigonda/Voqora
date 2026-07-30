@@ -23,11 +23,15 @@ an equal-version build as a new update.
 Before building:
 
 - Update the top section of `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD`.
-- Update the product version in the Xcode project and backend package metadata.
+- Update the product version in the Xcode project, backend package metadata,
+  and backend runtime configuration.
 - Increment both the public version and `CURRENT_PROJECT_VERSION` for every
   distributable update.
 - Confirm `README.md`, `PRIVACY.md`, and the changelog agree about the release.
 - Ensure the working tree is clean and `gh auth status` succeeds.
+- Run `scripts/validate_release.sh X.Y.Z` before any archive. It verifies the
+  Xcode marketing/build versions and both backend version declarations, so a
+  DMG cannot be assembled from a mixed-version source tree.
 
 ## 3. Validate proportionately
 
@@ -69,8 +73,10 @@ git commit -m "release: publish vX.Y.Z update feed"
 The feed points to the immutable GitHub release asset URL and is deployed to
 GitHub Pages by `.github/workflows/pages.yml`. Enable **Settings → Pages →
 Source → GitHub Actions** once in the GitHub repository before the first
-release. Confirm `https://himudigonda.github.io/Voqora/appcast.xml` is live
-before publishing the next version.
+release. Do not push the new feed by itself: `make ship` uploads the immutable
+DMG first, then pushes `main` so Pages can expose an enclosure that already
+exists. Confirm `https://himudigonda.github.io/Voqora/appcast.xml` only after
+that ordered publish completes.
 
 ## 6. Publish
 

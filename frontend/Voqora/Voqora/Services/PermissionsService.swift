@@ -8,10 +8,11 @@ import UserNotifications
 /// Live-status checker for the two macOS permissions Voqora cares about:
 /// Accessibility (required for the global hotkey) and Notifications (optional).
 ///
-/// The onboarding wizard observes this service and unlocks its "Next" button
-/// only after the required permissions are granted. Status is polled because
-/// macOS provides no callback when the user grants/revokes a permission via
-/// System Settings — the user leaves the app, flips a toggle, comes back.
+/// The onboarding wizard observes this service and provides an explicit
+/// continue-without-access route when the user declines Accessibility. Status
+/// is polled because macOS provides no callback when the user grants/revokes a
+/// permission via System Settings — the user leaves the app, flips a toggle,
+/// comes back.
 @MainActor
 final class PermissionsService: ObservableObject {
     @Published private(set) var accessibilityGranted: Bool = false

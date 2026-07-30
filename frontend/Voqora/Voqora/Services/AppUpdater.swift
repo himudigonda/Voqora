@@ -9,6 +9,10 @@ import Sparkle
 /// Sparkle's native controller rather than reimplementing installer logic.
 @MainActor
 final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
+    /// Sparkle's public `SUNoUpdateError` value. Keep this isolated behind a
+    /// small helper so the UI never calls an invalid feed or signature error
+    /// “up to date.”
+    private static let noUpdateErrorCode = 1001
     private var controller: SPUStandardUpdaterController?
     private var observations: [NSKeyValueObservation] = []
 
@@ -68,6 +72,14 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     // MARK: - Sparkle lifecycle
 
+    static func statusMessage(forUpdateCheckError error: NSError) -> String {
+        guard error.domain == SUSparkleErrorDomain,
+              error.code == noUpdateErrorCode else {
+            return "Couldn't check for updates. Your current Voqora still works. Try again later."
+        }
+        return "Voqora is up to date."
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         isCheckingForUpdates = false
         updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
@@ -75,18 +87,18 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
         isCheckingForUpdates = false
-        updateStatusMessage = "Voqora is up to date."
+        updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         isCheckingForUpdates = false
-        updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+        updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         isCheckingForUpdates = false
-        if error != nil {
-            updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+        if let error {
+            updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
         }
     }
 }

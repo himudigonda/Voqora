@@ -14,14 +14,36 @@ class DashboardViewModel: ObservableObject {
     private static let voiceDefaultsMigrationVersion = 7
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
+    private static let supportedVoiceIDs: Set<String> = [
+        "af_bella", "af_sarah", "am_adam", "am_michael",
+        "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+    ]
+
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
-        guard defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion else {
+        let needsReleaseMigration = defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion
+        let hasUnsupportedSelectedVoice = !supportedVoiceIDs.contains(
+            defaults.string(forKey: "selectedVoice") ?? "af_bella"
+        )
+        let hasUnsupportedBookVoice = !supportedVoiceIDs.contains(
+            defaults.string(forKey: "defaultBookVoice") ?? "af_bella"
+        )
+
+        guard needsReleaseMigration || hasUnsupportedSelectedVoice || hasUnsupportedBookVoice else {
             return false
         }
 
-        defaults.set("af_bella", forKey: "selectedVoice")
-        defaults.set("af_bella", forKey: "defaultBookVoice")
-        defaults.set(voiceDefaultsMigrationVersion, forKey: voiceDefaultsMigrationKey)
+        // A versioned release migration resets both choices once. Afterwards,
+        // preserve an explicit supported choice, but never render an orphaned
+        // multilingual/legacy identifier that this public build cannot play.
+        if needsReleaseMigration || hasUnsupportedSelectedVoice {
+            defaults.set("af_bella", forKey: "selectedVoice")
+        }
+        if needsReleaseMigration || hasUnsupportedBookVoice {
+            defaults.set("af_bella", forKey: "defaultBookVoice")
+        }
+        if needsReleaseMigration {
+            defaults.set(voiceDefaultsMigrationVersion, forKey: voiceDefaultsMigrationKey)
+        }
         return true
     }
 
@@ -37,6 +59,10 @@ class DashboardViewModel: ObservableObject {
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false        // Model in ONNX session RAM
+    /// A concise recovery message when the app-owned local engine exits before
+    /// it can answer health checks. It keeps a damaged/blocked backend from
+    /// looking like an indefinitely blank player while automatic retries run.
+    @Published private(set) var backendRecoveryMessage: String?
     @Published var selectedTab: String? = "home"
     /// Confirmation for a completed file action. Kept separate from playback
     /// status so saving while audio is playing never makes the player look idle.
@@ -283,8 +309,28 @@ class DashboardViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled, generation == self.speakGeneration else { return }
                 audio.stop()
-                showTransientError("Voqora could not reach the local speech engine. Try again.")
+                showTransientError(Self.speechFailureMessage(for: error))
             }
+        }
+    }
+
+    /// Translate the local HTTP contract into an action someone can take.
+    /// A validation response is not a network failure, and describing it that
+    /// way sends people looking for an installer/network fix when they only
+    /// need to shorten or reselect a passage.
+    static func speechFailureMessage(for error: Error) -> String {
+        guard let streamError = error as? BackendService.StreamError else {
+            return "Voqora could not reach the local speech engine. Try again."
+        }
+        switch streamError {
+        case .rejectedResponse(let statusCode) where statusCode == 422:
+            return "That selection is empty or too long. Try a shorter passage."
+        case .rejectedResponse(let statusCode) where statusCode == 503:
+            return "Voqora's local speech engine is still warming up. Try again in a moment."
+        case .emptyAudio:
+            return "Voqora did not receive playable audio. Try the selection again."
+        default:
+            return "Voqora could not reach the local speech engine. Try again."
         }
     }
 
@@ -409,9 +455,12 @@ class DashboardViewModel: ObservableObject {
 
                 if isNowOnline {
                     isBackendInitializing = false
+                    backend.clearLaunchFailure()
+                    backendRecoveryMessage = nil
                 } else {
                     let launching = backend.isLaunching
                     isBackendInitializing = launching
+                    backendRecoveryMessage = backend.lastLaunchFailure
                     backend.start()
                 }
 

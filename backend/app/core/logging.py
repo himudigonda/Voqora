@@ -50,18 +50,12 @@ class _JsonFormatter(logging.Formatter):
     # MUST NOT override these — a caller passing `extra={"cid": None}` was
     # previously able to null out the correlation ID. Caught by hypothesis.
     _PROTECTED_KEYS = frozenset({"ts", "level", "logger", "msg", "cid"})
-
-    def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
-            + f".{int(record.msecs):03d}Z",
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-            "cid": _correlation_id.get(),
-        }
-        # Include the standard "extra" fields, skipping the noise.
-        skip = {
+    # LogRecord framework fields are never user event metadata. Keep this
+    # explicit and shared with the formatter property test: Python adds such
+    # fields across releases (for example ``taskName``), and treating one as
+    # an arbitrary extra would produce a misleading test failure.
+    _SKIPPED_RECORD_KEYS = frozenset(
+        {
             "args",
             "asctime",
             "created",
@@ -86,8 +80,20 @@ class _JsonFormatter(logging.Formatter):
             "threadName",
             "taskName",
         }
+    )
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
+            + f".{int(record.msecs):03d}Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "cid": _correlation_id.get(),
+        }
+        # Include the standard "extra" fields, skipping framework noise.
         for k, v in record.__dict__.items():
-            if k in skip or k.startswith("_"):
+            if k in self._SKIPPED_RECORD_KEYS or k.startswith("_"):
                 continue
             if k in self._PROTECTED_KEYS:
                 # Keep the reserved value; expose the caller's collision under a

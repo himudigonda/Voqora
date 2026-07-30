@@ -83,6 +83,17 @@ final class AudiobookViewModel: ObservableObject {
         pendingDeepLink = bookID
     }
 
+    /// The player view owns this visibility signal. It is deliberately
+    /// separate from `nowPlaying`: an audiobook can keep playing after the
+    /// user leaves the full player, while the compact bar must never render
+    /// underneath that full player.
+    @Published var isPlayerViewActive = false
+
+    /// Single source of truth for the compact audiobook bar.
+    var isNowPlayingBarVisible: Bool {
+        nowPlaying != nil && !isPlayerViewActive
+    }
+
     // Sleep timer
     @Published var sleepTimerEndsAt: Date? = nil
     @Published var sleepUntilEndOfBook: Bool = false

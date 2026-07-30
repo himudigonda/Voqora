@@ -1,21 +1,22 @@
 import Combine
 import Foundation
-import ApplicationServices
 
 /// Single source of truth for first-launch onboarding state.
 ///
-/// Before v1.1 the `hasOnboarded` flag was checked ad hoc in `VoqoraApp.init`
+/// Before the repaired public Voqora flow, the `hasOnboarded` flag was checked ad hoc in `VoqoraApp.init`
 /// and surrounding views. This coordinator centralizes the read/write/reset
 /// surface and is the only thing views should consult.
 @MainActor
 final class OnboardingCoordinator: ObservableObject {
     /// Bump when onboarding flow changes shape; existing users see it again once.
-    /// v3: re-runs the permission-led first-use flow for the public Voqora
+    /// v3: re-ran the permission-led first-use flow for the public Voqora
     /// release after the legacy identity change.
-    private static let currentVersion = 3
+    /// v4: re-runs the repaired flow once for profiles created by the early
+    /// public builds, which could carry a completed flag while opening into a
+    /// non-functional player. It never resets user content or preferences.
+    private static let currentVersion = 4
 
     @Published private(set) var version: Int = 0
-    private let accessibilityTrusted: () -> Bool
     private let defaults: UserDefaults
 
     private var hasOnboarded: Bool {
@@ -28,11 +29,7 @@ final class OnboardingCoordinator: ObservableObject {
         set { defaults.set(newValue, forKey: "onboardingVersion") }
     }
 
-    init(
-        accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
-        defaults: UserDefaults = .standard
-    ) {
-        self.accessibilityTrusted = accessibilityTrusted
+    init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if storedVersion < Self.currentVersion {
             hasOnboarded = false
@@ -40,10 +37,13 @@ final class OnboardingCoordinator: ObservableObject {
         }
     }
 
-    /// A completed wizard is not sufficient if macOS later revokes or never
-    /// granted Accessibility. The selected-text shortcut cannot work without
-    /// it, so surface the guided flow again instead of leaving a dead dashboard.
-    var needsOnboarding: Bool { !hasOnboarded || !accessibilityTrusted() }
+    /// Accessibility is necessary for selected-text reading, not for every
+    /// Voqora workflow. A completed wizard must therefore stay complete when
+    /// someone deliberately continues without that macOS permission; the
+    /// dashboard's persistent recovery banner owns the later grant/revoke
+    /// path. Reopening a full wizard on every launch would turn a reversible
+    /// choice into a product dead end.
+    var needsOnboarding: Bool { !hasOnboarded }
 
     func markCompleted() {
         hasOnboarded = true

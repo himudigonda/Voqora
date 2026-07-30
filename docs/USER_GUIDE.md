@@ -21,9 +21,10 @@ This clears the downloaded-file quarantine marker only from the installed
 Voqora app. Do not run it on software from an untrusted source.
 
 On first launch, Voqora opens a short setup flow before the speech engine is
-ready. It explains the shortcut, takes you to the macOS Accessibility setting,
-and waits for you to grant it. Accessibility is required for speaking selected
-text from other apps. Notifications and an optional email are clearly optional.
+ready. It explains the shortcut and takes you to the macOS Accessibility
+setting. Accessibility is required for speaking selected text from other apps,
+but you can continue into Voqora without it and enable it later from the
+dashboard reminder. Notifications and an optional email are clearly optional.
 
 ## Speak selected text
 

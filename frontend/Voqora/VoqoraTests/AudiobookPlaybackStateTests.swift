@@ -35,6 +35,23 @@ private actor DelayedAudioLoader {
 
 @MainActor
 final class AudiobookPlaybackStateTests: XCTestCase {
+    func test_nowPlayingBar_isVisibleOnlyOutsideFullPlayer() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        XCTAssertFalse(viewModel.isNowPlayingBarVisible)
+
+        viewModel.nowPlaying = makeBook()
+        XCTAssertTrue(viewModel.isNowPlayingBarVisible)
+
+        viewModel.isPlayerViewActive = true
+        XCTAssertFalse(
+            viewModel.isNowPlayingBarVisible,
+            "The compact player must not render beneath the full audiobook player."
+        )
+
+        viewModel.isPlayerViewActive = false
+        XCTAssertTrue(viewModel.isNowPlayingBarVisible)
+    }
+
     func test_stopInvalidatesAnyInFlightBookLoad() async {
         let audio = AudioService(startingEngine: false)
         let loader = DelayedAudioLoader()

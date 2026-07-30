@@ -17,6 +17,9 @@ BUILD_DIR="build"
 XCODE_PROJECT_DIR="frontend/Voqora"
 STAGING_DIR="${BUILD_DIR}/dmg-staging"
 SCRIPTS_DIR="scripts"
+# Packaging is intentionally resource-bounded too. The caller may increase
+# this only when the machine is reserved for a deliberate release archive.
+XCODE_JOBS="${XCODE_JOBS:-4}"
 
 # ── 0. Locate Xcode ─────────────────────────────────────────
 if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
@@ -84,6 +87,7 @@ if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
     -configuration Release \
+    -jobs "$XCODE_JOBS" \
     -derivedDataPath "${BUILD_DIR}/DerivedData" \
     -archivePath "${BUILD_DIR}/${APP_NAME}.xcarchive" \
     MARKETING_VERSION="${VERSION}" \

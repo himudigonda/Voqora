@@ -20,20 +20,28 @@ struct AudiobookPlayerView: View {
     private let tickerTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            background
-            HStack(alignment: .top, spacing: 24) {
-                coverColumn
-                centerColumn
-                sectionsRail
-            }
-            .padding(28)
+        GeometryReader { geometry in
+            let visibility = AudiobookPlayerLayout.columnVisibility(for: geometry.size.width)
+            ZStack(alignment: .topTrailing) {
+                background
+                HStack(alignment: .top, spacing: 24) {
+                    if visibility.showCover {
+                        coverColumn
+                    }
+                    centerColumn
+                    if visibility.showRail {
+                        sectionsRail
+                    }
+                }
+                .padding(28)
 
-            sleepTimerMenu
-                .padding(.top, 16)
-                .padding(.trailing, 20)
+                sleepTimerMenu
+                    .padding(.top, 16)
+                    .padding(.trailing, 20)
+            }
+            .clipped()
         }
-        .frame(minWidth: 760, minHeight: 580)
+        .frame(minWidth: AudiobookPlayerLayout.minWidth, minHeight: 580)
         .focusable()
         // Real .onKeyPress modifiers live on the focused root — no hidden
         // buttons. Works because the NavigationStack pushes us into the
@@ -59,6 +67,10 @@ struct AudiobookPlayerView: View {
             }
         }
         .onAppear {
+            // Navigation into this view is the actual source of truth for
+            // whether the full player is visible. The window uses this to
+            // avoid rendering a second player bar underneath it.
+            bookVM.isPlayerViewActive = true
             playerSpeed = bookVM.defaultBookSpeed
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
@@ -69,6 +81,9 @@ struct AudiobookPlayerView: View {
                 let color = await CoverColorExtractor.shared.dominantColor(for: coverURL)
                 dominantColor = color
             }
+        }
+        .onDisappear {
+            bookVM.isPlayerViewActive = false
         }
     }
 
