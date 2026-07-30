@@ -4,6 +4,20 @@ import Combine
 
 @MainActor
 class AudioService: NSObject, ObservableObject {
+    enum ExportError: LocalizedError {
+        case noAudioAvailable
+        case couldNotSave
+
+        var errorDescription: String? {
+            switch self {
+            case .noAudioAvailable:
+                return "There is no generated audio to save yet."
+            case .couldNotSave:
+                return "Voqora could not save the audio clip to your Desktop."
+            }
+        }
+    }
+
     @Published var isPlaying = false
     @Published var progress: Double = 0.0
     @Published var currentTime: TimeInterval = 0
@@ -296,6 +310,13 @@ class AudioService: NSObject, ObservableObject {
         pausedTime = 0
         duration = 0
         playbackCompleted = false
+        // `stop()` deliberately preserves the last completed clip so it can be
+        // exported. A new speech request is the point at which that clip must
+        // be discarded.
+        lastAudioData = Data()
+        pcmAccumulator = Data()
+        headerAccumulator = Data()
+        estimatedDuration = 0
         isStreamActive = true
         // Pre-warm hardware: start playerNode now so it's running when first buffer arrives.
         if !engine.isRunning { try? engine.start() }
@@ -336,7 +357,6 @@ class AudioService: NSObject, ObservableObject {
         isStreamActive = false
         hasStrippedHeader = false
         scheduledBufferCount = 0
-        lastAudioData = Data()
         pcmAccumulator = Data()
         headerAccumulator = Data()
         estimatedDuration = 0
@@ -545,8 +565,8 @@ class AudioService: NSObject, ObservableObject {
         return Double(lastAudioData.count / 2) / format.sampleRate
     }
 
-    func exportToDesktop() {
-        guard !lastAudioData.isEmpty else { return }
+    func exportToDesktop() throws -> URL {
+        guard !lastAudioData.isEmpty else { throw ExportError.noAudioAvailable }
         let headerSize = 44
         let totalSize = lastAudioData.count + headerSize - 8
         var header = Data()
@@ -564,9 +584,27 @@ class AudioService: NSObject, ObservableObject {
         header.append(contentsOf: withUnsafeBytes(of: UInt32(lastAudioData.count)) { Data($0) })
 
         let wavData = header + lastAudioData
-        let filename = "Voqora_\(Int(Date().timeIntervalSince1970)).wav"
-        let desktopURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0].appendingPathComponent(filename)
-        try? wavData.write(to: desktopURL)
+        let desktopURL = uniqueDesktopExportURL()
+        do {
+            try wavData.write(to: desktopURL, options: .atomic)
+        } catch {
+            throw ExportError.couldNotSave
+        }
         MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
+        return desktopURL
+    }
+
+    private func uniqueDesktopExportURL() -> URL {
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let stem = "Voqora_\(timestamp)"
+        var suffix = 1
+        var url = desktop.appendingPathComponent("\(stem).wav")
+
+        while FileManager.default.fileExists(atPath: url.path) {
+            suffix += 1
+            url = desktop.appendingPathComponent("\(stem)_\(suffix).wav")
+        }
+        return url
     }
 }

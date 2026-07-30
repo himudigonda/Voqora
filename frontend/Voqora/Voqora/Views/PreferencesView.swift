@@ -471,7 +471,7 @@ struct PreferencesView: View {
                         Divider()
 
                         Button {
-                            audio.exportToDesktop()
+                            vm.exportLastClip()
                         } label: {
                             Label("Export Last Clip to Desktop", systemImage: "square.and.arrow.down")
                                 .font(vm.appFont(size: 13, weight: .bold))

@@ -106,17 +106,17 @@ struct MainDashboardView: View {
             Spacer()
 
             HStack(spacing: 12) {
-                Text(vm.status.message.uppercased())
+                Text((vm.actionFeedback ?? vm.status.message).uppercased())
                     .font(vm.appFont(size: 10, weight: .bold))
                     .kerning(1.5)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(vm.actionFeedback == nil ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color.green))
                     .background(Capsule().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.1)))
 
                 if audio.duration > 0 {
                     Button {
-                        audio.exportToDesktop()
+                        vm.exportLastClip()
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "square.and.arrow.down.fill")

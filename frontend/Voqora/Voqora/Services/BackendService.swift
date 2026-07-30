@@ -4,6 +4,20 @@ import Foundation
 
 /// A thread-safe service to manage the Python backend process and handle streaming requests.
 final class BackendService: NSObject, @unchecked Sendable {
+    enum LogExportError: LocalizedError {
+        case noLogsAvailable
+        case couldNotSave
+
+        var errorDescription: String? {
+            switch self {
+            case .noLogsAvailable:
+                return "There are no Voqora logs available to export yet."
+            case .couldNotSave:
+                return "Voqora could not save the debug logs to your Desktop."
+            }
+        }
+    }
+
     private var process: Process?
     private var processPipe: Pipe?
     /// Persistent log handle. Held for the lifetime of the backend process so
@@ -168,7 +182,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
     }
 
-    func exportLogs() {
+    func exportLogs() throws -> [URL] {
         let fileManager = FileManager.default
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
@@ -177,20 +191,37 @@ final class BackendService: NSObject, @unchecked Sendable {
         let logsToExport = ["backend.log", "frontend.log"]
         let timestamp = Int(Date().timeIntervalSince1970)
 
-        for logName in logsToExport {
-            let sourceURL = appSupport.appendingPathComponent(logName)
-            let destinationURL = desktop.appendingPathComponent("Voqora_\(logName)_\(timestamp).txt")
+        var exportedURLs: [URL] = []
+        do {
+            for logName in logsToExport {
+                let sourceURL = appSupport.appendingPathComponent(logName)
+                guard fileManager.fileExists(atPath: sourceURL.path) else { continue }
 
-            if fileManager.fileExists(atPath: sourceURL.path) {
-                try? fileManager.copyItem(at: sourceURL, to: destinationURL)
-                print("✅ Exported \(logName) to Desktop")
-            } else {
-                print("⚠️ Could not find \(logName) at \(sourceURL.path)")
+                let destinationURL = uniqueLogExportURL(
+                    named: "Voqora_\(logName)_\(timestamp)",
+                    in: desktop,
+                    fileManager: fileManager
+                )
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                exportedURLs.append(destinationURL)
             }
+        } catch {
+            for url in exportedURLs { try? fileManager.removeItem(at: url) }
+            throw LogExportError.couldNotSave
         }
 
-        // Show in Finder
-        NSWorkspace.shared.activateFileViewerSelecting([desktop])
+        guard !exportedURLs.isEmpty else { throw LogExportError.noLogsAvailable }
+        return exportedURLs
+    }
+
+    private func uniqueLogExportURL(named stem: String, in directory: URL, fileManager: FileManager) -> URL {
+        var suffix = 1
+        var url = directory.appendingPathComponent("\(stem).txt")
+        while fileManager.fileExists(atPath: url.path) {
+            suffix += 1
+            url = directory.appendingPathComponent("\(stem)_\(suffix).txt")
+        }
+        return url
     }
 
     struct HealthStatus {

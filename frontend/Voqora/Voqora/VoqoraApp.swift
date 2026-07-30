@@ -179,7 +179,7 @@ struct VoqoraApp: App {
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
             print("⌨️ KeyboardShortcuts: exportAudio triggered")
             Task { @MainActor in
-                audio.exportToDesktop()
+                dashboardVM.exportLastClip()
             }
         }
 

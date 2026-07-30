@@ -33,6 +33,9 @@ class DashboardViewModel: ObservableObject {
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false        // Model in ONNX session RAM
     @Published var selectedTab: String? = "home"
+    /// Confirmation for a completed file action. Kept separate from playback
+    /// status so saving while audio is playing never makes the player look idle.
+    @Published private(set) var actionFeedback: String?
 
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
@@ -100,6 +103,7 @@ class DashboardViewModel: ObservableObject {
     /// Cancelled on re-entrance for the same reason. See HARD-021.
     private var errorResetTask: Task<Void, Never>?
     private(set) var errorResetGeneration = 0
+    private var actionFeedbackTask: Task<Void, Never>?
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -183,6 +187,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speak(text: String) async {
+        clearActionFeedback()
         guard isBackendOnline else {
             backend.start()
             showTransientError("Voqora is still starting. Try again in a moment.")
@@ -277,6 +282,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     private func showTransientError(_ message: String) {
+        clearActionFeedback()
         status = .error(message)
         // Auto-clear the error and return to READY after three seconds.
         // Cancellable so an earlier error cannot overwrite later app state.
@@ -297,6 +303,41 @@ class DashboardViewModel: ObservableObject {
         if case .error = status {
             status = .ready
         }
+    }
+
+    func exportLastClip() {
+        do {
+            let url = try audio.exportToDesktop()
+            showActionFeedback("Saved \(url.lastPathComponent) to Desktop")
+        } catch {
+            showTransientError(error.localizedDescription)
+        }
+    }
+
+    func exportLogs() {
+        do {
+            let urls = try backend.exportLogs()
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
+            showActionFeedback("Saved \(urls.count) debug log\(urls.count == 1 ? "" : "s") to Desktop")
+        } catch {
+            showTransientError(error.localizedDescription)
+        }
+    }
+
+    private func showActionFeedback(_ message: String) {
+        actionFeedbackTask?.cancel()
+        actionFeedback = message
+        actionFeedbackTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.actionFeedback = nil
+        }
+    }
+
+    private func clearActionFeedback() {
+        actionFeedbackTask?.cancel()
+        actionFeedbackTask = nil
+        actionFeedback = nil
     }
 
 
@@ -372,9 +413,4 @@ class DashboardViewModel: ObservableObject {
         selectedFontName = newFont.familyName ?? "System Standard"
     }
 
-    func exportLogs() {
-        Task {
-            backend.exportLogs()
-        }
-    }
 }
