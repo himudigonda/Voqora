@@ -295,7 +295,9 @@ def test_audiobook_upload_rejects_oversize_file(monkeypatch):
     assert "MB" in response.json()["detail"]
 
 
-def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemini(monkeypatch):
+def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemini(
+    monkeypatch,
+):
     from fastapi.testclient import TestClient
 
     from app.main import app
@@ -845,7 +847,10 @@ def test_upload_rejects_unsupported_extension():
     [
         ("notes.txt", "text/plain"),
         ("chapter.md", "text/markdown"),
-        ("outline.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        (
+            "outline.docx",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
     ],
 )
 def test_upload_accepts_every_supported_text_document_kind(

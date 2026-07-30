@@ -111,7 +111,7 @@ struct VoqoraWindow: View {
                 // MAIN CONTENT
                 detailContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalPDFDrop)
+                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
 
                 // Global drop overlay shown across any non-Audiobooks tab when a PDF is hovering.
                 if globalDropHovering && vm.selectedTab != "books" {
@@ -347,23 +347,37 @@ struct VoqoraWindow: View {
         return t
     }
 
-    private func handleGlobalPDFDrop(_ providers: [NSItemProvider]) -> Bool {
+    private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
             if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
             else if let u = item as? URL { url = u }
-            guard let url, url.pathExtension.lowercased() == "pdf" else { return }
+            guard let url else {
+                Task { @MainActor in
+                    bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
+                }
+                return
+            }
             Task { @MainActor in
-                vm.selectedTab = "books"
-                let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
-                let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
-                bookVM.presentEstimate(
-                    for: url,
-                    voice: voice,
-                    speed: speed,
-                    engine: "kokoro"
-                )
+                guard AudiobookImportStaging.supports(url) else {
+                    bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
+                    return
+                }
+                do {
+                    let stagedURL = try AudiobookImportStaging.stageDocument(from: url)
+                    vm.selectedTab = "books"
+                    let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
+                    let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
+                    bookVM.presentEstimate(
+                        for: stagedURL,
+                        voice: voice,
+                        speed: speed,
+                        engine: "kokoro"
+                    )
+                } catch {
+                    bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
+                }
             }
         }
         return true
@@ -381,7 +395,7 @@ struct VoqoraWindow: View {
                     .font(vm.appFont(size: 13, weight: .black))
                     .kerning(3)
                     .foregroundStyle(.cyan)
-                Text("Will switch to Audiobooks and start an estimate.")
+                Text("\(AudiobookImportStaging.supportedFormatsDescription) files will switch to Audiobooks and start an estimate.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(.secondary)
             }

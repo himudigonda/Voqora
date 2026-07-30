@@ -106,6 +106,9 @@ struct VoqoraApp: App {
         vmInstance.audiobookVM = audiobookInstance
 
         backend = backendInstance
+        appDelegate.stopOwnedBackend = { [backendInstance] in
+            backendInstance.stop()
+        }
 
         if !runningTests {
             // Don't trigger permission prompts here — the onboarding wizard
@@ -119,7 +122,6 @@ struct VoqoraApp: App {
             Task { @MainActor in
                 MetricsFlushDriver.shared.start()
             }
-            registerCustomFonts()
             checkRunningLocation()
         }
     }
@@ -139,26 +141,6 @@ struct VoqoraApp: App {
                 NSApplication.shared.terminate(nil)
             } else {
                 NSApplication.shared.terminate(nil)
-            }
-        }
-    }
-
-    private func registerCustomFonts() {
-        guard let fontFolder = Bundle.main.resourceURL?.appendingPathComponent("Fonts") else {
-            print("📝 FontLoader: Could not locate Fonts directory in bundle.")
-            return
-        }
-        guard let files = try? FileManager.default.contentsOfDirectory(at: fontFolder, includingPropertiesForKeys: nil) else {
-            print("📝 FontLoader: No bundled fonts found or directory inaccessible.")
-            return
-        }
-
-        for url in files where ["ttf", "otf"].contains(url.pathExtension.lowercased()) {
-            var error: Unmanaged<CFError>?
-            if !CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
-                print("⚠️ FontLoader: Failed to register font at \(url.path): \(error?.takeRetainedValue().localizedDescription ?? "Unknown error")")
-            } else {
-                print("✅ FontLoader: Registered \(url.lastPathComponent)")
             }
         }
     }
@@ -190,7 +172,7 @@ struct VoqoraApp: App {
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
             print("⌨️ KeyboardShortcuts: exportAudio triggered")
             Task { @MainActor in
-                dashboardVM.exportLastClip()
+                vm.exportLastClip()
             }
         }
 
@@ -230,7 +212,10 @@ struct VoqoraApp: App {
             Button("Stop") { audio.stop() }
             Button("Quit") {
                 dashboardVM.stopHeartbeat()
-                Task { backend.stop() }
+                // Stop only the child process this app owns before macOS
+                // tears the process down. A detached Task can be pre-empted
+                // by termination and leave a local server behind.
+                backend.stop()
                 NSApplication.shared.terminate(nil)
             }
         } label: {

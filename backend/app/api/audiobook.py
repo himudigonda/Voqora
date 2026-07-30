@@ -300,9 +300,7 @@ async def start_audiobook(
                 f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
             ),
         )
-    await AudiobookStore.update_meta(
-        book_id, uses_gemini_cleanup=uses_gemini_cleanup
-    )
+    await AudiobookStore.update_meta(book_id, uses_gemini_cleanup=uses_gemini_cleanup)
     await AudiobookService.enqueue(book_id, x_gemini_api_key or "")
     return {"status": "queued", "book_id": book_id}
 

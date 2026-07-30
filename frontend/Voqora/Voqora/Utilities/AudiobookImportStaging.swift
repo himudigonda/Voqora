@@ -9,7 +9,10 @@ import Foundation
 enum AudiobookImportStaging {
     static let directoryPrefix = "VoqoraImport-"
 
-    private static let supportedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
+    /// The shared product contract for every document entry point: importer,
+    /// drag and drop, upload MIME type, and analytics must agree on this set.
+    nonisolated static let supportedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
+    nonisolated static let supportedFormatsDescription = "PDF, TXT, DOCX, and Markdown"
 
     enum StagingError: LocalizedError {
         case unsupportedFile
@@ -17,9 +20,13 @@ enum AudiobookImportStaging {
         var errorDescription: String? {
             switch self {
             case .unsupportedFile:
-                return "Voqora audiobooks support PDF, TXT, DOCX, and Markdown files."
+                return "Voqora audiobooks support \(supportedFormatsDescription) files."
             }
         }
+    }
+
+    nonisolated static func supports(_ sourceURL: URL) -> Bool {
+        supportedExtensions.contains(sourceURL.pathExtension.lowercased())
     }
 
     static func stageDocument(
@@ -27,7 +34,7 @@ enum AudiobookImportStaging {
         in root: URL = FileManager.default.temporaryDirectory,
         fileManager: FileManager = .default
     ) throws -> URL {
-        guard supportedExtensions.contains(sourceURL.pathExtension.lowercased()) else {
+        guard supports(sourceURL) else {
             throw StagingError.unsupportedFile
         }
 

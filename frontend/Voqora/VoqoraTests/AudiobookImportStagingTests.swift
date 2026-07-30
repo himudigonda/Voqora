@@ -46,4 +46,12 @@ final class AudiobookImportStagingTests: XCTestCase {
         AudiobookImportStaging.discard(unrelatedFile, in: root)
         XCTAssertTrue(FileManager.default.fileExists(atPath: unrelatedFile.path))
     }
+
+    func test_supportedFormatsAreOneExplicitProductContract() {
+        for ext in ["pdf", "txt", "docx", "md"] {
+            XCTAssertTrue(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.\(ext)")))
+        }
+        XCTAssertFalse(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.epub")))
+        XCTAssertTrue(AudiobookImportStaging.supportedFormatsDescription.contains("Markdown"))
+    }
 }

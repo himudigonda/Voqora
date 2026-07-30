@@ -42,9 +42,9 @@ final class DashboardViewModelTests: XCTestCase {
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
         defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
-        // v5 could already be recorded by an early local build without
+        // v6 could already be recorded by an early local build without
         // actually applying the Bella default before the voice model initialized.
-        defaults.set(5, forKey: "voiceDefaultsMigrationVersion")
+        defaults.set(6, forKey: "voiceDefaultsMigrationVersion")
 
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")

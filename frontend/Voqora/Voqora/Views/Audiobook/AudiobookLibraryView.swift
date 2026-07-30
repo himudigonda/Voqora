@@ -246,10 +246,9 @@ struct AudiobookLibraryView: View {
                 }
                 return
             }
-            let allowed: Set<String> = ["pdf", "txt", "docx", "md"]
-            guard allowed.contains(url.pathExtension.lowercased()) else {
+            guard AudiobookImportStaging.supports(url) else {
                 Task { @MainActor in
-                    bookVM.showToast("Voqora audiobooks support PDF, TXT, DOCX, and Markdown files.", kind: .info)
+                    bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
                 }
                 return
             }

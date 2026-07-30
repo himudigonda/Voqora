@@ -8,10 +8,10 @@ class DashboardViewModel: ObservableObject {
     /// development build could leave a non-English voice in shared defaults;
     /// every fresh v1 install and every upgrade from that build must begin with
     /// the same predictable US-English voice.
-    // Version 6 supersedes the short-lived builds whose `@AppStorage` wrapper
-    // could write a cached legacy voice back after this migration. It resets
-    // only once, then preserves any voice the person chooses.
-    private static let voiceDefaultsMigrationVersion = 6
+    // Version 7 supersedes the short-lived builds that could record v6 while
+    // retaining a stale multilingual development voice. It resets only once,
+    // then preserves every explicit choice made afterwards.
+    private static let voiceDefaultsMigrationVersion = 7
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
