@@ -2,13 +2,17 @@ import Combine
 import Foundation
 import Sparkle
 
-/// Owns Sparkle's standard updater for the lifetime of the app.
+/// Owns Voqora's future Sparkle updater configuration.
 ///
-/// Sparkle handles scheduled checks, signed appcast parsing, archive
-/// verification, replacement, and relaunch. The UI intentionally uses
-/// Sparkle's native controller rather than reimplementing installer logic.
+/// Non-notarized early-access builds intentionally use the GitHub Releases
+/// page for manual installs. Sparkle remains wired for the notarized release
+/// channel, but is not started until that trust boundary exists.
 @MainActor
 final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
+    /// Sparkle's public `SUNoUpdateError` value. Keep this isolated behind a
+    /// small helper so the UI never calls an invalid feed or signature error
+    /// “up to date.”
+    private static let noUpdateErrorCode = 1001
     private var controller: SPUStandardUpdaterController?
     private var observations: [NSKeyValueObservation] = []
 
@@ -25,15 +29,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     override init() {
         super.init()
-        if RuntimeEnvironment.isRunningTests {
-            controller = nil
-        } else {
-            controller = SPUStandardUpdaterController(
-                startingUpdater: true,
-                updaterDelegate: self,
-                userDriverDelegate: nil
-            )
-        }
+        controller = nil
         observeUpdaterState()
     }
 
@@ -68,6 +64,14 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     // MARK: - Sparkle lifecycle
 
+    static func statusMessage(forUpdateCheckError error: NSError) -> String {
+        guard error.domain == SUSparkleErrorDomain,
+              error.code == noUpdateErrorCode else {
+            return "Couldn't check for updates. Your current Voqora still works. Try again later."
+        }
+        return "Voqora is up to date."
+    }
+
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         isCheckingForUpdates = false
         updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
@@ -75,18 +79,18 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
         isCheckingForUpdates = false
-        updateStatusMessage = "Voqora is up to date."
+        updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
         isCheckingForUpdates = false
-        updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+        updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
     func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
         isCheckingForUpdates = false
-        if error != nil {
-            updateStatusMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+        if let error {
+            updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
         }
     }
 }

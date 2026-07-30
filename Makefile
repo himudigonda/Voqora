@@ -9,6 +9,12 @@ CONFIG = Release
 BUILD_DIR = build
 APP_PATH = $(BUILD_DIR)/DerivedData/Build/Products/$(CONFIG)/Voqora.app
 BUNDLE_ID = com.himudigonda.Voqora
+# Keep normal local builds and the serial test host from monopolising the Mac.
+# `-jobs` limits Xcode build operations. It does not promise to override every
+# Swift compiler worker, so the expensive macOS host remains explicit below.
+# A release owner can opt into a different cap deliberately, for example
+# `make app XCODE_JOBS=6`.
+XCODE_JOBS ?= 4
 
 .PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release appcast ship help
 
@@ -41,6 +47,7 @@ app:
 	xcodebuild -project $(PROJECT_PATH) \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
+		-jobs $(XCODE_JOBS) \
 		-derivedDataPath $(BUILD_DIR)/DerivedData \
 		-quiet \
 		build
@@ -70,17 +77,12 @@ clean:
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 	@echo "✨ Local build folders cleared."
 
-# Factory reset: clean + system-level wipe + permission reset
+# Factory reset: confirmed build cleanup + system-level wipe + permission reset
 # Wipes ~/Library/Application Support/com.himudigonda.Voqora (audiobooks,
 # history, settings). Prompts unless CI=1. See HARD-050.
-nuke: clean
-ifndef CI
-	@printf "⚠️  This wipes ALL local Voqora data (audiobooks, history,\n   accessibility grants). Continue? [y/N] " && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
-endif
-	@echo "🧨 NUKING SYSTEM DATA..."
-	@# A reset must never kill an app merely because it shares Voqora's bundle
-	@# identifier. Require every local/installed copy and the shared backend to
-	@# be stopped first, then remove data only after the user acknowledged it.
+nuke:
+	@# A reset must never touch data or build artifacts before its owning apps
+	@# are closed and the user has explicitly confirmed the exact current target.
 	@if pgrep -f "/Applications/Voqora.app/Contents/MacOS/Voqora" >/dev/null; then \
 		echo "Quit /Applications/Voqora.app before resetting its shared data."; exit 2; \
 	fi
@@ -88,7 +90,11 @@ endif
 		pgrep -f "$$HOME/Library/Application Support/$(BUNDLE_ID)/VoqoraServer/VoqoraServer" >/dev/null; then \
 		echo "Quit every local Voqora candidate before resetting shared data."; exit 2; \
 	fi
-	rm -rf ~/Library/Application\ Support/VoqoraServer
+ifndef CI
+	@printf "⚠️  This wipes ALL local Voqora data (audiobooks, history,\n   accessibility grants). Continue? [y/N] " && read ans && [ "$$ans" = "y" ] || (echo "Aborted." && exit 1)
+endif
+	@$(MAKE) clean
+	@echo "🧨 NUKING SYSTEM DATA..."
 	rm -rf ~/Library/Application\ Support/$(BUNDLE_ID)
 	@echo "🔐 Resetting macOS Accessibility Database..."
 	tccutil reset Accessibility $(BUNDLE_ID) || true
@@ -150,6 +156,7 @@ test-swift:
 		echo "🧪 Running one serial Swift test host..."; \
 		xcodebuild test -project $(PROJECT_PATH) -scheme $(SCHEME) \
 			-destination 'platform=macOS,arch=arm64' \
+			-jobs $(XCODE_JOBS) \
 			-parallel-testing-enabled NO \
 			CODE_SIGNING_ALLOWED=NO
 
@@ -182,9 +189,11 @@ endif
 # `release: nuke backend` chain destroyed local audiobooks/history every
 # time. If you want a truly fresh build, run `make nuke` explicitly first.
 # See HARD-050.
-release: check-version backend
-	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
+release: check-version
+	@echo "🚀 Validating release source for v$(VERSION) before any heavy build..."
 	./scripts/validate_release.sh $(VERSION)
+	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
+	$(MAKE) backend
 	chmod +x scripts/create_dmg.sh
 	./scripts/create_dmg.sh $(VERSION)
 	./scripts/validate_release.sh $(VERSION) build/Voqora-$(VERSION).dmg

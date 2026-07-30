@@ -38,6 +38,8 @@ enum OnboardingCopy {
     static let axGrantButton = "Open System Settings"
     static let axGrantedLabel = "Granted"
     static let axPendingLabel = "Waiting for you to grant access…"
+    static let axContinueWithoutButton = "Continue without access"
+    static let axContinueWithoutHelp = "You can still use audiobooks and enable selected-text reading later in Preferences."
 
     // MARK: - Step 4 — Notifications (optional)
 

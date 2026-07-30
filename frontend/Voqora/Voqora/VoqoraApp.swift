@@ -35,6 +35,9 @@ struct VoqoraApp: App {
     /// downloader.
     @StateObject private var updater: AppUpdater
 
+    /// Pre-notarization releases use this explicit, verified Finder handoff.
+    @StateObject private var installer: GuidedInstallerService
+
     /// 3. Backend (Kept private, managed by VM, but we own the instance to stop deinit)
     private let backend: BackendService
 
@@ -69,6 +72,7 @@ struct VoqoraApp: App {
         let backendInstance = BackendService()
         let systemInstance = SystemService()
         let updaterInstance = AppUpdater()
+        let installerInstance = GuidedInstallerService()
         let legacyMigrationInstance = LegacySuperSayMigration()
         let testDefaults = runningTests ? RuntimeEnvironment.testDefaults() : nil
         let onboardingInstance = OnboardingCoordinator(defaults: testDefaults ?? .standard)
@@ -100,6 +104,7 @@ struct VoqoraApp: App {
         _onboarding = StateObject(wrappedValue: onboardingInstance)
         _identity = StateObject(wrappedValue: identityInstance)
         _updater = StateObject(wrappedValue: updaterInstance)
+        _installer = StateObject(wrappedValue: installerInstance)
         _legacyMigration = StateObject(wrappedValue: legacyMigrationInstance)
 
         // Wire mutual exclusion between TTS hotkey playback and audiobook playback
@@ -116,16 +121,18 @@ struct VoqoraApp: App {
             // ducking + AppleScript permissions on first hotkey use.
             setupShortcuts(vm: vmInstance)
 
-            MetricsService.shared.trackLaunch()
+            if !RuntimeEnvironment.disablesTelemetry {
+                MetricsService.shared.trackLaunch()
+                // Start the periodic flush driver (previously embedded inside the
+                // singleton init; now externalized so the actor can stay isolated).
+                Task { @MainActor in
+                    MetricsFlushDriver.shared.start()
+                }
+            }
             // A privacy removal made while offline is honoured locally first.
             // Retry the separate server-side contact removal quietly on launch;
-            // it never gates first use or the local speech path.
+            // it never depends on the anonymous-telemetry choice.
             Task { await identityInstance.retryPendingRemoval() }
-            // Start the periodic flush driver (previously embedded inside the
-            // singleton init; now externalized so the actor can stay isolated).
-            Task { @MainActor in
-                MetricsFlushDriver.shared.start()
-            }
             checkRunningLocation()
         }
     }
@@ -204,6 +211,7 @@ struct VoqoraApp: App {
                         .environmentObject(identity)
                         .environmentObject(permissions)
                         .environmentObject(updater)
+                        .environmentObject(installer)
                         .environmentObject(legacyMigration)
                 }
             }

@@ -75,9 +75,23 @@ passed.
 - Made update feedback legible in Preferences. Manual checks now show whether
   Voqora is preparing, checking, up to date, has an update ready, or could not
   reach the feed, without replacing Sparkle's native update dialog.
-- No new public release is included in this section. Installer, Gatekeeper,
-  Sparkle, website/metrics, and full manual-flow evidence remain release gates
-  until they are verified against one immutable candidate artifact.
+- Metrics now fail closed when the remote overview is on an older schema, so
+  the website and private dashboard cannot present missing fields as zero
+  adoption.
+
+### Early-access distribution
+
+- This release is deliberately distributed without Apple notarization while
+  Voqora is validating product demand. macOS may require **Open Anyway** or
+  the documented one-app quarantine command after download. The update archive
+  is still verified by Sparkle before installation.
+- The project retains its signed Sparkle feed tooling for a future notarized
+  release channel. It is intentionally not started by this non-notarized
+  early-access build.
+- Automatic in-app replacement is intentionally disabled for this
+  non-notarized early-access release. Preferences opens the canonical GitHub
+  Releases page instead, so people receive a straightforward manual install
+  path rather than a button that can fail at macOS's trust boundary.
 
 ### Audiobooks
 

@@ -27,8 +27,30 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     // Thread-safe state managed by stateQueue
     private var _isLaunching = false
+    private var nextLaunchAllowedAt = Date.distantPast
+    /// A short, non-sensitive diagnostic for the UI while the owned local
+    /// process is being retried. This is intentionally not a raw system error
+    /// or a path: those stay in the exported debug log.
+    private var _lastLaunchFailure: String?
+    private static let failedLaunchBackoff: TimeInterval = 2
+    private let executableOverride: URL?
+    private let applicationSupportOverride: URL?
     var isLaunching: Bool {
         stateQueue.sync { _isLaunching }
+    }
+
+    var lastLaunchFailure: String? {
+        stateQueue.sync { _lastLaunchFailure }
+    }
+
+    func clearLaunchFailure() {
+        stateQueue.sync { _lastLaunchFailure = nil }
+    }
+
+    /// Internal lifecycle visibility for deterministic fast-exit regression
+    /// coverage. Product code never uses this to control backend ownership.
+    var hasOwnedProcess: Bool {
+        stateQueue.sync { process != nil }
     }
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
@@ -48,6 +70,15 @@ final class BackendService: NSObject, @unchecked Sendable {
         return URLSession(configuration: config, delegate: self, delegateQueue: nil)
     }()
 
+    init(
+        executableOverride: URL? = nil,
+        applicationSupportOverride: URL? = nil
+    ) {
+        self.executableOverride = executableOverride
+        self.applicationSupportOverride = applicationSupportOverride
+        super.init()
+    }
+
     // MARK: - Process Management
 
     func start() {
@@ -55,12 +86,15 @@ final class BackendService: NSObject, @unchecked Sendable {
         // function. Use a flag so we can guard at function scope.
         var shouldStart = false
         stateQueue.sync {
-            guard process == nil, !_isLaunching else { return }
+            guard process == nil,
+                  !_isLaunching,
+                  Date() >= nextLaunchAllowedAt
+            else { return }
             _isLaunching = true
             shouldStart = true
         }
-        // Real function-level guard — prevents the pkill + relaunch every 500 ms while
-        // the server is already starting (the previous crash-loop root cause).
+        // Real function-level guard — prevents repeated launch attempts while
+        // the server is already starting or during a bounded failure backoff.
         guard shouldStart else { return }
 
         // start() is called from the @MainActor heartbeat (every 500 ms while the
@@ -77,26 +111,24 @@ final class BackendService: NSObject, @unchecked Sendable {
     /// log wiring. Always runs on a background queue (dispatched from start()).
     private func performLaunch() {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
+        let appSupport = applicationSupportOverride
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(bundleID)
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
-        let executableURL = appSupport.appendingPathComponent("VoqoraServer/VoqoraServer")
+        let executableURL = executableOverride
+            ?? appSupport.appendingPathComponent("VoqoraServer/VoqoraServer")
 
         // Just check if LaunchManager did its job
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
-            stateQueue.sync { _isLaunching = false }
+            stateQueue.sync {
+                _isLaunching = false
+                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
+                _lastLaunchFailure = "The local speech engine is unavailable."
+            }
             print("❌ Backend binary not ready yet.")
             return
         }
-
-        // Kill only a stale copy of this exact extracted backend. A generic
-        // `pkill VoqoraServer` can terminate another app build and made local
-        // QA look like the product was spawning or fighting multiple apps.
-        let cleanup = Process()
-        cleanup.launchPath = "/usr/bin/pkill"
-        cleanup.arguments = ["-f", executableURL.path]
-        try? cleanup.run()
-        cleanup.waitUntilExit()
 
         let p = Process()
         p.executableURL = executableURL
@@ -149,6 +181,12 @@ final class BackendService: NSObject, @unchecked Sendable {
                 if self.process === terminated {
                     self.process = nil
                     self._isLaunching = false
+                    if terminated.terminationStatus != 0 {
+                        self.nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
+                        self._lastLaunchFailure = "The local speech engine stopped unexpectedly."
+                    }
+                    self.processPipe?.fileHandleForReading.readabilityHandler = nil
+                    self.processPipe = nil
                     try? self.logFileHandle?.close()
                     self.logFileHandle = nil
                 }
@@ -156,18 +194,36 @@ final class BackendService: NSObject, @unchecked Sendable {
             print("⚠️ Backend process exited (PID: \(terminated.processIdentifier), status: \(terminated.terminationStatus))")
         }
 
+        // Register ownership before starting the child. A binary can fail fast
+        // (for example, after a damaged extraction); recording it only after
+        // `run()` races its termination handler and can leave the app holding a
+        // dead Process forever. Never terminate a separately running copy here.
+        stateQueue.sync {
+            self.process = p
+            self.processPipe = pipe
+        }
+
         do {
             try p.run()
             stateQueue.sync {
-                self.process = p
-                self.processPipe = pipe
-                self._isLaunching = false
+                if self.process === p {
+                    self._isLaunching = false
+                }
             }
             print("✅ Backend Launched (PID: \(p.processIdentifier))")
         } catch {
             print("❌ Backend Launch Failed: \(error)")
             stateQueue.sync {
+                if self.process === p {
+                    self.process = nil
+                    self.processPipe?.fileHandleForReading.readabilityHandler = nil
+                    self.processPipe = nil
+                    try? self.logFileHandle?.close()
+                    self.logFileHandle = nil
+                }
                 _isLaunching = false
+                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
+                _lastLaunchFailure = "The local speech engine could not start."
             }
         }
     }

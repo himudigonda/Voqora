@@ -7,8 +7,26 @@ the DMG from the [release page](https://github.com/himudigonda/Voqora/releases/t
 drag Voqora to Applications, and open it.
 
 The current build is not Apple-notarized. If macOS blocks the first launch,
-approve Voqora in **System Settings -> Privacy & Security**, then open it
-again.
+open **System Settings -> Privacy & Security**, choose **Open Anyway** for
+Voqora, then open it again. The DMG also includes an
+**OPTIONAL-OPEN-VOQORA.command** fallback that only targets the installed
+`/Applications/Voqora.app`. If macOS does not show that option or repeats the
+warning, and you downloaded Voqora from the official release page, run this
+once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Voqora.app
+open /Applications/Voqora.app
+```
+
+This clears the downloaded-file quarantine marker only from the installed
+Voqora app. Do not run it on software from an untrusted source.
+
+On first launch, Voqora opens a short setup flow before the speech engine is
+ready. It explains the shortcut and takes you to the macOS Accessibility
+setting. Accessibility is required for speaking selected text from other apps,
+but you can continue into Voqora without it and enable it later from the
+dashboard reminder. Notifications and an optional email are clearly optional.
 
 ## Speak selected text
 

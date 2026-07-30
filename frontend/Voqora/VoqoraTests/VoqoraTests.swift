@@ -2,6 +2,12 @@
 import XCTest
 
 final class VoqoraTests: XCTestCase {
+    func testTelemetryVerificationOverrideRequiresAnExactOne() {
+        XCTAssertTrue(RuntimeEnvironment.disablesTelemetry(in: ["VOQORA_DISABLE_TELEMETRY": "1"]))
+        XCTAssertFalse(RuntimeEnvironment.disablesTelemetry(in: [:]))
+        XCTAssertFalse(RuntimeEnvironment.disablesTelemetry(in: ["VOQORA_DISABLE_TELEMETRY": "true"]))
+    }
+
     /// Test 1: Verify Text Processor strips URLs correctly
     func testTextSanitization_CleanURLs() {
         let input = "Check this out https://example.com/cool"

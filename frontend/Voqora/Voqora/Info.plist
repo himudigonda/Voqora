@@ -34,7 +34,15 @@
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>
-	<true/>
+	<false/>
+	<!--
+	 Sparkle's embedded downloader XPC service needs a stable Developer ID
+	 identity. Early-access builds are intentionally ad-hoc signed, so use
+	 Sparkle's in-process downloader until the notarized distribution path is
+	 enabled. Archive verification remains EdDSA-backed.
+	-->
+	<key>SUEnableDownloaderService</key>
+	<false/>
 	<key>SUFeedURL</key>
 	<string>https://himudigonda.github.io/Voqora/appcast.xml</string>
 	<key>SUPublicEDKey</key>

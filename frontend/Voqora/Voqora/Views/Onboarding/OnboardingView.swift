@@ -119,6 +119,17 @@ struct OnboardingView: View {
                 Spacer().frame(width: 80)
             }
             Spacer()
+            if step == 2 && !permissions.accessibilityGranted {
+                // Do not turn a denied or unavailable macOS permission into a
+                // dead-end product. Selected-text reading stays unavailable
+                // until it is granted, but local audiobooks and the in-app
+                // experience remain usable with the persistent dashboard cue.
+                Button(OnboardingCopy.axContinueWithoutButton) {
+                    withAnimation { step += 1 }
+                }
+                .buttonStyle(.bordered)
+                .help(OnboardingCopy.axContinueWithoutHelp)
+            }
             if step == stepCount - 1 {
                 Button(OnboardingCopy.doneButton) { coordinator.markCompleted() }
                     .buttonStyle(.borderedProminent)
@@ -136,7 +147,9 @@ struct OnboardingView: View {
         .padding(.horizontal, 40)
     }
 
-    /// Step-specific Next-button gating.
+    /// Step-specific Next-button gating. Accessibility gets a dedicated,
+    /// explicit continue-without-access path rather than making the whole app
+    /// unusable when the user declines it.
     private var canAdvance: Bool {
         switch step {
         case 2: permissions.accessibilityGranted

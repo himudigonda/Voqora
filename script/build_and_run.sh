@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # One deliberate local run loop for Voqora. It builds the bundled speech
-# service and Release app, stops only an existing Voqora process, then launches
-# the newly built bundle. It never starts a macOS test host.
+# service and Release app, then launches the newly built bundle only when no
+# other Voqora copy owns the shared product profile or local speech port. It
+# never starts a macOS test host and never terminates another app for a build.
 
 MODE="${1:-run}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,14 +14,26 @@ BUNDLE_ID="com.himudigonda.Voqora"
 
 cd "$ROOT_DIR"
 
-stop_running_app() {
-  # Never kill every installed Voqora copy by display name. A local proof must
-  # only replace the precise candidate it built, otherwise an Applications copy
-  # and a test candidate can fight each other for the shared app-support path.
-  pkill -f "$APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 || true
-  # The bundled service is extracted under this bundle identifier. Target that
-  # exact path rather than every process called VoqoraServer.
-  pkill -f "$HOME/Library/Application Support/$BUNDLE_ID/VoqoraServer/VoqoraServer" >/dev/null 2>&1 || true
+assert_runtime_is_exclusive() {
+  # Public and source builds deliberately use one bundle identifier so macOS
+  # permissions and application data stay coherent for real updates. That also
+  # means a local candidate must never be launched beside an installed copy:
+  # both would target the same extracted backend and loopback port. Refuse the
+  # overlap with a useful message instead of forcibly killing either app.
+  if /usr/bin/pgrep -f "/Applications/$APP_NAME.app/Contents/MacOS/$APP_NAME" >/dev/null 2>&1; then
+    echo "An installed Voqora is running. Quit it before launching a local candidate; this runner will not stop it for you." >&2
+    exit 2
+  fi
+
+  if /usr/bin/pgrep -f "$APP_PATH/Contents/MacOS/$APP_NAME" >/dev/null 2>&1; then
+    echo "A local Voqora candidate is already running. Quit it before starting another one." >&2
+    exit 2
+  fi
+
+  if /usr/bin/pgrep -f "$HOME/Library/Application Support/$BUNDLE_ID/VoqoraServer/VoqoraServer" >/dev/null 2>&1; then
+    echo "A Voqora local speech service is already running. Quit its owning Voqora app and wait for it to exit before retrying." >&2
+    exit 2
+  fi
 }
 
 build_latest() {
@@ -69,35 +82,35 @@ verify_fresh_launch() {
 
 case "$MODE" in
   run)
-    stop_running_app
+    assert_runtime_is_exclusive
     build_latest
     launch_app
     ;;
   --debug|debug)
-    stop_running_app
+    assert_runtime_is_exclusive
     build_latest
     exec lldb -- "$APP_PATH/Contents/MacOS/$APP_NAME"
     ;;
   --logs|logs)
-    stop_running_app
+    assert_runtime_is_exclusive
     build_latest
     launch_app
     exec /usr/bin/log stream --info --style compact --predicate "process == \"$APP_NAME\""
     ;;
   --telemetry|telemetry)
-    stop_running_app
+    assert_runtime_is_exclusive
     build_latest
     launch_app
     exec /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
     ;;
   --verify|verify)
-    stop_running_app
+    assert_runtime_is_exclusive
     build_latest
     launch_app
     verify_fresh_launch
     ;;
   --clean-build|clean-build)
-    stop_running_app
+    assert_runtime_is_exclusive
     FORCE_BACKEND_REBUILD=1 build_latest
     launch_app
     ;;

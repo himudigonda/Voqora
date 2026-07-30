@@ -35,17 +35,20 @@ GitHub Actions separates the work:
 That separation keeps the expensive Mac-host test work off a contributor’s
 normal edit-save-verify loop while still testing it before merge.
 
+The macOS build and test recipes cap Xcode at four build operations by default.
+Swift still manages some internal compiler workers, so the cap is not presented
+as a thermal guarantee. The important guard is behavioural: routine checks do
+not launch the macOS app host at all, and the explicit Swift suite has one host
+and refuses to overlap another Xcode run. Use `XCODE_JOBS=6` only when the
+machine is intentionally reserved for a faster build.
+
 ## Current validation baseline
 
-The public-v1 `main` baseline is 184 backend tests and 73 Swift tests. After
-the current local-only merge from `main`, the private v1.1 `develop` branch
-passes 389 backend tests and 177 Swift tests in its own serial host. Re-run its
-exact fast backend and serial Swift commands after every later merge from
-`main` instead of treating a previous green result as current evidence.
-
-Run only the smallest relevant command while iterating, then run the guarded
-Swift target once and the full release-candidate matrix at the release gate.
+The private v1.1 integration baseline is 389 backend tests and 185 Swift tests. The Swift
+receipt came from one serial host with four Xcode build jobs, after the
+first-use, backend-lifecycle, updater, audiobook-layout, and telemetry
+regressions were added. Re-run only the smallest relevant command while
+iterating; run the full release candidate matrix once at the release gate.
 Documentation, packaging, or automation edits that change user-facing
 distribution behavior still need their specific artifact or script verification,
-even when they do not need the macOS test host. Do not use repeated parallel
-runs as a substitute for diagnosis.
+even when they do not need the macOS test host.

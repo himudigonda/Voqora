@@ -17,6 +17,9 @@ BUILD_DIR="build"
 XCODE_PROJECT_DIR="frontend/Voqora"
 STAGING_DIR="${BUILD_DIR}/dmg-staging"
 SCRIPTS_DIR="scripts"
+# Packaging is intentionally resource-bounded too. The caller may increase
+# this only when the machine is reserved for a deliberate release archive.
+XCODE_JOBS="${XCODE_JOBS:-4}"
 
 # ── 0. Locate Xcode ─────────────────────────────────────────
 if [ -d "/Applications/Xcode.app/Contents/Developer" ]; then
@@ -83,6 +86,7 @@ if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
     -configuration Release \
+    -jobs "$XCODE_JOBS" \
     -derivedDataPath "${BUILD_DIR}/DerivedData" \
     -archivePath "${BUILD_DIR}/${APP_NAME}.xcarchive" \
     MARKETING_VERSION="${VERSION}" \
@@ -129,14 +133,25 @@ for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
 done
 echo "   ✓ License and third-party notices bundled."
 
-# Xcode signs the archive before the distributable-only fonts, backend bundle,
-# and notices are staged. Re-sign the completed app so its resource seal
-# describes exactly what ships inside the DMG. This is deliberately ad-hoc;
-# Developer ID signing and notarization are separate release credentials.
-echo "🔏 Sealing staged app bundle..."
-codesign --force --deep --sign - "$STAGING_DIR/${APP_NAME}.app"
-codesign --verify --deep --strict "$STAGING_DIR/${APP_NAME}.app"
-echo "   ✓ Staged app signature verified."
+# The disk image carries its own readable first-run support path. This is a
+# deliberate temporary supplement to the non-notarized early-access channel,
+# not an unattended installer or a substitute for Apple notarization.
+for SUPPORT_FILE in README-FIRST.txt OPTIONAL-OPEN-VOQORA.command; do
+    cp "installer/${SUPPORT_FILE}" "$STAGING_DIR/${SUPPORT_FILE}"
+done
+chmod +x "$STAGING_DIR/OPTIONAL-OPEN-VOQORA.command"
+echo "   ✓ Bundled early-access install guidance."
+
+# Fonts and notices are added after Xcode archives the application, so the
+# top-level signature must be refreshed after every staged resource is in its
+# final location. Re-signing only the app bundle preserves the nested
+# framework signatures that Xcode produced while sealing the changed resources.
+STAGED_APP="$STAGING_DIR/${APP_NAME}.app"
+codesign --force --sign "$SIGNING_IDENTITY" \
+    --preserve-metadata=identifier,entitlements,requirements,flags,runtime \
+    "$STAGED_APP"
+codesign --verify --deep --strict "$STAGED_APP"
+echo "   ✓ Final staged app signature seals bundled resources."
 
 # ── 6. Build drag-and-drop DMG ──────────────────────────────
 echo "💿 Building installer DMG..."
@@ -152,6 +167,8 @@ create-dmg \
     --icon        "${APP_NAME}.app"  165 200 \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 200 \
+    --icon "README-FIRST.txt" 165 350 \
+    --icon "OPTIONAL-OPEN-VOQORA.command" 495 350 \
     --no-internet-enable \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"

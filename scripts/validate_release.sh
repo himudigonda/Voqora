@@ -6,23 +6,43 @@ DMG_PATH="${2:-}"
 APP_NAME="Voqora"
 INFO_PLIST="frontend/Voqora/Voqora/Info.plist"
 PROJECT="frontend/Voqora/Voqora.xcodeproj"
+BACKEND_PROJECT="backend/pyproject.toml"
+BACKEND_CONFIG="backend/app/core/config.py"
 MOUNTED_APP_SIGNING_DETAILS=""
 
 fail() { echo "❌ $1" >&2; exit 1; }
 value() { /usr/libexec/PlistBuddy -c "Print :$1" "$INFO_PLIST" 2>/dev/null || true; }
 
+# `xcodebuild -showBuildSettings` is not free. Read the project settings once
+# and derive every required value from that one receipt.
+BUILD_SETTINGS="$(xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -showBuildSettings 2>/dev/null)"
+project_setting() {
+    local key="$1"
+    printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' -v key="$key" '$1 ~ "^[[:space:]]*" key "$" { print $2; exit }'
+}
+
 PUBLIC_KEY="$(value SUPublicEDKey)"
 FEED_URL="$(value SUFeedURL)"
 [ -n "$PUBLIC_KEY" ] || fail "SUPublicEDKey is missing. Sparkle updates must be signed."
 if [ "$PUBLIC_KEY" = '$(SPARKLE_PUBLIC_ED_KEY)' ]; then
-    PUBLIC_KEY="$(xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -showBuildSettings 2>/dev/null | awk -F ' = ' '/^[[:space:]]*SPARKLE_PUBLIC_ED_KEY = / { print $2; exit }')"
+    PUBLIC_KEY="$(project_setting SPARKLE_PUBLIC_ED_KEY)"
 fi
 [ -n "$PUBLIC_KEY" ] || fail "SPARKLE_PUBLIC_ED_KEY is not resolved in the project."
 [ -n "$FEED_URL" ] || fail "SUFeedURL is missing."
 [[ "$FEED_URL" == https://* ]] || fail "SUFeedURL must use HTTPS."
 
-MARKETING_VERSION="$(xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -showBuildSettings 2>/dev/null | awk -F ' = ' '/^[[:space:]]*MARKETING_VERSION = / { print $2; exit }')"
+MARKETING_VERSION="$(project_setting MARKETING_VERSION)"
 [ "$MARKETING_VERSION" = "$VERSION" ] || fail "Xcode MARKETING_VERSION is $MARKETING_VERSION, expected $VERSION."
+
+BUILD_NUMBER="$(project_setting CURRENT_PROJECT_VERSION)"
+[[ "$BUILD_NUMBER" =~ ^[1-9][0-9]*$ ]] || fail "Xcode CURRENT_PROJECT_VERSION must be a positive integer, got '${BUILD_NUMBER:-missing}'."
+
+BACKEND_PACKAGE_VERSION="$(awk -F '"' '/^version[[:space:]]*=/ { print $2; exit }' "$BACKEND_PROJECT")"
+BACKEND_RUNTIME_VERSION="$(awk -F '"' '/^[[:space:]]*VERSION:[[:space:]]*str[[:space:]]*=/ { print $2; exit }' "$BACKEND_CONFIG")"
+[ "$BACKEND_PACKAGE_VERSION" = "$VERSION" ] \
+    || fail "Backend package version is ${BACKEND_PACKAGE_VERSION:-missing}, expected $VERSION."
+[ "$BACKEND_RUNTIME_VERSION" = "$VERSION" ] \
+    || fail "Backend runtime version is ${BACKEND_RUNTIME_VERSION:-missing}, expected $VERSION."
 
 if [ "${REQUIRE_DISTRIBUTION_SIGNING:-0}" = "1" ]; then
     [ -n "${DEVELOPER_ID_APPLICATION:-}" ] || fail "Set DEVELOPER_ID_APPLICATION for a public distribution build."

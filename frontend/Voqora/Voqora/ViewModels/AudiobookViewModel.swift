@@ -99,19 +99,13 @@ final class AudiobookViewModel: ObservableObject {
         pendingDeepLink = bookID
     }
 
-    /// True while `AudiobookPlayerView` is the front-most visible view (set
-    /// by its own onAppear/onDisappear — the NavigationStack push/pop is the
-    /// actual source of truth for whether the player is on screen). Lets
-    /// `NowPlayingBar` distinguish "a book is playing" from "that book's own
-    /// player is already on screen" — the v1.1 design notes Sprint 6, T6.1 (Defect A: the
-    /// bar previously rendered underneath the player nearly always, since
-    /// opening the player itself calls `play()`, making `nowPlaying` non-nil
-    /// for the entire time the player view is up).
-    @Published var isPlayerViewActive: Bool = false
+    /// The player view owns this visibility signal. It is deliberately
+    /// separate from `nowPlaying`: an audiobook can keep playing after the
+    /// user leaves the full player, while the compact bar must never render
+    /// underneath that full player.
+    @Published var isPlayerViewActive = false
 
-    /// Single source of truth for `NowPlayingBar`'s visibility gate —
-    /// extracted so the condition is unit-testable, not just inline in
-    /// VoqoraWindow's view body.
+    /// Single source of truth for the compact audiobook bar.
     var isNowPlayingBarVisible: Bool {
         nowPlaying != nil && !isPlayerViewActive
     }

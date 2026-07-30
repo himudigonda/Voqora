@@ -70,10 +70,35 @@ French, Italian, Brazilian Portuguese, Hindi, and Mandarin beta map to a
 matching voice when auto-detection is enabled. Japanese is deliberately not
 listed because its real-text phonemization is not yet reliable.
 
-Optional document cleanup is separate: if you provide a Gemini API key, confirm
-the consent control, and choose that flow, the relevant document material is
-sent to Gemini for that operation. See [PRIVACY.md](PRIVACY.md) for the complete
-product boundary.
+## Product boundary, plainly stated
+
+| What you do | What Voqora does | What it does not do by default |
+| --- | --- | --- |
+| Speak selected text | Sends it to the bundled local speech service on your Mac. | Upload it to a hosted text-to-speech API. |
+| Add a PDF, TXT, DOCX, or Markdown file | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
+| Clean a difficult document | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
+| Use product analytics | Sends an optional anonymous event with a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
+| Get the latest build | Opens a SHA-256-verified DMG from Voqora's official GitHub release in Finder. | Replace the app automatically, alter Gatekeeper settings, or upload your reading activity or personal files. |
+
+An optional email in Preferences helps attribute a returning installation, but
+Voqora works fully without it. Installations, download clicks, product events,
+and opted-in contacts are measured as different things, because a useful
+product dashboard should describe reality rather than manufacture a flattering
+audience number.
+
+## Built as a native Mac utility
+
+The visible action is one shortcut. The work behind it is a deliberately small
+native system: SwiftUI and AppKit for the Mac experience, a bundled local
+FastAPI service for speech, Kokoro ONNX for synthesis, and streaming audio
+playback so listening can begin before a longer passage has fully rendered.
+
+That split is intentional. A browser tab can make sound. A useful desktop
+utility has to work with selected text in other applications, survive restarts,
+remember progress, recover from permissions and engine startup, and stay out
+of the way once it is set up. The [architecture guide](docs/architecture.md)
+maps those boundaries; the [technical deep dive](https://himudigonda.me/blog/voqora)
+explains the decisions behind them.
 
 ## Measured on the launch machine
 
@@ -84,9 +109,24 @@ keyboard-to-speaker latency promise.
 
 ## Install notes
 
-Voqora v1.0.0 is ad-hoc signed and not Apple-notarized. macOS can ask you to
-approve the first launch in System Settings. This is the remaining distribution
-step before a fully frictionless consumer install.
+Voqora is free to download, but the current release is not yet Apple-notarized.
+The DMG includes **README-FIRST.txt** with the short path: drag Voqora to
+Applications, eject the DMG, then open Voqora from Applications. If macOS blocks
+that first launch, open **System Settings -> Privacy & Security**, choose **Open
+Anyway** for Voqora, then open it again.
+
+If that button is missing or macOS keeps showing the same warning, and you
+downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run the included
+**OPTIONAL-OPEN-VOQORA.command** after moving the app to Applications. You can
+also run this once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Voqora.app
+open /Applications/Voqora.app
+```
+
+That command removes macOS's downloaded-file quarantine marker from that one
+installed copy of Voqora. Do not use it on software you do not trust.
 
 ## Build from source
 

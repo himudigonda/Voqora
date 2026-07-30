@@ -7,8 +7,8 @@ final class OnboardingCoordinatorTests: XCTestCase {
     private var defaults: UserDefaults!
     private var suiteName = ""
 
-    private func makeCoordinator(accessibilityTrusted: @escaping () -> Bool = { true }) -> OnboardingCoordinator {
-        OnboardingCoordinator(accessibilityTrusted: accessibilityTrusted, defaults: defaults)
+    private func makeCoordinator() -> OnboardingCoordinator {
+        OnboardingCoordinator(defaults: defaults)
     }
 
     override func setUp() async throws {
@@ -62,12 +62,25 @@ final class OnboardingCoordinatorTests: XCTestCase {
                       "users on an older onboarding version must see the wizard again once")
     }
 
-    func test_revokedAccessibility_requiresOnboardingEvenAfterCompletion() {
+    func test_brokenPublicProfile_rerunsRepairedOnboardingEvenWhenAccessibilityIsGranted() {
+        // This matches an early public profile that claimed setup was complete
+        // but opened into an unusable player instead of showing the guide.
         defaults.set(true, forKey: "hasOnboarded")
         defaults.set(3, forKey: "onboardingVersion")
 
-        let coord = makeCoordinator(accessibilityTrusted: { false })
-        XCTAssertTrue(coord.needsOnboarding,
-                      "a revoked Accessibility grant must not leave selected-text speech unusable")
+        let coord = makeCoordinator()
+
+        XCTAssertTrue(coord.needsOnboarding)
+    }
+
+    func test_revokedAccessibility_keepsCompletedOnboardingAndUsesDashboardRecovery() {
+        defaults.set(true, forKey: "hasOnboarded")
+        // This represents a person who already completed the repaired v4
+        // onboarding and later revokes Accessibility in System Settings.
+        defaults.set(4, forKey: "onboardingVersion")
+
+        let coord = makeCoordinator()
+        XCTAssertFalse(coord.needsOnboarding,
+                       "a completed setup must not trap someone in onboarding when Accessibility is revoked")
     }
 }

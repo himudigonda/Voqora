@@ -128,6 +128,25 @@ actor MetricsService {
         Task { await self.enqueue(event: "legacy_app_removed", props: [:]) }
     }
 
+    /// Installer signals describe the handoff funnel, never a completed app
+    /// installation or a unique person. The DMG still requires an explicit
+    /// Finder drag-and-drop step by the user.
+    nonisolated func trackInstallerDownloadStarted() {
+        Task { await self.enqueue(event: "installer_download_started", props: [:]) }
+    }
+
+    nonisolated func trackInstallerDownloadVerified() {
+        Task { await self.enqueue(event: "installer_download_verified", props: [:]) }
+    }
+
+    nonisolated func trackInstallerOpened() {
+        Task { await self.enqueue(event: "installer_opened", props: [:]) }
+    }
+
+    nonisolated func trackInstallerFailed() {
+        Task { await self.enqueue(event: "installer_failed", props: [:]) }
+    }
+
     /// Fire-and-forget force-flush. Safe to call from anywhere.
     nonisolated func flush() {
         Task { await self.flushLocked() }
@@ -264,6 +283,8 @@ extension MetricsService {
             "app_launch", "generation", "export",
             "audiobook_upload", "audiobook_play", "gemini_clean",
             "migration_detected", "migration_completed", "legacy_app_removed",
+            "installer_download_started", "installer_download_verified",
+            "installer_opened", "installer_failed",
         ]
 
         func serialized() -> [String: Any] {

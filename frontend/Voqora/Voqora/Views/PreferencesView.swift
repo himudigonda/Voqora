@@ -8,8 +8,8 @@ struct PreferencesView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
-    @EnvironmentObject var updater: AppUpdater
     @EnvironmentObject var legacyMigration: LegacySuperSayMigration
+    @EnvironmentObject var installer: GuidedInstallerService
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -439,62 +439,37 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: Binding(
-                            get: { updater.automaticallyChecksForUpdates },
-                            set: { updater.setAutomaticallyChecksForUpdates($0) }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Automatically check for updates")
-                                    .font(vm.appFont(size: 14, weight: .bold))
-                                Text("Checks Voqora's signed public update feed automatically. Voqora always shows you the update before replacing the app.")
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Button {
+                                    installer.downloadAndOpenLatest()
+                                } label: {
+                                    Label(installer.state.isBusy ? "Preparing installer…" : "Download latest installer", systemImage: "arrow.down.circle")
+                                        .font(vm.appFont(size: 13, weight: .medium))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.cyan)
+                                .disabled(installer.state.isBusy)
+
+                                Link("View releases on GitHub", destination: GuidedInstallerService.releasePageURL)
+                                    .font(vm.appFont(size: 11, weight: .medium))
+
+                                Spacer()
+
+                                Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"))
                                     .font(vm.appFont(size: 11))
                                     .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                        .toggleStyle(.switch)
-
-                        Divider()
-
-                        HStack {
-                            Button {
-                                updater.checkForUpdates()
-                            } label: {
-                                Label("Check for Updates...", systemImage: "arrow.triangle.2.circlepath")
-                                    .font(vm.appFont(size: 13, weight: .medium))
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(!updater.canCheckForUpdates)
-
-                            if updater.isCheckingForUpdates {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Checking for updates…")
-                                        .font(vm.appFont(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                            } else if !updater.canCheckForUpdates {
-                                HStack(spacing: 6) {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text("Preparing update checks…")
-                                        .font(vm.appFont(size: 11))
-                                        .foregroundStyle(.secondary)
-                                }
-                                .help("Voqora enables this after the update service has finished starting or after a current check completes.")
-                            } else if let message = updater.updateStatusMessage {
-                                Text(message)
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
                             }
 
-                            Spacer()
-
-                            Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"))
+                            Text(installer.state.message ?? "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to Applications. It never replaces the app automatically.")
                                 .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(installer.state.isFailure ? .red : .secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            if case .failed = installer.state {
+                                Button("Try again") { installer.reset(); installer.downloadAndOpenLatest() }
+                                    .buttonStyle(.bordered)
+                            }
                         }
 
                         Divider()
