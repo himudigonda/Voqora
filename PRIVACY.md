@@ -7,14 +7,9 @@ Some features can make external requests:
 
 | Feature | When it communicates externally |
 | --- | --- |
-| Optional product telemetry | When the telemetry toggle is enabled in Preferences. It sends product-use metadata, not the text selected for speech. Every event is labelled `voqora`; the retired SuperSay legacy app uses a separate `supersay` label. |
+| Optional product telemetry | When the telemetry toggle is enabled in Preferences. It sends product-use metadata, not the text selected for speech. |
 | Optional PDF cleaning | Only when you provide a Gemini API key and choose the PDF-cleaning flow. The selected document material is sent to Gemini for that operation. |
 | Release checks | When automatic update checks are enabled or you choose **Check for Updates**. The app reads Voqora's signed public update feed; it does not upload your text, files, or account data. |
-
-If SuperSay is found in `/Applications` or `~/Applications`, Voqora can report
-that discovery, a completed explicit preference import, and a later observed
-legacy-app removal. These are product events only. Voqora never uploads the
-legacy app's preferences or contents, and it never removes SuperSay itself.
 
 Telemetry reports anonymous installations, not a deduplicated count of people.
 If you voluntarily enter an email in Voqora, it is stored separately from

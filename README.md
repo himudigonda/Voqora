@@ -7,6 +7,10 @@ turning long PDFs into resumable audiobooks. It is built for the moment when
 you still need to get through the material, but do not want to keep staring at
 it.
 
+Previously published as SuperSay. Its archival product history lives in the
+[legacy post](https://himudigonda.me/blog/supersay); this repository documents
+Voqora as it exists today.
+
 <p align="center">
   <a href="https://github.com/himudigonda/Voqora/releases/latest"><img src="https://img.shields.io/github/v/release/himudigonda/Voqora?display_name=tag&style=flat-square" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-111827?style=flat-square&logo=apple&logoColor=white" alt="macOS 14 or later">
@@ -70,21 +74,35 @@ text. Optional PDF cleanup is separate: if you provide a Gemini API key and
 choose that flow, the relevant document material is sent to Gemini for that
 operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 
-## Moving from SuperSay
+## Product boundary, plainly stated
 
-SuperSay is an earlier public product that is now frozen at its final legacy
-release. Voqora is the supported current product.
+| What you do | What Voqora does | What it does not do by default |
+| --- | --- | --- |
+| Speak selected text | Sends it to the bundled local speech service on your Mac. | Upload it to a hosted text-to-speech API. |
+| Add a normal PDF | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
+| Clean a difficult PDF | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
+| Use product analytics | Sends an optional anonymous event with a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
+| Check for an update | Reads Voqora's signed public update feed. | Upload your reading activity or personal files. |
 
-When Voqora finds `SuperSay.app` in `/Applications` or `~/Applications`, it
-offers an explicit, local-only import of compatible voice, speed, volume,
-ducking, theme, font, and URL-cleanup preferences. It never copies documents,
-audio, history, credentials, email, shortcuts, or analytics choices, and it
-never removes SuperSay automatically. Confirm that Voqora works for you, then
-move SuperSay to Trash yourself when you are ready.
+An optional email in Preferences helps attribute a returning installation, but
+Voqora works fully without it. Installations, download clicks, product events,
+and opted-in contacts are measured as different things, because a useful
+product dashboard should describe reality rather than manufacture a flattering
+audience number.
 
-The two products record separate anonymous installation counts. They are not
-presented as a deduplicated count of people. An optional email entered in
-Voqora is the only future basis for a legitimate identity link.
+## Built as a native Mac utility
+
+The visible action is one shortcut. The work behind it is a deliberately small
+native system: SwiftUI and AppKit for the Mac experience, a bundled local
+FastAPI service for speech, Kokoro ONNX for synthesis, and streaming audio
+playback so listening can begin before a longer passage has fully rendered.
+
+That split is intentional. A browser tab can make sound. A useful desktop
+utility has to work with selected text in other applications, survive restarts,
+remember progress, recover from permissions and engine startup, and stay out
+of the way once it is set up. The [architecture guide](docs/architecture.md)
+maps those boundaries; the [technical deep dive](https://himudigonda.me/blog/voqora)
+explains the decisions behind them.
 
 ## Measured on the launch machine
 
@@ -143,6 +161,15 @@ make test-ci      # backend + the explicit serial macOS test target
 - [Roadmap](docs/ROADMAP.md)
 - [Data handling](PRIVACY.md)
 - [Commercial licensing](COMMERCIAL-LICENSE.md)
+
+## Release integrity
+
+The repository keeps the source, install guidance, changelog, release process,
+and signed update-feed tooling together. A candidate is not called ready just
+because it compiles: it must pass the fast backend suite, the explicit serial
+macOS suite, a mounted-DMG inspection, first-use validation, and an actual
+update-feed check against the exact archive being shipped. See the
+[release process](docs/release.md) for the full evidence checklist.
 
 ## License
 
