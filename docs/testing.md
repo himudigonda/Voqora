@@ -37,7 +37,7 @@ normal edit-save-verify loop while still testing it before merge.
 
 ## Current validation baseline
 
-The current local baseline is 183 backend tests and 71 Swift tests. Re-run only
+The current local baseline is 184 backend tests and 73 Swift tests. Re-run only
 the smallest relevant command while iterating; run the full release candidate
 matrix once at the release gate. Documentation, packaging, or automation edits
 that change user-facing distribution behavior still need their specific
