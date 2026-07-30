@@ -9,13 +9,18 @@ from app.core.config import settings
 _SR = settings.AUDIO_SAMPLE_RATE
 _BYTE_RATE = _SR * 2  # mono int16 → 2 bytes/sample
 
-# Pre-computed WAV header for streaming (44 bytes, sizes set to zero for streaming)
+# Pre-computed WAV header for an open-ended stream. A size of zero makes
+# AVFoundation reject the response as an empty file. `0xFFFFFFFF` is the
+# conventional unknown-length sentinel used by RIFF stream producers; parsers
+# consume the available PCM bytes while the Swift client keeps its low-latency
+# header-then-PCM path.
+_STREAMING_RIFF_SIZE = 0xFFFFFFFF
 _WAV_HEADER = bytearray(44)
-struct.pack_into("<4sI4s", _WAV_HEADER, 0, b"RIFF", 0, b"WAVE")
+struct.pack_into("<4sI4s", _WAV_HEADER, 0, b"RIFF", _STREAMING_RIFF_SIZE, b"WAVE")
 struct.pack_into(
     "<4sIHHIIHH", _WAV_HEADER, 12, b"fmt ", 16, 1, 1, _SR, _BYTE_RATE, 2, 16
 )
-struct.pack_into("<4sI", _WAV_HEADER, 36, b"data", 0)
+struct.pack_into("<4sI", _WAV_HEADER, 36, b"data", _STREAMING_RIFF_SIZE)
 _WAV_HEADER_BYTES = bytes(_WAV_HEADER)
 
 # Pre-computed fade curves (avoid re-allocating on every call)

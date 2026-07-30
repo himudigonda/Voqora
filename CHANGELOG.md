@@ -30,6 +30,9 @@ this is the first public release of the product and its source history.
 - A delayed audiobook-file request can no longer revive playback after Stop,
   deletion, or a switch to another book. Voqora invalidates the older request
   before teardown and does not surface its late error as a fresh user action.
+- The local speech stream now uses an explicit open-ended WAV envelope that
+  AVFoundation accepts. This keeps playback streaming while avoiding an
+  apparently successful response that audio parsers treat as an empty file.
 - Unified the document contract across the Library importer, global drag and
   drop, MIME handling, and metrics. Voqora accepts PDF, TXT, DOCX, and
   Markdown, stages documents safely before processing, and gives a readable
