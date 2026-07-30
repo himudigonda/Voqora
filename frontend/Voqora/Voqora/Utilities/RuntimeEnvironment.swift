@@ -8,4 +8,11 @@ enum RuntimeEnvironment {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTestCase") != nil
     }
+
+    /// The app target hosts its unit tests. Keep test-only state out of the
+    /// user's Voqora preferences, without changing the production default.
+    nonisolated static func testDefaults() -> UserDefaults {
+        let suite = "com.himudigonda.Voqora.tests.\(ProcessInfo.processInfo.processIdentifier)"
+        return UserDefaults(suiteName: suite)!
+    }
 }

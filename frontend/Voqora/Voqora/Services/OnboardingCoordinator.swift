@@ -1,6 +1,5 @@
 import Combine
 import Foundation
-import SwiftUI
 import ApplicationServices
 
 /// Single source of truth for first-launch onboarding state.
@@ -15,14 +14,26 @@ final class OnboardingCoordinator: ObservableObject {
     /// release after the legacy identity change.
     private static let currentVersion = 3
 
-    @AppStorage("hasOnboarded") private var hasOnboarded: Bool = false
-    @AppStorage("onboardingVersion") private var storedVersion: Int = 0
-
     @Published private(set) var version: Int = 0
     private let accessibilityTrusted: () -> Bool
+    private let defaults: UserDefaults
 
-    init(accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() }) {
+    private var hasOnboarded: Bool {
+        get { defaults.bool(forKey: "hasOnboarded") }
+        set { defaults.set(newValue, forKey: "hasOnboarded") }
+    }
+
+    private var storedVersion: Int {
+        get { defaults.integer(forKey: "onboardingVersion") }
+        set { defaults.set(newValue, forKey: "onboardingVersion") }
+    }
+
+    init(
+        accessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
+        defaults: UserDefaults = .standard
+    ) {
         self.accessibilityTrusted = accessibilityTrusted
+        self.defaults = defaults
         if storedVersion < Self.currentVersion {
             hasOnboarded = false
             storedVersion = Self.currentVersion

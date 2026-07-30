@@ -19,10 +19,10 @@ struct VoqoraApp: App {
     @StateObject private var audiobookVM: AudiobookViewModel
 
     /// First-launch + onboarding state.
-    @StateObject private var onboarding = OnboardingCoordinator()
+    @StateObject private var onboarding: OnboardingCoordinator
 
     /// Anonymous identity (anon_id + optional email) for analytics.
-    @StateObject private var identity = IdentityService.shared
+    @StateObject private var identity: IdentityService
 
     /// Live AX + Notifications permission status. Observed by onboarding.
     @StateObject private var permissions = PermissionsService()
@@ -70,6 +70,11 @@ struct VoqoraApp: App {
         let systemInstance = SystemService()
         let updaterInstance = AppUpdater()
         let legacyMigrationInstance = LegacySuperSayMigration()
+        let testDefaults = runningTests ? RuntimeEnvironment.testDefaults() : nil
+        let onboardingInstance = OnboardingCoordinator(defaults: testDefaults ?? .standard)
+        let identityInstance = runningTests
+            ? IdentityService(defaults: testDefaults!)
+            : IdentityService.shared
 
         // Create VM with dependency injection
         let vmInstance = DashboardViewModel(
@@ -92,6 +97,8 @@ struct VoqoraApp: App {
         _launchManager = StateObject(wrappedValue: launchInstance)
         _dashboardVM = StateObject(wrappedValue: vmInstance)
         _audiobookVM = StateObject(wrappedValue: audiobookInstance)
+        _onboarding = StateObject(wrappedValue: onboardingInstance)
+        _identity = StateObject(wrappedValue: identityInstance)
         _updater = StateObject(wrappedValue: updaterInstance)
         _legacyMigration = StateObject(wrappedValue: legacyMigrationInstance)
 

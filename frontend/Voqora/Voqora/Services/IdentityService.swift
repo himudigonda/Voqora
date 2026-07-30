@@ -30,8 +30,10 @@ final class IdentityService: ObservableObject {
     /// at init and cached; never changes for the lifetime of an install.
     let anonID: String
 
-    private init() {
-        let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         if let stored = defaults.string(forKey: Self.anonKey), !stored.isEmpty {
             self.anonID = stored
         } else {
@@ -82,7 +84,7 @@ final class IdentityService: ObservableObject {
             throw IdentityError.server("Server error \(http.statusCode)")
         }
 
-        UserDefaults.standard.set(trimmed, forKey: Self.emailKey)
+        defaults.set(trimmed, forKey: Self.emailKey)
         self.email = trimmed
         Self.log.info("identify ok for anon=\(self.anonID.prefix(8), privacy: .public)")
     }
@@ -91,7 +93,7 @@ final class IdentityService: ObservableObject {
     /// normal product UI calls `removeEmail()` so the optional server-side
     /// contact is removed too.
     func clearEmail() {
-        UserDefaults.standard.removeObject(forKey: Self.emailKey)
+        defaults.removeObject(forKey: Self.emailKey)
         email = nil
     }
 
