@@ -8,7 +8,9 @@ drag Voqora to Applications, and open it.
 
 The current build is not Apple-notarized. If macOS blocks the first launch,
 open **System Settings -> Privacy & Security**, choose **Open Anyway** for
-Voqora, then open it again. If macOS does not show that option or repeats the
+Voqora, then open it again. The DMG also includes an
+**OPTIONAL-OPEN-VOQORA.command** fallback that only targets the installed
+`/Applications/Voqora.app`. If macOS does not show that option or repeats the
 warning, and you downloaded Voqora from the official release page, run this
 once in Terminal:
 

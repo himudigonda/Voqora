@@ -9,6 +9,7 @@ struct PreferencesView: View {
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var legacyMigration: LegacySuperSayMigration
+    @EnvironmentObject var installer: GuidedInstallerService
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -436,23 +437,37 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        HStack {
-                            Link(destination: URL(string: "https://github.com/himudigonda/Voqora/releases/latest")!) {
-                                Label("Get the Latest Voqora", systemImage: "arrow.down.circle")
-                                    .font(vm.appFont(size: 13, weight: .medium))
-                            }
-                            .buttonStyle(.plain)
+                        VStack(alignment: .leading, spacing: 9) {
+                            HStack {
+                                Button {
+                                    installer.downloadAndOpenLatest()
+                                } label: {
+                                    Label(installer.state.isBusy ? "Preparing installer…" : "Download latest installer", systemImage: "arrow.down.circle")
+                                        .font(vm.appFont(size: 13, weight: .medium))
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.cyan)
+                                .disabled(installer.state.isBusy)
 
-                            Text("Early access uses manual updates from GitHub Releases.")
+                                Link("View releases on GitHub", destination: GuidedInstallerService.releasePageURL)
+                                    .font(vm.appFont(size: 11, weight: .medium))
+
+                                Spacer()
+
+                                Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"))
+                                    .font(vm.appFont(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text(installer.state.message ?? "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to Applications. It never replaces the app automatically.")
                                 .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(installer.state.isFailure ? .red : .secondary)
                                 .fixedSize(horizontal: false, vertical: true)
 
-                            Spacer()
-
-                            Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"))
-                                .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                            if case .failed = installer.state {
+                                Button("Try again") { installer.reset(); installer.downloadAndOpenLatest() }
+                                    .buttonStyle(.bordered)
+                            }
                         }
 
                         Divider()

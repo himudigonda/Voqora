@@ -9,7 +9,13 @@ release must all describe the same product.
 `main` is the only public branch. Keep unreleased work isolated from `main` and
 do not publish it until the release is approved.
 
-Voqora uses Sparkle 2 for in-app updates. Every release has two identifiers:
+The current early-access channel uses a verified DMG handoff: the app obtains
+official GitHub release metadata, verifies the DMG's published SHA-256, then
+opens the DMG in Finder for an explicit drag to Applications. It does not use
+Sparkle to replace an unsigned app.
+
+Sparkle is reserved for the later Developer ID-signed and notarized channel.
+Every public release still has two identifiers:
 
 - **Marketing version**: what people see, for example `1.0.0`.
 - **Build number**: the monotonically increasing bundle identity Sparkle uses.
@@ -59,10 +65,11 @@ Inspect the actual mounted DMG:
 3. The app bundle reports the intended bundle identifier and version.
 4. The local server starts and selected text can be spoken.
 
-## 5. Create and publish the signed update feed
+## 5. Create and publish the signed update feed only for the notarized channel
 
-After the DMG is built, generate the Sparkle appcast while the update signing
-key is available in the release Mac's Keychain:
+Do this only after Developer ID signing and notarization are available. After
+the DMG is built, generate the Sparkle appcast while the update signing key is
+available in the release Mac's Keychain:
 
 ```bash
 make appcast VERSION=X.Y.Z
@@ -97,9 +104,11 @@ come from the matching changelog section.
 - Open the GitHub release page in a logged-out browser session and confirm the
   exact DMG asset can be downloaded before checking the appcast.
 - Download the DMG and confirm its SHA-256 matches the build receipt.
-- From a separately installed older build, open **Preferences → Check for
-  Updates**. It should accept the signed appcast and offer the newer release
-  rather than download and run a DMG installer itself.
+- In the early-access channel, choose **Preferences → Download latest
+  installer**. Confirm it opens only a digest-verified DMG in Finder and that
+  no app is replaced automatically.
+- In the notarized Sparkle channel, separately install an older build and
+  verify the signed appcast offers the newer release.
 - Check that the repository default branch and release tag contain only Voqora
   branding.
 - Check that the release notes explain what users get, not internal project

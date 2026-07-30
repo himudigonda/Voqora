@@ -137,6 +137,15 @@ for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
 done
 echo "   ✓ License and third-party notices bundled."
 
+# The disk image carries its own readable first-run support path. This is a
+# deliberate temporary supplement to the non-notarized early-access channel,
+# not an unattended installer or a substitute for Apple notarization.
+for SUPPORT_FILE in README-FIRST.txt OPTIONAL-OPEN-VOQORA.command; do
+    cp "installer/${SUPPORT_FILE}" "$STAGING_DIR/${SUPPORT_FILE}"
+done
+chmod +x "$STAGING_DIR/OPTIONAL-OPEN-VOQORA.command"
+echo "   ✓ Bundled early-access install guidance."
+
 # Fonts and notices are added after Xcode archives the application, so the
 # top-level signature must be refreshed after every staged resource is in its
 # final location. Re-signing only the app bundle preserves the nested
@@ -162,6 +171,8 @@ create-dmg \
     --icon        "${APP_NAME}.app"  165 200 \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 200 \
+    --icon "README-FIRST.txt" 165 350 \
+    --icon "OPTIONAL-OPEN-VOQORA.command" 495 350 \
     --no-internet-enable \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"

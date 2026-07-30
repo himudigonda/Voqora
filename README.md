@@ -83,7 +83,7 @@ operation. See [PRIVACY.md](PRIVACY.md) for the complete product boundary.
 | Add a PDF, TXT, DOCX, or Markdown file | Extracts, narrates, and stores audiobook progress locally. | Create an account or send the document to Voqora's servers. |
 | Clean a difficult document | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
 | Use product analytics | Sends an optional anonymous event with a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
-| Check for an update | Checks Voqora's public update feed for a newer release. | Upload your reading activity or personal files. |
+| Get the latest build | Opens a SHA-256-verified DMG from Voqora's official GitHub release in Finder. | Replace the app automatically, alter Gatekeeper settings, or upload your reading activity or personal files. |
 
 An optional email in Preferences helps attribute a returning installation, but
 Voqora works fully without it. Installations, download clicks, product events,
@@ -116,13 +116,16 @@ with `make benchmark` before a release or public performance claim.
 
 ## Install notes
 
-Voqora is free to download, but the current release is not yet Apple-notarized. After
-dragging it to Applications, try opening it normally. If macOS blocks that
-first launch, open **System Settings -> Privacy & Security**, choose **Open
+Voqora is free to download, but the current release is not yet Apple-notarized.
+The DMG includes **README-FIRST.txt** with the short path: drag Voqora to
+Applications, eject the DMG, then open Voqora from Applications. If macOS blocks
+that first launch, open **System Settings -> Privacy & Security**, choose **Open
 Anyway** for Voqora, then open it again.
 
 If that button is missing or macOS keeps showing the same warning, and you
-downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run this once in Terminal:
+downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run the included
+**OPTIONAL-OPEN-VOQORA.command** after moving the app to Applications. You can
+also run this once in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Voqora.app

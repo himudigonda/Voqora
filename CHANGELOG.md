@@ -5,6 +5,30 @@ this is the first public release of the product and its source history.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-07-30
+
+### Guided early-access updates
+
+- Added a deliberate manual update path for the current non-notarized channel.
+  Voqora now fetches the official GitHub release metadata, accepts exactly one
+  HTTPS Voqora DMG with a published SHA-256 digest, verifies the downloaded
+  file, and opens it in Finder for a user-controlled drag to Applications.
+- The update path never replaces the running app, changes Gatekeeper settings,
+  or runs a shell command. It gives clear resolving, download, verification,
+  success, retry, and GitHub fallback states instead.
+- The DMG now includes `README-FIRST.txt` and an explicitly optional scoped
+  recovery command for the installed `/Applications/Voqora.app`. Both explain
+  the pre-notarization status without pretending the fallback is automatic.
+
+### Migration and measurement
+
+- Added the same digest-verified Finder handoff to the final SuperSay legacy
+  patch, alongside direct links to the SuperSay story, Voqora story, GitHub,
+  and current installer.
+- Recorded installer download, verification, Finder-open, and failure events
+  as distinct funnel signals. They are not described as installs or people.
+- Aligned the public event validator with the app’s closed telemetry list.
+
 ## [1.0.3] - 2026-07-30
 
 ### First-use reliability
@@ -252,6 +276,7 @@ this is the first public release of the product and its source history.
   manual approval on first launch.
 - Optional PDF cleanup depends on a Gemini API key supplied by the user.
 
+[1.0.4]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.4
 [1.0.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.1
 [1.0.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.2
 [1.0.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.3
