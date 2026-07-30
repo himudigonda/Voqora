@@ -34,7 +34,8 @@ this is the first public release of the product and its source history.
 
 - Moved the public marketing version to `1.0.1`. Existing `1.0.0` installs need
   a higher version to receive a Sparkle update; an equal-version replacement
-  cannot be delivered as an update.
+  cannot be delivered as an update. The internal bundle build also advances to
+  `3`, so Sparkle can distinguish this build from the earlier v1.0.0 delivery.
 - Documented the legacy transition, data boundary, and single-host Swift test
   policy in the public release material.
 
