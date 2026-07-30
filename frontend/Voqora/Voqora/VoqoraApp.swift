@@ -39,29 +39,31 @@ struct VoqoraApp: App {
     private let backend: BackendService
 
     init() {
-        // 1. REDIRECT FRONTEND LOGS TO FILE
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
+        let runningTests = RuntimeEnvironment.isRunningTests
+        if !runningTests {
+            // 1. REDIRECT FRONTEND LOGS TO FILE
+            let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
+            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
 
-        // Ensure directory exists
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+            // Ensure directory exists
+            try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
-        let logURL = appSupport.appendingPathComponent("frontend.log")
+            let logURL = appSupport.appendingPathComponent("frontend.log")
 
-        // Clear old log
-        try? "".write(to: logURL, atomically: true, encoding: .utf8)
+            // Clear old log
+            try? "".write(to: logURL, atomically: true, encoding: .utf8)
 
-        // Redirect stdout and stderr to the log file, then disable buffering so every
-        // print() line lands immediately (no partial logs on crash or low-volume runs).
-        freopen(logURL.path, "a+", stdout)
-        freopen(logURL.path, "a+", stderr)
-        setbuf(stdout, nil)
-        setbuf(stderr, nil)
+            // Redirect stdout and stderr to the log file, then disable buffering so every
+            // print() line lands immediately (no partial logs on crash or low-volume runs).
+            freopen(logURL.path, "a+", stdout)
+            freopen(logURL.path, "a+", stderr)
+            setbuf(stdout, nil)
 
-        print("--- Voqora Frontend Log Started: \(Date()) ---")
+            print("--- Voqora Frontend Log Started: \(Date()) ---")
+        }
 
         // Create instances
-        let audioInstance = AudioService()
+        let audioInstance = AudioService(startingEngine: !runningTests)
         let historyInstance = HistoryManager()
         let launchInstance = LaunchManager()
         let backendInstance = BackendService()
@@ -98,19 +100,21 @@ struct VoqoraApp: App {
 
         backend = backendInstance
 
-        // Don't trigger permission prompts here — the onboarding wizard
-        // gates them behind explicit buttons. SystemService still drives
-        // ducking + AppleScript permissions on first hotkey use.
-        setupShortcuts(vm: vmInstance, audio: audioInstance)
+        if !runningTests {
+            // Don't trigger permission prompts here — the onboarding wizard
+            // gates them behind explicit buttons. SystemService still drives
+            // ducking + AppleScript permissions on first hotkey use.
+            setupShortcuts(vm: vmInstance, audio: audioInstance)
 
-        MetricsService.shared.trackLaunch()
-        // Start the periodic flush driver (previously embedded inside the
-        // singleton init; now externalized so the actor can stay isolated).
-        Task { @MainActor in
-            MetricsFlushDriver.shared.start()
+            MetricsService.shared.trackLaunch()
+            // Start the periodic flush driver (previously embedded inside the
+            // singleton init; now externalized so the actor can stay isolated).
+            Task { @MainActor in
+                MetricsFlushDriver.shared.start()
+            }
+            registerCustomFonts()
+            checkRunningLocation()
         }
-        registerCustomFonts()
-        checkRunningLocation()
     }
 
     private func checkRunningLocation() {
@@ -190,17 +194,26 @@ struct VoqoraApp: App {
 
     var body: some Scene {
         WindowGroup(id: "dashboard") {
-            VoqoraWindow()
-                .environmentObject(dashboardVM)
-                .environmentObject(audio)
-                .environmentObject(history)
-                .environmentObject(launchManager)
-                .environmentObject(audiobookVM)
-                .environmentObject(onboarding)
-                .environmentObject(identity)
-                .environmentObject(permissions)
-                .environmentObject(updater)
-                .environmentObject(legacyMigration)
+            Group {
+                if RuntimeEnvironment.isRunningTests {
+                    // The test target is app-hosted so it can import internal
+                    // Swift symbols. It must not also run the product window
+                    // lifecycle.
+                    EmptyView()
+                } else {
+                    VoqoraWindow()
+                        .environmentObject(dashboardVM)
+                        .environmentObject(audio)
+                        .environmentObject(history)
+                        .environmentObject(launchManager)
+                        .environmentObject(audiobookVM)
+                        .environmentObject(onboarding)
+                        .environmentObject(identity)
+                        .environmentObject(permissions)
+                        .environmentObject(updater)
+                        .environmentObject(legacyMigration)
+                }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])

@@ -96,9 +96,15 @@ class AudioService: NSObject, ObservableObject {
     /// See HARD-020.
     private var volumeRampToken: UUID?
 
-    override init() {
+    init(startingEngine: Bool = !RuntimeEnvironment.isRunningTests) {
         super.init()
-        setupEngine()
+        // XCTest hosts the app target. Starting Core Audio there can leave an
+        // orphaned audio process after pure logic tests have finished. Unit
+        // tests do not exercise playback hardware, so keep that dependency
+        // explicit and leave the production default unchanged.
+        if startingEngine {
+            setupEngine()
+        }
     }
 
     private func setupEngine() {
@@ -566,9 +572,36 @@ class AudioService: NSObject, ObservableObject {
     }
 
     func exportToDesktop() throws -> URL {
-        guard !lastAudioData.isEmpty else { throw ExportError.noAudioAvailable }
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
+        let timestamp = Int(Date().timeIntervalSince1970)
+        do {
+            let exportedURL = try Self.writeWAV(
+                pcmData: lastAudioData,
+                to: desktop,
+                timestamp: timestamp
+            )
+            // Record an export only after the atomic file write has succeeded.
+            MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
+            return exportedURL
+        } catch let error as ExportError {
+            throw error
+        } catch {
+            throw ExportError.couldNotSave
+        }
+    }
+
+    /// Writes a complete WAV for a rendered PCM stream. Kept deterministic so
+    /// the app can test export bytes and name collisions without touching a
+    /// person's Desktop or needing an audio device.
+    static func writeWAV(
+        pcmData: Data,
+        to directory: URL,
+        timestamp: Int,
+        fileManager: FileManager = .default
+    ) throws -> URL {
+        guard !pcmData.isEmpty else { throw ExportError.noAudioAvailable }
         let headerSize = 44
-        let totalSize = lastAudioData.count + headerSize - 8
+        let totalSize = pcmData.count + headerSize - 8
         var header = Data()
         header.append("RIFF".data(using: .ascii)!)
         header.append(contentsOf: withUnsafeBytes(of: UInt32(totalSize)) { Data($0) })
@@ -581,29 +614,34 @@ class AudioService: NSObject, ObservableObject {
         header.append(contentsOf: withUnsafeBytes(of: UInt16(2)) { Data($0) })
         header.append(contentsOf: withUnsafeBytes(of: UInt16(16)) { Data($0) })
         header.append("data".data(using: .ascii)!)
-        header.append(contentsOf: withUnsafeBytes(of: UInt32(lastAudioData.count)) { Data($0) })
+        header.append(contentsOf: withUnsafeBytes(of: UInt32(pcmData.count)) { Data($0) })
 
-        let wavData = header + lastAudioData
-        let desktopURL = uniqueDesktopExportURL()
+        let wavData = header + pcmData
+        let exportURL = uniqueWAVExportURL(
+            in: directory,
+            timestamp: timestamp,
+            fileManager: fileManager
+        )
         do {
-            try wavData.write(to: desktopURL, options: .atomic)
+            try wavData.write(to: exportURL, options: .atomic)
         } catch {
             throw ExportError.couldNotSave
         }
-        MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
-        return desktopURL
+        return exportURL
     }
 
-    private func uniqueDesktopExportURL() -> URL {
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
-        let timestamp = Int(Date().timeIntervalSince1970)
+    private static func uniqueWAVExportURL(
+        in directory: URL,
+        timestamp: Int,
+        fileManager: FileManager
+    ) -> URL {
         let stem = "Voqora_\(timestamp)"
         var suffix = 1
-        var url = desktop.appendingPathComponent("\(stem).wav")
+        var url = directory.appendingPathComponent("\(stem).wav")
 
-        while FileManager.default.fileExists(atPath: url.path) {
+        while fileManager.fileExists(atPath: url.path) {
             suffix += 1
-            url = desktop.appendingPathComponent("\(stem)_\(suffix).wav")
+            url = directory.appendingPathComponent("\(stem)_\(suffix).wav")
         }
         return url
     }
