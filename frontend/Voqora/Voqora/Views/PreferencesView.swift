@@ -8,7 +8,6 @@ struct PreferencesView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
-    @EnvironmentObject var legacyMigration: LegacySuperSayMigration
     @EnvironmentObject var installer: GuidedInstallerService
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
@@ -18,7 +17,6 @@ struct PreferencesView: View {
     @State private var emailSaved = false
     @State private var emailRemoving = false
     @State private var emailRemovalQueued = false
-    @State private var migrationStatus: String?
 
     var body: some View {
         ScrollView {
@@ -121,38 +119,6 @@ struct PreferencesView: View {
                             Label("Run onboarding again", systemImage: "arrow.counterclockwise")
                         }
                         .buttonStyle(.bordered)
-                    }
-                }
-
-                if legacyMigration.isLegacyInstalled {
-                    PreferenceSection(title: "SuperSay migration", icon: "arrow.right.circle") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("SuperSay is retired. Voqora is the supported successor.")
-                                .font(vm.appFont(size: 14, weight: .bold))
-                            Text("Import compatible playback and appearance preferences if you want to. Documents, audio, history, credentials, email, shortcuts, and analytics choices are never copied. Voqora will never remove SuperSay automatically.")
-                                .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                            HStack {
-                                Button("Import preferences") {
-                                    let count = legacyMigration.importCompatiblePreferences()
-                                    migrationStatus = count > 0
-                                        ? "Imported \(count) compatible preference\(count == 1 ? "" : "s")."
-                                        : "No compatible SuperSay preferences were found."
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.cyan)
-                                Button("Show SuperSay in Finder") {
-                                    legacyMigration.showLegacyAppInFinder()
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                            if let migrationStatus {
-                                Text(migrationStatus)
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
                     }
                 }
 
