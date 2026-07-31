@@ -113,20 +113,6 @@ actor MetricsService {
         }
     }
 
-    /// Records a real, local migration state only. These events are used to
-    /// understand the voluntary SuperSay-to-Voqora path, not to infer people.
-    nonisolated func trackMigrationDetected() {
-        Task { await self.enqueue(event: "migration_detected", props: [:]) }
-    }
-
-    nonisolated func trackMigrationCompleted() {
-        Task { await self.enqueue(event: "migration_completed", props: [:]) }
-    }
-
-    nonisolated func trackLegacyAppRemoved() {
-        Task { await self.enqueue(event: "legacy_app_removed", props: [:]) }
-    }
-
     /// Installer signals describe the handoff funnel, never a completed app
     /// installation or a unique person. The DMG still requires an explicit
     /// Finder drag-and-drop step by the user.
@@ -302,7 +288,6 @@ extension MetricsService {
         nonisolated static let allowedNames: Set<String> = [
             "app_launch", "generation", "export",
             "audiobook_upload", "audiobook_play", "gemini_clean",
-            "migration_detected", "migration_completed", "legacy_app_removed",
             "installer_download_started", "installer_download_verified",
             "installer_opened", "installer_failed",
         ]
