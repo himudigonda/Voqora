@@ -117,14 +117,14 @@ with `make benchmark` before a release or public performance claim.
 ## Install notes
 
 Voqora is free to download, but the current release is not yet Apple-notarized.
-The DMG includes **README-FIRST.txt** with the short path: drag Voqora to
+The release notes include the short path: drag Voqora to
 Applications, eject the DMG, then open Voqora from Applications. If macOS blocks
 that first launch, open **System Settings -> Privacy & Security**, choose **Open
 Anyway** for Voqora, then open it again.
 
 If that button is missing or macOS keeps showing the same warning, and you
 downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run the included
-**OPTIONAL-OPEN-VOQORA.command** after moving the app to Applications. You can
+the scoped recovery command after moving the app to Applications. You can
 also run this once in Terminal:
 
 ```bash
