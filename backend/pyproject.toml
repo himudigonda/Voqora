@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-version = "1.0.4"
+version = "1.0.0"
 description = "Voqora Inference Engine"
 readme = "README.md"
 requires-python = ">=3.11"
