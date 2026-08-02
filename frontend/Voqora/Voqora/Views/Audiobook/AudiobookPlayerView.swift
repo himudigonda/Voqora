@@ -72,6 +72,7 @@ struct AudiobookPlayerView: View {
             // avoid rendering a second player bar underneath it.
             bookVM.isPlayerViewActive = true
             playerSpeed = bookVM.defaultBookSpeed
+            bookVM.audio.setPlaybackRate(Float(playerSpeed))
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
             }
@@ -304,6 +305,7 @@ struct AudiobookPlayerView: View {
                     Button(String(format: "%.2gx", s)) {
                         playerSpeed = s
                         bookVM.defaultBookSpeed = s
+                        bookVM.audio.setPlaybackRate(Float(s))
                     }
                 }
             } label: {
@@ -529,6 +531,7 @@ struct AudiobookPlayerView: View {
         let clamped = min(2.0, max(0.75, raw))
         playerSpeed = clamped
         bookVM.defaultBookSpeed = clamped
+        bookVM.audio.setPlaybackRate(Float(clamped))
     }
 
     private var prettyTitle: String {

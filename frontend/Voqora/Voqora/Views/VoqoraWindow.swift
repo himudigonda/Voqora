@@ -166,6 +166,15 @@ struct VoqoraWindow: View {
                 DispatchQueue.main.async {
                     showOnboarding = true
                 }
+            } else if !permissions.accessibilityGranted {
+                // A completed setup can still end up without Accessibility —
+                // revoked in System Settings, or (for a locally rebuilt
+                // candidate) invalidated because every rebuild changes the
+                // app's code signature. Don't wait for the user to find the
+                // dashboard banner or replay onboarding: ask again immediately.
+                // macOS itself suppresses the system dialog once already
+                // answered, so this is a silent no-op for anyone who denied it.
+                permissions.requestAccessibility()
             }
         }
         .onChange(of: onboarding.version) { _, _ in

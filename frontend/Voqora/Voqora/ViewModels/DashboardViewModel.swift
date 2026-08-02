@@ -1,3 +1,4 @@
+import ApplicationServices
 import Combine
 import Foundation
 import SwiftUI
@@ -220,10 +221,28 @@ class DashboardViewModel: ObservableObject {
         }
         guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
             print("⚠️ DashboardViewModel: No text found in selection.")
-            showTransientError("Select text in any app, then press Cmd+Shift+.")
+            if !AXIsProcessTrusted() {
+                // Without Accessibility, SelectionManager can never read a
+                // selection — this is the shortcut's most common silent
+                // failure. A toast alone is easy to miss if Voqora's window
+                // isn't focused, so bring the app forward and go straight to
+                // the fix instead of leaving the user to guess why nothing happened.
+                showTransientError("Voqora needs Accessibility access. Opening System Settings…")
+                NSApp.activate(ignoringOtherApps: true)
+                PermissionsService.shared.openAccessibilitySettings()
+            } else {
+                showTransientError("Select text in any app, then press Cmd+Shift+.")
+            }
             return
         }
         print("🎤 DashboardViewModel: Sending \(text.count) chars to backend...")
+        // Confirms the shortcut actually fired even when Voqora's window is
+        // backgrounded — the only in-app feedback otherwise is a toast on a
+        // window the user may not be looking at.
+        PermissionsService.shared.scheduleNotification(
+            title: "Voqora is speaking",
+            body: String(text.prefix(120))
+        )
         await speak(text: text)
     }
 

@@ -83,4 +83,29 @@ final class OnboardingCoordinatorTests: XCTestCase {
         XCTAssertFalse(coord.needsOnboarding,
                        "a completed setup must not trap someone in onboarding when Accessibility is revoked")
     }
+
+    func test_resumeStep_defaultsToZero() {
+        let coord = makeCoordinator()
+        XCTAssertEqual(coord.resumeStep, 0)
+    }
+
+    func test_recordStep_persistsForResume() {
+        let coord = makeCoordinator()
+        coord.recordStep(3)
+        XCTAssertEqual(coord.resumeStep, 3, "quitting mid-wizard must resume, not restart from step 0")
+    }
+
+    func test_markCompleted_clearsResumeStep() {
+        let coord = makeCoordinator()
+        coord.recordStep(3)
+        coord.markCompleted()
+        XCTAssertEqual(coord.resumeStep, 0, "a finished wizard must not carry stale progress into a future forced re-run")
+    }
+
+    func test_reset_clearsResumeStep() {
+        let coord = makeCoordinator()
+        coord.recordStep(3)
+        coord.reset()
+        XCTAssertEqual(coord.resumeStep, 0, "'Run onboarding again' is a deliberate full replay, not a resume")
+    }
 }

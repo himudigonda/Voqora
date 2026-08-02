@@ -70,7 +70,28 @@ class AudioService: NSObject, ObservableObject {
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
-    private let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24000, channels: 1, interleaved: false)!
+    /// Sits between `playerNode` and the mixer so audiobook speed changes
+    /// actually change how fast audio plays, instead of only relabeling a
+    /// picker that never reached the engine.
+    private let timePitch = AVAudioUnitTimePitch()
+    /// AVAudioUnitTimePitch is a real Audio Unit and only accepts the
+    /// engine's canonical Float32 format — connecting it with the Int16
+    /// format this class used before crashes at `engine.connect(...)` with
+    /// kAudioUnitErr_FormatNotSupported. PCM byte accounting elsewhere
+    /// (`lastAudioData`, export, seek) still treats network audio as Int16;
+    /// only buffer construction converts to Float32 for the engine.
+    private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
+
+    /// Live playback rate applied to `timePitch`. Reset to 1.0 by `stop()` so
+    /// an audiobook's chosen speed never bleeds into an unrelated hotkey TTS
+    /// clip (TTS speed is instead baked in server-side at generation time).
+    @Published private(set) var playbackRate: Float = 1.0
+
+    func setPlaybackRate(_ rate: Float) {
+        let clamped = max(0.5, min(2.5, rate))
+        playbackRate = clamped
+        timePitch.rate = clamped
+    }
     /// Test-only instances deliberately skip Core Audio setup. Keep every
     /// playback entry point aware of that rather than letting one helper try
     /// to start an unconfigured graph.
@@ -113,7 +134,9 @@ class AudioService: NSObject, ObservableObject {
 
     private func setupEngine() {
         engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        engine.attach(timePitch)
+        engine.connect(playerNode, to: timePitch, format: format)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
         engineConfigured = true
         NotificationCenter.default.addObserver(
             self,
@@ -357,6 +380,7 @@ class AudioService: NSObject, ObservableObject {
         volumeRampTimer?.invalidate()
         volumeRampTimer = nil
         audiobookGeneration += 1  // invalidate any in-flight completion handlers
+        setPlaybackRate(1.0)
         playerNode.stop()
         timer?.cancel()
         isPlaying = false
@@ -376,13 +400,21 @@ class AudioService: NSObject, ObservableObject {
         audiobookTotalFrames = 0
     }
 
+    /// `data` holds raw little-endian Int16 PCM (the wire/export format).
+    /// The engine connection format is Float32, so each sample is converted
+    /// on the way into the buffer. Reads bytes rather than binding to Int16
+    /// directly since `data` is a slice and isn't guaranteed 2-byte aligned.
     private func dataToBuffer(_ data: Data) -> AVAudioPCMBuffer? {
         let frameCount = UInt32(data.count) / 2
         guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
         buffer.frameLength = frameCount
-        data.withUnsafeBytes { ptr in
-            if let base = ptr.baseAddress, let channel = buffer.int16ChannelData?[0] {
-                memcpy(channel, base, Int(frameCount) * MemoryLayout<Int16>.size)
+        guard let channel = buffer.floatChannelData?[0] else { return nil }
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            for i in 0..<Int(frameCount) {
+                let lo = UInt16(raw[i * 2])
+                let hi = UInt16(raw[i * 2 + 1])
+                let sample = Int16(bitPattern: lo | (hi << 8))
+                channel[i] = Float(sample) / 32768.0
             }
         }
         return buffer
@@ -459,12 +491,11 @@ class AudioService: NSObject, ObservableObject {
         isStreamActive = false
         hasStrippedHeader = true
 
-        // AVAudioFile(forReading:) sets processingFormat to Float32 regardless of
-        // the file's on-disk format. Our player node is connected with Int16, so
-        // scheduling Float32 buffers reinterprets the bit patterns as Int16 and
-        // produces pure noise. Force Int16 processing format to match the
-        // connection format and avoid the mismatch.
-        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatInt16, interleaved: false)
+        // AVAudioFile(forReading:) sets processingFormat to Float32 regardless
+        // of the file's on-disk format, which now matches the engine's
+        // connection format directly (see `format` above) — no conversion
+        // needed between the file read and the scheduled buffer.
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
         currentAudioFile = file
         audiobookSampleRate = file.processingFormat.sampleRate
         audiobookTotalFrames = file.length

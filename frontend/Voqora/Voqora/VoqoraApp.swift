@@ -25,7 +25,10 @@ struct VoqoraApp: App {
     @StateObject private var identity: IdentityService
 
     /// Live AX + Notifications permission status. Observed by onboarding.
-    @StateObject private var permissions = PermissionsService()
+    /// Uses the shared singleton so view models can schedule notifications
+    /// (audiobook ready, speaking, update available) without needing this
+    /// service injected into their initializers.
+    @StateObject private var permissions = PermissionsService.shared
 
     /// Native Sparkle 2 lifecycle. It owns background checks, verified
     /// downloads, replacement, and relaunch instead of the former custom DMG

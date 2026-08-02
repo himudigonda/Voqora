@@ -30,4 +30,12 @@ final class PermissionsServiceTests: XCTestCase {
         svc.startPolling()
         svc.stopPolling()
     }
+
+    func test_scheduleNotification_isNoOpInTestRunner() {
+        let svc = PermissionsService()
+        // Same XCTestCase guard as requestNotifications — scheduling must
+        // never touch the real UNUserNotificationCenter during a test run.
+        svc.scheduleNotification(title: "Test", body: "Test body")
+        XCTAssertEqual(svc.notificationsStatus, .unknown)
+    }
 }
