@@ -339,6 +339,10 @@ final class AudiobookViewModel: ObservableObject {
                     let book = await fetchDetailWithFallback(bookID: bookID)
                     if let book {
                         completionSummary = book
+                        PermissionsService.shared.scheduleNotification(
+                            title: "Audiobook ready",
+                            body: "\"\(book.title)\" is ready to listen."
+                        )
                     }
                     break
                 } else if type == "failed" || type == "cancelled" {
@@ -452,6 +456,9 @@ final class AudiobookViewModel: ObservableObject {
                 // book while the file request was in flight.
                 guard generation == self.playbackGeneration else { return }
                 try self.audio.loadAndPlayWAV(at: url)
+                // stop() (called just above) resets the live rate to 1.0 —
+                // reapply this book's chosen speed now that it's actually playing.
+                self.audio.setPlaybackRate(Float(self.defaultBookSpeed))
                 // Only commit user-visible playback state after loading
                 // succeeded. A corrupted local audio file must not leave a
                 // misleading "now playing" book with nothing loaded.

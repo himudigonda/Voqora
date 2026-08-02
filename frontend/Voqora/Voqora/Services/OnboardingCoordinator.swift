@@ -29,6 +29,11 @@ final class OnboardingCoordinator: ObservableObject {
         set { defaults.set(newValue, forKey: "onboardingVersion") }
     }
 
+    private var storedStep: Int {
+        get { defaults.integer(forKey: "onboardingStep") }
+        set { defaults.set(newValue, forKey: "onboardingStep") }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if storedVersion < Self.currentVersion {
@@ -45,14 +50,26 @@ final class OnboardingCoordinator: ObservableObject {
     /// choice into a product dead end.
     var needsOnboarding: Bool { !hasOnboarded }
 
+    /// The step to resume at if a user quit mid-wizard without finishing.
+    /// Zero for a fresh install, a fresh `reset()`, or after `markCompleted()`.
+    var resumeStep: Int { storedStep }
+
+    /// Persists the step reached so far. Called on every step change; only
+    /// meaningful if the wizard is abandoned before `markCompleted()` fires.
+    func recordStep(_ step: Int) {
+        storedStep = step
+    }
+
     func markCompleted() {
         hasOnboarded = true
         storedVersion = Self.currentVersion
+        storedStep = 0
         version &+= 1
     }
 
     func reset() {
         hasOnboarded = false
+        storedStep = 0
         version &+= 1
     }
 }

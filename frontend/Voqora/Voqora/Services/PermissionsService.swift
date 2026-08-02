@@ -15,6 +15,11 @@ import UserNotifications
 /// comes back.
 @MainActor
 final class PermissionsService: ObservableObject {
+    /// The app-wide instance. VoqoraApp's `@StateObject` wraps this same
+    /// instance so SwiftUI observes it while non-view callers (view models,
+    /// AppUpdater) can still reach it to schedule notifications.
+    static let shared = PermissionsService()
+
     @Published private(set) var accessibilityGranted: Bool = false
     @Published private(set) var notificationsStatus: NotificationsStatus = .unknown
 
@@ -85,6 +90,15 @@ final class PermissionsService: ObservableObject {
         }
     }
 
+    /// Opens System Settings' Notifications pane directly. Once a user has
+    /// denied notifications, `requestNotifications()` cannot re-prompt —
+    /// macOS only lets the user flip that back on here.
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     // MARK: - Notifications
 
     func refreshNotifications() async {
@@ -94,7 +108,7 @@ final class PermissionsService: ObservableObject {
             notificationsStatus = .unknown
             return
         }
-        if #available(macOS 26, *) {
+        if #available(macOS 27, *) {
             notificationsStatus = .unknown
             return
         }
@@ -112,7 +126,7 @@ final class PermissionsService: ObservableObject {
     /// Trigger the system Notifications authorization prompt. No-op on macOS 27 beta or in tests.
     func requestNotifications() async {
         guard NSClassFromString("XCTestCase") == nil else { return }
-        if #available(macOS 26, *) { return }
+        if #available(macOS 27, *) { return }
         do {
             _ = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])
@@ -120,5 +134,22 @@ final class PermissionsService: ObservableObject {
             // ignored — user denial surfaces via the settings query
         }
         await refreshNotifications()
+    }
+
+    /// Delivers a local notification for a meaningful, user-visible moment
+    /// (an audiobook finished converting, speech started, an update is
+    /// available). Silently no-ops if the user hasn't authorized
+    /// notifications yet — this is never the path that requests permission.
+    func scheduleNotification(title: String, body: String, identifier: String = UUID().uuidString) {
+        guard NSClassFromString("XCTestCase") == nil else { return }
+        guard notificationsStatus == .authorized || notificationsStatus == .provisional else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        Task {
+            try? await UNUserNotificationCenter.current().add(request)
+        }
     }
 }

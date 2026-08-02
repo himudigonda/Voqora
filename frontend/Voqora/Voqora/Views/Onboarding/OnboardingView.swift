@@ -44,10 +44,16 @@ struct OnboardingView: View {
         .frame(minWidth: 720, minHeight: 560)
         .onAppear {
             emailDraft = identity.email ?? ""
+            // Resume where a previous session left off instead of replaying
+            // already-granted permission steps from scratch.
+            step = min(max(0, coordinator.resumeStep), stepCount - 1)
             permissions.startPolling()
         }
         .onDisappear {
             permissions.stopPolling()
+        }
+        .onChange(of: step) { _, newValue in
+            coordinator.recordStep(newValue)
         }
     }
 

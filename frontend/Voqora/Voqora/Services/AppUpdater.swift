@@ -75,6 +75,10 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         isCheckingForUpdates = false
         updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
+        PermissionsService.shared.scheduleNotification(
+            title: "Update available",
+            body: "Voqora \(item.displayVersionString) is ready to review."
+        )
     }
 
     func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {

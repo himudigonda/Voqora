@@ -36,9 +36,22 @@ assert_runtime_is_exclusive() {
   fi
 }
 
+# Every local rebuild produces a new ad-hoc code signature, which silently
+# invalidates any previous Accessibility grant for this exact binary path —
+# System Settings can still show the toggle "on" while `AXIsProcessTrusted()`
+# returns false for the freshly built process, leaving the app stuck (its
+# sidebar/main UI depends on Accessibility having actually been granted to
+# THIS signature). Reset it after every build so the very next launch gets a
+# real, working grant prompt instead of a stale, misleading toggle.
+reset_dev_accessibility() {
+  echo "Resetting Accessibility for $BUNDLE_ID (every local rebuild changes its code signature, which invalidates the previous grant)..."
+  /usr/bin/tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
+}
+
 build_latest() {
   make backend
   make app
+  reset_dev_accessibility
 }
 
 launch_app() {

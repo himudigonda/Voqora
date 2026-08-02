@@ -9,6 +9,7 @@ struct PreferencesView: View {
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var installer: GuidedInstallerService
+    @EnvironmentObject var permissions: PermissionsService
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -105,6 +106,41 @@ struct PreferencesView: View {
                 .onAppear {
                     if emailDraft.isEmpty { emailDraft = identity.email ?? "" }
                 }
+
+                // Section: Notifications
+                PreferenceSection(title: "Notifications", icon: "bell.badge") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Label("System Notifications", systemImage: "bell")
+                                .font(vm.appFont(size: 14))
+                            Spacer()
+                            notificationsStatusBadge
+                        }
+
+                        Text("Notifies you when an audiobook finishes converting, when Voqora starts speaking a selection, and when an update is available.")
+                            .font(vm.appFont(size: 11))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if permissions.notificationsStatus == .denied {
+                            Button {
+                                permissions.openNotificationSettings()
+                            } label: {
+                                Label("Open Notification Settings", systemImage: "gear")
+                            }
+                            .buttonStyle(.bordered)
+                        } else if permissions.notificationsStatus != .authorized {
+                            Button {
+                                Task { await permissions.requestNotifications() }
+                            } label: {
+                                Label("Enable Notifications", systemImage: "bell.badge")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.cyan)
+                        }
+                    }
+                }
+                .onAppear { Task { await permissions.refreshNotifications() } }
 
                 PreferenceSection(title: "Setup", icon: "checklist") {
                     VStack(alignment: .leading, spacing: 10) {
@@ -483,6 +519,30 @@ struct PreferencesView: View {
             } catch {
                 emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
             }
+        }
+    }
+
+    @ViewBuilder
+    private var notificationsStatusBadge: some View {
+        switch permissions.notificationsStatus {
+        case .authorized, .provisional:
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                Text("ENABLED")
+            }
+            .font(vm.appFont(size: 9, weight: .black))
+            .kerning(1)
+            .foregroundStyle(.green)
+        case .denied:
+            Text("DENIED")
+                .font(vm.appFont(size: 9, weight: .black))
+                .kerning(1)
+                .foregroundStyle(.red)
+        case .notDetermined, .unknown:
+            Text("NOT ENABLED")
+                .font(vm.appFont(size: 9, weight: .black))
+                .kerning(1)
+                .foregroundStyle(.secondary)
         }
     }
 
