@@ -34,4 +34,33 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertFalse(updater.automaticallyChecksForUpdates)
         XCTAssertNil(updater.updateStatusMessage)
     }
+
+    func test_isVersionNewerThan_comparesNumericComponents() {
+        XCTAssertTrue(AppUpdater.isVersion("1.0.1", newerThan: "1.0.0"))
+        XCTAssertTrue(AppUpdater.isVersion("1.1.0", newerThan: "1.0.9"))
+        XCTAssertTrue(AppUpdater.isVersion("2.0.0", newerThan: "1.9.9"))
+        // Numeric comparison, not lexical — "1.0.10" must beat "1.0.9".
+        XCTAssertTrue(AppUpdater.isVersion("1.0.10", newerThan: "1.0.9"))
+    }
+
+    func test_isVersionNewerThan_falseWhenEqualOrOlder() {
+        XCTAssertFalse(AppUpdater.isVersion("1.0.0", newerThan: "1.0.0"))
+        XCTAssertFalse(AppUpdater.isVersion("1.0.0", newerThan: "1.0.1"))
+        XCTAssertFalse(AppUpdater.isVersion("0.9.9", newerThan: "1.0.0"))
+    }
+
+    func test_isVersionNewerThan_handlesMissingComponents() {
+        // "1.1" vs "1.0.5" — missing patch component defaults to 0.
+        XCTAssertTrue(AppUpdater.isVersion("1.1", newerThan: "1.0.5"))
+        XCTAssertFalse(AppUpdater.isVersion("1.0", newerThan: "1.0.0"))
+    }
+
+    func test_checkGitHubReleaseForUpdate_isNoOpInTestRunner() async {
+        let updater = AppUpdater()
+        // Same XCTestCase guard as PermissionsService's network-touching
+        // methods — a real GitHub API call during a unit test run would be
+        // flaky, slow, and rate-limited.
+        await updater.checkGitHubReleaseForUpdate()
+        XCTAssertNil(updater.latestGitHubVersion)
+    }
 }

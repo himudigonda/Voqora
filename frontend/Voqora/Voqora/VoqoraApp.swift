@@ -131,6 +131,10 @@ struct VoqoraApp: App {
             // Retry the separate server-side contact removal quietly on launch;
             // it never depends on the anonymous-telemetry choice.
             Task { await identityInstance.retryPendingRemoval() }
+            // Sparkle stays dormant until Voqora is notarized (see AppUpdater),
+            // so this is the only thing that tells an early-access user a
+            // newer release exists. It only checks and notifies — never downloads.
+            Task { await updaterInstance.checkGitHubReleaseForUpdate() }
             checkRunningLocation()
         }
     }
