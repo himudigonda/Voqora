@@ -755,6 +755,13 @@ final class AudiobookViewModel: ObservableObject {
         if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
             stopPlayback()
         }
+        // T-9: cancel and drop this book's SSE subscription synchronously,
+        // independent of whether the network delete below succeeds. Removing
+        // sseGeneration[bookID] also makes subscribe()'s per-token guard
+        // reject any event already in flight for the (now-stale) task.
+        sseTasks[book.bookID]?.cancel()
+        sseTasks.removeValue(forKey: book.bookID)
+        sseGeneration.removeValue(forKey: book.bookID)
         Task {
             do {
                 try await service.delete(book.bookID)

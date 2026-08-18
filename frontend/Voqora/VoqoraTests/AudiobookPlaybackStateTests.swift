@@ -268,6 +268,39 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
     }
 
+    // MARK: - delete() cancels its SSE task (jira-audiobook-quality.md T-9)
+
+    func test_delete_cancelsAndRemovesSSETask_lateEventIsNoOp() async {
+        var continuation: AsyncStream<[String: Any]>.Continuation!
+        let stream = AsyncStream<[String: Any]> { continuation = $0 }
+        let book = makeBook(bookID: "b1", status: "cleaning")
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in stream }
+        )
+
+        viewModel.subscribe(to: "b1")
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        XCTAssertNotNil(viewModel.sseTasks["b1"], "precondition: an active SSE task exists before delete()")
+
+        viewModel.delete(book)
+        // sseTasks/sseGeneration are cleared synchronously by delete(), ahead
+        // of its async network-delete Task -- no need to wait for that here.
+        XCTAssertNil(viewModel.sseTasks["b1"], "delete() must cancel and remove the book's SSE task")
+
+        // A late event, arriving after delete(), must be a no-op.
+        continuation.yield([
+            "type": "snapshot", "status": "cleaning",
+            "phase_progress": ["page_done": 3, "page_total": 10],
+        ])
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        XCTAssertNil(
+            viewModel.processingState["b1"],
+            "a late SSE event after delete() must not resurrect processingState"
+        )
+        continuation.finish()
+    }
+
     // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)
 
     func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {

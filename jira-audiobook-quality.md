@@ -854,7 +854,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Unit | Two "done" events for different books, second one received first but resolving `fetchDetailWithFallback` second — assert `completionSummary` reflects receipt order |
     | E2E | Manual: process two books concurrently, confirm the completion modal shows the correct one and progress never visibly regresses |
 
-- [ ] `T-9` — `delete()` cancels its SSE task; prune `processingState` for
+- [x] `T-9` — `delete()` cancels its SSE task; prune `processingState` for
       vanished books.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: `T-7` (reuses the generation-token bookkeeping)
