@@ -230,7 +230,10 @@ struct AudiobookLibraryView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker("", selection: $sort) {
+            // T-20: an empty title left this control unlabeled for
+            // VoiceOver. `.menu` style still shows only the selected value's
+            // icon, so the title change is accessibility-only.
+            Picker("Sort audiobooks", selection: $sort) {
                 ForEach(SortMode.allCases) { mode in
                     Label(mode.label, systemImage: mode.icon).tag(mode)
                 }

@@ -1017,7 +1017,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: toggle Gemini cleanup with no key saved, confirm Start is disabled |
 
-- [ ] `T-20` — Accessibility labels sweep.
+- [x] `T-20` — Accessibility labels sweep.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookToastView.swift`,
     `UploadEstimateModal.swift`, `AudiobookLibraryView.swift`
   - Depends on: none

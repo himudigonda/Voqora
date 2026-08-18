@@ -70,6 +70,7 @@ struct UploadEstimateModal: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
         }
     }
 
