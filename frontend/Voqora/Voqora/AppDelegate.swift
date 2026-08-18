@@ -7,5 +7,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         stopOwnedBackend?()
+        MetricsFlushDriver.shared.stop()
     }
 }

@@ -132,6 +132,14 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: .AVAudioEngineConfigurationChange,
+            object: nil
+        )
+    }
+
     private func setupEngine() {
         engine.attach(playerNode)
         engine.attach(timePitch)

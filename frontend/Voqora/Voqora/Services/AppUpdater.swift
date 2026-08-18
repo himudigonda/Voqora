@@ -86,6 +86,10 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         observeUpdaterState()
     }
 
+    deinit {
+        observations.forEach { $0.invalidate() }
+    }
+
     func checkForUpdates() {
         guard canCheckForUpdates else { return }
         isCheckingForUpdates = true
