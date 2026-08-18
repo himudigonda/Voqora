@@ -990,7 +990,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: simulate a backend-down first load, confirm the distinct message appears |
 
-- [ ] `T-18` — Improve error-toast readability.
+- [x] `T-18` — Improve error-toast readability.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookToastView.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none

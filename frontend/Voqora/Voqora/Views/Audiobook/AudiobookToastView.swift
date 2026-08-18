@@ -14,7 +14,7 @@ struct AudiobookToastView: View {
                 Text(toast.message)
                     .font(vm.appFont(size: 12, weight: .medium))
                     .foregroundStyle(.primary)
-                    .lineLimit(2)
+                    .lineLimit(Self.lineLimit(for: toast.kind))
                 Spacer(minLength: 8)
                 Button { bookVM.dismissToast() } label: {
                     Image(systemName: "xmark")
@@ -53,5 +53,13 @@ struct AudiobookToastView: View {
         case .info: return .cyan
         case .success: return .green
         }
+    }
+
+    /// T-18: error toasts often carry essential detail (e.g. a full network
+    /// error description) that a 2-line cap silently truncates with no way
+    /// to re-read it. Info/success toasts stay short and truncated -- they're
+    /// less likely to carry detail the user actually needs.
+    static func lineLimit(for kind: AudiobookViewModel.Toast.Kind) -> Int? {
+        kind == .error ? nil : 2
     }
 }
