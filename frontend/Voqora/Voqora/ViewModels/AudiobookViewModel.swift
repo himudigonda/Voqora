@@ -340,14 +340,21 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
+    /// T-18: an error toast's message is no longer truncated (see
+    /// AudiobookToastView.lineLimit(for:)), so it needs longer on screen to
+    /// actually be read than a short info/success confirmation does.
+    static func dismissDelayNanoseconds(for kind: Toast.Kind) -> UInt64 {
+        kind == .error ? 8_000_000_000 : 4_000_000_000
+    }
+
     func showToast(_ message: String, kind: Toast.Kind = .info) {
-        // S4: cancel any previously-scheduled dismiss so a stale 4 s timer
+        // S4: cancel any previously-scheduled dismiss so a stale timer
         // doesn't kill this fresh toast a fraction of a second later.
         toastDismissTask?.cancel()
         let new = Toast(message: message, kind: kind)
         toast = new
         toastDismissTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: Self.dismissDelayNanoseconds(for: kind))
             if Task.isCancelled { return }
             if self?.toast?.id == new.id {
                 self?.toast = nil

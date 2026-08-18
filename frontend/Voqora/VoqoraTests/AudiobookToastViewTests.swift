@@ -17,4 +17,18 @@ final class AudiobookToastViewTests: XCTestCase {
         XCTAssertEqual(AudiobookToastView.lineLimit(for: .info), 2)
         XCTAssertEqual(AudiobookToastView.lineLimit(for: .success), 2)
     }
+
+    /// AudiobookViewModel.dismissDelayNanoseconds(for:) — the other half of
+    /// T-18: an untruncated error message also needs longer on screen to be
+    /// readable than the flat 4s every toast kind previously got.
+    @MainActor
+    func test_dismissDelay_errorGetsLongerWindowThanInfoAndSuccess() {
+        let errorDelay = AudiobookViewModel.dismissDelayNanoseconds(for: .error)
+        let infoDelay = AudiobookViewModel.dismissDelayNanoseconds(for: .info)
+        let successDelay = AudiobookViewModel.dismissDelayNanoseconds(for: .success)
+
+        XCTAssertGreaterThan(errorDelay, infoDelay)
+        XCTAssertEqual(infoDelay, successDelay)
+        XCTAssertEqual(infoDelay, 4_000_000_000)
+    }
 }
