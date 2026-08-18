@@ -22,7 +22,6 @@ Key invariants:
       per-page text that matches what was written to the clean files.
 """
 
-import asyncio
 import os
 import shutil
 import struct
@@ -172,15 +171,14 @@ def test_wav_header_builder_fields():
     assert data_size == body
 
 
-def test_riff_sizes_consistent_with_file_size(tmp_path):
+@pytest.mark.asyncio
+async def test_riff_sizes_consistent_with_file_size(tmp_path):
     """I8: RIFF chunk size and data chunk size must match actual file."""
     bid = _make_book(2)
     for n in (1, 2):
         AudiobookService._write_silence_wav(AudiobookStore.page_audio_path(bid, n), 0.5)
 
-    asyncio.get_event_loop().run_until_complete(
-        AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
-    )
+    await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
     final = AudiobookStore.audio_path(bid)
     file_size = os.path.getsize(final)
 
