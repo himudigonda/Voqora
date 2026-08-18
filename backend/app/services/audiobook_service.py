@@ -185,16 +185,21 @@ class AudiobookService:
         """Re-process pages currently listed in `meta.failed_pages`, OR resume
         a stuck book in `needs_key` / `failed` state.
 
-        Deletes failed pages' cleaned text + per-page WAV + the final
-        audio.wav (so concat re-runs), clears the failed list, and enqueues
-        the book. Returns the number of pages slated for retry. For
-        needs_key/failed without per-page failures, returns 0 but still
-        enqueues a fresh pipeline run.
+        Deletes failed pages' per-page WAV (so TTS re-runs) plus the final
+        audio.wav (so concat re-runs). Clean text is only deleted — forcing
+        a re-run of the costly Gemini cleaning call — for pages whose
+        `page_status` actually indicates a *cleaning* failure; a page that
+        only failed TTS keeps its already-correct clean text and just gets
+        re-synthesized. Clears the failed list, and enqueues the book.
+        Returns the number of pages slated for retry. For needs_key/failed
+        without per-page failures, returns 0 but still enqueues a fresh
+        pipeline run.
         """
         meta = AudiobookStore.read_meta(book_id)
         if meta is None:
             return 0
         failed = list(meta.get("failed_pages") or [])
+        page_status: dict[str, str] = dict(meta.get("page_status") or {})
         status = meta.get("status")
         # Allow resume from {needs_key, failed} even with empty failed_pages —
         # in those states the pipeline never reached the per-page retry stage
@@ -204,15 +209,25 @@ class AudiobookService:
         if not failed and status not in resumable_states:
             return 0
         for n in failed:
-            for p in (
-                AudiobookStore.page_clean_path(book_id, n),
-                AudiobookStore.page_audio_path(book_id, n),
-            ):
+            # Books processed before page_status existed have no recorded
+            # entry for a failed page — fall back to the previous (safe,
+            # if wasteful) behavior of always re-cleaning in that case.
+            cleaning_failed = (
+                page_status.get(str(n), "cleaning_failed") == "cleaning_failed"
+            )
+            paths = [AudiobookStore.page_audio_path(book_id, n)]
+            if cleaning_failed:
+                paths.append(AudiobookStore.page_clean_path(book_id, n))
+            for p in paths:
                 try:
                     if os.path.exists(p):
                         os.remove(p)
                 except OSError:
                     pass
+            # Stale marker cleared regardless of type — retry_failed always
+            # re-runs TTS for the page, and a successful retry should no
+            # longer show it as failed in the transcript.
+            page_status.pop(str(n), None)
         # Delete final concatenated audio so concat re-runs.
         for p in (
             AudiobookStore.audio_path(book_id),
@@ -224,7 +239,11 @@ class AudiobookService:
             except OSError:
                 pass
         await AudiobookStore.update_meta(
-            book_id, failed_pages=[], error=None, status="queued"
+            book_id,
+            failed_pages=[],
+            page_status=page_status,
+            error=None,
+            status="queued",
         )
         await cls.enqueue(book_id, api_key)
         return len(failed)
@@ -638,7 +657,16 @@ class AudiobookService:
                     )
                     async with state_lock:
                         failed.append(n)
-                        await AudiobookStore.update_meta(book_id, failed_pages=failed)
+                        # Mark this as a *cleaning* failure (as opposed to a
+                        # TTS-only failure) so retry_failed knows this page's
+                        # clean text actually needs to be regenerated, not
+                        # just its audio re-synthesized.
+                        current_meta = AudiobookStore.read_meta(book_id) or {}
+                        page_status = dict(current_meta.get("page_status") or {})
+                        page_status[str(n)] = "cleaning_failed"
+                        await AudiobookStore.update_meta(
+                            book_id, failed_pages=failed, page_status=page_status
+                        )
                     cls._emit(
                         book_id, "page_failed", phase="cleaning", page=n, error=str(e)
                     )

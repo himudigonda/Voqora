@@ -795,7 +795,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | Mock a slow `clean_one` (e.g. `asyncio.sleep` inside a patched Gemini call), cancel the book, immediately delete it, then assert `AudiobookStore.list_books()` doesn't contain the deleted book_id after the straggler would have run |
     | E2E | N/A |
 
-- [ ] `T-5` — Scope `retry_failed` re-cleaning to actual cleaning failures.
+- [x] `T-5` — Scope `retry_failed` re-cleaning to actual cleaning failures.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: `T-1` (needs `page_status` to distinguish failure type)
   - Acceptance: a TTS-only failure's retry doesn't re-run Gemini cleaning

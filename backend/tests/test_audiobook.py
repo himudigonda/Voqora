@@ -960,6 +960,90 @@ async def test_retry_failed_clears_pages_and_enqueues(monkeypatch):
     assert new_meta["error"] is None
 
 
+@pytest.mark.asyncio
+async def test_retry_failed_only_re_cleans_cleaning_failed_pages(monkeypatch):
+    """T-5: retry_failed must scope re-cleaning to pages whose page_status
+    actually indicates a cleaning failure — a TTS-only failure's clean text
+    is already correct and re-cleaning it would waste a Gemini call for no
+    reason. Both pages still get their audio wiped so TTS re-runs for both."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "failed"
+    meta["failed_pages"] = [2, 3]
+    # Page 2: TTS-only failure — clean text is fine, only audio needs a redo.
+    # Page 3: cleaning failure — clean text itself needs to be regenerated.
+    meta["page_status"] = {"2": "tts_failed", "3": "cleaning_failed"}
+    AudiobookStore.write_meta(bid, meta)
+    for n in (2, 3):
+        for path in (
+            AudiobookStore.page_clean_path(bid, n),
+            AudiobookStore.page_audio_path(bid, n),
+        ):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+
+    enqueued: list[str] = []
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        enqueued.append(book_id)
+
+    monkeypatch.setattr(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    )
+
+    count = await AudiobookService.retry_failed(bid, "fake-key")
+    assert count == 2
+    assert enqueued == [bid]
+
+    # Page 2 (TTS-only failure): clean text preserved, audio wiped.
+    assert os.path.exists(AudiobookStore.page_clean_path(bid, 2))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 2))
+    # Page 3 (cleaning failure): both clean text and audio wiped.
+    assert not os.path.exists(AudiobookStore.page_clean_path(bid, 3))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 3))
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert new_meta["failed_pages"] == []
+    # Stale page_status entries cleared for both retried pages.
+    assert new_meta.get("page_status", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_re_cleans_legacy_pages_with_no_page_status(monkeypatch):
+    """Books processed before page_status existed have no recorded failure
+    type for a failed page — retry_failed must fall back to the previous
+    (safe) behavior of always re-cleaning rather than silently skipping a
+    clean-text regeneration it can't actually verify is unnecessary."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "failed"
+    meta["failed_pages"] = [1]
+    # No "page_status" key at all — simulates a pre-T-1 book.
+    AudiobookStore.write_meta(bid, meta)
+    for path in (
+        AudiobookStore.page_clean_path(bid, 1),
+        AudiobookStore.page_audio_path(bid, 1),
+    ):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        return None
+
+    monkeypatch.setattr(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    )
+
+    await AudiobookService.retry_failed(bid, "fake-key")
+
+    assert not os.path.exists(AudiobookStore.page_clean_path(bid, 1))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 1))
+
+
 def test_retry_endpoint_requires_api_key_only_for_a_gemini_book():
     from fastapi.testclient import TestClient
 
