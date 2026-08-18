@@ -16,7 +16,8 @@ struct AudiobookCardView: View {
     /// Live progress fraction derived from SSE state, falling back to book model.
     private var progressFraction: Double {
         switch status {
-        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t):
+        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t),
+             .sectioning(let p, let t):
             guard t > 0 else { return 0 }
             return Double(p) / Double(t)
         default:
@@ -148,7 +149,7 @@ struct AudiobookCardView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.4))
                 ProgressView().tint(.cyan).scaleEffect(0.8)
             }
-        case .extracting, .cleaning, .generating:
+        case .extracting, .cleaning, .generating, .sectioning:
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.35))
                 progressRing
