@@ -2,7 +2,6 @@ import Foundation
 
 enum AppStatus: Equatable {
     case ready
-    case grabbing
     case thinking
     case speaking
     case paused
@@ -11,7 +10,6 @@ enum AppStatus: Equatable {
     var message: String {
         switch self {
         case .ready: "Ready"
-        case .grabbing: "Reading Screen..."
         case .thinking: "AI is Processing..."
         case .speaking: "Speaking"
         case .paused: "Paused"

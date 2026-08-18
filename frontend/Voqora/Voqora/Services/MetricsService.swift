@@ -66,9 +66,6 @@ actor MetricsService {
         }
     }
 
-    /// Current enabled state — useful for UI toggles.
-    func isEnabled() -> Bool { enabled }
-
     // MARK: - Public surface (fire-and-forget, call-site compatible with v1)
 
     nonisolated func trackLaunch() {
@@ -335,7 +332,6 @@ extension MetricsService {
             "chars":          { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "voice":          { ($0 as? String) },
             "speed":          { v in (v as? Double).flatMap { $0 >= 0.5 && $0 <= 2.0 ? $0 : nil } },
-            "volume":         { v in (v as? Double).flatMap { $0 >= 0.0 && $0 <= 1.5 ? $0 : nil } },
             "audio_seconds":  { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
             "pages":          { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "file_kind":      { v in

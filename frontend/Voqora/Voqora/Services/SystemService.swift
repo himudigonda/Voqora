@@ -28,20 +28,4 @@ class SystemService {
             }
         }
     }
-
-    func requestPermissions() {
-        // Accessibility
-        // We only check the prompt option if we are NOT trusted.
-        // If we are already trusted, we do nothing.
-        // If we are not trusted, we check, forcing the prompt ONLY if the system hasn't already decided.
-
-        let trusted = AXIsProcessTrusted()
-        print("Accessibility Access: \(trusted)")
-
-        if !trusted {
-            // This will trigger the prompt if not already denied
-            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
-            AXIsProcessTrustedWithOptions(options as CFDictionary)
-        }
-    }
 }
