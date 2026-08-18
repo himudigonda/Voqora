@@ -17,6 +17,7 @@ import pytest
 from app.services.audiobook_service import (
     SAMPLE_RATE,
     WAV_HEADER_SIZE,
+    AudiobookCancelled,
     AudiobookService,
     _wav_header,
 )
@@ -241,7 +242,9 @@ async def test_generate_full_page_paces_between_segments():
         ),
         patch("app.services.audiobook_service.asyncio.sleep", new=sleep_mock),
     ):
-        samples = await AudiobookService._generate_full_page("hello", "af_bella", 1.0)
+        samples = await AudiobookService._generate_full_page(
+            "test-book", "hello", "af_bella", 1.0
+        )
 
     assert sleep_mock.call_count == 3
     for call in sleep_mock.call_args_list:
@@ -267,11 +270,47 @@ async def test_generate_full_page_pacing_adds_real_elapsed_time(monkeypatch):
         side_effect=mock_generate,
     ):
         start = asyncio.get_running_loop().time()
-        await AudiobookService._generate_full_page("hello", "af_bella", 1.0)
+        await AudiobookService._generate_full_page(
+            "test-book", "hello", "af_bella", 1.0
+        )
         elapsed = asyncio.get_running_loop().time() - start
 
     # 4 segments * 0.02s pacing = 0.08s floor; generous slack for CI jitter.
     assert elapsed >= 0.07
+
+
+# ---------- responsive mid-page cancellation (T-3) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_stops_mid_page_once_cancelled():
+    """Regression: previously the only cancellation checkpoint was at the
+    per-*page* boundary in _phase_tts's loop — a page with several TTS
+    segments had no way to stop mid-synthesis. _generate_full_page must now
+    check cancellation between segments and stop before the final one once
+    the flag is set partway through."""
+    bid = "cancel-mid-page-book"
+    AudiobookService._cancel_flags.pop(bid, None)
+
+    async def mock_generate(*args, **kwargs):
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+        # Cancellation arrives while a 3rd segment is still "in flight".
+        AudiobookService._cancel_flags[bid] = True
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)  # never reached if the fix works
+
+    try:
+        with patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=mock_generate,
+        ):
+            with pytest.raises(AudiobookCancelled):
+                await AudiobookService._generate_full_page(
+                    bid, "hello", "af_bella", 1.0
+                )
+    finally:
+        AudiobookService._cancel_flags.pop(bid, None)
 
 
 @pytest.mark.asyncio

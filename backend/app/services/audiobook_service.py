@@ -718,8 +718,15 @@ class AudiobookService:
                     cls._write_silence_wav(out_path, 0.3)
                 else:
                     try:
-                        samples = await cls._generate_full_page(text, voice, speed)
+                        samples = await cls._generate_full_page(
+                            book_id, text, voice, speed
+                        )
                         cls._write_wav_from_samples(out_path, samples)
+                    except AudiobookCancelled:
+                        # A cancel raised mid-page (inside _generate_full_page's
+                        # segment loop) must propagate as a real cancellation,
+                        # not get swallowed as a per-page TTS failure below.
+                        raise
                     except Exception as e:
                         log.warning(
                             "audiobook.tts_failed",
@@ -752,7 +759,7 @@ class AudiobookService:
 
     @classmethod
     async def _generate_full_page(
-        cls, text: str, voice: str, speed: float
+        cls, book_id: str, text: str, voice: str, speed: float
     ) -> np.ndarray:
         """Drain the EngineManager.generate async generator into one float32 array.
 
@@ -763,9 +770,15 @@ class AudiobookService:
         EngineManager.generate used by the audiobook pipeline — interactive
         /speak (app/api/tts.py) calls it directly and is unaffected. See
         jira-cpu-ram-optimization.md.
+
+        `book_id` is checked for cancellation between segments — not just at
+        the page boundary in `_phase_tts`'s loop — so a mid-page cancel
+        responds within roughly one segment's synthesis time instead of
+        waiting for the whole (possibly multi-segment) page to finish.
         """
         chunks: list[np.ndarray] = []
         async for chunk in EngineManager.generate(text, voice, speed):
+            cls._check_cancel(book_id)
             chunks.append(chunk)
             await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
         if not chunks:

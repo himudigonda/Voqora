@@ -760,7 +760,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — single-phase concern, covered by unit |
     | E2E | N/A |
 
-- [ ] `T-3` — Responsive mid-page cancellation.
+- [x] `T-3` — Responsive mid-page cancellation.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - **Needs plumbing**: `_generate_full_page(cls, text: str, voice: str,
