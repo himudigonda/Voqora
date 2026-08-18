@@ -732,7 +732,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 1 — Backend pipeline correctness (independent, can start immediately)
 
-- [ ] `T-1` — Fix transcript/audio desync on TTS failure + duplicate-page marker.
+- [x] `T-1` — Fix transcript/audio desync on TTS failure + duplicate-page marker.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: a TTS-failed page's transcript text is distinctly marked

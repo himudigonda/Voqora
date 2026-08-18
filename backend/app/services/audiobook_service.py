@@ -328,10 +328,18 @@ class AudiobookService:
             meta = AudiobookStore.read_meta(book_id) or meta
             await cls._phase_tts(book_id, meta)
             actual = await cls._phase_concat(book_id, meta)
-            await AudiobookStore.update_meta(
+            final_meta = await AudiobookStore.update_meta(
                 book_id, status="done", actual=actual, error=None
             )
-            cls._emit(book_id, "done", actual=actual)
+            # Thread failed_pages into the terminal event so a listening
+            # client learns immediately that some pages failed (TTS or
+            # cleaning), without a separate GET round-trip.
+            cls._emit(
+                book_id,
+                "done",
+                actual=actual,
+                failed_pages=final_meta.get("failed_pages") or [],
+            )
         except AudiobookCancelled:
             await AudiobookStore.update_meta(
                 book_id, status="cancelled", error="Cancelled by user."
@@ -383,6 +391,15 @@ class AudiobookService:
         # generating identical audio twice.
         seen_content_hashes: set[str] = set()
 
+        # Per-page status side-channel (distinct from the "-" clean-text
+        # marker itself): lets the transcript distinguish a duplicate page
+        # from a real TTS/cleaning failure instead of showing an unexplained
+        # bare dash or silently-wrong narrated text. Seeded from any existing
+        # value so a resumed extract doesn't drop entries recorded earlier.
+        page_status: dict[str, str] = dict(
+            (AudiobookStore.read_meta(book_id) or {}).get("page_status") or {}
+        )
+
         for n in range(1, page_count + 1):
             cls._check_cancel(book_id)
             # Honor /speak preemption between pages.
@@ -422,6 +439,7 @@ class AudiobookService:
                                 with open(tmp, "w", encoding="utf-8") as f:
                                     f.write("-")
                                 os.replace(tmp, clean_path)
+                            page_status[str(n)] = "duplicate"
                         else:
                             seen_content_hashes.add(h)
                 except OSError:
@@ -430,6 +448,7 @@ class AudiobookService:
             await AudiobookStore.update_meta(
                 book_id,
                 phase_progress={"page_done": n, "page_total": page_count},
+                page_status=page_status,
             )
             cls._emit(
                 book_id, "page_done", phase="extracting", page=n, total=page_count
@@ -704,7 +723,16 @@ class AudiobookService:
                         extra={"book_id": book_id, "page": n, "error": str(e)},
                     )
                     failed.append(n)
-                    await AudiobookStore.update_meta(book_id, failed_pages=failed)
+                    # Mark this page distinctly (not shown as matching
+                    # narrated text, not a bare unexplained "-") so a
+                    # consumer of transcript.json knows its audio is
+                    # actually silence, not the clean text it still shows.
+                    current_meta = AudiobookStore.read_meta(book_id) or {}
+                    page_status = dict(current_meta.get("page_status") or {})
+                    page_status[str(n)] = "tts_failed"
+                    await AudiobookStore.update_meta(
+                        book_id, failed_pages=failed, page_status=page_status
+                    )
                     cls._emit(book_id, "page_failed", phase="tts", page=n, error=str(e))
                     cls._write_silence_wav(out_path, 0.5)
 
@@ -821,12 +849,22 @@ class AudiobookService:
                 if os.path.exists(cp):
                     with open(cp, encoding="utf-8") as f:
                         page_texts[str(n)] = f.read()
+            # Re-read meta fresh rather than trusting the `meta` argument:
+            # TTS-phase failures write page_status *after* `_run_pipeline`
+            # captured the `meta` local this function was called with, so
+            # that snapshot can be stale for entries recorded during TTS.
+            # Additive alongside `pages` (never replacing it) so a page whose
+            # audio actually failed/was deduped is distinctly marked instead
+            # of silently presented as matching, successfully-narrated text.
+            current_meta = AudiobookStore.read_meta(book_id) or meta
+            page_status = dict(current_meta.get("page_status") or {})
             transcript = {
                 "book_id": book_id,
                 "sections": timed_sections,
                 "page_to_time": page_to_time,
                 "total_audio_seconds": total_seconds,
                 "pages": page_texts,
+                "page_status": page_status,
             }
             tpath = AudiobookStore.transcript_path(book_id)
             tmp = tpath + ".tmp"
