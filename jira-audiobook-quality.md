@@ -900,7 +900,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — same reason |
     | E2E | Manual: play a book, confirm scrubber/highlight/elapsed-time all update smoothly during playback; confirm sleep-timer-at-end-of-book still cancels correctly on natural completion |
 
-- [ ] `T-12` — Memoize `orderedPages`/`currentPageID`/`currentSection`.
+- [x] `T-12` — Memoize `orderedPages`/`currentPageID`/`currentSection`.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookPlayerView.swift`
   - Depends on: `T-11` (needs the real `audio.currentTime` source to key
     the cache invalidation correctly)
