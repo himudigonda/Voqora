@@ -102,14 +102,58 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
     }
 
-    private func makeBook() -> Audiobook {
+    // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)
+
+    func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {
+        let book = makeBook(status: "sectioning", pageDone: 3, pageTotal: 10)
+        guard case .sectioning(let page, let total) = book.displayStatus else {
+            XCTFail("expected .sectioning, got \(book.displayStatus)")
+            return
+        }
+        XCTAssertEqual(page, 3)
+        XCTAssertEqual(total, 10)
+        XCTAssertTrue(book.displayStatus.isProcessing)
+    }
+
+    func test_applyStatus_sectioning_setsSectioningState() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        viewModel.applyStatus(bookID: "b1", status: "sectioning", pageDone: 2, pageTotal: 5, error: nil)
+        guard case .sectioning(let page, let total) = viewModel.processingState["b1"] else {
+            XCTFail("expected .sectioning, got \(String(describing: viewModel.processingState["b1"]))")
+            return
+        }
+        XCTAssertEqual(page, 2)
+        XCTAssertEqual(total, 5)
+    }
+
+    func test_applyPhase_sectioning_setsSectioningState_doesNotFreezeAtPriorPhase() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        viewModel.applyPhase(bookID: "b1", phase: "cleaning", page: 1, total: 5)
+        viewModel.applyPhase(bookID: "b1", phase: "sectioning", page: 5, total: 5)
+        guard case .sectioning(let page, let total) = viewModel.processingState["b1"] else {
+            XCTFail(
+                "applyPhase(sectioning) must not silently no-op and leave the prior phase's " +
+                "state frozen, got \(String(describing: viewModel.processingState["b1"]))"
+            )
+            return
+        }
+        XCTAssertEqual(page, 5)
+        XCTAssertEqual(total, 5)
+    }
+
+    private func makeBook(
+        bookID: String = "in-flight-book",
+        status: String = "done",
+        pageDone: Int = 1,
+        pageTotal: Int = 1
+    ) -> Audiobook {
         Audiobook(
-            bookID: "in-flight-book",
+            bookID: bookID,
             title: "In-flight book",
             createdAt: "2026-07-30T00:00:00Z",
             pageCount: 1,
-            status: "done",
-            phaseProgress: PhaseProgress(pageDone: 1, pageTotal: 1),
+            status: status,
+            phaseProgress: PhaseProgress(pageDone: pageDone, pageTotal: pageTotal),
             sections: [],
             pageToTime: [:],
             totalAudioSeconds: 0,

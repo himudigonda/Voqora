@@ -386,11 +386,14 @@ final class AudiobookViewModel: ObservableObject {
         return try? await service.get(bookID)
     }
 
-    private func applyStatus(bookID: String, status: String, pageDone: Int, pageTotal: Int, error: String?) {
+    /// Internal (not private) so unit tests can drive the SSE `snapshot`
+    /// mapping directly without a live backend.
+    func applyStatus(bookID: String, status: String, pageDone: Int, pageTotal: Int, error: String?) {
         let s: ProcessingStatus
         switch status {
         case "extracting": s = .extracting(page: pageDone, total: pageTotal)
         case "cleaning": s = .cleaning(page: pageDone, total: pageTotal)
+        case "sectioning": s = .sectioning(page: pageDone, total: pageTotal)
         case "tts", "concatenating": s = .generating(page: pageDone, total: pageTotal)
         case "done": s = .ready
         case "needs_key": s = .needsKey
@@ -401,11 +404,14 @@ final class AudiobookViewModel: ObservableObject {
         processingState[bookID] = s
     }
 
-    private func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
+    /// Internal (not private) so unit tests can drive the SSE `phase_started`/
+    /// `page_done` mapping directly without a live backend.
+    func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
         let status: ProcessingStatus
         switch phase {
         case "extracting": status = .extracting(page: page, total: total)
         case "cleaning": status = .cleaning(page: page, total: total)
+        case "sectioning": status = .sectioning(page: page, total: total)
         case "tts", "concatenating": status = .generating(page: page, total: total)
         default: return
         }

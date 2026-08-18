@@ -809,7 +809,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 2 — Frontend sectioning status gap (independent, highest leverage — do early)
 
-- [ ] `T-6` — Handle `"sectioning"` in all three status-mapping sites.
+- [x] `T-6` — Handle `"sectioning"` in all three status-mapping sites.
   - Files: `frontend/Voqora/Voqora/Models/Audiobook.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
