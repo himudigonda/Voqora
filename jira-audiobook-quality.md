@@ -885,7 +885,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 4 — Transcript scroll + player reactivity
 
-- [ ] `T-11` — Make `AudiobookPlayerView` reactive via `@EnvironmentObject`;
+- [x] `T-11` — Make `AudiobookPlayerView` reactive via `@EnvironmentObject`;
       remove the decoupled ticker.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookPlayerView.swift`
   - Depends on: none

@@ -1,9 +1,13 @@
-import Combine
 import SwiftUI
 
 struct AudiobookPlayerView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    // T-11: real reactive source for live playback state — replaces a
+    // decoupled 0.25s ticker that forced full-body re-evaluation without
+    // actually subscribing to anything. Safe: this view is a descendant of
+    // VoqoraApp.swift's `.environmentObject(audio)` on the root VoqoraWindow.
+    @EnvironmentObject var audio: AudioService
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
@@ -12,12 +16,9 @@ struct AudiobookPlayerView: View {
     @State private var dragging = false
     @State private var playerSpeed: Double = 1.0
     @State private var transcriptOpen = false
-    @State private var ticker = Date()
     @State private var dominantColor: Color = .cyan
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
-    // Hardware-paced timer to push UI updates while audio is playing.
-    private let tickerTimer = Timer.publish(every: 0.25, on: .main, in: .common).autoconnect()
 
     var body: some View {
         GeometryReader { geometry in
@@ -60,9 +61,12 @@ struct AudiobookPlayerView: View {
             return .handled
         }
         .onKeyPress(".") { bookVM.jumpToNextSection(in: book); return .handled }
-        .onReceive(tickerTimer) { now in
-            ticker = now
-            if bookVM.audio.playbackCompleted && bookVM.sleepUntilEndOfBook {
+        // T-11: the ticker's one non-cosmetic side effect (cancelling a
+        // "sleep until end of book" timer once playback naturally
+        // completes) now runs off the real `audio.playbackCompleted`
+        // publisher instead of a 0.25s poke.
+        .onChange(of: audio.playbackCompleted) { _, completed in
+            if completed && bookVM.sleepUntilEndOfBook {
                 bookVM.cancelSleepTimer()
             }
         }
@@ -72,7 +76,7 @@ struct AudiobookPlayerView: View {
             // avoid rendering a second player bar underneath it.
             bookVM.isPlayerViewActive = true
             playerSpeed = bookVM.defaultBookSpeed
-            bookVM.audio.setPlaybackRate(Float(playerSpeed))
+            audio.setPlaybackRate(Float(playerSpeed))
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
             }
@@ -127,12 +131,12 @@ struct AudiobookPlayerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .shadow(
-                color: bookVM.audio.isPlaying ? dominantColor.opacity(0.45) : .black.opacity(0.45),
-                radius: bookVM.audio.isPlaying ? 42 : 30,
-                y: bookVM.audio.isPlaying ? 20 : 16
+                color: audio.isPlaying ? dominantColor.opacity(0.45) : .black.opacity(0.45),
+                radius: audio.isPlaying ? 42 : 30,
+                y: audio.isPlaying ? 20 : 16
             )
-            .scaleEffect(bookVM.audio.isPlaying ? 1.0 : 0.97)
-            .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: bookVM.audio.isPlaying)
+            .scaleEffect(audio.isPlaying ? 1.0 : 0.97)
+            .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: audio.isPlaying)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(currentSectionLabel)
@@ -228,7 +232,7 @@ struct AudiobookPlayerView: View {
             .frame(height: 20)
 
             HStack {
-                Text(DurationFormatter.clock(bookVM.audio.currentTime))
+                Text(DurationFormatter.clock(audio.currentTime))
                 Spacer()
                 if let remain = bookVM.sleepRemainingSeconds {
                     Label("Sleep in \(DurationFormatter.clock(remain))", systemImage: "moon.zzz.fill")
@@ -240,7 +244,7 @@ struct AudiobookPlayerView: View {
                         .foregroundStyle(.cyan)
                 }
                 Spacer()
-                Text("-" + DurationFormatter.clock(max(0, bookVM.audio.duration - bookVM.audio.currentTime)))
+                Text("-" + DurationFormatter.clock(max(0, audio.duration - audio.currentTime)))
             }
             .font(vm.appFont(size: 11, weight: .medium).monospaced())
             .foregroundStyle(.secondary)
@@ -249,7 +253,7 @@ struct AudiobookPlayerView: View {
 
     private var displayProgress: Double {
         if dragging { return localScrub }
-        return bookVM.audio.progress
+        return audio.progress
     }
 
     private var transportSection: some View {
@@ -276,10 +280,10 @@ struct AudiobookPlayerView: View {
                 Circle().fill(.white).frame(width: 72, height: 72)
                     .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                     .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
-                Image(systemName: bookVM.audio.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 26, weight: .black))
                     .foregroundStyle(.black)
-                    .offset(x: bookVM.audio.isPlaying ? 0 : 2)
+                    .offset(x: audio.isPlaying ? 0 : 2)
             }
         }
         .buttonStyle(.plain)
@@ -305,7 +309,7 @@ struct AudiobookPlayerView: View {
                     Button(String(format: "%.2gx", s)) {
                         playerSpeed = s
                         bookVM.defaultBookSpeed = s
-                        bookVM.audio.setPlaybackRate(Float(s))
+                        audio.setPlaybackRate(Float(s))
                     }
                 }
             } label: {
@@ -321,12 +325,12 @@ struct AudiobookPlayerView: View {
             Spacer()
 
             HStack(spacing: 8) {
-                Image(systemName: bookVM.audio.volume < 0.05 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                Image(systemName: audio.volume < 0.05 ? "speaker.slash.fill" : "speaker.wave.2.fill")
                     .foregroundStyle(.secondary)
                     .font(.system(size: 12))
                 Slider(value: Binding(
-                    get: { Double(bookVM.audio.volume) },
-                    set: { bookVM.audio.setVolume(Float($0)) }
+                    get: { Double(audio.volume) },
+                    set: { audio.setVolume(Float($0)) }
                 ), in: 0...1.5)
                 .tint(.cyan)
                 .frame(width: 110)
@@ -443,7 +447,7 @@ struct AudiobookPlayerView: View {
     }
 
     private func currentPageID(in t: AudiobookService.Transcript) -> Int? {
-        let now = bookVM.audio.currentTime
+        let now = audio.currentTime
         let times = t.pageToTime
             .compactMap { (k, v) -> (Int, Double)? in Int(k).map { ($0, v) } }
             .sorted { $0.1 < $1.1 }
@@ -531,7 +535,7 @@ struct AudiobookPlayerView: View {
         let clamped = min(2.0, max(0.75, raw))
         playerSpeed = clamped
         bookVM.defaultBookSpeed = clamped
-        bookVM.audio.setPlaybackRate(Float(clamped))
+        audio.setPlaybackRate(Float(clamped))
     }
 
     private var prettyTitle: String {
