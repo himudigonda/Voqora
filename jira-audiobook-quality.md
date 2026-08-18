@@ -960,7 +960,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: right-click a processing card, confirm the context menu (with Cancel Processing) appears |
 
-- [ ] `T-16` — Reconcile modal sizes and card/grid width consistency.
+- [x] `T-16` — Reconcile modal sizes and card/grid width consistency.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/UploadEstimateModal.swift`,
     `CompletionSummaryModal.swift`, `AudiobookCardView.swift`,
     `AudiobookLibraryView.swift`

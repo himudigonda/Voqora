@@ -405,9 +405,11 @@ private struct SkeletonCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // T-16: track the grid's adaptive column instead of a hard 180pt,
+            // matching AudiobookCardView's cover fix.
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 180, height: 252)
+                .aspectRatio(AudiobookCardView.coverAspectRatio, contentMode: .fit)
                 .overlay(shimmer)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -419,7 +421,7 @@ private struct SkeletonCard: View {
                 .frame(width: 90, height: 9)
                 .overlay(shimmer)
         }
-        .frame(width: 180, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                 phase = 1.5
