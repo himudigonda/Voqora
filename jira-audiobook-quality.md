@@ -945,7 +945,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: type a search term matching nothing, confirm the message appears |
 
-- [ ] `T-15` — Fix processing-card hit-testing blocking the context menu.
+- [x] `T-15` — Fix processing-card hit-testing blocking the context menu.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`
   - Depends on: none
   - Acceptance: right-clicking a processing card opens its context menu

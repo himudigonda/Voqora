@@ -166,7 +166,15 @@ struct AudiobookLibraryView: View {
                 LazyVGrid(columns: columns, spacing: 32) {
                     ForEach(filteredSorted, id: \.id) { book in
                         let isProcessing = (bookVM.processingState[book.bookID] ?? book.displayStatus).isProcessing
-                        Button { openBook(book) } label: {
+                        // T-15: gate only the tap-to-open action, not hit-testing for the
+                        // whole subtree. `.allowsHitTesting(!isProcessing)` here used to
+                        // disable AudiobookCardView's own `.contextMenu` too, making its
+                        // only "Cancel Processing" affordance unreachable by right-click
+                        // exactly when a card was processing.
+                        Button {
+                            guard !isProcessing else { return }
+                            openBook(book)
+                        } label: {
                             AudiobookCardView(book: book)
                                 .environmentObject(vm)
                                 .environmentObject(bookVM)
@@ -175,7 +183,6 @@ struct AudiobookLibraryView: View {
                         // P7: without contentShape, macOS hit-testing fires only over
                         // visible pixels. This extends hover/click to the full card rect.
                         .contentShape(Rectangle())
-                        .allowsHitTesting(!isProcessing)
                     }
                 }
                 .padding(36)
