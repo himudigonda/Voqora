@@ -202,6 +202,78 @@ async def _mock_generate_yielding(*args, **kwargs):
     yield np.zeros(6000, dtype=np.float32)
 
 
+# ---------- worker queue bound (jira-cpu-ram-optimization.md T-8) ----------
+
+
+@pytest.mark.asyncio
+async def test_initialize_creates_bounded_worker_queue():
+    """The worker queue was an unbounded asyncio.Queue(); it must now have a
+    finite maxsize so a pathological enqueue burst can't grow it forever."""
+    AudiobookService._queue = None
+    AudiobookService._worker_task = None
+    AudiobookService.initialize()
+    try:
+        assert AudiobookService._queue.maxsize > 0
+    finally:
+        await AudiobookService.shutdown(grace_seconds=0.1)
+
+
+# ---------- background TTS pacing (jira-cpu-ram-optimization.md T-7) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_paces_between_segments():
+    """_generate_full_page must yield the configured pacing delay after every
+    segment — this is the only caller of EngineManager.generate the audiobook
+    pipeline uses; interactive /speak is a separate call site, unaffected."""
+    from app.core.config import settings
+
+    async def mock_generate(*args, **kwargs):
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+
+    sleep_mock = AsyncMock()
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=mock_generate,
+        ),
+        patch("app.services.audiobook_service.asyncio.sleep", new=sleep_mock),
+    ):
+        samples = await AudiobookService._generate_full_page("hello", "af_bella", 1.0)
+
+    assert sleep_mock.call_count == 3
+    for call in sleep_mock.call_args_list:
+        assert call.args[0] == settings.AUDIOBOOK_TTS_SEGMENT_PACING_S
+    assert len(samples) == 300
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_pacing_adds_real_elapsed_time(monkeypatch):
+    """Integration-style check that pacing is a real yield, not a stubbed
+    no-op — uses a small pacing value so the test stays fast."""
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.AUDIOBOOK_TTS_SEGMENT_PACING_S",
+        0.02,
+    )
+
+    async def mock_generate(*args, **kwargs):
+        for _ in range(4):
+            yield np.zeros(100, dtype=np.float32)
+
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate",
+        side_effect=mock_generate,
+    ):
+        start = asyncio.get_running_loop().time()
+        await AudiobookService._generate_full_page("hello", "af_bella", 1.0)
+        elapsed = asyncio.get_running_loop().time() - start
+
+    # 4 segments * 0.02s pacing = 0.08s floor; generous slack for CI jitter.
+    assert elapsed >= 0.07
+
+
 @pytest.mark.asyncio
 async def test_tts_phase_writes_per_page_wavs(monkeypatch):
     bid = AudiobookStore.create_book("Test.pdf")

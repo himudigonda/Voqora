@@ -73,7 +73,7 @@ class AudiobookService:
         if cls._executor is None:
             cls._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         if cls._queue is None:
-            cls._queue = asyncio.Queue()
+            cls._queue = asyncio.Queue(maxsize=256)
         if cls._worker_task is None or cls._worker_task.done():
             cls._worker_task = asyncio.create_task(cls._worker_loop())
 
@@ -234,9 +234,14 @@ class AudiobookService:
         if cls._cancel_flags.get(book_id):
             raise AudiobookCancelled(book_id)
 
+    # Progress events are supersede-able (a later page_done implies every
+    # earlier one), so a slow SSE consumer drops its oldest pending events
+    # past this cap rather than growing memory unboundedly.
+    _SSE_QUEUE_MAXSIZE = 256
+
     @classmethod
     def subscribe(cls, book_id: str) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue()
+        q: asyncio.Queue = asyncio.Queue(maxsize=cls._SSE_QUEUE_MAXSIZE)
         cls._subscribers.setdefault(book_id, []).append(q)
         return q
 
@@ -255,7 +260,17 @@ class AudiobookService:
             try:
                 q.put_nowait(payload)
             except asyncio.QueueFull:
-                pass
+                # A stalled consumer — drop the oldest pending event to make
+                # room rather than blocking the emitter or growing unbounded.
+                log.debug(
+                    "audiobook.sse_queue_full_dropping_oldest",
+                    extra={"book_id": book_id, "event_type": event_type},
+                )
+                try:
+                    q.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                q.put_nowait(payload)
 
     # ---------- resume on startup ----------
 
@@ -706,10 +721,18 @@ class AudiobookService:
     async def _generate_full_page(
         cls, text: str, voice: str, speed: float
     ) -> np.ndarray:
-        """Drain the EngineManager.generate async generator into one float32 array."""
+        """Drain the EngineManager.generate async generator into one float32 array.
+
+        Paced with a short yield between segments (AUDIOBOOK_TTS_SEGMENT_PACING_S)
+        so background/auto-resumed audiobook synthesis doesn't monopolize the
+        CPU. This is the only caller of EngineManager.generate used by the
+        audiobook pipeline — interactive /speak (app/api/tts.py) calls it
+        directly and is unaffected. See jira-cpu-ram-optimization.md.
+        """
         chunks: list[np.ndarray] = []
         async for chunk in EngineManager.generate(text, voice, speed):
             chunks.append(chunk)
+            await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
         if not chunks:
             return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32)
         return np.concatenate(chunks)
