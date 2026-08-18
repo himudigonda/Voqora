@@ -64,7 +64,9 @@ struct CompletionSummaryModal: View {
             }
         }
         .padding(28)
-        .frame(width: 460, height: 540)
+        // T-16: match UploadEstimateModal's frame so the two modals in the
+        // same upload -> completion flow don't visibly change size.
+        .frame(width: 520, height: 640)
         .background(.ultraThinMaterial)
         .onAppear { bouncing.toggle() }
     }

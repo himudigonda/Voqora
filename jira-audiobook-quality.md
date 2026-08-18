@@ -931,7 +931,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 5 — Library/modal UI polish (mechanical, lower risk, can run in parallel with Sprint 3/4)
 
-- [ ] `T-14` — Wire up library search + no-results state.
+- [x] `T-14` — Wire up library search + no-results state.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`
   - Depends on: none
   - Acceptance: `.searchable()` is actually rendered and filters the grid;
@@ -945,7 +945,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: type a search term matching nothing, confirm the message appears |
 
-- [ ] `T-15` — Fix processing-card hit-testing blocking the context menu.
+- [x] `T-15` — Fix processing-card hit-testing blocking the context menu.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`
   - Depends on: none
   - Acceptance: right-clicking a processing card opens its context menu
@@ -960,7 +960,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: right-click a processing card, confirm the context menu (with Cancel Processing) appears |
 
-- [ ] `T-16` — Reconcile modal sizes and card/grid width consistency.
+- [x] `T-16` — Reconcile modal sizes and card/grid width consistency.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/UploadEstimateModal.swift`,
     `CompletionSummaryModal.swift`, `AudiobookCardView.swift`,
     `AudiobookLibraryView.swift`
@@ -976,7 +976,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: compare the two modals side by side; resize the library window and confirm cards/grid stay visually consistent |
 
-- [ ] `T-17` — Distinct library-load-failure state.
+- [x] `T-17` — Distinct library-load-failure state.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
@@ -990,7 +990,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: simulate a backend-down first load, confirm the distinct message appears |
 
-- [ ] `T-18` — Improve error-toast readability.
+- [x] `T-18` — Improve error-toast readability.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookToastView.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
@@ -1004,7 +1004,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: trigger a long error message, confirm it's fully readable before dismissal |
 
-- [ ] `T-19` — Start-Processing button gates on missing Gemini key.
+- [x] `T-19` — Start-Processing button gates on missing Gemini key.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/UploadEstimateModal.swift`
   - Depends on: none
   - Acceptance: toggling Gemini cleanup on without a saved key proactively
@@ -1017,7 +1017,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: toggle Gemini cleanup with no key saved, confirm Start is disabled |
 
-- [ ] `T-20` — Accessibility labels sweep.
+- [x] `T-20` — Accessibility labels sweep.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookToastView.swift`,
     `UploadEstimateModal.swift`, `AudiobookLibraryView.swift`
   - Depends on: none
