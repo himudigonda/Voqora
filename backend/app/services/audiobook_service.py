@@ -703,38 +703,43 @@ class AudiobookService:
 
             clean_path = AudiobookStore.page_clean_path(book_id, n)
             if not os.path.exists(clean_path):
-                # Skip pages with no cleaned text.
+                # Skip pages with no cleaned text — but still fall through to
+                # the phase_progress/page_done bookkeeping below. Previously
+                # this `continue`d immediately, so the progress bar could
+                # undercount/stall on a page with no clean text.
                 cls._write_silence_wav(out_path, 0.5)
-                continue
-            with open(clean_path, encoding="utf-8") as f:
-                text = f.read().strip() or "-"
-
-            # P3: blank-page marker is silence, never spoken aloud as "dash".
-            # GeminiCleaner returns the literal "-" string for empty pages.
-            if text == "-" or text.startswith("[blank") and text.endswith("]"):
-                cls._write_silence_wav(out_path, 0.3)
             else:
-                try:
-                    samples = await cls._generate_full_page(text, voice, speed)
-                    cls._write_wav_from_samples(out_path, samples)
-                except Exception as e:
-                    log.warning(
-                        "audiobook.tts_failed",
-                        extra={"book_id": book_id, "page": n, "error": str(e)},
-                    )
-                    failed.append(n)
-                    # Mark this page distinctly (not shown as matching
-                    # narrated text, not a bare unexplained "-") so a
-                    # consumer of transcript.json knows its audio is
-                    # actually silence, not the clean text it still shows.
-                    current_meta = AudiobookStore.read_meta(book_id) or {}
-                    page_status = dict(current_meta.get("page_status") or {})
-                    page_status[str(n)] = "tts_failed"
-                    await AudiobookStore.update_meta(
-                        book_id, failed_pages=failed, page_status=page_status
-                    )
-                    cls._emit(book_id, "page_failed", phase="tts", page=n, error=str(e))
-                    cls._write_silence_wav(out_path, 0.5)
+                with open(clean_path, encoding="utf-8") as f:
+                    text = f.read().strip() or "-"
+
+                # P3: blank-page marker is silence, never spoken aloud as "dash".
+                # GeminiCleaner returns the literal "-" string for empty pages.
+                if text == "-" or text.startswith("[blank") and text.endswith("]"):
+                    cls._write_silence_wav(out_path, 0.3)
+                else:
+                    try:
+                        samples = await cls._generate_full_page(text, voice, speed)
+                        cls._write_wav_from_samples(out_path, samples)
+                    except Exception as e:
+                        log.warning(
+                            "audiobook.tts_failed",
+                            extra={"book_id": book_id, "page": n, "error": str(e)},
+                        )
+                        failed.append(n)
+                        # Mark this page distinctly (not shown as matching
+                        # narrated text, not a bare unexplained "-") so a
+                        # consumer of transcript.json knows its audio is
+                        # actually silence, not the clean text it still shows.
+                        current_meta = AudiobookStore.read_meta(book_id) or {}
+                        page_status = dict(current_meta.get("page_status") or {})
+                        page_status[str(n)] = "tts_failed"
+                        await AudiobookStore.update_meta(
+                            book_id, failed_pages=failed, page_status=page_status
+                        )
+                        cls._emit(
+                            book_id, "page_failed", phase="tts", page=n, error=str(e)
+                        )
+                        cls._write_silence_wav(out_path, 0.5)
 
             EngineManager.touch()
             await AudiobookStore.update_meta(

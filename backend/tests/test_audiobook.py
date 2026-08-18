@@ -308,6 +308,62 @@ async def test_tts_phase_writes_per_page_wavs(monkeypatch):
         assert os.path.exists(AudiobookStore.page_audio_path(bid, n))
 
 
+# ---------- TTS progress stall for missing-clean-text pages (T-2) ----------
+
+
+@pytest.mark.asyncio
+async def test_tts_missing_clean_text_still_advances_progress_and_emits_page_done():
+    """Regression: a page with no clean file (e.g. extraction never produced
+    one) previously hit an early `continue` that skipped the phase_progress
+    meta update and page_done SSE emit — the progress bar could
+    undercount/stall on that page even though the loop otherwise moved on."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    # Page 1 has no clean file at all; page 2 does.
+    path2 = AudiobookStore.page_clean_path(bid, 2)
+    os.makedirs(os.path.dirname(path2), exist_ok=True)
+    with open(path2, "w") as f:
+        f.write("Page 2 content.")
+
+    events: list[dict] = []
+    orig_emit = AudiobookService._emit
+
+    def _capture_emit(cls, book_id, event_type, **data):
+        events.append({"type": event_type, **data})
+        return orig_emit(book_id, event_type, **data)
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_yielding,
+        ),
+        patch.object(AudiobookService, "_emit", classmethod(_capture_emit)),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    page_done_events = [
+        e for e in events if e["type"] == "page_done" and e["page"] == 1
+    ]
+    assert (
+        len(page_done_events) == 1
+    ), "missing-clean-text page must still emit page_done"
+
+    new_meta = AudiobookStore.read_meta(bid)
+    # phase_progress reflects both pages processed, not stalled at page 0/1.
+    assert new_meta["phase_progress"]["page_done"] == 2
+    assert os.path.exists(
+        AudiobookStore.page_audio_path(bid, 1)
+    ), "silence WAV still written"
+
+
 # ---------- TTS/audio desync + page_status marking (T-1) ----------
 
 

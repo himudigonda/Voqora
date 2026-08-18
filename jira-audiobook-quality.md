@@ -747,7 +747,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | Run `_phase_tts` + `_phase_concat` end-to-end with one forced failure; assert the final `transcript.json` and `"done"` SSE payload both reflect it |
     | E2E | N/A — covered by integration; full pipeline run is exercised manually per §10 |
 
-- [ ] `T-2` — Fix TTS-phase progress stall for missing-clean-text pages.
+- [x] `T-2` — Fix TTS-phase progress stall for missing-clean-text pages.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: the missing-clean-text branch still emits `page_done` and
