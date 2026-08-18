@@ -667,10 +667,66 @@ class AudiobookService:
                     total=page_count,
                 )
 
+        # `asyncio.gather`'s default behavior (no `return_exceptions`) only
+        # re-raises the *first* exception a sibling task hits — it does NOT
+        # cancel the other still-running tasks, which can keep executing in
+        # the background after this function has already returned/raised.
+        # A straggler mid-Gemini-call can then finish *after* the book was
+        # cancelled and deleted, and its trailing `update_meta` call
+        # resurrects a zombie DB row for a book that no longer exists.
+        # Fix: actively cancel sibling tasks the moment a cancellation is
+        # observed (via the shared `_cancel_flags`, polled here rather than
+        # only checked at each task's own entry), and unconditionally wait
+        # for every task to actually finish (or be cancelled) before this
+        # phase returns, so no clean_one call can ever outlive it.
+        tasks: list[asyncio.Task] = [
+            asyncio.ensure_future(clean_one(n)) for n in pending
+        ]
+        remaining: set[asyncio.Task] = set(tasks)
         try:
-            await asyncio.gather(*(clean_one(n) for n in pending))
-        except GeminiAuthError:
-            raise
+            while remaining:
+                done, remaining = await asyncio.wait(
+                    remaining, timeout=0.1, return_when=asyncio.FIRST_COMPLETED
+                )
+                auth_failed = any(
+                    t.done()
+                    and not t.cancelled()
+                    and isinstance(t.exception(), GeminiAuthError)
+                    for t in done
+                )
+                if remaining and (cls._cancel_flags.get(book_id) or auth_failed):
+                    for t in remaining:
+                        t.cancel()
+        finally:
+            # Defensive: guarantee every spawned task is fully finished (or
+            # cancelled) before this phase returns/raises, regardless of how
+            # we got here.
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        gemini_auth_exc: GeminiAuthError | None = None
+        was_cancelled = False
+        other_exc: Exception | None = None
+        for t in tasks:
+            if t.cancelled():
+                was_cancelled = True
+                continue
+            exc = t.exception()
+            if exc is None:
+                continue
+            if isinstance(exc, GeminiAuthError):
+                gemini_auth_exc = gemini_auth_exc or exc
+            elif isinstance(exc, AudiobookCancelled):
+                was_cancelled = True
+            else:
+                other_exc = other_exc or exc
+
+        if gemini_auth_exc is not None:
+            raise gemini_auth_exc
+        if was_cancelled:
+            raise AudiobookCancelled(book_id)
+        if other_exc is not None:
+            raise other_exc
 
         cls._emit(book_id, "phase_finished", phase="cleaning")
 

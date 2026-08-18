@@ -781,7 +781,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit against the real segment loop structure |
     | E2E | N/A |
 
-- [ ] `T-4` — Fix cancel + immediate delete zombie-row race.
+- [x] `T-4` — Fix cancel + immediate delete zombie-row race.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: a straggler clean-phase task cannot mutate meta for an

@@ -1016,6 +1016,76 @@ async def test_request_delete_unknown_returns_false():
     assert ok is False
 
 
+# ---------- cancel + immediate delete zombie-row race (T-4) ----------
+
+
+@pytest.mark.asyncio
+async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkeypatch):
+    """Stress test for the finding: _phase_clean's asyncio.gather doesn't
+    cancel sibling clean_one tasks when the book is cancelled, so a straggler
+    still mid Gemini-call can call update_meta *after* the book's DB row was
+    already deleted by a concurrent delete — resurrecting a zombie row. Must
+    fail on the pre-fix `asyncio.gather(*(clean_one(n) for n in pending))`
+    (no return_exceptions, no explicit sibling cancellation) and pass once
+    stragglers are actively cancelled instead.
+    """
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x" * 200)  # long enough to route through clean_page, not OCR
+
+    release = asyncio.Event()
+
+    async def slow_clean_page(api_key, text):
+        # Simulates a page whose Gemini call is already in flight (past its
+        # own cancel checkpoint) when cancel + delete happen concurrently.
+        await release.wait()
+        return "cleaned slowly"
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=slow_clean_page)
+    )
+
+    clean_task = asyncio.create_task(AudiobookService._phase_clean(bid, "fake-key"))
+    await asyncio.sleep(0.05)  # let both pages' clean_one start + block on release
+
+    AudiobookService.cancel(bid)
+    # Delete only the DB row here (not the on-disk files via the full
+    # AudiobookStore.delete_book/rmtree) so the race under test is isolated
+    # to "does a straggler resurrect the DB row via update_meta", not an
+    # incidental FileNotFoundError from writing into an already-rmtree'd
+    # directory — both are real consequences of the same underlying bug,
+    # but only the DB-row resurrection is what T-4 is about.
+    conn = AudiobookStore._connection()
+    with AudiobookStore._conn_lock:
+        conn.execute("DELETE FROM books WHERE book_id = ?", (bid,))
+
+    # Give a correct fix's cancellation watcher time to stop the stragglers
+    # before they'd otherwise complete and write to the now-deleted book.
+    await asyncio.sleep(0.3)
+    release.set()  # let any still-running straggler (pre-fix code) finish
+
+    try:
+        await asyncio.wait_for(clean_task, timeout=2.0)
+    except BaseException:
+        # We don't care exactly how the (possibly still-racy) phase ends —
+        # only whether a straggler managed to touch a deleted book's state.
+        pass
+
+    assert all(
+        b["book_id"] != bid for b in AudiobookStore.list_books()
+    ), "a straggler clean_one task resurrected the deleted book's DB row"
+
+
 @pytest.mark.asyncio
 async def test_retry_failed_resumes_needs_key_book(monkeypatch):
     """Regression for C2: a book in needs_key state with no failed pages
