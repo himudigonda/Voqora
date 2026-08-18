@@ -157,6 +157,10 @@ struct AudiobookLibraryView: View {
     private var content: some View {
         if !bookVM.hasLoadedOnce {
             skeletonGrid
+        } else if bookVM.loadFailed && bookVM.books.isEmpty {
+            // T-17: a first-load failure (e.g. backend unreachable) must read
+            // as distinctly different from a genuinely empty library.
+            loadFailedState
         } else if bookVM.books.isEmpty {
             emptyState
         } else if Self.showsNoResultsState(searchText: searchText, matchCount: filteredSorted.count) {
@@ -368,6 +372,35 @@ struct AudiobookLibraryView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.cyan)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Load-failure state (T-17)
+
+    private var loadFailedState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.red.opacity(0.6))
+            VStack(spacing: 6) {
+                Text("COULDN'T LOAD YOUR LIBRARY")
+                    .font(vm.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text("Voqora couldn't reach the backend. Check that it's running and try again.")
+                    .font(vm.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+            Button { Task { await bookVM.refresh() } } label: {
+                Label("Try Again", systemImage: "arrow.clockwise")
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

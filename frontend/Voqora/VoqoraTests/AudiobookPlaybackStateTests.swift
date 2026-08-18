@@ -5,6 +5,10 @@ private enum DelayedAudioFailure: Error {
     case deliberatelyUnavailable
 }
 
+private enum LibraryLoadFailure: Error {
+    case backendUnreachable
+}
+
 private actor DelayedAudioLoader {
     private var requested = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
@@ -336,6 +340,43 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             UserDefaults.standard.double(forKey: bookPosKeyB), 7.0,
             "book B's resume position must be untouched -- it did not complete"
         )
+    }
+
+    // MARK: - Distinct library-load-failure state (jira-audiobook-quality.md T-17)
+
+    func test_refresh_catchPath_setsLoadFailedFlag() async {
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            listBooks: { throw LibraryLoadFailure.backendUnreachable }
+        )
+        XCTAssertFalse(viewModel.loadFailed, "precondition: no failure yet")
+
+        await viewModel.refresh()
+
+        XCTAssertTrue(viewModel.loadFailed, "a failed refresh() must set a distinguishable flag")
+        XCTAssertTrue(viewModel.hasLoadedOnce)
+        XCTAssertNotNil(viewModel.toast, "the existing transient toast must still fire")
+    }
+
+    func test_refresh_clearsLoadFailedFlag_onNextSuccess() async {
+        var shouldFail = true
+        let book = makeBook(bookID: "b1", status: "done")
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in AsyncStream { _ in } },
+            listBooks: {
+                if shouldFail { throw LibraryLoadFailure.backendUnreachable }
+                return [book]
+            }
+        )
+
+        await viewModel.refresh()
+        XCTAssertTrue(viewModel.loadFailed)
+
+        shouldFail = false
+        await viewModel.refresh()
+
+        XCTAssertFalse(viewModel.loadFailed, "a subsequent successful refresh() must clear the flag")
     }
 
     // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)

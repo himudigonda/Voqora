@@ -28,6 +28,11 @@ final class AudiobookViewModel: ObservableObject {
     /// dedicated error state without competing with a global toast.
     @Published var loadingError: String? = nil
     @Published var hasLoadedOnce: Bool = false
+    /// T-17: distinguishes "the last `refresh()` failed" from a genuinely
+    /// empty library, so the library view can render a distinct state
+    /// instead of falling back to the same empty-shelf UI. Set on
+    /// `refresh()`'s catch path, cleared on the next successful refresh.
+    @Published var loadFailed: Bool = false
 
     // Upload flow
     @Published var pendingDocument: URL? = nil
@@ -182,6 +187,7 @@ final class AudiobookViewModel: ObservableObject {
             guard generation == refreshGeneration else { return }
             books = fresh
             hasLoadedOnce = true
+            loadFailed = false
             // Keep processingState in sync with anything still in flight.
             for book in fresh {
                 // D2.1: SSE already owns this book's live state while it has
@@ -202,6 +208,7 @@ final class AudiobookViewModel: ObservableObject {
             guard generation == refreshGeneration else { return }
             showToast("Could not load library: \(error.localizedDescription)", kind: .error)
             hasLoadedOnce = true
+            loadFailed = true
         }
     }
 

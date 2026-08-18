@@ -976,7 +976,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: compare the two modals side by side; resize the library window and confirm cards/grid stay visually consistent |
 
-- [ ] `T-17` — Distinct library-load-failure state.
+- [x] `T-17` — Distinct library-load-failure state.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
