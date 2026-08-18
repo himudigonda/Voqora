@@ -17,6 +17,9 @@ struct AudiobookPlayerView: View {
     @State private var playerSpeed: Double = 1.0
     @State private var transcriptOpen = false
     @State private var dominantColor: Color = .cyan
+    // T-13: last time the user manually scrolled the transcript; suppresses
+    // the auto-scroll-on-page-change effect for a short window afterward.
+    @State private var userScrolledAt: Date? = nil
     // T-12: per-transcript/per-book sort caches. Reference types held in
     // `@State` so refreshing them during body evaluation mutates their own
     // storage in place rather than reassigning the `@State` property itself
@@ -425,10 +428,37 @@ struct AudiobookPlayerView: View {
                         }
                         .padding(20)
                     }
+                    // T-13: user-scroll detection. macOS deployment target is
+                    // 14.0 (below the 15.0 minimum for `.onScrollGeometryChange`),
+                    // so a DragGesture is the documented fallback — it catches
+                    // direct click-drag scrolling; it will not see a pure
+                    // trackpad/scroll-wheel gesture, which AppKit's NSScrollView
+                    // handles outside SwiftUI's gesture system. Good enough to
+                    // suppress auto-scroll for the common "reading ahead" case.
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 2)
+                            .onChanged { _ in userScrolledAt = Date() }
+                    )
+                    // T-13: scroll to the current page immediately the first
+                    // time this branch mounts — i.e. the first time the panel
+                    // is shown with a transcript already loaded, or the first
+                    // time a transcript arrives while the panel is already
+                    // open. SwiftUI preserves this branch's identity (no
+                    // re-mount, no re-fire) while `bookVM.currentTranscript`
+                    // stays non-nil, so this does not re-trigger just because
+                    // the transcript's content changes mid-session.
+                    .onAppear {
+                        if let page = currentPageID(in: transcript) {
+                            proxy.scrollTo(page, anchor: .center)
+                        }
+                    }
                     // S8/T-12: only scroll when the *current page* changes,
-                    // not on every render.
+                    // not on every render. T-13: suppressed for a short
+                    // window after a detected manual scroll so auto-scroll
+                    // doesn't fight a user reading ahead/back.
                     .onChange(of: currentPageID(in: transcript)) { _, newPage in
                         guard let newPage else { return }
+                        guard Self.shouldAutoScroll(userScrolledAt: userScrolledAt, now: Date()) else { return }
                         withAnimation(.easeOut(duration: 0.4)) {
                             proxy.scrollTo(newPage, anchor: .center)
                         }
@@ -585,7 +615,7 @@ struct AudiobookPlayerView: View {
     }
 }
 
-// MARK: - Pure, testable logic (T-12)
+// MARK: - Pure, testable logic (T-12, T-13)
 //
 // Extracted as `internal` static members (rather than `private`) so
 // `VoqoraTests` can exercise them directly via `@testable import Voqora`,
@@ -679,5 +709,17 @@ extension AudiobookPlayerView {
             }
         }
         return result
+    }
+
+    /// T-13: how long auto-scroll stays suppressed after a detected manual
+    /// scroll. Matches the toast auto-dismiss duration used elsewhere in
+    /// this feature, for consistency.
+    static let userScrollPauseDuration: TimeInterval = 4
+
+    /// Whether the transcript should auto-scroll to the current page right
+    /// now, given when the user last manually scrolled (if ever).
+    static func shouldAutoScroll(userScrolledAt: Date?, now: Date) -> Bool {
+        guard let userScrolledAt else { return true }
+        return now.timeIntervalSince(userScrolledAt) >= userScrollPauseDuration
     }
 }

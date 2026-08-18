@@ -915,7 +915,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual, on a long (100+ page) book: confirm no visible scroll jank while playing and dragging the transcript |
 
-- [ ] `T-13` — Transcript initial-scroll + user-scroll-pause.
+- [x] `T-13` — Transcript initial-scroll + user-scroll-pause.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookPlayerView.swift`
   - Depends on: `T-11`, `T-12`
   - Acceptance: opening the transcript panel (or loading a transcript

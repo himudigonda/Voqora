@@ -2,10 +2,11 @@
 import XCTest
 
 /// Pure-logic tests for `AudiobookPlayerView`'s memoized transcript/section
-/// lookup (jira-audiobook-quality.md T-12). These exercise the `internal`
-/// static members added specifically so this logic is testable without a
-/// live view/window — see the `AudiobookPlayerLayoutTests`/
-/// `AudiobookViewModel.libraryPollInterval` precedent this file follows.
+/// lookup (jira-audiobook-quality.md T-12) and auto-scroll-pause behavior
+/// (T-13). These exercise the `internal` static members added specifically
+/// so this logic is testable without a live view/window — see the
+/// `AudiobookPlayerLayoutTests`/`AudiobookViewModel.libraryPollInterval`
+/// precedent this file follows.
 final class AudiobookPlayerViewTests: XCTestCase {
     // MARK: - sortPages / sortPageTimes / sortSections
 
@@ -85,6 +86,35 @@ final class AudiobookPlayerViewTests: XCTestCase {
 
     func test_currentSection_noSectionsReturnsNil() {
         XCTAssertNil(AudiobookPlayerView.currentSection(in: [], at: 100))
+    }
+
+    // MARK: - T-13: shouldAutoScroll
+
+    func test_shouldAutoScroll_trueWhenNeverManuallyScrolled() {
+        XCTAssertTrue(AudiobookPlayerView.shouldAutoScroll(userScrolledAt: nil, now: Date()))
+    }
+
+    func test_shouldAutoScroll_falseImmediatelyAfterManualScroll() {
+        let now = Date()
+        XCTAssertFalse(AudiobookPlayerView.shouldAutoScroll(userScrolledAt: now, now: now))
+    }
+
+    func test_shouldAutoScroll_falseWithinPauseWindow() {
+        let scrolledAt = Date()
+        let stillPaused = scrolledAt.addingTimeInterval(AudiobookPlayerView.userScrollPauseDuration - 0.1)
+        XCTAssertFalse(AudiobookPlayerView.shouldAutoScroll(userScrolledAt: scrolledAt, now: stillPaused))
+    }
+
+    func test_shouldAutoScroll_trueExactlyAtPauseWindowBoundary() {
+        let scrolledAt = Date()
+        let boundary = scrolledAt.addingTimeInterval(AudiobookPlayerView.userScrollPauseDuration)
+        XCTAssertTrue(AudiobookPlayerView.shouldAutoScroll(userScrolledAt: scrolledAt, now: boundary))
+    }
+
+    func test_shouldAutoScroll_trueAfterPauseWindowElapses() {
+        let scrolledAt = Date()
+        let later = scrolledAt.addingTimeInterval(AudiobookPlayerView.userScrollPauseDuration + 1)
+        XCTAssertTrue(AudiobookPlayerView.shouldAutoScroll(userScrolledAt: scrolledAt, now: later))
     }
 
     // MARK: - Helpers
