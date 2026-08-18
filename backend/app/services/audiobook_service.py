@@ -185,16 +185,21 @@ class AudiobookService:
         """Re-process pages currently listed in `meta.failed_pages`, OR resume
         a stuck book in `needs_key` / `failed` state.
 
-        Deletes failed pages' cleaned text + per-page WAV + the final
-        audio.wav (so concat re-runs), clears the failed list, and enqueues
-        the book. Returns the number of pages slated for retry. For
-        needs_key/failed without per-page failures, returns 0 but still
-        enqueues a fresh pipeline run.
+        Deletes failed pages' per-page WAV (so TTS re-runs) plus the final
+        audio.wav (so concat re-runs). Clean text is only deleted — forcing
+        a re-run of the costly Gemini cleaning call — for pages whose
+        `page_status` actually indicates a *cleaning* failure; a page that
+        only failed TTS keeps its already-correct clean text and just gets
+        re-synthesized. Clears the failed list, and enqueues the book.
+        Returns the number of pages slated for retry. For needs_key/failed
+        without per-page failures, returns 0 but still enqueues a fresh
+        pipeline run.
         """
         meta = AudiobookStore.read_meta(book_id)
         if meta is None:
             return 0
         failed = list(meta.get("failed_pages") or [])
+        page_status: dict[str, str] = dict(meta.get("page_status") or {})
         status = meta.get("status")
         # Allow resume from {needs_key, failed} even with empty failed_pages —
         # in those states the pipeline never reached the per-page retry stage
@@ -204,15 +209,25 @@ class AudiobookService:
         if not failed and status not in resumable_states:
             return 0
         for n in failed:
-            for p in (
-                AudiobookStore.page_clean_path(book_id, n),
-                AudiobookStore.page_audio_path(book_id, n),
-            ):
+            # Books processed before page_status existed have no recorded
+            # entry for a failed page — fall back to the previous (safe,
+            # if wasteful) behavior of always re-cleaning in that case.
+            cleaning_failed = (
+                page_status.get(str(n), "cleaning_failed") == "cleaning_failed"
+            )
+            paths = [AudiobookStore.page_audio_path(book_id, n)]
+            if cleaning_failed:
+                paths.append(AudiobookStore.page_clean_path(book_id, n))
+            for p in paths:
                 try:
                     if os.path.exists(p):
                         os.remove(p)
                 except OSError:
                     pass
+            # Stale marker cleared regardless of type — retry_failed always
+            # re-runs TTS for the page, and a successful retry should no
+            # longer show it as failed in the transcript.
+            page_status.pop(str(n), None)
         # Delete final concatenated audio so concat re-runs.
         for p in (
             AudiobookStore.audio_path(book_id),
@@ -224,7 +239,11 @@ class AudiobookService:
             except OSError:
                 pass
         await AudiobookStore.update_meta(
-            book_id, failed_pages=[], error=None, status="queued"
+            book_id,
+            failed_pages=[],
+            page_status=page_status,
+            error=None,
+            status="queued",
         )
         await cls.enqueue(book_id, api_key)
         return len(failed)
@@ -328,10 +347,18 @@ class AudiobookService:
             meta = AudiobookStore.read_meta(book_id) or meta
             await cls._phase_tts(book_id, meta)
             actual = await cls._phase_concat(book_id, meta)
-            await AudiobookStore.update_meta(
+            final_meta = await AudiobookStore.update_meta(
                 book_id, status="done", actual=actual, error=None
             )
-            cls._emit(book_id, "done", actual=actual)
+            # Thread failed_pages into the terminal event so a listening
+            # client learns immediately that some pages failed (TTS or
+            # cleaning), without a separate GET round-trip.
+            cls._emit(
+                book_id,
+                "done",
+                actual=actual,
+                failed_pages=final_meta.get("failed_pages") or [],
+            )
         except AudiobookCancelled:
             await AudiobookStore.update_meta(
                 book_id, status="cancelled", error="Cancelled by user."
@@ -383,6 +410,15 @@ class AudiobookService:
         # generating identical audio twice.
         seen_content_hashes: set[str] = set()
 
+        # Per-page status side-channel (distinct from the "-" clean-text
+        # marker itself): lets the transcript distinguish a duplicate page
+        # from a real TTS/cleaning failure instead of showing an unexplained
+        # bare dash or silently-wrong narrated text. Seeded from any existing
+        # value so a resumed extract doesn't drop entries recorded earlier.
+        page_status: dict[str, str] = dict(
+            (AudiobookStore.read_meta(book_id) or {}).get("page_status") or {}
+        )
+
         for n in range(1, page_count + 1):
             cls._check_cancel(book_id)
             # Honor /speak preemption between pages.
@@ -422,6 +458,7 @@ class AudiobookService:
                                 with open(tmp, "w", encoding="utf-8") as f:
                                     f.write("-")
                                 os.replace(tmp, clean_path)
+                            page_status[str(n)] = "duplicate"
                         else:
                             seen_content_hashes.add(h)
                 except OSError:
@@ -430,6 +467,7 @@ class AudiobookService:
             await AudiobookStore.update_meta(
                 book_id,
                 phase_progress={"page_done": n, "page_total": page_count},
+                page_status=page_status,
             )
             cls._emit(
                 book_id, "page_done", phase="extracting", page=n, total=page_count
@@ -619,7 +657,16 @@ class AudiobookService:
                     )
                     async with state_lock:
                         failed.append(n)
-                        await AudiobookStore.update_meta(book_id, failed_pages=failed)
+                        # Mark this as a *cleaning* failure (as opposed to a
+                        # TTS-only failure) so retry_failed knows this page's
+                        # clean text actually needs to be regenerated, not
+                        # just its audio re-synthesized.
+                        current_meta = AudiobookStore.read_meta(book_id) or {}
+                        page_status = dict(current_meta.get("page_status") or {})
+                        page_status[str(n)] = "cleaning_failed"
+                        await AudiobookStore.update_meta(
+                            book_id, failed_pages=failed, page_status=page_status
+                        )
                     cls._emit(
                         book_id, "page_failed", phase="cleaning", page=n, error=str(e)
                     )
@@ -648,10 +695,66 @@ class AudiobookService:
                     total=page_count,
                 )
 
+        # `asyncio.gather`'s default behavior (no `return_exceptions`) only
+        # re-raises the *first* exception a sibling task hits — it does NOT
+        # cancel the other still-running tasks, which can keep executing in
+        # the background after this function has already returned/raised.
+        # A straggler mid-Gemini-call can then finish *after* the book was
+        # cancelled and deleted, and its trailing `update_meta` call
+        # resurrects a zombie DB row for a book that no longer exists.
+        # Fix: actively cancel sibling tasks the moment a cancellation is
+        # observed (via the shared `_cancel_flags`, polled here rather than
+        # only checked at each task's own entry), and unconditionally wait
+        # for every task to actually finish (or be cancelled) before this
+        # phase returns, so no clean_one call can ever outlive it.
+        tasks: list[asyncio.Task] = [
+            asyncio.ensure_future(clean_one(n)) for n in pending
+        ]
+        remaining: set[asyncio.Task] = set(tasks)
         try:
-            await asyncio.gather(*(clean_one(n) for n in pending))
-        except GeminiAuthError:
-            raise
+            while remaining:
+                done, remaining = await asyncio.wait(
+                    remaining, timeout=0.1, return_when=asyncio.FIRST_COMPLETED
+                )
+                auth_failed = any(
+                    t.done()
+                    and not t.cancelled()
+                    and isinstance(t.exception(), GeminiAuthError)
+                    for t in done
+                )
+                if remaining and (cls._cancel_flags.get(book_id) or auth_failed):
+                    for t in remaining:
+                        t.cancel()
+        finally:
+            # Defensive: guarantee every spawned task is fully finished (or
+            # cancelled) before this phase returns/raises, regardless of how
+            # we got here.
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+        gemini_auth_exc: GeminiAuthError | None = None
+        was_cancelled = False
+        other_exc: Exception | None = None
+        for t in tasks:
+            if t.cancelled():
+                was_cancelled = True
+                continue
+            exc = t.exception()
+            if exc is None:
+                continue
+            if isinstance(exc, GeminiAuthError):
+                gemini_auth_exc = gemini_auth_exc or exc
+            elif isinstance(exc, AudiobookCancelled):
+                was_cancelled = True
+            else:
+                other_exc = other_exc or exc
+
+        if gemini_auth_exc is not None:
+            raise gemini_auth_exc
+        if was_cancelled:
+            raise AudiobookCancelled(book_id)
+        if other_exc is not None:
+            raise other_exc
 
         cls._emit(book_id, "phase_finished", phase="cleaning")
 
@@ -684,29 +787,50 @@ class AudiobookService:
 
             clean_path = AudiobookStore.page_clean_path(book_id, n)
             if not os.path.exists(clean_path):
-                # Skip pages with no cleaned text.
+                # Skip pages with no cleaned text — but still fall through to
+                # the phase_progress/page_done bookkeeping below. Previously
+                # this `continue`d immediately, so the progress bar could
+                # undercount/stall on a page with no clean text.
                 cls._write_silence_wav(out_path, 0.5)
-                continue
-            with open(clean_path, encoding="utf-8") as f:
-                text = f.read().strip() or "-"
-
-            # P3: blank-page marker is silence, never spoken aloud as "dash".
-            # GeminiCleaner returns the literal "-" string for empty pages.
-            if text == "-" or text.startswith("[blank") and text.endswith("]"):
-                cls._write_silence_wav(out_path, 0.3)
             else:
-                try:
-                    samples = await cls._generate_full_page(text, voice, speed)
-                    cls._write_wav_from_samples(out_path, samples)
-                except Exception as e:
-                    log.warning(
-                        "audiobook.tts_failed",
-                        extra={"book_id": book_id, "page": n, "error": str(e)},
-                    )
-                    failed.append(n)
-                    await AudiobookStore.update_meta(book_id, failed_pages=failed)
-                    cls._emit(book_id, "page_failed", phase="tts", page=n, error=str(e))
-                    cls._write_silence_wav(out_path, 0.5)
+                with open(clean_path, encoding="utf-8") as f:
+                    text = f.read().strip() or "-"
+
+                # P3: blank-page marker is silence, never spoken aloud as "dash".
+                # GeminiCleaner returns the literal "-" string for empty pages.
+                if text == "-" or text.startswith("[blank") and text.endswith("]"):
+                    cls._write_silence_wav(out_path, 0.3)
+                else:
+                    try:
+                        samples = await cls._generate_full_page(
+                            book_id, text, voice, speed
+                        )
+                        cls._write_wav_from_samples(out_path, samples)
+                    except AudiobookCancelled:
+                        # A cancel raised mid-page (inside _generate_full_page's
+                        # segment loop) must propagate as a real cancellation,
+                        # not get swallowed as a per-page TTS failure below.
+                        raise
+                    except Exception as e:
+                        log.warning(
+                            "audiobook.tts_failed",
+                            extra={"book_id": book_id, "page": n, "error": str(e)},
+                        )
+                        failed.append(n)
+                        # Mark this page distinctly (not shown as matching
+                        # narrated text, not a bare unexplained "-") so a
+                        # consumer of transcript.json knows its audio is
+                        # actually silence, not the clean text it still shows.
+                        current_meta = AudiobookStore.read_meta(book_id) or {}
+                        page_status = dict(current_meta.get("page_status") or {})
+                        page_status[str(n)] = "tts_failed"
+                        await AudiobookStore.update_meta(
+                            book_id, failed_pages=failed, page_status=page_status
+                        )
+                        cls._emit(
+                            book_id, "page_failed", phase="tts", page=n, error=str(e)
+                        )
+                        cls._write_silence_wav(out_path, 0.5)
 
             EngineManager.touch()
             await AudiobookStore.update_meta(
@@ -719,7 +843,7 @@ class AudiobookService:
 
     @classmethod
     async def _generate_full_page(
-        cls, text: str, voice: str, speed: float
+        cls, book_id: str, text: str, voice: str, speed: float
     ) -> np.ndarray:
         """Drain the EngineManager.generate async generator into one float32 array.
 
@@ -730,9 +854,15 @@ class AudiobookService:
         EngineManager.generate used by the audiobook pipeline — interactive
         /speak (app/api/tts.py) calls it directly and is unaffected. See
         jira-cpu-ram-optimization.md.
+
+        `book_id` is checked for cancellation between segments — not just at
+        the page boundary in `_phase_tts`'s loop — so a mid-page cancel
+        responds within roughly one segment's synthesis time instead of
+        waiting for the whole (possibly multi-segment) page to finish.
         """
         chunks: list[np.ndarray] = []
         async for chunk in EngineManager.generate(text, voice, speed):
+            cls._check_cancel(book_id)
             chunks.append(chunk)
             await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
         if not chunks:
@@ -821,12 +951,22 @@ class AudiobookService:
                 if os.path.exists(cp):
                     with open(cp, encoding="utf-8") as f:
                         page_texts[str(n)] = f.read()
+            # Re-read meta fresh rather than trusting the `meta` argument:
+            # TTS-phase failures write page_status *after* `_run_pipeline`
+            # captured the `meta` local this function was called with, so
+            # that snapshot can be stale for entries recorded during TTS.
+            # Additive alongside `pages` (never replacing it) so a page whose
+            # audio actually failed/was deduped is distinctly marked instead
+            # of silently presented as matching, successfully-narrated text.
+            current_meta = AudiobookStore.read_meta(book_id) or meta
+            page_status = dict(current_meta.get("page_status") or {})
             transcript = {
                 "book_id": book_id,
                 "sections": timed_sections,
                 "page_to_time": page_to_time,
                 "total_audio_seconds": total_seconds,
                 "pages": page_texts,
+                "page_status": page_status,
             }
             tpath = AudiobookStore.transcript_path(book_id)
             tmp = tpath + ".tmp"

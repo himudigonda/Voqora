@@ -732,7 +732,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 1 — Backend pipeline correctness (independent, can start immediately)
 
-- [ ] `T-1` — Fix transcript/audio desync on TTS failure + duplicate-page marker.
+- [x] `T-1` — Fix transcript/audio desync on TTS failure + duplicate-page marker.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: a TTS-failed page's transcript text is distinctly marked
@@ -747,7 +747,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | Run `_phase_tts` + `_phase_concat` end-to-end with one forced failure; assert the final `transcript.json` and `"done"` SSE payload both reflect it |
     | E2E | N/A — covered by integration; full pipeline run is exercised manually per §10 |
 
-- [ ] `T-2` — Fix TTS-phase progress stall for missing-clean-text pages.
+- [x] `T-2` — Fix TTS-phase progress stall for missing-clean-text pages.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: the missing-clean-text branch still emits `page_done` and
@@ -760,7 +760,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — single-phase concern, covered by unit |
     | E2E | N/A |
 
-- [ ] `T-3` — Responsive mid-page cancellation.
+- [x] `T-3` — Responsive mid-page cancellation.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - **Needs plumbing**: `_generate_full_page(cls, text: str, voice: str,
@@ -781,7 +781,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit against the real segment loop structure |
     | E2E | N/A |
 
-- [ ] `T-4` — Fix cancel + immediate delete zombie-row race.
+- [x] `T-4` — Fix cancel + immediate delete zombie-row race.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: none
   - Acceptance: a straggler clean-phase task cannot mutate meta for an
@@ -795,7 +795,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | Mock a slow `clean_one` (e.g. `asyncio.sleep` inside a patched Gemini call), cancel the book, immediately delete it, then assert `AudiobookStore.list_books()` doesn't contain the deleted book_id after the straggler would have run |
     | E2E | N/A |
 
-- [ ] `T-5` — Scope `retry_failed` re-cleaning to actual cleaning failures.
+- [x] `T-5` — Scope `retry_failed` re-cleaning to actual cleaning failures.
   - Files: `backend/app/services/audiobook_service.py`
   - Depends on: `T-1` (needs `page_status` to distinguish failure type)
   - Acceptance: a TTS-only failure's retry doesn't re-run Gemini cleaning
