@@ -724,10 +724,12 @@ class AudiobookService:
         """Drain the EngineManager.generate async generator into one float32 array.
 
         Paced with a short yield between segments (AUDIOBOOK_TTS_SEGMENT_PACING_S)
-        so background/auto-resumed audiobook synthesis doesn't monopolize the
-        CPU. This is the only caller of EngineManager.generate used by the
-        audiobook pipeline — interactive /speak (app/api/tts.py) calls it
-        directly and is unaffected. See jira-cpu-ram-optimization.md.
+        so audiobook synthesis doesn't monopolize the CPU — applies to every
+        audiobook TTS pass (foreground or auto-resumed alike; the backend has
+        no signal to tell them apart). This is the only caller of
+        EngineManager.generate used by the audiobook pipeline — interactive
+        /speak (app/api/tts.py) calls it directly and is unaffected. See
+        jira-cpu-ram-optimization.md.
         """
         chunks: list[np.ndarray] = []
         async for chunk in EngineManager.generate(text, voice, speed):

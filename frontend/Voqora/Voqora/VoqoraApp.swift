@@ -65,6 +65,16 @@ struct VoqoraApp: App {
             print("--- Voqora Frontend Log Started: \(Date()) ---")
         }
 
+        // Touch AppActivityMonitor.shared as early as possible — it's lazily
+        // instantiated, and NotificationCenter doesn't replay missed
+        // notifications to a late subscriber. Background work (heartbeat,
+        // audiobook poll) doesn't start until deep in an async chain
+        // (LaunchManager.prepare() completing), so without this, a
+        // didResignActiveNotification firing during that startup window
+        // would be silently dropped and isBackgrounded would stay wrong
+        // until the next activation transition.
+        _ = AppActivityMonitor.shared
+
         // Create instances
         let audioInstance = AudioService(startingEngine: !runningTests)
         let historyInstance = HistoryManager()

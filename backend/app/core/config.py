@@ -39,9 +39,11 @@ class Settings(BaseSettings):
     # run up a multi-dollar bill on a 2,000-page book. See HARD-072.
     MAX_GEMINI_COST_USD_PER_BOOK: float = 5.0
 
-    # Yield between audiobook TTS segments so background/auto-resumed
-    # synthesis doesn't monopolize the CPU. Does not apply to interactive
-    # /speak — only AudiobookService._generate_full_page. See
+    # Yield between audiobook TTS segments so audiobook synthesis doesn't
+    # monopolize the CPU. Applies to every audiobook TTS pass — the backend
+    # has no signal to distinguish a foreground user-initiated job from a
+    # silently auto-resumed one, so this paces both equally. Does not apply
+    # to interactive /speak — only AudiobookService._generate_full_page. See
     # jira-cpu-ram-optimization.md.
     AUDIOBOOK_TTS_SEGMENT_PACING_S: float = 0.05
 
