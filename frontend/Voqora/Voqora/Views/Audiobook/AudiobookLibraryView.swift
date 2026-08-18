@@ -69,6 +69,9 @@ struct AudiobookLibraryView: View {
                 if hoveringDrop { dropOverlay.transition(.opacity) }
             }
             .navigationTitle("Audiobooks")
+            // T-14: search field was fully wired (`filteredSorted`, `searchText`)
+            // but never rendered anywhere. Matches VaultView.swift's convention.
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Search audiobooks...")
             .toolbar { toolbarContent }
             .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
             .fileImporter(
@@ -156,6 +159,8 @@ struct AudiobookLibraryView: View {
             skeletonGrid
         } else if bookVM.books.isEmpty {
             emptyState
+        } else if Self.showsNoResultsState(searchText: searchText, matchCount: filteredSorted.count) {
+            noResultsState
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 32) {
@@ -185,6 +190,14 @@ struct AudiobookLibraryView: View {
             }
             .padding(36)
         }
+    }
+
+    /// T-14: pure trigger condition for the "no results" empty state, kept
+    /// testable without a live view per the `AudiobookPlayerLayout`/
+    /// `AudiobookPlayerView.shouldAutoScroll` precedent. A non-empty search
+    /// that matches nothing is distinct from a genuinely empty library.
+    static func showsNoResultsState(searchText: String, matchCount: Int) -> Bool {
+        !searchText.isEmpty && matchCount == 0
     }
 
     private var filteredSorted: [Audiobook] {
@@ -348,6 +361,28 @@ struct AudiobookLibraryView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.cyan)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - No-results state (T-14)
+
+    private var noResultsState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.secondary.opacity(0.4))
+            VStack(spacing: 6) {
+                Text("NO MATCHES")
+                    .font(vm.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text("No audiobooks match “\(searchText)”. Try a different search.")
+                    .font(vm.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

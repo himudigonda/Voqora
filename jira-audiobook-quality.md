@@ -931,7 +931,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 5 — Library/modal UI polish (mechanical, lower risk, can run in parallel with Sprint 3/4)
 
-- [ ] `T-14` — Wire up library search + no-results state.
+- [x] `T-14` — Wire up library search + no-results state.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift`
   - Depends on: none
   - Acceptance: `.searchable()` is actually rendered and filters the grid;
