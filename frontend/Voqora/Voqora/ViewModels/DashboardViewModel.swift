@@ -449,6 +449,18 @@ class DashboardViewModel: ObservableObject {
     }
 
 
+    /// Poll aggressively (500 ms) while backend is offline/starting up, then
+    /// relax to 5 s once stable — this cuts the "waiting for backend" window
+    /// from up to 5 s to under 500 ms in normal operation. While the app is
+    /// backgrounded, widen to a 30 s floor: the crash-recovery/auto-relaunch
+    /// behavior driven by this loop still needs to keep working, just far
+    /// less frequently, since nobody is watching in real time. Never shrinks
+    /// the interval — only ever widens it.
+    static func heartbeatDelay(isOnline: Bool, isBackgrounded: Bool) -> UInt64 {
+        let baseDelay: UInt64 = isOnline ? 5_000_000_000 : 500_000_000
+        return isBackgrounded ? max(baseDelay, 30_000_000_000) : baseDelay
+    }
+
     func startHeartbeat() {
         guard heartbeatTask == nil else { return }
         heartbeatTask = Task {
@@ -483,10 +495,10 @@ class DashboardViewModel: ObservableObject {
                     backend.start()
                 }
 
-                // Poll aggressively (500 ms) while backend is offline/starting up,
-                // then relax to 5 s once stable. This cuts the "waiting for backend"
-                // window from up to 5 s to under 500 ms in normal operation.
-                let delay: UInt64 = isNowOnline ? 5_000_000_000 : 500_000_000
+                let delay = Self.heartbeatDelay(
+                    isOnline: isNowOnline,
+                    isBackgrounded: AppActivityMonitor.shared.isBackgrounded
+                )
                 try? await Task.sleep(nanoseconds: delay)
             }
         }

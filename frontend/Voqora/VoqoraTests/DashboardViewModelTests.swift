@@ -328,4 +328,16 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertNotEqual(AppStatus.error("a"), AppStatus.error("b"))
         XCTAssertNotEqual(AppStatus.ready, AppStatus.speaking)
     }
+
+    // MARK: - heartbeatDelay (jira-cpu-ram-optimization.md T-5)
+
+    func test_heartbeatDelay_foreground_matchesExistingOnlineOfflineCadence() {
+        XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: true, isBackgrounded: false), 5_000_000_000)
+        XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: false, isBackgrounded: false), 500_000_000)
+    }
+
+    func test_heartbeatDelay_backgrounded_widensToThirtySecondFloor() {
+        XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: true, isBackgrounded: true), 30_000_000_000)
+        XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: false, isBackgrounded: true), 30_000_000_000)
+    }
 }
