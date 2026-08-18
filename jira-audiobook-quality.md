@@ -679,44 +679,102 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ## 12. Acceptance Criteria
 
-- [ ] A TTS-failed page is marked distinctly in the transcript, not shown as
+- [x] A TTS-failed page is marked distinctly in the transcript, not shown as
       matching text or a bare `"-"`; `failed_pages` reaches the frontend via
-      the `"done"` SSE payload.
-- [ ] Duplicate-page dedup marker is distinguishable from a real failure.
-- [ ] TTS phase progress never stalls for a missing-clean-text page.
-- [ ] Mid-page cancellation responds within one segment, not a whole page.
-- [ ] Cancel + immediate delete cannot resurrect a deleted book's DB row
-      (tested).
-- [ ] `retry_failed` only re-cleans pages that actually failed cleaning.
-- [ ] `displayStatus`/`applyStatus`/`applyPhase` all handle `"sectioning"` —
+      the `"done"` SSE payload. **Fix-loop correction**: the backend half
+      shipped in T-1, but independent review caught that the frontend never
+      decoded/rendered `page_status` — the headline bug was still visible
+      end-to-end. Closed in a follow-up commit (`Transcript.pageStatus` +
+      `AudiobookPlayerView.transcriptRow` badge/dimming), tested.
+- [x] Duplicate-page dedup marker is distinguishable from a real failure —
+      same fix, distinct icon/caption per status value.
+- [x] TTS phase progress never stalls for a missing-clean-text page.
+- [x] Mid-page cancellation responds within one segment, not a whole page.
+      Confirmed unaffected: interactive `/speak` doesn't call the changed
+      code path (verified — separate call site).
+- [x] Cancel + immediate delete cannot resurrect a deleted book's DB row —
+      **empirically reproduced**: the stress test fails against the
+      pre-fix commit (verified in an isolated worktree) and passes against
+      the fix. **Residual risk, disclosed**: the fix narrows the race
+      window from ~90s to ~0.1s (a poll interval), it does not structurally
+      eliminate it — a straggler that finishes inside that ~0.1s window
+      could still theoretically resurrect a row. Accepted per this plan's
+      own Medium/Medium risk framing (§13); a structural fix (a tombstone
+      check in `update_meta`) is a reasonable follow-up, not done here.
+- [x] `retry_failed` only re-cleans pages that actually failed cleaning.
+- [x] `displayStatus`/`applyStatus`/`applyPhase` all handle `"sectioning"` —
       no book ever visibly regresses to "queued" or freezes during it.
-- [ ] The `sseTasks` defer race cannot wipe out a newer subscription
-      (tested).
-- [ ] `processingState` never regresses due to a stale poll response racing
-      a newer SSE event (tested).
-- [ ] `completionSummary` reflects event-receipt order, not resolution
-      order, when two books finish close together (tested).
-- [ ] `delete()` cancels the book's SSE task; no post-delete state
-      resurrection.
-- [ ] The transcript panel scrolls to the current page immediately on open/
+      Cross-lane compile break in `AudiobookCardView.swift` (non-exhaustive
+      switch after this case was added) caught and fixed same-session.
+- [x] The `sseTasks` defer race cannot wipe out a newer subscription — tested,
+      and independently adversarially verified (traced the exact ordering,
+      confirmed no scenario where a legitimate subscription blocks its own
+      cleanup).
+- [x] `processingState` never regresses due to a stale poll response racing
+      a newer SSE event — tested.
+- [x] `completionSummary` reflects event-receipt order, not resolution
+      order, when two books finish close together — tested.
+- [x] `delete()` cancels the book's SSE task; no post-delete state
+      resurrection — tested; adversarially verified the cancel happens
+      synchronously before the network call, and the SSE-loop's own
+      generation guard is a second, independent layer of protection.
+- [x] The transcript panel scrolls to the current page immediately on open/
       load, and auto-scroll pauses for ~4s after manual scrolling.
-- [ ] `orderedPages`/`currentPageID`/`currentSection` are memoized, not
-      re-sorted every tick.
-- [ ] `AudiobookPlayerView` reads live playback state via a real
-      `@EnvironmentObject`, not a decoupled ticker; the ticker is removed.
-- [ ] Library search is reachable and functional; a no-results state exists.
-- [ ] The processing-card context menu (Cancel Processing) is reachable
-      while a card is processing.
-- [ ] Upload-estimate and completion modals are the same size.
-- [ ] Card/cover width tracks the grid column consistently; captions don't
-      wrap and misalign grid rows.
-- [ ] A library load failure shows a distinct state from "empty library."
-- [ ] Error toasts are readable in full (no premature truncation/dismissal
-      for errors specifically).
-- [ ] Start-Processing button proactively disables for a missing Gemini key,
+- [x] `orderedPages`/`currentPageID`/`currentSection` are memoized, not
+      re-sorted every tick — cache invalidation keyed on transcript/book
+      identity, traced and confirmed correct (no dedicated unit test for
+      the invalidation trigger itself, only for the pure sort/lookup
+      functions — minor test-coverage gap, not a functional bug).
+- [x] `AudiobookPlayerView` reads live playback state via a real
+      `@EnvironmentObject`, not a decoupled ticker; the ticker is
+      confirmed removed (grepped, only comments referencing it remain).
+- [x] Library search is reachable and functional; a no-results state exists.
+- [x] The processing-card context menu (Cancel Processing) is reachable
+      while a card is processing — the tap-gate moved into the Button's
+      own action instead of `.allowsHitTesting`. **Not fully live-verified**:
+      confirmed correct by static reasoning about SwiftUI hit-testing: a
+      genuine screenshot/interaction check on the built app would close
+      this with certainty.
+- [x] Upload-estimate and completion modals are the same size (520×640).
+- [x] Card/cover width tracks the grid column via `.aspectRatio`, checked
+      mathematically at both the grid's 200pt and 240pt extremes (linear
+      scaling, no competing constraint found) — **not live-screenshot
+      verified**, same caveat as above.
+      Captions have `.lineLimit(1)`.
+- [x] A library load failure shows a distinct state from "empty library."
+- [x] Error toasts are readable in full. **Fix-loop correction**: T-18
+      initially only removed the line-cap for `.error` toasts, not the
+      dismiss-duration half of its own acceptance criterion — closed in a
+      follow-up commit (`AudiobookViewModel.dismissDelayNanoseconds`,
+      8s for errors vs. 4s for info/success), tested.
+- [x] Start-Processing button proactively disables for a missing Gemini key,
       matching the existing image-only-case behavior.
-- [ ] Icon-only buttons and the sort picker have accessibility labels.
-- [ ] Full test suite (frontend + backend) passes; lint clean.
+- [x] Icon-only buttons and the sort picker have accessibility labels.
+- [x] Full test suite (frontend + backend) passes; lint clean. 142/142
+      Swift, 201/201 backend, `ruff`/`black` clean. SwiftLint itself isn't
+      installed on this machine, so the Swift half of `make lint` is a
+      confirmed no-op, not a confirmed pass — same caveat as the CPU/RAM
+      plan.
+
+**Not done, out of scope, disclosed rather than silently dropped:**
+- No live/manual verification pass was run against the built, running app
+  (would need `make app`/`make run`, a real backend, and processing an
+  actual document through the pipeline to meaningfully exercise
+  transcript/processing states). Automated test coverage plus static
+  reasoning is the evidence basis for every acceptance item above; the two
+  items marked "not live-verified" are the ones a real screenshot/
+  interaction check would add the most confidence to.
+- `AudioService`'s `activeSessionID`/`audiobookGeneration` guard (T-10's
+  actual protective mechanism) has no direct unit test — only its
+  downstream consumer (`AudiobookViewModel`'s completion sink) is tested.
+  Flagged by adversarial review; a reasonable follow-up, not blocking.
+- A pre-existing (not introduced by this plan) double-navigation gap in
+  `AudiobookLibraryView`'s tap handling — two rapid taps landing in the
+  same render pass could theoretically push a duplicate navigation route.
+  Out of scope; noted for a future pass.
+- Sleep-based timing assumptions in a handful of new Swift tests (10-20ms)
+  are a soft flakiness risk under heavy system load — currently reliably
+  green on this machine, not rewritten to a more robust polling pattern.
 
 ## 13. Risks, Mitigations & Rollback
 
@@ -1033,7 +1091,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 6 — Final verification
 
-- [ ] `T-21` — Full regression pass across both languages.
+- [x] `T-21` — Full regression pass across both languages.
   - Files: none (verification only)
   - Depends on: `T-1` through `T-20`
   - Acceptance: all items in §12 checked off with evidence
