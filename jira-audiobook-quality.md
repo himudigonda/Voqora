@@ -1004,7 +1004,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A |
     | E2E | Manual: trigger a long error message, confirm it's fully readable before dismissal |
 
-- [ ] `T-19` — Start-Processing button gates on missing Gemini key.
+- [x] `T-19` — Start-Processing button gates on missing Gemini key.
   - Files: `frontend/Voqora/Voqora/Views/Audiobook/UploadEstimateModal.swift`
   - Depends on: none
   - Acceptance: toggling Gemini cleanup on without a saved key proactively
