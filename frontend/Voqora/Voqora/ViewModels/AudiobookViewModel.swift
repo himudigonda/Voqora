@@ -64,7 +64,27 @@ final class AudiobookViewModel: ObservableObject {
 
     // Per-book live processing state, keyed by book_id.
     @Published var processingState: [String: ProcessingStatus] = [:]
-    private var sseTasks: [String: Task<Void, Never>] = [:]
+    /// `private(set)` (not `private`) so unit tests can observe the effect of
+    /// the D1/T-7 race fix without a live backend.
+    private(set) var sseTasks: [String: Task<Void, Never>] = [:]
+    /// D1/T-7: one UUID minted per `subscribe(to:)` attempt for a book. A
+    /// subscription's deferred cleanup only clears `sseTasks`/`sseGeneration`
+    /// if it still owns this slot — otherwise a delayed cleanup from an older,
+    /// already-superseded subscription (URLSession cancellation isn't
+    /// instant) would wipe out a newer one's live registration. Mirrors
+    /// AudioService's `volumeRampToken` (HARD-020).
+    private var sseGeneration: [String: UUID] = [:]
+    /// D2.2: monotonic token for `refresh()` calls. A slower-resolving
+    /// overlapping refresh (plain polling racing a user action, or two
+    /// closely-spaced user actions) must not apply its response after a
+    /// newer refresh already did. Mirrors `DashboardViewModel.speakGeneration`.
+    private var refreshGeneration = 0
+    /// D2.3: monotonic token bumped the moment a "done" SSE event is
+    /// *received*, before the async detail fetch that follows. Gates
+    /// `completionSummary` writes so the event received last wins, not
+    /// whichever fetch happens to resolve last. Mirrors
+    /// `DashboardViewModel.errorResetGeneration`.
+    private(set) var completionGeneration = 0
 
     // Polling for library refresh.
     private var pollTask: Task<Void, Never>?
@@ -101,10 +121,21 @@ final class AudiobookViewModel: ObservableObject {
 
     private var completionObserver: AnyCancellable?
 
+    /// Test seam mirroring `localAudioURL`: lets tests simulate SSE events
+    /// through a controlled `AsyncStream` instead of opening a real
+    /// connection (needed to exercise the T-7/T-8/T-9 race fixes
+    /// deterministically).
+    private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
+    /// Test seam mirroring `localAudioURL`: lets tests control `refresh()`'s
+    /// library snapshot deterministically instead of hitting a live backend.
+    private let listBooks: @MainActor () async throws -> [Audiobook]
+
     init(
         service: AudiobookService? = nil,
         audio: AudioService,
-        localAudioURL: (@MainActor (String) async throws -> URL)? = nil
+        localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
+        subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil,
+        listBooks: (@MainActor () async throws -> [Audiobook])? = nil
     ) {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
@@ -112,18 +143,26 @@ final class AudiobookViewModel: ObservableObject {
         self.localAudioURL = localAudioURL ?? { bookID in
             try await resolvedService.ensureLocalAudio(for: bookID)
         }
+        self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
+        self.listBooks = listBooks ?? { try await resolvedService.list() }
         self.keyVerified = KeychainService.has(.geminiAPIKey)
         if let stored = KeychainService.get(.geminiAPIKey) {
             self.draftKey = stored
         }
         // Clear saved position when a book plays to its natural end.
+        // T-10: reads `audio.completedSessionID` (the book identity AudioService
+        // captured when *that* session started) instead of `self.nowPlaying`
+        // (read fresh here, at sink-execution time). If the user starts a new
+        // book in the exact instant an older one finishes, `nowPlaying` may
+        // have already moved on by the time this sink runs — the completed
+        // session's own captured identity can't drift out from under it.
         completionObserver = audio.$playbackCompleted
             .filter { $0 }
             .sink { [weak self] _ in
-                guard let self, let book = self.nowPlaying else { return }
-                UserDefaults.standard.removeObject(forKey: "bookPos_\(book.bookID)")
+                guard let self, let bookID = self.audio.completedSessionID else { return }
+                UserDefaults.standard.removeObject(forKey: "bookPos_\(bookID)")
                 MetricsService.shared.trackAudiobookPlay(
-                    bookIDHash: sha256Hex(book.bookID),
+                    bookIDHash: sha256Hex(bookID),
                     secondsPlayed: self.audio.duration
                 )
             }
@@ -134,18 +173,33 @@ final class AudiobookViewModel: ObservableObject {
     // MARK: - Library
 
     func refresh() async {
+        // D2.2: reserve this call's place before the await so a slower-
+        // resolving overlapping refresh can detect it's been superseded.
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         do {
-            let fresh = try await service.list()
+            let fresh = try await listBooks()
+            guard generation == refreshGeneration else { return }
             books = fresh
             hasLoadedOnce = true
             // Keep processingState in sync with anything still in flight.
             for book in fresh {
-                processingState[book.bookID] = book.displayStatus
+                // D2.1: SSE already owns this book's live state while it has
+                // an active subscription — a GET snapshot here can be stale
+                // relative to an SSE event that already applied. This makes
+                // the code actually honor the "SSE is source of truth"
+                // comment on the poll loop below, not just gate whether
+                // refresh() is *called*, but what it *writes* once called
+                // from elsewhere (retry/startProcessing/cancel/delete).
+                if sseTasks[book.bookID] == nil {
+                    processingState[book.bookID] = book.displayStatus
+                }
                 if book.displayStatus.isProcessing && sseTasks[book.bookID] == nil {
                     subscribe(to: book.bookID)
                 }
             }
         } catch {
+            guard generation == refreshGeneration else { return }
             showToast("Could not load library: \(error.localizedDescription)", kind: .error)
             hasLoadedOnce = true
         }
@@ -325,12 +379,27 @@ final class AudiobookViewModel: ObservableObject {
         retry(book)
     }
 
-    private func subscribe(to bookID: String) {
+    /// Internal (not private) so unit tests can drive it directly with the
+    /// `subscribeToEvents` seam instead of a live backend.
+    func subscribe(to bookID: String) {
         sseTasks[bookID]?.cancel()
+        // D1/T-7: mint a fresh token for *this* attempt. The deferred cleanup
+        // below only fires for the attempt that still owns this slot.
+        let token = UUID()
+        sseGeneration[bookID] = token
         sseTasks[bookID] = Task { [weak self] in
-            defer { self?.sseTasks[bookID] = nil }
+            defer {
+                if self?.sseGeneration[bookID] == token {
+                    self?.sseTasks[bookID] = nil
+                    self?.sseGeneration[bookID] = nil
+                }
+            }
             guard let self else { return }
-            for await event in service.subscribe(to: bookID) {
+            for await event in subscribeToEvents(bookID) {
+                // T-7/T-9: a subscription superseded by a newer one (or
+                // dropped by delete()) must stop applying events immediately,
+                // not just eventually clean up its dictionary slot.
+                guard sseGeneration[bookID] == token else { break }
                 let type = event["type"] as? String ?? ""
                 if type == "snapshot" {
                     if let status = event["status"] as? String {
@@ -344,17 +413,17 @@ final class AudiobookViewModel: ObservableObject {
                     let total = event["total"] as? Int ?? 0
                     applyPhase(bookID: bookID, phase: phase, page: page, total: total)
                 } else if type == "done" {
+                    // D2.3: reserve this event's place in completion ordering
+                    // *now*, before the slow refresh()/fetch below — receipt
+                    // order, not resolution order, decides the winner.
+                    let generation = beginCompletionFetch()
                     // Refresh the library list AND fetch the canonical detail
                     // for this book so we present the completion modal even
                     // if list endpoint is racing the meta.json write (C7).
                     await refresh()
                     let book = await fetchDetailWithFallback(bookID: bookID)
                     if let book {
-                        completionSummary = book
-                        PermissionsService.shared.scheduleNotification(
-                            title: "Audiobook ready",
-                            body: "\"\(book.title)\" is ready to listen."
-                        )
+                        applyCompletion(book, generation: generation)
                     }
                     break
                 } else if type == "failed" || type == "cancelled" {
@@ -386,11 +455,36 @@ final class AudiobookViewModel: ObservableObject {
         return try? await service.get(bookID)
     }
 
-    private func applyStatus(bookID: String, status: String, pageDone: Int, pageTotal: Int, error: String?) {
+    /// D2.3: call when a "done" SSE event is *received*, before the async
+    /// detail fetch that follows. Returns the generation to pass to
+    /// `applyCompletion` once that fetch resolves — reserves this event's
+    /// place in completion ordering ahead of time.
+    func beginCompletionFetch() -> Int {
+        completionGeneration &+= 1
+        return completionGeneration
+    }
+
+    /// D2.3: apply a completion fetch's result only if no newer "done" event
+    /// has been received since `generation` was captured — a slow-resolving
+    /// fetch for an older event must not clobber a newer one that already
+    /// applied. Internal (not private) so unit tests can drive it directly.
+    func applyCompletion(_ book: Audiobook, generation: Int) {
+        guard generation == completionGeneration else { return }
+        completionSummary = book
+        PermissionsService.shared.scheduleNotification(
+            title: "Audiobook ready",
+            body: "\"\(book.title)\" is ready to listen."
+        )
+    }
+
+    /// Internal (not private) so unit tests can drive the SSE `snapshot`
+    /// mapping directly without a live backend.
+    func applyStatus(bookID: String, status: String, pageDone: Int, pageTotal: Int, error: String?) {
         let s: ProcessingStatus
         switch status {
         case "extracting": s = .extracting(page: pageDone, total: pageTotal)
         case "cleaning": s = .cleaning(page: pageDone, total: pageTotal)
+        case "sectioning": s = .sectioning(page: pageDone, total: pageTotal)
         case "tts", "concatenating": s = .generating(page: pageDone, total: pageTotal)
         case "done": s = .ready
         case "needs_key": s = .needsKey
@@ -401,11 +495,14 @@ final class AudiobookViewModel: ObservableObject {
         processingState[bookID] = s
     }
 
-    private func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
+    /// Internal (not private) so unit tests can drive the SSE `phase_started`/
+    /// `page_done` mapping directly without a live backend.
+    func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
         let status: ProcessingStatus
         switch phase {
         case "extracting": status = .extracting(page: page, total: total)
         case "cleaning": status = .cleaning(page: page, total: total)
+        case "sectioning": status = .sectioning(page: page, total: total)
         case "tts", "concatenating": status = .generating(page: page, total: total)
         default: return
         }
@@ -467,7 +564,7 @@ final class AudiobookViewModel: ObservableObject {
                 // The user may have stopped, deleted, or selected another
                 // book while the file request was in flight.
                 guard generation == self.playbackGeneration else { return }
-                try self.audio.loadAndPlayWAV(at: url)
+                try self.audio.loadAndPlayWAV(at: url, sessionID: book.bookID)
                 // stop() (called just above) resets the live rate to 1.0 —
                 // reapply this book's chosen speed now that it's actually playing.
                 self.audio.setPlaybackRate(Float(self.defaultBookSpeed))
@@ -664,6 +761,13 @@ final class AudiobookViewModel: ObservableObject {
         if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
             stopPlayback()
         }
+        // T-9: cancel and drop this book's SSE subscription synchronously,
+        // independent of whether the network delete below succeeds. Removing
+        // sseGeneration[bookID] also makes subscribe()'s per-token guard
+        // reject any event already in flight for the (now-stale) task.
+        sseTasks[book.bookID]?.cancel()
+        sseTasks.removeValue(forKey: book.bookID)
+        sseGeneration.removeValue(forKey: book.bookID)
         Task {
             do {
                 try await service.delete(book.bookID)

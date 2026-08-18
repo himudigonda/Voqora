@@ -809,7 +809,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 2 — Frontend sectioning status gap (independent, highest leverage — do early)
 
-- [ ] `T-6` — Handle `"sectioning"` in all three status-mapping sites.
+- [x] `T-6` — Handle `"sectioning"` in all three status-mapping sites.
   - Files: `frontend/Voqora/Voqora/Models/Audiobook.swift`,
     `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
@@ -826,7 +826,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 3 — Frontend state-race fixes (sequenced: T-7 before T-8, since T-8 depends on SSE ownership being trustworthy)
 
-- [ ] `T-7` — Fix `sseTasks` defer race with a per-subscription UUID token.
+- [x] `T-7` — Fix `sseTasks` defer race with a per-subscription UUID token.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
   - Acceptance: an older subscription's cleanup cannot clear a newer one's
@@ -839,7 +839,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit against the real dictionary/token logic |
     | E2E | Manual: retry a failed book repeatedly, confirm progress doesn't stall/reset |
 
-- [ ] `T-8` — Guard `processingState` and `completionSummary` against races.
+- [x] `T-8` — Guard `processingState` and `completionSummary` against races.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: `T-7`
   - Acceptance: `refresh()` never overwrites `processingState` for a book
@@ -854,7 +854,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Unit | Two "done" events for different books, second one received first but resolving `fetchDetailWithFallback` second — assert `completionSummary` reflects receipt order |
     | E2E | Manual: process two books concurrently, confirm the completion modal shows the correct one and progress never visibly regresses |
 
-- [ ] `T-9` — `delete()` cancels its SSE task; prune `processingState` for
+- [x] `T-9` — `delete()` cancels its SSE task; prune `processingState` for
       vanished books.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: `T-7` (reuses the generation-token bookkeeping)
@@ -868,7 +868,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit |
     | E2E | N/A |
 
-- [ ] `T-10` — Narrow mitigation for the speculative completion-mis-attribution race.
+- [x] `T-10` — Narrow mitigation for the speculative completion-mis-attribution race.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`,
     `frontend/Voqora/Voqora/Services/AudioService.swift`
   - Depends on: none
