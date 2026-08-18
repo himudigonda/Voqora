@@ -33,6 +33,37 @@ private actor DelayedAudioLoader {
     }
 }
 
+/// Generic ordering gate for T-8's overlapping-`refresh()` test: lets the
+/// test hold one call's `listBooks()` open until it has confirmed a second,
+/// faster call already resolved -- deterministic without a real network delay.
+private actor ResolutionGate {
+    private var released = false
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+    private var waitingWaiter: CheckedContinuation<Void, Never>?
+
+    func waitForRelease() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation in
+            releaseWaiter = continuation
+            waitingWaiter?.resume()
+            waitingWaiter = nil
+        }
+    }
+
+    func waitUntilWaiting() async {
+        guard releaseWaiter == nil else { return }
+        await withCheckedContinuation { continuation in
+            waitingWaiter = continuation
+        }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+}
+
 @MainActor
 final class AudiobookPlaybackStateTests: XCTestCase {
     func test_nowPlayingBar_isVisibleOnlyOutsideFullPlayer() {
@@ -160,6 +191,81 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertNotNil(viewModel.sseTasks["book1"], "an older task's deferred cleanup must not clear a newer registration")
 
         continuationB.finish()
+    }
+
+    // MARK: - processingState / completionSummary race guards (jira-audiobook-quality.md T-8)
+
+    func test_refresh_doesNotOverwriteProcessingState_forBookWithActiveSSE() async {
+        let book = makeBook(bookID: "b1", status: "cleaning", pageDone: 1, pageTotal: 10)
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in AsyncStream { _ in } },  // never yields; stays "active"
+            listBooks: { [book] }
+        )
+        viewModel.subscribe(to: "b1")
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        // SSE already advanced this book further than the GET snapshot knows about.
+        viewModel.processingState["b1"] = .generating(page: 9, total: 10)
+
+        await viewModel.refresh()
+
+        guard case .generating(let page, let total) = viewModel.processingState["b1"] else {
+            XCTFail("SSE-owned state must survive a poll refresh, got \(String(describing: viewModel.processingState["b1"]))")
+            return
+        }
+        XCTAssertEqual(page, 9)
+        XCTAssertEqual(total, 10)
+    }
+
+    func test_refresh_overlappingCalls_onlyNewerGenerationApplies() async {
+        let staleBook = makeBook(bookID: "b1", status: "cleaning", pageDone: 1, pageTotal: 10)
+        let freshBook = makeBook(bookID: "b1", status: "cleaning", pageDone: 5, pageTotal: 10)
+        let gate = ResolutionGate()
+        var callCount = 0
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in AsyncStream { _ in } },
+            listBooks: {
+                callCount += 1
+                if callCount == 1 {
+                    await gate.waitForRelease()  // first call: held open
+                    return [staleBook]
+                }
+                return [freshBook]  // second call: resolves immediately
+            }
+        )
+
+        let firstRefresh = Task { await viewModel.refresh() }
+        await gate.waitUntilWaiting()
+        let secondRefresh = Task { await viewModel.refresh() }
+        await secondRefresh.value
+        await gate.release()
+        await firstRefresh.value
+
+        guard case .cleaning(let page, _) = viewModel.processingState["b1"] else {
+            XCTFail("expected .cleaning, got \(String(describing: viewModel.processingState["b1"]))")
+            return
+        }
+        XCTAssertEqual(page, 5, "the older, later-resolving refresh must not overwrite the newer one's result")
+    }
+
+    func test_applyCompletion_receiptOrderWins_notResolutionOrder() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let bookA = makeBook(bookID: "A", status: "done")
+        let bookB = makeBook(bookID: "B", status: "done")
+
+        // A's "done" event is received first, B's second -- but A's fetch
+        // resolves *after* B's (simulating a slower fetchDetailWithFallback).
+        let generationA = viewModel.beginCompletionFetch()
+        let generationB = viewModel.beginCompletionFetch()
+
+        viewModel.applyCompletion(bookB, generation: generationB)  // resolves first
+        viewModel.applyCompletion(bookA, generation: generationA)  // resolves later, but stale
+
+        XCTAssertEqual(
+            viewModel.completionSummary?.bookID, "B",
+            "completionSummary must reflect the event received last (B), not whichever fetch resolved last (A)"
+        )
     }
 
     // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)

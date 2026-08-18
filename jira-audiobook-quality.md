@@ -839,7 +839,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit against the real dictionary/token logic |
     | E2E | Manual: retry a failed book repeatedly, confirm progress doesn't stall/reset |
 
-- [ ] `T-8` — Guard `processingState` and `completionSummary` against races.
+- [x] `T-8` — Guard `processingState` and `completionSummary` against races.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: `T-7`
   - Acceptance: `refresh()` never overwrites `processingState` for a book

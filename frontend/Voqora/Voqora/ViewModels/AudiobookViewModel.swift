@@ -74,6 +74,17 @@ final class AudiobookViewModel: ObservableObject {
     /// instant) would wipe out a newer one's live registration. Mirrors
     /// AudioService's `volumeRampToken` (HARD-020).
     private var sseGeneration: [String: UUID] = [:]
+    /// D2.2: monotonic token for `refresh()` calls. A slower-resolving
+    /// overlapping refresh (plain polling racing a user action, or two
+    /// closely-spaced user actions) must not apply its response after a
+    /// newer refresh already did. Mirrors `DashboardViewModel.speakGeneration`.
+    private var refreshGeneration = 0
+    /// D2.3: monotonic token bumped the moment a "done" SSE event is
+    /// *received*, before the async detail fetch that follows. Gates
+    /// `completionSummary` writes so the event received last wins, not
+    /// whichever fetch happens to resolve last. Mirrors
+    /// `DashboardViewModel.errorResetGeneration`.
+    private(set) var completionGeneration = 0
 
     // Polling for library refresh.
     private var pollTask: Task<Void, Never>?
@@ -115,12 +126,16 @@ final class AudiobookViewModel: ObservableObject {
     /// connection (needed to exercise the T-7/T-8/T-9 race fixes
     /// deterministically).
     private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
+    /// Test seam mirroring `localAudioURL`: lets tests control `refresh()`'s
+    /// library snapshot deterministically instead of hitting a live backend.
+    private let listBooks: @MainActor () async throws -> [Audiobook]
 
     init(
         service: AudiobookService? = nil,
         audio: AudioService,
         localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
-        subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil
+        subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil,
+        listBooks: (@MainActor () async throws -> [Audiobook])? = nil
     ) {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
@@ -129,6 +144,7 @@ final class AudiobookViewModel: ObservableObject {
             try await resolvedService.ensureLocalAudio(for: bookID)
         }
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
+        self.listBooks = listBooks ?? { try await resolvedService.list() }
         self.keyVerified = KeychainService.has(.geminiAPIKey)
         if let stored = KeychainService.get(.geminiAPIKey) {
             self.draftKey = stored
@@ -151,18 +167,33 @@ final class AudiobookViewModel: ObservableObject {
     // MARK: - Library
 
     func refresh() async {
+        // D2.2: reserve this call's place before the await so a slower-
+        // resolving overlapping refresh can detect it's been superseded.
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         do {
-            let fresh = try await service.list()
+            let fresh = try await listBooks()
+            guard generation == refreshGeneration else { return }
             books = fresh
             hasLoadedOnce = true
             // Keep processingState in sync with anything still in flight.
             for book in fresh {
-                processingState[book.bookID] = book.displayStatus
+                // D2.1: SSE already owns this book's live state while it has
+                // an active subscription — a GET snapshot here can be stale
+                // relative to an SSE event that already applied. This makes
+                // the code actually honor the "SSE is source of truth"
+                // comment on the poll loop below, not just gate whether
+                // refresh() is *called*, but what it *writes* once called
+                // from elsewhere (retry/startProcessing/cancel/delete).
+                if sseTasks[book.bookID] == nil {
+                    processingState[book.bookID] = book.displayStatus
+                }
                 if book.displayStatus.isProcessing && sseTasks[book.bookID] == nil {
                     subscribe(to: book.bookID)
                 }
             }
         } catch {
+            guard generation == refreshGeneration else { return }
             showToast("Could not load library: \(error.localizedDescription)", kind: .error)
             hasLoadedOnce = true
         }
@@ -376,17 +407,17 @@ final class AudiobookViewModel: ObservableObject {
                     let total = event["total"] as? Int ?? 0
                     applyPhase(bookID: bookID, phase: phase, page: page, total: total)
                 } else if type == "done" {
+                    // D2.3: reserve this event's place in completion ordering
+                    // *now*, before the slow refresh()/fetch below — receipt
+                    // order, not resolution order, decides the winner.
+                    let generation = beginCompletionFetch()
                     // Refresh the library list AND fetch the canonical detail
                     // for this book so we present the completion modal even
                     // if list endpoint is racing the meta.json write (C7).
                     await refresh()
                     let book = await fetchDetailWithFallback(bookID: bookID)
                     if let book {
-                        completionSummary = book
-                        PermissionsService.shared.scheduleNotification(
-                            title: "Audiobook ready",
-                            body: "\"\(book.title)\" is ready to listen."
-                        )
+                        applyCompletion(book, generation: generation)
                     }
                     break
                 } else if type == "failed" || type == "cancelled" {
@@ -416,6 +447,28 @@ final class AudiobookViewModel: ObservableObject {
             return local
         }
         return try? await service.get(bookID)
+    }
+
+    /// D2.3: call when a "done" SSE event is *received*, before the async
+    /// detail fetch that follows. Returns the generation to pass to
+    /// `applyCompletion` once that fetch resolves — reserves this event's
+    /// place in completion ordering ahead of time.
+    func beginCompletionFetch() -> Int {
+        completionGeneration &+= 1
+        return completionGeneration
+    }
+
+    /// D2.3: apply a completion fetch's result only if no newer "done" event
+    /// has been received since `generation` was captured — a slow-resolving
+    /// fetch for an older event must not clobber a newer one that already
+    /// applied. Internal (not private) so unit tests can drive it directly.
+    func applyCompletion(_ book: Audiobook, generation: Int) {
+        guard generation == completionGeneration else { return }
+        completionSummary = book
+        PermissionsService.shared.scheduleNotification(
+            title: "Audiobook ready",
+            body: "\"\(book.title)\" is ready to listen."
+        )
     }
 
     /// Internal (not private) so unit tests can drive the SSE `snapshot`
