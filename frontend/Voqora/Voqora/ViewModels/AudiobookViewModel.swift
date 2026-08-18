@@ -151,6 +151,15 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
+    /// `.onDisappear` (which stops this poll) fires on in-app tab
+    /// navigation, but not when the whole app is backgrounded while this
+    /// view stays mounted — so this loop also widens its interval directly
+    /// when backgrounded, to a 60 s floor. Never shrinks the interval.
+    static func libraryPollInterval(hasActiveSSE: Bool, isBackgrounded: Bool) -> UInt64 {
+        let baseInterval: UInt64 = hasActiveSSE ? 15_000_000_000 : 5_000_000_000
+        return isBackgrounded ? max(baseInterval, 60_000_000_000) : baseInterval
+    }
+
     func startPolling() {
         pollTask?.cancel()
         pollTask = Task { [weak self] in
@@ -165,7 +174,10 @@ final class AudiobookViewModel: ObservableObject {
                 if !hasActiveSSE {
                     await self.refresh()
                 }
-                let interval: UInt64 = hasActiveSSE ? 15_000_000_000 : 5_000_000_000
+                let interval = Self.libraryPollInterval(
+                    hasActiveSSE: hasActiveSSE,
+                    isBackgrounded: AppActivityMonitor.shared.isBackgrounded
+                )
                 try? await Task.sleep(nanoseconds: interval)
             }
         }

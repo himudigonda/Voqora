@@ -78,6 +78,30 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertFalse(audio.isPlaying)
     }
 
+    // MARK: - libraryPollInterval (jira-cpu-ram-optimization.md T-6)
+
+    func test_libraryPollInterval_foreground_matchesExistingSSECadence() {
+        XCTAssertEqual(
+            AudiobookViewModel.libraryPollInterval(hasActiveSSE: false, isBackgrounded: false),
+            5_000_000_000
+        )
+        XCTAssertEqual(
+            AudiobookViewModel.libraryPollInterval(hasActiveSSE: true, isBackgrounded: false),
+            15_000_000_000
+        )
+    }
+
+    func test_libraryPollInterval_backgrounded_widensToSixtySecondFloor() {
+        XCTAssertEqual(
+            AudiobookViewModel.libraryPollInterval(hasActiveSSE: false, isBackgrounded: true),
+            60_000_000_000
+        )
+        XCTAssertEqual(
+            AudiobookViewModel.libraryPollInterval(hasActiveSSE: true, isBackgrounded: true),
+            60_000_000_000
+        )
+    }
+
     private func makeBook() -> Audiobook {
         Audiobook(
             bookID: "in-flight-book",
