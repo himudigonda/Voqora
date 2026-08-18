@@ -868,7 +868,7 @@ Commands confirmed against the repo-root `Makefile` (same as
     | Integration | N/A — covered by unit |
     | E2E | N/A |
 
-- [ ] `T-10` — Narrow mitigation for the speculative completion-mis-attribution race.
+- [x] `T-10` — Narrow mitigation for the speculative completion-mis-attribution race.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`,
     `frontend/Voqora/Voqora/Services/AudioService.swift`
   - Depends on: none

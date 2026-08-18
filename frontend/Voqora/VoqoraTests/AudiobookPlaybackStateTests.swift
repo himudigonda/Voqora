@@ -301,6 +301,43 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         continuation.finish()
     }
 
+    // MARK: - completion-mis-attribution mitigation (jira-audiobook-quality.md T-10)
+
+    func test_completionObserver_attributesToTheSessionThatCompleted_notCurrentNowPlaying() {
+        let bookPosKeyA = "bookPos_t10-book-a"
+        let bookPosKeyB = "bookPos_t10-book-b"
+        UserDefaults.standard.removeObject(forKey: bookPosKeyA)
+        UserDefaults.standard.removeObject(forKey: bookPosKeyB)
+        defer {
+            UserDefaults.standard.removeObject(forKey: bookPosKeyA)
+            UserDefaults.standard.removeObject(forKey: bookPosKeyB)
+        }
+
+        let audio = AudioService(startingEngine: false)
+        let viewModel = AudiobookViewModel(audio: audio)
+        UserDefaults.standard.set(42.0, forKey: bookPosKeyA)
+        UserDefaults.standard.set(7.0, forKey: bookPosKeyB)
+
+        // Simulate: book A's natural-completion signal was scheduled with A's
+        // identity captured (AudioService's own internal step, mirrored here
+        // by setting completedSessionID directly)...
+        audio.completedSessionID = "t10-book-a"
+        // ...but by the time the sink actually observes it, the user has
+        // already started book B -- nowPlaying has moved on.
+        viewModel.nowPlaying = makeBook(bookID: "t10-book-b")
+
+        audio.playbackCompleted = true
+
+        XCTAssertNil(
+            UserDefaults.standard.object(forKey: bookPosKeyA),
+            "the session that actually completed (A) must have its resume position cleared"
+        )
+        XCTAssertEqual(
+            UserDefaults.standard.double(forKey: bookPosKeyB), 7.0,
+            "book B's resume position must be untouched -- it did not complete"
+        )
+    }
+
     // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)
 
     func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {

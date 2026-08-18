@@ -150,13 +150,19 @@ final class AudiobookViewModel: ObservableObject {
             self.draftKey = stored
         }
         // Clear saved position when a book plays to its natural end.
+        // T-10: reads `audio.completedSessionID` (the book identity AudioService
+        // captured when *that* session started) instead of `self.nowPlaying`
+        // (read fresh here, at sink-execution time). If the user starts a new
+        // book in the exact instant an older one finishes, `nowPlaying` may
+        // have already moved on by the time this sink runs — the completed
+        // session's own captured identity can't drift out from under it.
         completionObserver = audio.$playbackCompleted
             .filter { $0 }
             .sink { [weak self] _ in
-                guard let self, let book = self.nowPlaying else { return }
-                UserDefaults.standard.removeObject(forKey: "bookPos_\(book.bookID)")
+                guard let self, let bookID = self.audio.completedSessionID else { return }
+                UserDefaults.standard.removeObject(forKey: "bookPos_\(bookID)")
                 MetricsService.shared.trackAudiobookPlay(
-                    bookIDHash: sha256Hex(book.bookID),
+                    bookIDHash: sha256Hex(bookID),
                     secondsPlayed: self.audio.duration
                 )
             }
@@ -558,7 +564,7 @@ final class AudiobookViewModel: ObservableObject {
                 // The user may have stopped, deleted, or selected another
                 // book while the file request was in flight.
                 guard generation == self.playbackGeneration else { return }
-                try self.audio.loadAndPlayWAV(at: url)
+                try self.audio.loadAndPlayWAV(at: url, sessionID: book.bookID)
                 // stop() (called just above) resets the live rate to 1.0 —
                 // reapply this book's chosen speed now that it's actually playing.
                 self.audio.setPlaybackRate(Float(self.defaultBookSpeed))
