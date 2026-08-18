@@ -419,11 +419,8 @@ struct AudiobookPlayerView: View {
                         LazyVStack(alignment: .leading, spacing: 14) {
                             ForEach(orderedPages(transcript), id: \.page) { entry in
                                 let isCurrent = isCurrentPage(entry.page, in: transcript)
-                                Text(entry.text)
+                                transcriptRow(entry, isCurrent: isCurrent)
                                     .id(entry.page)
-                                    .font(vm.appFont(size: isCurrent ? 14 : 13, weight: isCurrent ? .bold : .regular))
-                                    .foregroundStyle(isCurrent ? Color.cyan : Color.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                         .padding(20)
@@ -477,6 +474,27 @@ struct AudiobookPlayerView: View {
         }
     }
 
+    /// A page whose `status` is set means its transcript text doesn't match
+    /// its audio (TTS/cleaning failed and it was replaced with silence, or
+    /// it's a byte-identical duplicate that was never narrated) — mark it
+    /// distinctly instead of rendering it identically to a normally-narrated
+    /// page. See jira-audiobook-quality.md T-1.
+    @ViewBuilder
+    private func transcriptRow(_ entry: PageEntry, isCurrent: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if let status = entry.status {
+                Label(Self.pageStatusCaption(for: status), systemImage: Self.pageStatusIcon(for: status))
+                    .font(vm.appFont(size: 10, weight: .bold))
+                    .foregroundStyle(.orange)
+            }
+            Text(entry.text)
+                .font(vm.appFont(size: isCurrent ? 14 : 13, weight: isCurrent ? .bold : .regular))
+                .foregroundStyle(entry.status != nil ? Color.secondary.opacity(0.6) : (isCurrent ? Color.cyan : Color.secondary))
+                .italic(entry.status != nil)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     // MARK: - Transcript memoization (T-12)
     //
     // `orderedPages`/`currentPageID`/`currentSection` used to re-sort the
@@ -504,7 +522,7 @@ struct AudiobookPlayerView: View {
     private func refreshTranscriptCacheIfNeeded(_ t: AudiobookService.Transcript) {
         guard transcriptCache.bookID != t.bookID else { return }
         transcriptCache.bookID = t.bookID
-        transcriptCache.orderedPages = Self.sortPages(t.pages)
+        transcriptCache.orderedPages = Self.sortPages(t.pages, pageStatus: t.pageStatus)
         transcriptCache.sortedPageTimes = Self.sortPageTimes(t.pageToTime)
     }
 
@@ -623,10 +641,19 @@ struct AudiobookPlayerView: View {
 // `DashboardViewModel.heartbeatDelay` extraction precedent.
 extension AudiobookPlayerView {
     /// One transcript page's number and clean text, sorted ascending by
-    /// page number.
+    /// page number. `status` mirrors the backend's `page_status` map
+    /// ("tts_failed" / "cleaning_failed" / "duplicate") — nil for a
+    /// normally-narrated page. See jira-audiobook-quality.md T-1.
     struct PageEntry: Equatable {
         let page: Int
         let text: String
+        let status: String?
+
+        init(page: Int, text: String, status: String? = nil) {
+            self.page = page
+            self.text = text
+            self.status = status
+        }
     }
 
     /// One transcript page's number and audio start time, sorted ascending
@@ -656,10 +683,13 @@ extension AudiobookPlayerView {
 
     /// Sorted ascending by page number. Pure — the transcript's `pages`
     /// dict keys are page numbers as strings; a key that isn't a valid
-    /// `Int` is dropped rather than crashing on malformed data.
-    static func sortPages(_ pages: [String: String]) -> [PageEntry] {
+    /// `Int` is dropped rather than crashing on malformed data. `pageStatus`
+    /// is optional/additive (nil for transcripts from before T-1 shipped).
+    static func sortPages(_ pages: [String: String], pageStatus: [String: String]? = nil) -> [PageEntry] {
         pages
-            .compactMap { (key, text) -> PageEntry? in Int(key).map { PageEntry(page: $0, text: text) } }
+            .compactMap { (key, text) -> PageEntry? in
+                Int(key).map { PageEntry(page: $0, text: text, status: pageStatus?[key]) }
+            }
             .sorted { $0.page < $1.page }
     }
 
@@ -673,6 +703,25 @@ extension AudiobookPlayerView {
 
     static func sortSections(_ sections: [AudiobookSection]) -> [AudiobookSection] {
         sections.sorted { $0.startTime < $1.startTime }
+    }
+
+    /// User-facing caption for a marked page's backend `page_status` value.
+    /// Falls back to a generic message for a status string this build
+    /// doesn't recognize, rather than showing nothing.
+    static func pageStatusCaption(for status: String) -> String {
+        switch status {
+        case "tts_failed": return "Audio unavailable for this page"
+        case "cleaning_failed": return "This page could not be cleaned"
+        case "duplicate": return "Duplicate page (not narrated)"
+        default: return "This page was not narrated normally"
+        }
+    }
+
+    static func pageStatusIcon(for status: String) -> String {
+        switch status {
+        case "duplicate": return "doc.on.doc"
+        default: return "exclamationmark.triangle.fill"
+        }
     }
 
     /// The page whose narration is currently playing: the last page (by

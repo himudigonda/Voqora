@@ -23,6 +23,33 @@ final class AudiobookPlayerViewTests: XCTestCase {
         )
     }
 
+    // MARK: - page_status threading (jira-audiobook-quality.md T-1 frontend consumption)
+
+    func test_sortPages_threadsPageStatusOntoMatchingEntries() {
+        let pages = ["1": "first", "2": "second", "3": "third"]
+        let pageStatus = ["2": "tts_failed"]
+        let sorted = AudiobookPlayerView.sortPages(pages, pageStatus: pageStatus)
+        XCTAssertEqual(sorted.first { $0.page == 1 }?.status, nil)
+        XCTAssertEqual(sorted.first { $0.page == 2 }?.status, "tts_failed")
+        XCTAssertEqual(sorted.first { $0.page == 3 }?.status, nil)
+    }
+
+    func test_sortPages_withNoPageStatus_leavesEveryEntryUnmarked() {
+        let pages = ["1": "first"]
+        let sorted = AudiobookPlayerView.sortPages(pages)
+        XCTAssertNil(sorted.first?.status)
+    }
+
+    func test_pageStatusCaption_coversEveryKnownStatus() {
+        XCTAssertEqual(AudiobookPlayerView.pageStatusCaption(for: "tts_failed"), "Audio unavailable for this page")
+        XCTAssertEqual(AudiobookPlayerView.pageStatusCaption(for: "cleaning_failed"), "This page could not be cleaned")
+        XCTAssertEqual(AudiobookPlayerView.pageStatusCaption(for: "duplicate"), "Duplicate page (not narrated)")
+    }
+
+    func test_pageStatusCaption_unknownStatus_fallsBackToGenericMessage() {
+        XCTAssertFalse(AudiobookPlayerView.pageStatusCaption(for: "some_future_status").isEmpty)
+    }
+
     func test_sortPageTimes_sortsAscendingByTime() {
         let pageToTime = ["5": 40.0, "1": 0.0, "3": 20.0]
         let sorted = AudiobookPlayerView.sortPageTimes(pageToTime)

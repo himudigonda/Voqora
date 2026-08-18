@@ -84,6 +84,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let pageToTime: [String: Double]
         let totalAudioSeconds: Double
         let pages: [String: String]
+        /// Per-page marker for a page whose transcript text doesn't match
+        /// its audio: "tts_failed" (synthesis failed, page is near-silent),
+        /// "cleaning_failed" (Gemini cleanup failed), or "duplicate"
+        /// (byte-identical page, skipped and marked "-" to avoid redundant
+        /// cost). Absent for a normally-narrated page. Additive — older
+        /// books simply have no entries here. See jira-audiobook-quality.md T-1.
+        let pageStatus: [String: String]?
 
         enum CodingKeys: String, CodingKey {
             case bookID = "book_id"
@@ -91,6 +98,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             case pageToTime = "page_to_time"
             case totalAudioSeconds = "total_audio_seconds"
             case pages
+            case pageStatus = "page_status"
         }
     }
 
