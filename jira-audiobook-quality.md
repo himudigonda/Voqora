@@ -826,7 +826,7 @@ Commands confirmed against the repo-root `Makefile` (same as
 
 ### Sprint 3 — Frontend state-race fixes (sequenced: T-7 before T-8, since T-8 depends on SSE ownership being trustworthy)
 
-- [ ] `T-7` — Fix `sseTasks` defer race with a per-subscription UUID token.
+- [x] `T-7` — Fix `sseTasks` defer race with a per-subscription UUID token.
   - Files: `frontend/Voqora/Voqora/ViewModels/AudiobookViewModel.swift`
   - Depends on: none
   - Acceptance: an older subscription's cleanup cannot clear a newer one's

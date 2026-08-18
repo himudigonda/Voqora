@@ -102,6 +102,66 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
     }
 
+    // MARK: - sseTasks defer race (jira-audiobook-quality.md T-7)
+
+    func test_subscribe_supersededSubscriptionCannotApplyEventsOrClearNewerRegistration() async {
+        var continuationA: AsyncStream<[String: Any]>.Continuation!
+        let streamA = AsyncStream<[String: Any]> { continuationA = $0 }
+        var continuationB: AsyncStream<[String: Any]>.Continuation!
+        let streamB = AsyncStream<[String: Any]> { continuationB = $0 }
+        var callCount = 0
+        let viewModel = AudiobookViewModel(
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in
+                callCount += 1
+                return callCount == 1 ? streamA : streamB
+            }
+        )
+
+        // As startProcessing()/retry() do: subscribe twice in quick
+        // succession for the same book. The first task's `defer` cleanup
+        // (delayed since URLSession cancellation isn't instant) must not
+        // fire before the second registration exists, nor clear it once it
+        // does.
+        viewModel.subscribe(to: "book1")
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        viewModel.subscribe(to: "book1")
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        XCTAssertNotNil(viewModel.sseTasks["book1"], "a live registration must exist after the second subscribe()")
+
+        // A stale event from the superseded (first) stream must be ignored.
+        continuationA.yield([
+            "type": "snapshot", "status": "cleaning",
+            "phase_progress": ["page_done": 1, "page_total": 10],
+        ])
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        XCTAssertNil(
+            viewModel.processingState["book1"],
+            "the superseded subscription must not be able to apply events"
+        )
+
+        // The current (second) subscription's event must still apply.
+        continuationB.yield([
+            "type": "snapshot", "status": "cleaning",
+            "phase_progress": ["page_done": 5, "page_total": 10],
+        ])
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        guard case .cleaning(let page, let total) = viewModel.processingState["book1"] else {
+            XCTFail("expected the current subscription's event to apply, got \(String(describing: viewModel.processingState["book1"]))")
+            return
+        }
+        XCTAssertEqual(page, 5)
+        XCTAssertEqual(total, 10)
+
+        // Finishing the now-superseded first stream (its `defer` firing late)
+        // must not wipe out the still-live second registration.
+        continuationA.finish()
+        try? await Task.sleep(nanoseconds: 15_000_000)
+        XCTAssertNotNil(viewModel.sseTasks["book1"], "an older task's deferred cleanup must not clear a newer registration")
+
+        continuationB.finish()
+    }
+
     // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)
 
     func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {

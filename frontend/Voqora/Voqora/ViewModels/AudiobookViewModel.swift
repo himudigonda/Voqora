@@ -64,7 +64,16 @@ final class AudiobookViewModel: ObservableObject {
 
     // Per-book live processing state, keyed by book_id.
     @Published var processingState: [String: ProcessingStatus] = [:]
-    private var sseTasks: [String: Task<Void, Never>] = [:]
+    /// `private(set)` (not `private`) so unit tests can observe the effect of
+    /// the D1/T-7 race fix without a live backend.
+    private(set) var sseTasks: [String: Task<Void, Never>] = [:]
+    /// D1/T-7: one UUID minted per `subscribe(to:)` attempt for a book. A
+    /// subscription's deferred cleanup only clears `sseTasks`/`sseGeneration`
+    /// if it still owns this slot — otherwise a delayed cleanup from an older,
+    /// already-superseded subscription (URLSession cancellation isn't
+    /// instant) would wipe out a newer one's live registration. Mirrors
+    /// AudioService's `volumeRampToken` (HARD-020).
+    private var sseGeneration: [String: UUID] = [:]
 
     // Polling for library refresh.
     private var pollTask: Task<Void, Never>?
@@ -101,10 +110,17 @@ final class AudiobookViewModel: ObservableObject {
 
     private var completionObserver: AnyCancellable?
 
+    /// Test seam mirroring `localAudioURL`: lets tests simulate SSE events
+    /// through a controlled `AsyncStream` instead of opening a real
+    /// connection (needed to exercise the T-7/T-8/T-9 race fixes
+    /// deterministically).
+    private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
+
     init(
         service: AudiobookService? = nil,
         audio: AudioService,
-        localAudioURL: (@MainActor (String) async throws -> URL)? = nil
+        localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
+        subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil
     ) {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
@@ -112,6 +128,7 @@ final class AudiobookViewModel: ObservableObject {
         self.localAudioURL = localAudioURL ?? { bookID in
             try await resolvedService.ensureLocalAudio(for: bookID)
         }
+        self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.keyVerified = KeychainService.has(.geminiAPIKey)
         if let stored = KeychainService.get(.geminiAPIKey) {
             self.draftKey = stored
@@ -325,12 +342,27 @@ final class AudiobookViewModel: ObservableObject {
         retry(book)
     }
 
-    private func subscribe(to bookID: String) {
+    /// Internal (not private) so unit tests can drive it directly with the
+    /// `subscribeToEvents` seam instead of a live backend.
+    func subscribe(to bookID: String) {
         sseTasks[bookID]?.cancel()
+        // D1/T-7: mint a fresh token for *this* attempt. The deferred cleanup
+        // below only fires for the attempt that still owns this slot.
+        let token = UUID()
+        sseGeneration[bookID] = token
         sseTasks[bookID] = Task { [weak self] in
-            defer { self?.sseTasks[bookID] = nil }
+            defer {
+                if self?.sseGeneration[bookID] == token {
+                    self?.sseTasks[bookID] = nil
+                    self?.sseGeneration[bookID] = nil
+                }
+            }
             guard let self else { return }
-            for await event in service.subscribe(to: bookID) {
+            for await event in subscribeToEvents(bookID) {
+                // T-7/T-9: a subscription superseded by a newer one (or
+                // dropped by delete()) must stop applying events immediately,
+                // not just eventually clean up its dictionary slot.
+                guard sseGeneration[bookID] == token else { break }
                 let type = event["type"] as? String ?? ""
                 if type == "snapshot" {
                     if let status = event["status"] as? String {
