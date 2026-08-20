@@ -10,6 +10,7 @@ struct PreferencesView: View {
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var installer: GuidedInstallerService
     @EnvironmentObject var permissions: PermissionsService
+    @EnvironmentObject var updater: AppUpdater
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -440,6 +441,16 @@ struct PreferencesView: View {
                         Divider()
 
                         VStack(alignment: .leading, spacing: 9) {
+                            if let latest = updater.latestGitHubVersion {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "arrow.up.circle.fill").foregroundStyle(.cyan)
+                                    Text("Voqora \(latest) is available.")
+                                        .font(vm.appFont(size: 12, weight: .semibold))
+                                    Link("Open the releases page", destination: GuidedInstallerService.releasePageURL)
+                                        .font(vm.appFont(size: 12))
+                                }
+                            }
+
                             HStack {
                                 Button {
                                     installer.downloadAndOpenLatest()

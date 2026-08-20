@@ -234,3 +234,22 @@ async def test_speed_scaled_pauses():
 
     # We expect fewer samples at 2.0x due to faster playback + shorter pauses
     assert total_samples_2x < total_samples_1x
+
+
+def test_initialize_disables_onnx_spinning():
+    """ORT's allow_spinning defaults to enabled, which busy-waits between
+    inferences (see jira-cpu-ram-optimization.md). initialize() must
+    explicitly disable it rather than relying on the default."""
+    TTSEngine._model = None
+    mock_session_options = MagicMock()
+
+    with (
+        patch("app.services.tts.ort.SessionOptions", return_value=mock_session_options),
+        patch("app.services.tts.ort.InferenceSession", return_value=MagicMock()),
+        patch("app.services.tts.Kokoro.from_session", return_value=MockKokoro()),
+    ):
+        TTSEngine.initialize()
+
+    mock_session_options.add_session_config_entry.assert_called_once_with(
+        "session.intra_op.allow_spinning", "0"
+    )

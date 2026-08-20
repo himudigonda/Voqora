@@ -40,6 +40,8 @@ struct Audiobook: Identifiable, Codable, Hashable {
             return .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "cleaning":
             return .cleaning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+        case "sectioning":
+            return .sectioning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "tts":
             return .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "concatenating":
@@ -164,6 +166,11 @@ enum ProcessingStatus: Hashable {
     case queued
     case extracting(page: Int, total: Int)
     case cleaning(page: Int, total: Int)
+    /// The backend's outline/chaptering phase (T-6). Every book passes
+    /// through this — on the Gemini-detect-sections path it can take up to
+    /// 120s — so it needs its own case rather than falling through to
+    /// `.queued` (which made the UI look stuck/reverted).
+    case sectioning(page: Int, total: Int)
     case generating(page: Int, total: Int)
     case ready
     case needsKey
@@ -172,7 +179,7 @@ enum ProcessingStatus: Hashable {
 
     var isProcessing: Bool {
         switch self {
-        case .extracting, .cleaning, .generating, .queued: return true
+        case .extracting, .cleaning, .sectioning, .generating, .queued: return true
         default: return false
         }
     }
@@ -187,6 +194,7 @@ enum ProcessingStatus: Hashable {
         case .queued: return "QUEUED"
         case .extracting(let p, let t): return "EXTRACTING \(p)/\(t)"
         case .cleaning(let p, let t): return "CLEANING \(p)/\(t)"
+        case .sectioning(let p, let t): return "SECTIONING \(p)/\(t)"
         case .generating(let p, let t): return "GENERATING \(p)/\(t)"
         case .ready: return "READY"
         case .needsKey: return "NEEDS KEY — RESUME"

@@ -27,10 +27,67 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     /// from looking like a button that silently did nothing.
     @Published private(set) var updateStatusMessage: String?
 
+    /// Set once `checkGitHubReleaseForUpdate()` finds a release newer than
+    /// the running build. This is deliberately independent of Sparkle (which
+    /// stays dormant until Voqora is notarized): it never downloads or
+    /// installs anything, only tells the user a newer version exists and
+    /// points at the releases page for a manual install.
+    @Published private(set) var latestGitHubVersion: String?
+    private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases/latest")!
+
+    private struct GitHubReleaseTag: Decodable {
+        let tagName: String
+        enum CodingKeys: String, CodingKey { case tagName = "tag_name" }
+    }
+
+    /// Fetches the latest published GitHub release tag and compares it
+    /// against `CFBundleShortVersionString`. Schedules the same "Update
+    /// available" notification Sparkle would have, so the user hears about
+    /// it either way. Silently no-ops on any network/parsing failure — this
+    /// is a courtesy check, not a required startup step.
+    func checkGitHubReleaseForUpdate() async {
+        guard NSClassFromString("XCTestCase") == nil else { return }
+        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else { return }
+        var request = URLRequest(url: Self.latestReleaseAPIURL)
+        request.timeoutInterval = 12
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("Voqora", forHTTPHeaderField: "User-Agent")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let release = try? JSONDecoder().decode(GitHubReleaseTag.self, from: data)
+        else { return }
+
+        let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
+        guard Self.isVersion(latest, newerThan: current) else { return }
+
+        latestGitHubVersion = latest
+        PermissionsService.shared.scheduleNotification(
+            title: "Update available",
+            body: "Voqora \(latest) is ready — open the releases page to download it."
+        )
+    }
+
+    /// Numeric, dot-separated comparison (e.g. "1.0.10" > "1.0.9"). Falls
+    /// back to 0 for any missing/non-numeric component.
+    static func isVersion(_ a: String, newerThan b: String) -> Bool {
+        let partsA = a.split(separator: ".").compactMap { Int($0) }
+        let partsB = b.split(separator: ".").compactMap { Int($0) }
+        for i in 0..<max(partsA.count, partsB.count) {
+            let x = i < partsA.count ? partsA[i] : 0
+            let y = i < partsB.count ? partsB[i] : 0
+            if x != y { return x > y }
+        }
+        return false
+    }
+
     override init() {
         super.init()
         controller = nil
         observeUpdaterState()
+    }
+
+    deinit {
+        observations.forEach { $0.invalidate() }
     }
 
     func checkForUpdates() {

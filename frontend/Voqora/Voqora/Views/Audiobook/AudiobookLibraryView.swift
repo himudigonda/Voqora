@@ -69,6 +69,9 @@ struct AudiobookLibraryView: View {
                 if hoveringDrop { dropOverlay.transition(.opacity) }
             }
             .navigationTitle("Audiobooks")
+            // T-14: search field was fully wired (`filteredSorted`, `searchText`)
+            // but never rendered anywhere. Matches VaultView.swift's convention.
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Search audiobooks...")
             .toolbar { toolbarContent }
             .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
             .fileImporter(
@@ -154,14 +157,28 @@ struct AudiobookLibraryView: View {
     private var content: some View {
         if !bookVM.hasLoadedOnce {
             skeletonGrid
+        } else if bookVM.loadFailed && bookVM.books.isEmpty {
+            // T-17: a first-load failure (e.g. backend unreachable) must read
+            // as distinctly different from a genuinely empty library.
+            loadFailedState
         } else if bookVM.books.isEmpty {
             emptyState
+        } else if Self.showsNoResultsState(searchText: searchText, matchCount: filteredSorted.count) {
+            noResultsState
         } else {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 32) {
                     ForEach(filteredSorted, id: \.id) { book in
                         let isProcessing = (bookVM.processingState[book.bookID] ?? book.displayStatus).isProcessing
-                        Button { openBook(book) } label: {
+                        // T-15: gate only the tap-to-open action, not hit-testing for the
+                        // whole subtree. `.allowsHitTesting(!isProcessing)` here used to
+                        // disable AudiobookCardView's own `.contextMenu` too, making its
+                        // only "Cancel Processing" affordance unreachable by right-click
+                        // exactly when a card was processing.
+                        Button {
+                            guard !isProcessing else { return }
+                            openBook(book)
+                        } label: {
                             AudiobookCardView(book: book)
                                 .environmentObject(vm)
                                 .environmentObject(bookVM)
@@ -170,7 +187,6 @@ struct AudiobookLibraryView: View {
                         // P7: without contentShape, macOS hit-testing fires only over
                         // visible pixels. This extends hover/click to the full card rect.
                         .contentShape(Rectangle())
-                        .allowsHitTesting(!isProcessing)
                     }
                 }
                 .padding(36)
@@ -185,6 +201,14 @@ struct AudiobookLibraryView: View {
             }
             .padding(36)
         }
+    }
+
+    /// T-14: pure trigger condition for the "no results" empty state, kept
+    /// testable without a live view per the `AudiobookPlayerLayout`/
+    /// `AudiobookPlayerView.shouldAutoScroll` precedent. A non-empty search
+    /// that matches nothing is distinct from a genuinely empty library.
+    static func showsNoResultsState(searchText: String, matchCount: Int) -> Bool {
+        !searchText.isEmpty && matchCount == 0
     }
 
     private var filteredSorted: [Audiobook] {
@@ -206,7 +230,10 @@ struct AudiobookLibraryView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker("", selection: $sort) {
+            // T-20: an empty title left this control unlabeled for
+            // VoiceOver. `.menu` style still shows only the selected value's
+            // icon, so the title change is accessibility-only.
+            Picker("Sort audiobooks", selection: $sort) {
                 ForEach(SortMode.allCases) { mode in
                     Label(mode.label, systemImage: mode.icon).tag(mode)
                 }
@@ -351,6 +378,57 @@ struct AudiobookLibraryView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    // MARK: - Load-failure state (T-17)
+
+    private var loadFailedState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.red.opacity(0.6))
+            VStack(spacing: 6) {
+                Text("COULDN'T LOAD YOUR LIBRARY")
+                    .font(vm.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text("Voqora couldn't reach the backend. Check that it's running and try again.")
+                    .font(vm.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+            Button { Task { await bookVM.refresh() } } label: {
+                Label("Try Again", systemImage: "arrow.clockwise")
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - No-results state (T-14)
+
+    private var noResultsState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.secondary.opacity(0.4))
+            VStack(spacing: 6) {
+                Text("NO MATCHES")
+                    .font(vm.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text("No audiobooks match “\(searchText)”. Try a different search.")
+                    .font(vm.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
 }
 
 // Allow URL? to drive .sheet(item:)
@@ -363,9 +441,11 @@ private struct SkeletonCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            // T-16: track the grid's adaptive column instead of a hard 180pt,
+            // matching AudiobookCardView's cover fix.
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 180, height: 252)
+                .aspectRatio(AudiobookCardView.coverAspectRatio, contentMode: .fit)
                 .overlay(shimmer)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -377,7 +457,7 @@ private struct SkeletonCard: View {
                 .frame(width: 90, height: 9)
                 .overlay(shimmer)
         }
-        .frame(width: 180, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
             withAnimation(.linear(duration: 1.4).repeatForever(autoreverses: false)) {
                 phase = 1.5

@@ -25,6 +25,14 @@ class AudioService: NSObject, ObservableObject {
     @Published var isDragging = false
     /// True when the current clip played to its natural end (not manually paused/stopped).
     @Published var playbackCompleted = false
+    /// The caller-supplied session identity (see `loadAndPlayWAV`) for the
+    /// session that most recently completed naturally. Set immediately
+    /// before `playbackCompleted` publishes true (T-10), so an observer can
+    /// attribute a completion signal to the exact session that produced it
+    /// instead of trusting its own possibly-stale "currently playing" state
+    /// at the moment it reacts to the signal. See
+    /// AudiobookViewModel.completionObserver.
+    @Published var completedSessionID: String?
 
     /// 0...1.5 (matches existing speechVolume range used elsewhere for TTS).
     /// Mirrors `playerNode.volume`. Use `setVolume(_:)` to change it; the
@@ -130,6 +138,14 @@ class AudioService: NSObject, ObservableObject {
         if startingEngine {
             setupEngine()
         }
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(
+            self,
+            name: .AVAudioEngineConfigurationChange,
+            object: nil
+        )
     }
 
     private func setupEngine() {
@@ -398,6 +414,10 @@ class AudioService: NSObject, ObservableObject {
         currentAudioFile = nil
         audiobookFrameOffset = 0
         audiobookTotalFrames = 0
+        // T-10: no future completion handler should be able to credit a
+        // stopped session's identity (defense-in-depth alongside the
+        // audiobookGeneration guard above).
+        activeSessionID = nil
     }
 
     /// `data` holds raw little-endian Int16 PCM (the wire/export format).
@@ -480,14 +500,24 @@ class AudioService: NSObject, ObservableObject {
     private static let audiobookChunkLookahead: Int = 2
     /// Incremented on every seek/stop to invalidate stale completion handlers.
     private var audiobookGeneration: Int = 0
+    /// Caller-supplied identity for the current audiobook playback session
+    /// (e.g. a book ID). Captured here — at the point playback actually
+    /// starts — rather than trusting a caller's mutable "now playing" state
+    /// read later, when a natural-completion signal is finally observed. T-10.
+    private var activeSessionID: String?
 
     /// Open a local WAV file and start chunked playback from frame 0.
-    func loadAndPlayWAV(at url: URL) throws {
+    /// `sessionID` is echoed back via `completedSessionID` if/when this
+    /// session completes naturally (T-10) — pass the identity of whatever
+    /// is being played so a completion observer doesn't have to guess it
+    /// from its own state at sink-execution time.
+    func loadAndPlayWAV(at url: URL, sessionID: String? = nil) throws {
         stop()
         progress = 0
         currentTime = 0
         pausedTime = 0
         playbackCompleted = false
+        activeSessionID = sessionID
         isStreamActive = false
         hasStrippedHeader = true
 
@@ -550,6 +580,10 @@ class AudioService: NSObject, ObservableObject {
 
         scheduledBufferCount += 1
         let gen = audiobookGeneration  // capture before the async hop
+        // T-10: capture the session identity *now*, at schedule time, not
+        // later when a completion observer reacts to `playbackCompleted` —
+        // by then the caller's own "now playing" state may have moved on.
+        let sessionID = activeSessionID
         playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, gen == self.audiobookGeneration else { return }
@@ -561,6 +595,7 @@ class AudioService: NSObject, ObservableObject {
                 // End-of-file: when the last buffer drains, mark complete.
                 if scheduledBufferCount == 0, isPlaying,
                    audiobookFrameOffset >= audiobookTotalFrames {
+                    completedSessionID = sessionID
                     playbackCompleted = true
                     stop()
                 }

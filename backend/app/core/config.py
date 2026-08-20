@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     # Kept in lockstep with the public app version. The release preflight
     # verifies this runtime declaration and `pyproject.toml` against Xcode so
     # support logs and packaged components never report a stale product build.
-    VERSION: str = "1.0.0"
+    VERSION: str = "1.0.1"
     # Loopback only. The Swift client always connects via localhost; binding to
     # 0.0.0.0 would expose /speak and /audiobook to every device on the LAN
     # with no authentication. See HARD-004.
@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     # above this are rejected at upload time so a user can't accidentally
     # run up a multi-dollar bill on a 2,000-page book. See HARD-072.
     MAX_GEMINI_COST_USD_PER_BOOK: float = 5.0
+
+    # Yield between audiobook TTS segments so audiobook synthesis doesn't
+    # monopolize the CPU. Applies to every audiobook TTS pass — the backend
+    # has no signal to distinguish a foreground user-initiated job from a
+    # silently auto-resumed one, so this paces both equally. Does not apply
+    # to interactive /speak — only AudiobookService._generate_full_page. See
+    # jira-cpu-ram-optimization.md.
+    AUDIOBOOK_TTS_SEGMENT_PACING_S: float = 0.05
 
     # Paths
     BASE_DIR: str = os.path.dirname(

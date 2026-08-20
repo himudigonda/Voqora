@@ -98,6 +98,48 @@ async def test_emit_delivers_payload_to_all_active_subscribers():
 
 
 @pytest.mark.asyncio
+async def test_emit_drops_oldest_event_when_subscriber_queue_is_full():
+    """jira-cpu-ram-optimization.md T-8: the SSE subscriber queue is bounded
+    (was unbounded asyncio.Queue()); a stalled consumer must not raise or
+    grow memory unboundedly — the oldest pending event is dropped instead."""
+    bid = _create_book()
+    q = AudiobookService.subscribe(bid)
+    for i in range(AudiobookService._SSE_QUEUE_MAXSIZE):
+        AudiobookService._emit(bid, "progress", page=i)
+    assert q.full()
+
+    AudiobookService._emit(bid, "progress", page="overflow")
+    assert q.full()  # still full, not raised, not grown past cap
+
+    drained = []
+    while not q.empty():
+        drained.append(q.get_nowait())
+    assert drained[0]["page"] == 1  # oldest (page=0) was dropped to make room
+    assert (
+        drained[-1]["page"] == "overflow"
+    )  # the event that triggered the drop survived
+
+
+@pytest.mark.asyncio
+async def test_emit_reaches_terminal_event_despite_dropped_backlog(monkeypatch):
+    """A stalled SSE consumer still sees the final terminal event even after
+    losing intermediate progress updates to a small queue cap — progress
+    events are supersede-able, so this is the correct trade-off."""
+    monkeypatch.setattr(AudiobookService, "_SSE_QUEUE_MAXSIZE", 2)
+    bid = _create_book()
+    q = AudiobookService.subscribe(bid)
+
+    for i in range(20):
+        AudiobookService._emit(bid, "page_done", page=i)
+    AudiobookService._emit(bid, "done")
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
 async def test_emit_after_unsubscribe_does_not_deliver():
     bid = _create_book()
     q = AudiobookService.subscribe(bid)

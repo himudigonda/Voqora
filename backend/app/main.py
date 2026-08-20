@@ -24,6 +24,17 @@ log = get_logger("voqora.main")
 # PID of the Swift app that spawned us (captured at import time, before any fork).
 _PARENT_PID = os.getppid()
 
+# Hold every spawned bg task so it isn't GC'd before the event loop runs it.
+# Same pattern as app/api/audiobook.py's _bg_tasks/_spawn_bg — see HARD-031.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
+    return task
+
 
 async def _parent_watchdog() -> None:
     """Exit if the parent macOS app process disappears (crash, force-kill, etc.).
@@ -61,24 +72,24 @@ async def _load_engine_background() -> None:
         return
 
     # Wire idle-unload watcher only after the model is in RAM.
-    asyncio.create_task(TTSEngine.idle_watcher())
+    _spawn_bg(TTSEngine.idle_watcher())
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Kick off model load as a background task — uvicorn starts serving
     # immediately and /health returns "cold" until loading finishes (~2-3 s).
-    asyncio.create_task(_load_engine_background())
+    _spawn_bg(_load_engine_background())
 
     # Audiobook orchestrator + crash-recovery (fast, no I/O blocking)
     from app.services.audiobook_service import AudiobookService
 
     AudiobookService.initialize()
-    asyncio.create_task(AudiobookService.resume_in_progress())
+    _spawn_bg(AudiobookService.resume_in_progress())
 
     # Lifecycle watchdog: exit when the parent Swift app process disappears.
     # Runs even when launched from a terminal (harmless — exits when the shell dies).
-    asyncio.create_task(_parent_watchdog())
+    _spawn_bg(_parent_watchdog())
 
     yield
     # Clean shutdown: cancel any in-flight audiobook pipeline at the next

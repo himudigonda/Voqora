@@ -70,6 +70,7 @@ struct UploadEstimateModal: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close")
         }
     }
 
@@ -207,7 +208,12 @@ struct UploadEstimateModal: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(.cyan)
-            .disabled(bookVM.startingProcessing || requiresGeminiOCR)
+            .disabled(Self.isStartDisabled(
+                startingProcessing: bookVM.startingProcessing,
+                isImageOnly: bookVM.pendingEstimate?.isImageOnly ?? false,
+                useGeminiCleanup: useGeminiCleanup,
+                hasStoredKey: bookVM.hasStoredKey
+            ))
             .keyboardShortcut(.defaultAction)
         }
     }
@@ -219,8 +225,22 @@ struct UploadEstimateModal: View {
         .buttonStyle(.bordered)
     }
 
-    private var requiresGeminiOCR: Bool {
-        (bookVM.pendingEstimate?.isImageOnly ?? false) && !useGeminiCleanup
+    /// T-19: pure Start-Processing disabled-condition, kept testable without
+    /// a live view per the `AudiobookPlayerLayout`/`AudiobookPlayerView`
+    /// precedent. A scanned (image-only) PDF needs Gemini OCR to have any
+    /// text to narrate; Gemini cleanup toggled on with no saved key can
+    /// never succeed either -- both proactively disable Start rather than
+    /// letting the user tap it and hit a toast.
+    static func isStartDisabled(
+        startingProcessing: Bool,
+        isImageOnly: Bool,
+        useGeminiCleanup: Bool,
+        hasStoredKey: Bool
+    ) -> Bool {
+        if startingProcessing { return true }
+        if isImageOnly && !useGeminiCleanup { return true }
+        if useGeminiCleanup && !hasStoredKey { return true }
+        return false
     }
 
     private var loadingState: some View {

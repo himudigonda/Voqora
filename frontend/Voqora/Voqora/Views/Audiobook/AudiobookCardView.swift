@@ -9,6 +9,12 @@ struct AudiobookCardView: View {
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
+    /// T-16: cover width/height ratio (was a hardcoded 180x252 that didn't
+    /// track the grid's adaptive column). Applied via `.aspectRatio` so the
+    /// cover fills whatever width `AudiobookLibraryView`'s
+    /// `GridItem(.adaptive(...))` offers instead of a fixed pixel width.
+    static let coverAspectRatio: CGFloat = 180.0 / 252.0
+
     var status: ProcessingStatus {
         bookVM.processingState[book.bookID] ?? book.displayStatus
     }
@@ -16,7 +22,8 @@ struct AudiobookCardView: View {
     /// Live progress fraction derived from SSE state, falling back to book model.
     private var progressFraction: Double {
         switch status {
-        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t):
+        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t),
+             .sectioning(let p, let t):
             guard t > 0 else { return 0 }
             return Double(p) / Double(t)
         default:
@@ -38,7 +45,7 @@ struct AudiobookCardView: View {
             }
             .padding(.horizontal, 2)
         }
-        .frame(width: 180)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .scaleEffect(hovering && status.isReady ? 1.03 : 1.0)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
         .onHover { hovering = $0 }
@@ -86,7 +93,7 @@ struct AudiobookCardView: View {
         ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(.ultraThinMaterial)
-                .frame(width: 180, height: 252)
+                .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
                 .overlay {
                     AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { phase in
                         switch phase {
@@ -148,7 +155,7 @@ struct AudiobookCardView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.4))
                 ProgressView().tint(.cyan).scaleEffect(0.8)
             }
-        case .extracting, .cleaning, .generating:
+        case .extracting, .cleaning, .generating, .sectioning:
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.35))
                 progressRing
@@ -224,27 +231,32 @@ struct AudiobookCardView: View {
                 .font(vm.appFont(size: 9, weight: .black).monospaced())
                 .kerning(0.8)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         case .failed:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black))
                 .kerning(1)
                 .foregroundStyle(.red)
+                .lineLimit(1)
         case .cancelled:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black))
                 .kerning(1)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         case .needsKey:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black))
                 .kerning(1)
                 .foregroundStyle(.yellow)
+                .lineLimit(1)
         default:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black).monospaced())
                 .kerning(1)
                 .foregroundStyle(.cyan)
                 .contentTransition(.numericText())
+                .lineLimit(1)
         }
     }
 }

@@ -17,6 +17,7 @@ import pytest
 from app.services.audiobook_service import (
     SAMPLE_RATE,
     WAV_HEADER_SIZE,
+    AudiobookCancelled,
     AudiobookService,
     _wav_header,
 )
@@ -202,6 +203,116 @@ async def _mock_generate_yielding(*args, **kwargs):
     yield np.zeros(6000, dtype=np.float32)
 
 
+# ---------- worker queue bound (jira-cpu-ram-optimization.md T-8) ----------
+
+
+@pytest.mark.asyncio
+async def test_initialize_creates_bounded_worker_queue():
+    """The worker queue was an unbounded asyncio.Queue(); it must now have a
+    finite maxsize so a pathological enqueue burst can't grow it forever."""
+    AudiobookService._queue = None
+    AudiobookService._worker_task = None
+    AudiobookService.initialize()
+    try:
+        assert AudiobookService._queue.maxsize > 0
+    finally:
+        await AudiobookService.shutdown(grace_seconds=0.1)
+
+
+# ---------- background TTS pacing (jira-cpu-ram-optimization.md T-7) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_paces_between_segments():
+    """_generate_full_page must yield the configured pacing delay after every
+    segment — this is the only caller of EngineManager.generate the audiobook
+    pipeline uses; interactive /speak is a separate call site, unaffected."""
+    from app.core.config import settings
+
+    async def mock_generate(*args, **kwargs):
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+
+    sleep_mock = AsyncMock()
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=mock_generate,
+        ),
+        patch("app.services.audiobook_service.asyncio.sleep", new=sleep_mock),
+    ):
+        samples = await AudiobookService._generate_full_page(
+            "test-book", "hello", "af_bella", 1.0
+        )
+
+    assert sleep_mock.call_count == 3
+    for call in sleep_mock.call_args_list:
+        assert call.args[0] == settings.AUDIOBOOK_TTS_SEGMENT_PACING_S
+    assert len(samples) == 300
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_pacing_adds_real_elapsed_time(monkeypatch):
+    """Integration-style check that pacing is a real yield, not a stubbed
+    no-op — uses a small pacing value so the test stays fast."""
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.AUDIOBOOK_TTS_SEGMENT_PACING_S",
+        0.02,
+    )
+
+    async def mock_generate(*args, **kwargs):
+        for _ in range(4):
+            yield np.zeros(100, dtype=np.float32)
+
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate",
+        side_effect=mock_generate,
+    ):
+        start = asyncio.get_running_loop().time()
+        await AudiobookService._generate_full_page(
+            "test-book", "hello", "af_bella", 1.0
+        )
+        elapsed = asyncio.get_running_loop().time() - start
+
+    # 4 segments * 0.02s pacing = 0.08s floor; generous slack for CI jitter.
+    assert elapsed >= 0.07
+
+
+# ---------- responsive mid-page cancellation (T-3) ----------
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_stops_mid_page_once_cancelled():
+    """Regression: previously the only cancellation checkpoint was at the
+    per-*page* boundary in _phase_tts's loop — a page with several TTS
+    segments had no way to stop mid-synthesis. _generate_full_page must now
+    check cancellation between segments and stop before the final one once
+    the flag is set partway through."""
+    bid = "cancel-mid-page-book"
+    AudiobookService._cancel_flags.pop(bid, None)
+
+    async def mock_generate(*args, **kwargs):
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)
+        # Cancellation arrives while a 3rd segment is still "in flight".
+        AudiobookService._cancel_flags[bid] = True
+        yield np.zeros(100, dtype=np.float32)
+        yield np.zeros(100, dtype=np.float32)  # never reached if the fix works
+
+    try:
+        with patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=mock_generate,
+        ):
+            with pytest.raises(AudiobookCancelled):
+                await AudiobookService._generate_full_page(
+                    bid, "hello", "af_bella", 1.0
+                )
+    finally:
+        AudiobookService._cancel_flags.pop(bid, None)
+
+
 @pytest.mark.asyncio
 async def test_tts_phase_writes_per_page_wavs(monkeypatch):
     bid = AudiobookStore.create_book("Test.pdf")
@@ -234,6 +345,254 @@ async def test_tts_phase_writes_per_page_wavs(monkeypatch):
 
     for n in (1, 2):
         assert os.path.exists(AudiobookStore.page_audio_path(bid, n))
+
+
+# ---------- TTS progress stall for missing-clean-text pages (T-2) ----------
+
+
+@pytest.mark.asyncio
+async def test_tts_missing_clean_text_still_advances_progress_and_emits_page_done():
+    """Regression: a page with no clean file (e.g. extraction never produced
+    one) previously hit an early `continue` that skipped the phase_progress
+    meta update and page_done SSE emit — the progress bar could
+    undercount/stall on that page even though the loop otherwise moved on."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    # Page 1 has no clean file at all; page 2 does.
+    path2 = AudiobookStore.page_clean_path(bid, 2)
+    os.makedirs(os.path.dirname(path2), exist_ok=True)
+    with open(path2, "w") as f:
+        f.write("Page 2 content.")
+
+    events: list[dict] = []
+    orig_emit = AudiobookService._emit
+
+    def _capture_emit(cls, book_id, event_type, **data):
+        events.append({"type": event_type, **data})
+        return orig_emit(book_id, event_type, **data)
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_yielding,
+        ),
+        patch.object(AudiobookService, "_emit", classmethod(_capture_emit)),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    page_done_events = [
+        e for e in events if e["type"] == "page_done" and e["page"] == 1
+    ]
+    assert (
+        len(page_done_events) == 1
+    ), "missing-clean-text page must still emit page_done"
+
+    new_meta = AudiobookStore.read_meta(bid)
+    # phase_progress reflects both pages processed, not stalled at page 0/1.
+    assert new_meta["phase_progress"]["page_done"] == 2
+    assert os.path.exists(
+        AudiobookStore.page_audio_path(bid, 1)
+    ), "silence WAV still written"
+
+
+# ---------- TTS/audio desync + page_status marking (T-1) ----------
+
+
+async def _mock_generate_page_2_fails(text, voice, speed):
+    """Fails TTS for whatever page's clean text is "Page 2 content." —
+    used to simulate a single forced per-page TTS failure among several."""
+    if text == "Page 2 content.":
+        raise RuntimeError("synthetic TTS failure")
+    yield np.zeros(1200, dtype=np.float32)
+
+
+@pytest.mark.asyncio
+async def test_tts_failure_marks_page_status_and_preserves_clean_text(monkeypatch):
+    """Regression for the transcript/audio desync finding: a TTS exception
+    must mark the page in page_status (distinct from a real failure vs. a
+    duplicate) rather than leaving the clean text file as the only signal —
+    previously nothing told a transcript consumer that page 2's audio is
+    actually silence, not the narrated text still on disk."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2, 3):
+        path = AudiobookStore.page_clean_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(f"Page {n} content.")
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_page_2_fails,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert new_meta["failed_pages"] == [2]
+    assert new_meta["page_status"]["2"] == "tts_failed"
+    # Pages 1 and 3 are untouched by the failure.
+    assert "1" not in new_meta.get("page_status", {})
+    assert "3" not in new_meta.get("page_status", {})
+    # Clean text is preserved on disk (additive fix, not a data-destroying one) —
+    # page_status is the signal a consumer uses to know it wasn't narrated.
+    with open(AudiobookStore.page_clean_path(bid, 2), encoding="utf-8") as f:
+        assert f.read() == "Page 2 content."
+
+
+@pytest.mark.asyncio
+async def test_transcript_reflects_tts_failure_via_page_status(monkeypatch):
+    """Integration: _phase_tts (one forced failure) + _phase_concat end-to-end
+    — the final transcript.json must carry page_status alongside the
+    unchanged `pages` dict (additive, backward-compatible schema)."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2):
+        path = AudiobookStore.page_clean_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(f"Page {n} content.")
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_page_2_fails,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    assert transcript["page_status"]["2"] == "tts_failed"
+    # `pages` keeps existing behavior — still present, unchanged content.
+    assert transcript["pages"]["1"] == "Page 1 content."
+    assert transcript["pages"]["2"] == "Page 2 content."
+
+
+async def _mock_generate_always_fails(*args, **kwargs):
+    if False:
+        yield np.zeros(1, dtype=np.float32)  # makes this an async generator function
+    raise RuntimeError("synthetic TTS failure")
+
+
+@pytest.mark.asyncio
+async def test_done_sse_payload_includes_failed_pages(monkeypatch):
+    """The terminal 'done' SSE event must carry failed_pages so a listening
+    client learns about a broken page immediately, without a separate GET."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("Page 1 content.")
+
+    async def _noop_phase(*args, **kwargs):
+        return None
+
+    with (
+        patch.object(
+            AudiobookService, "_phase_extract", new=AsyncMock(side_effect=_noop_phase)
+        ),
+        patch.object(
+            AudiobookService, "_phase_clean", new=AsyncMock(side_effect=_noop_phase)
+        ),
+        patch.object(
+            AudiobookService, "_phase_section", new=AsyncMock(side_effect=_noop_phase)
+        ),
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_always_fails,
+        ),
+    ):
+        q = AudiobookService.subscribe(bid)
+        await AudiobookService._run_pipeline(bid)
+
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    done_events = [e for e in events if e["type"] == "done"]
+    assert len(done_events) == 1
+    assert done_events[0]["failed_pages"] == [1]
+
+
+# ---------- duplicate-page page_status marking (T-1) ----------
+
+
+@pytest.mark.asyncio
+async def test_duplicate_page_is_marked_in_page_status(monkeypatch):
+    """The duplicate-page dedup marker ("-") is ambiguous on its own — a
+    real failure can also leave a bare dash. page_status must distinguish
+    "duplicate" from a failure so the transcript doesn't show an unexplained
+    dash as if it were corrupted data."""
+    from app.services import audiobook_service as _svc
+    from app.services import pdf_extractor as _pe
+
+    bid = AudiobookStore.create_book("offer.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "offer.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "pdf"
+    AudiobookStore.write_meta(bid, meta)
+
+    long_content = (
+        "A" * 200 + "\n\nThis is the full offer letter body with enough text to matter."
+    )
+    for n in (1, 2):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(long_content)
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 2))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "render_cover", classmethod(lambda cls, b, **kw: None)
+    )
+
+    _svc.AudiobookService._queue = None
+    _svc.AudiobookService._worker_task = None
+    _svc.AudiobookService.initialize()
+
+    await _svc.AudiobookService._phase_extract(bid)
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert new_meta["page_status"]["2"] == "duplicate"
+    assert "1" not in new_meta.get("page_status", {})
 
 
 # ---------- API endpoints ----------
@@ -601,6 +960,90 @@ async def test_retry_failed_clears_pages_and_enqueues(monkeypatch):
     assert new_meta["error"] is None
 
 
+@pytest.mark.asyncio
+async def test_retry_failed_only_re_cleans_cleaning_failed_pages(monkeypatch):
+    """T-5: retry_failed must scope re-cleaning to pages whose page_status
+    actually indicates a cleaning failure — a TTS-only failure's clean text
+    is already correct and re-cleaning it would waste a Gemini call for no
+    reason. Both pages still get their audio wiped so TTS re-runs for both."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "failed"
+    meta["failed_pages"] = [2, 3]
+    # Page 2: TTS-only failure — clean text is fine, only audio needs a redo.
+    # Page 3: cleaning failure — clean text itself needs to be regenerated.
+    meta["page_status"] = {"2": "tts_failed", "3": "cleaning_failed"}
+    AudiobookStore.write_meta(bid, meta)
+    for n in (2, 3):
+        for path in (
+            AudiobookStore.page_clean_path(bid, n),
+            AudiobookStore.page_audio_path(bid, n),
+        ):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "wb").close()
+
+    enqueued: list[str] = []
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        enqueued.append(book_id)
+
+    monkeypatch.setattr(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    )
+
+    count = await AudiobookService.retry_failed(bid, "fake-key")
+    assert count == 2
+    assert enqueued == [bid]
+
+    # Page 2 (TTS-only failure): clean text preserved, audio wiped.
+    assert os.path.exists(AudiobookStore.page_clean_path(bid, 2))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 2))
+    # Page 3 (cleaning failure): both clean text and audio wiped.
+    assert not os.path.exists(AudiobookStore.page_clean_path(bid, 3))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 3))
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert new_meta["failed_pages"] == []
+    # Stale page_status entries cleared for both retried pages.
+    assert new_meta.get("page_status", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_re_cleans_legacy_pages_with_no_page_status(monkeypatch):
+    """Books processed before page_status existed have no recorded failure
+    type for a failed page — retry_failed must fall back to the previous
+    (safe) behavior of always re-cleaning rather than silently skipping a
+    clean-text regeneration it can't actually verify is unnecessary."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "failed"
+    meta["failed_pages"] = [1]
+    # No "page_status" key at all — simulates a pre-T-1 book.
+    AudiobookStore.write_meta(bid, meta)
+    for path in (
+        AudiobookStore.page_clean_path(bid, 1),
+        AudiobookStore.page_audio_path(bid, 1),
+    ):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").close()
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        return None
+
+    monkeypatch.setattr(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    )
+
+    await AudiobookService.retry_failed(bid, "fake-key")
+
+    assert not os.path.exists(AudiobookStore.page_clean_path(bid, 1))
+    assert not os.path.exists(AudiobookStore.page_audio_path(bid, 1))
+
+
 def test_retry_endpoint_requires_api_key_only_for_a_gemini_book():
     from fastapi.testclient import TestClient
 
@@ -655,6 +1098,76 @@ async def test_request_delete_cancels_in_flight_pipeline():
 async def test_request_delete_unknown_returns_false():
     ok = await AudiobookService.request_delete("nonexistent_id_xyz")
     assert ok is False
+
+
+# ---------- cancel + immediate delete zombie-row race (T-4) ----------
+
+
+@pytest.mark.asyncio
+async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkeypatch):
+    """Stress test for the finding: _phase_clean's asyncio.gather doesn't
+    cancel sibling clean_one tasks when the book is cancelled, so a straggler
+    still mid Gemini-call can call update_meta *after* the book's DB row was
+    already deleted by a concurrent delete — resurrecting a zombie row. Must
+    fail on the pre-fix `asyncio.gather(*(clean_one(n) for n in pending))`
+    (no return_exceptions, no explicit sibling cancellation) and pass once
+    stragglers are actively cancelled instead.
+    """
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x" * 200)  # long enough to route through clean_page, not OCR
+
+    release = asyncio.Event()
+
+    async def slow_clean_page(api_key, text):
+        # Simulates a page whose Gemini call is already in flight (past its
+        # own cancel checkpoint) when cancel + delete happen concurrently.
+        await release.wait()
+        return "cleaned slowly"
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=slow_clean_page)
+    )
+
+    clean_task = asyncio.create_task(AudiobookService._phase_clean(bid, "fake-key"))
+    await asyncio.sleep(0.05)  # let both pages' clean_one start + block on release
+
+    AudiobookService.cancel(bid)
+    # Delete only the DB row here (not the on-disk files via the full
+    # AudiobookStore.delete_book/rmtree) so the race under test is isolated
+    # to "does a straggler resurrect the DB row via update_meta", not an
+    # incidental FileNotFoundError from writing into an already-rmtree'd
+    # directory — both are real consequences of the same underlying bug,
+    # but only the DB-row resurrection is what T-4 is about.
+    conn = AudiobookStore._connection()
+    with AudiobookStore._conn_lock:
+        conn.execute("DELETE FROM books WHERE book_id = ?", (bid,))
+
+    # Give a correct fix's cancellation watcher time to stop the stragglers
+    # before they'd otherwise complete and write to the now-deleted book.
+    await asyncio.sleep(0.3)
+    release.set()  # let any still-running straggler (pre-fix code) finish
+
+    try:
+        await asyncio.wait_for(clean_task, timeout=2.0)
+    except BaseException:
+        # We don't care exactly how the (possibly still-racy) phase ends —
+        # only whether a straggler managed to touch a deleted book's state.
+        pass
+
+    assert all(
+        b["book_id"] != bid for b in AudiobookStore.list_books()
+    ), "a straggler clean_one task resurrected the deleted book's DB row"
 
 
 @pytest.mark.asyncio

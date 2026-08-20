@@ -199,8 +199,13 @@ class TTSEngine:
                 # without the idle-CPU cost of spinning. (6 threads only saves ~27ms
                 # but spinning burns 600%+ idle CPU — wrong trade-off for a desktop app.)
                 sess_options.intra_op_num_threads = min(4, os.cpu_count() or 2)
-                # Do NOT set allow_spinning=1: spinning makes ORT threads busy-wait
-                # at 100% CPU even between inferences (6 threads = 600% idle CPU).
+                # ORT's default is allow_spinning=1 (enabled) on standard PyPI wheels —
+                # leaving this unset does NOT avoid the busy-wait cost, it guarantees it.
+                # Measured on this exact onnxruntime build: ~14% CPU during inter-
+                # inference gaps when unset vs. ~0.4% when explicitly disabled (30x).
+                sess_options.add_session_config_entry(
+                    "session.intra_op.allow_spinning", "0"
+                )
 
                 # CPU-only: CoreML partitions only 43% of Kokoro's nodes, and the
                 # data transfer overhead between CoreML and CPU makes it slower overall

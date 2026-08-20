@@ -49,7 +49,6 @@ enum OnboardingCopy {
     skip this step and nothing else changes.
     """
     static let notifGrantButton = "Allow notifications"
-    static let notifSkipButton = "Skip"
     static let notifGrantedLabel = "Allowed"
     static let notifDeniedLabel = "Disabled (you can change this in System Settings)"
 
@@ -67,7 +66,6 @@ enum OnboardingCopy {
     """
     static let identityPlaceholder = "you@example.com"
     static let identitySaveButton = "Save email"
-    static let identitySkipButton = "Skip"
     static let identitySavedLabel = "Saved. Thanks!"
 
     // MARK: - Step 6 — Privacy + done
@@ -85,5 +83,4 @@ enum OnboardingCopy {
     static let nextButton = "Next"
     static let backButton = "Back"
     static let doneButton = "Get started"
-    static let skipButton = "Skip for now"
 }
