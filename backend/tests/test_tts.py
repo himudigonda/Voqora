@@ -103,6 +103,44 @@ async def test_tts_engine_no_inter_segment_fades():
 
 
 @pytest.mark.asyncio
+async def test_generate_passes_lang_through_to_model_create():
+    """Regression: SpeakRequest.lang was accepted by the API but silently
+    dropped everywhere downstream — every call to _model.create hardcoded
+    "en-us" regardless of what was actually requested, so non-English text
+    was always phonemized with English rules. lang must now actually reach
+    the model."""
+    mock_model = MagicMock()
+    mock_model.create.return_value = (np.ones(100), None)
+    TTSEngine._model = mock_model
+
+    gen = TTSEngine.generate("Bonjour le monde", "af_bella", 1.0, "fr-fr")
+    async for _ in gen:
+        pass
+
+    calls = mock_model.create.call_args_list
+    assert calls, "model.create was never called"
+    for call in calls:
+        assert call[0][3] == "fr-fr", f"expected lang='fr-fr', got {call[0][3]!r}"
+
+
+@pytest.mark.asyncio
+async def test_generate_defaults_lang_to_en_us_when_unspecified():
+    """Default must stay en-us so every existing caller's behavior is
+    unchanged unless it explicitly passes a different lang."""
+    mock_model = MagicMock()
+    mock_model.create.return_value = (np.ones(100), None)
+    TTSEngine._model = mock_model
+
+    gen = TTSEngine.generate("Hello world", "af_bella", 1.0)
+    async for _ in gen:
+        pass
+
+    calls = mock_model.create.call_args_list
+    assert calls, "model.create was never called"
+    assert calls[0][0][3] == "en-us"
+
+
+@pytest.mark.asyncio
 async def test_tts_engine_not_initialized():
     TTSEngine._model = None
     with pytest.raises(RuntimeError, match="Model not initialized"):
@@ -121,7 +159,7 @@ async def test_lookahead_cache_hit_skips_inference():
     test_text = "Hello world. Great to meet you all."
     # Derive the exact first segment the way generate() does
     first_seg = TTSEngine._split_segments(test_text)[0]  # "Hello world." with period
-    key = (first_seg, "af_bella", round(1.0, 2))
+    key = (first_seg, "af_bella", round(1.0, 2), "en-us")
     cached_audio = np.ones(50, dtype=np.float32) * 0.5
     TTSEngine._lookahead_cache[key] = cached_audio
 
@@ -151,7 +189,7 @@ async def test_prewarm_with_lookahead_populates_cache():
     # "Hello world test phrase" has no punctuation and 4 words < _NORMAL_SEG_WORDS,
     # so it stays as a single segment (no force-split at 2 words anymore).
     expected_seg = "Hello world test phrase"
-    key = (expected_seg, "af_bella", 1.0)
+    key = (expected_seg, "af_bella", 1.0, "en-us")
     assert key in TTSEngine._lookahead_cache
     assert TTSEngine._lookahead_cache[key] is cached_audio
     mock_model.create.assert_called_once_with(expected_seg, "af_bella", 1.0, "en-us")
@@ -166,7 +204,7 @@ async def test_prewarm_with_lookahead_no_op_when_cached():
     prewarm_text = "Hello world. Extra text."
     # Derive exact first segment to match the cache key generation in prewarm_with_lookahead
     first_seg = TTSEngine._split_segments(prewarm_text)[0]  # "Hello world." with period
-    key = (first_seg, "af_bella", 1.0)
+    key = (first_seg, "af_bella", 1.0, "en-us")
     TTSEngine._lookahead_cache[key] = np.ones(50, dtype=np.float32)
 
     await TTSEngine.prewarm_with_lookahead(prewarm_text, "af_bella", 1.0)
@@ -183,9 +221,9 @@ async def test_lookahead_cache_evicts_oldest_when_full():
 
     # Fill cache to capacity
     for i in range(TTSEngine._MAX_CACHE_ENTRIES):
-        TTSEngine._lookahead_cache[(f"seg{i}", "af_bella", 1.0)] = np.zeros(10)
+        TTSEngine._lookahead_cache[(f"seg{i}", "af_bella", 1.0, "en-us")] = np.zeros(10)
 
-    oldest_key = ("seg0", "af_bella", 1.0)
+    oldest_key = ("seg0", "af_bella", 1.0, "en-us")
     assert oldest_key in TTSEngine._lookahead_cache
 
     await TTSEngine.prewarm_with_lookahead("New entry here today", "af_bella", 1.0)

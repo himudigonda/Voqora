@@ -50,9 +50,9 @@ class EngineManager:
 
     @classmethod
     async def generate(
-        cls, text: str, voice: str, speed: float
+        cls, text: str, voice: str, speed: float, lang: str = "en-us"
     ) -> AsyncGenerator[np.ndarray, None]:
-        async for chunk in TTSEngine.generate(text, voice, speed):
+        async for chunk in TTSEngine.generate(text, voice, speed, lang):
             yield chunk
 
     @classmethod

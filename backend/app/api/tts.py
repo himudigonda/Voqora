@@ -145,7 +145,9 @@ async def speak(req: SpeakRequest):
         await EngineManager.ensure_loaded()
         EngineManager.touch()
 
-        raw_samples_generator = EngineManager.generate(req.text, req.voice, req.speed)
+        raw_samples_generator = EngineManager.generate(
+            req.text, req.voice, req.speed, req.lang
+        )
         wav_chunk_generator = AudioService.stream_samples_to_wav(
             raw_samples_generator, req.volume
         )

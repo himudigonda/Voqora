@@ -121,7 +121,9 @@ class TTSEngine:
                 cls.unload()
 
     @classmethod
-    async def prewarm_with_lookahead(cls, text: str, voice: str, speed: float) -> None:
+    async def prewarm_with_lookahead(
+        cls, text: str, voice: str, speed: float, lang: str = "en-us"
+    ) -> None:
         """Pre-run inference on the first segment and store the result in the cache.
 
         Called by /prewarm when the client sends clipboard text + voice + speed.
@@ -139,7 +141,7 @@ class TTSEngine:
             return
 
         first_seg = segments[0].strip()
-        key = (first_seg, voice, round(speed, 2))
+        key = (first_seg, voice, round(speed, 2), lang)
 
         if key in cls._lookahead_cache:
             # Move to end to mark as recently used (LRU)
@@ -156,7 +158,7 @@ class TTSEngine:
                 first_seg,
                 voice,
                 speed,
-                "en-us",
+                lang,
             )
         except Exception as e:
             log.warning("tts.lookahead_error", extra={"error": str(e)}, exc_info=True)
@@ -276,7 +278,7 @@ class TTSEngine:
 
     @classmethod
     async def generate(
-        cls, text: str, voice: str, speed: float
+        cls, text: str, voice: str, speed: float, lang: str = "en-us"
     ) -> AsyncGenerator[np.ndarray, None]:
         if not cls._model or not cls._executor:
             raise RuntimeError("Model not initialized. Call initialize() first.")
@@ -298,7 +300,7 @@ class TTSEngine:
 
             # Cache hit: first segment was pre-computed by prewarm_with_lookahead()
             if i == 0:
-                key = (seg_stripped, voice, round(speed, 2))
+                key = (seg_stripped, voice, round(speed, 2), lang)
                 cached = cls._lookahead_cache.pop(key, None)
                 if cached is not None:
                     log.debug(
@@ -314,7 +316,7 @@ class TTSEngine:
                         seg_stripped,
                         voice,
                         speed,
-                        "en-us",
+                        lang,
                     )
                 except Exception as e:
                     log.warning(
