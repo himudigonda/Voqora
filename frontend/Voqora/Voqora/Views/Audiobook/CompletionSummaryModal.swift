@@ -105,11 +105,7 @@ struct CompletionSummaryModal: View {
         }
     }
 
-    private var prettyTitle: String {
-        var t = book.title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 
     private func numberFormat(_ n: Int) -> String {
         let f = NumberFormatter()

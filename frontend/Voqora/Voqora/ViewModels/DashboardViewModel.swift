@@ -285,10 +285,14 @@ class DashboardViewModel: ObservableObject {
             status = .thinking
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
-            audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
 
-            // This resets the AudioService buffers
+            // This resets the AudioService buffers. Must run BEFORE
+            // setEstimatedDuration: it unconditionally zeroes `duration`, so
+            // calling it after silently wiped out the estimate on every
+            // single speak() — the scrub bar showed 0:00 during the whole
+            // "thinking" phase instead of an immediate estimate.
             audio.prepareForStream()
+            audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
 
             do {
                 let stream = backend.streamAudio(

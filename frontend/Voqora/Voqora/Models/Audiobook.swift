@@ -27,6 +27,17 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var id: String { bookID }
 
+    /// `title` with any supported source-file extension stripped. Single
+    /// source of truth for this — it was previously copy-pasted across 5
+    /// views and drifted: 3 correctly stripped every extension
+    /// (AudiobookImportStaging.supportedExtensions), 2 only stripped ".pdf",
+    /// so a .docx/.txt/.md book showed its raw filename in exactly the two
+    /// most-visible spots (the completion modal and the sidebar's "Continue
+    /// Listening" button).
+    var displayTitle: String {
+        AudiobookImportStaging.strippingSupportedExtension(from: title)
+    }
+
     var progressFraction: Double {
         let total = Double(phaseProgress.pageTotal)
         guard total > 0 else { return 0 }

@@ -61,9 +61,9 @@ struct AudiobookPlayerView: View {
         // detail pane, which receives focus by default.
         .onKeyPress(.space) { bookVM.togglePlayback(); return .handled }
         .onKeyPress(.leftArrow) { bookVM.skip(by: -15); return .handled }
-        .onKeyPress(.rightArrow) { bookVM.skip(by: 15); return .handled }
+        .onKeyPress(.rightArrow) { bookVM.skip(by: 30); return .handled }
         .onKeyPress("j") { bookVM.skip(by: -15); return .handled }
-        .onKeyPress("l") { bookVM.skip(by: 15); return .handled }
+        .onKeyPress("l") { bookVM.skip(by: 30); return .handled }
         .onKeyPress("n") { bookVM.jumpToNextSection(in: book); return .handled }
         .onKeyPress("p") { bookVM.jumpToPreviousSection(in: book); return .handled }
         .onKeyPress("[") { adjustSpeed(-0.25); return .handled }
@@ -668,13 +668,7 @@ struct AudiobookPlayerView: View {
         audio.setPlaybackRate(Float(clamped))
     }
 
-    private var prettyTitle: String {
-        let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
-        }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 }
 
 // MARK: - Pure, testable logic (T-12, T-13)

@@ -6,6 +6,7 @@ struct AudiobookCardView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     let book: Audiobook
     @State private var hovering = false
+    @State private var showDeleteConfirmation = false
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
@@ -74,19 +75,24 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
-            Button(role: .destructive) { bookVM.delete(book) } label: {
+            Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .confirmationDialog(
+            "Delete \"\(prettyTitle)\"?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                bookVM.delete(book)
+            }
+        } message: {
+            Text("This permanently deletes the audiobook and its narration. This can't be undone.")
+        }
     }
 
-    private var prettyTitle: String {
-        let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
-        }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 
     @ViewBuilder
     private var cover: some View {

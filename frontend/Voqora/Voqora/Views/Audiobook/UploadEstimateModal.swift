@@ -268,11 +268,7 @@ struct UploadEstimateModal: View {
     }
 
     private var prettyTitle: String {
-        let n = documentURL.lastPathComponent
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if n.lowercased().hasSuffix(ext) { return String(n.dropLast(ext.count)) }
-        }
-        return n
+        AudiobookImportStaging.strippingSupportedExtension(from: documentURL.lastPathComponent)
     }
 
     private func numberFormat(_ n: Int) -> String {

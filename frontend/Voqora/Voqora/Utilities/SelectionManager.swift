@@ -2,7 +2,30 @@ import AppKit
 
 @MainActor
 enum SelectionManager {
+    /// Serializes overlapping calls instead of racing them. Without this, a
+    /// rapid double-press of the shortcut could run two concurrent
+    /// snapshot -> Cmd+C -> poll -> restore cycles against the same system
+    /// pasteboard: call B could snapshot call A's synthetic copy (not the
+    /// user's real prior clipboard) and later "restore" that permanently, or
+    /// call A's restore could fire mid-poll for call B and make it time out
+    /// even though a real selection existed. A second caller now awaits the
+    /// first call's result instead of starting its own pasteboard mutation.
+    private static var inFlightTask: Task<String?, Never>?
+
     static func getSelectedText() async -> String? {
+        if let existing = inFlightTask {
+            VoqoraLog.debug("SelectionManager", "getSelectedText already in flight, awaiting existing call")
+            return await existing.value
+        }
+        let task = Task<String?, Never> {
+            defer { inFlightTask = nil }
+            return await performGetSelectedText()
+        }
+        inFlightTask = task
+        return await task.value
+    }
+
+    private static func performGetSelectedText() async -> String? {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontAppName = frontApp?.localizedName ?? frontApp?.bundleIdentifier ?? "unknown"
 

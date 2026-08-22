@@ -275,7 +275,7 @@ struct VoqoraWindow: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Continue Listening")
                         .font(vm.appFont(size: 13))
-                    Text(prettyTitleForResume(book.title))
+                    Text(book.displayTitle)
                         .font(vm.appFont(size: 10))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -321,12 +321,6 @@ struct VoqoraWindow: View {
         .padding(20)
         .shadow(color: .black.opacity(0.1), radius: 10)
         .animation(.spring(), value: audio.progress)
-    }
-
-    private func prettyTitleForResume(_ title: String) -> String {
-        var t = title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
-        return t
     }
 
     private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
