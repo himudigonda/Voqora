@@ -165,4 +165,63 @@ final class AudiobookPlayerViewTests: XCTestCase {
     private func makeSection(title: String, startPage: Int, endPage: Int, startTime: Double) -> AudiobookSection {
         AudiobookSection(title: title, startPage: startPage, endPage: endPage, startTime: startTime)
     }
+
+    // MARK: - splitIntoSentences / currentSentenceIndex (sentence-level transcript highlight)
+
+    func test_splitIntoSentences_splitsOnSentenceBoundaries() {
+        let sentences = AudiobookPlayerView.splitIntoSentences("This is one. This is two! Is this three?")
+        XCTAssertEqual(sentences, ["This is one.", "This is two!", "Is this three?"])
+    }
+
+    func test_splitIntoSentences_doesNotSplitOnAbbreviationsOrDecimals() {
+        let sentences = AudiobookPlayerView.splitIntoSentences("Dr. Smith paid $3.50 for it. He left.")
+        XCTAssertEqual(sentences, ["Dr. Smith paid $3.50 for it.", "He left."])
+    }
+
+    func test_splitIntoSentences_emptyString_returnsNoSentences() {
+        XCTAssertEqual(AudiobookPlayerView.splitIntoSentences(""), [])
+    }
+
+    func test_splitIntoSentences_noTerminalPunctuation_fallsBackToWholeString() {
+        XCTAssertEqual(AudiobookPlayerView.splitIntoSentences("just a fragment with no period"), ["just a fragment with no period"])
+    }
+
+    func test_currentSentenceIndex_singleSentence_isAlwaysZero() {
+        let idx = AudiobookPlayerView.currentSentenceIndex(in: ["only one."], pageStart: 0, pageEnd: 10, at: 7)
+        XCTAssertEqual(idx, 0)
+    }
+
+    func test_currentSentenceIndex_noPageEnd_fallsBackToFirstSentence() {
+        let idx = AudiobookPlayerView.currentSentenceIndex(in: ["one.", "two."], pageStart: 0, pageEnd: nil, at: 5)
+        XCTAssertEqual(idx, 0)
+    }
+
+    func test_currentSentenceIndex_interpolatesAcrossEquallySizedSentences() {
+        // Three equal-length sentences over a 30s window: ~0-10s -> 0, ~10-20s -> 1, ~20-30s -> 2.
+        let sentences = ["AAAAAAAAAA.", "BBBBBBBBBB.", "CCCCCCCCCC."]
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 30, at: 0), 0)
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 30, at: 5), 0)
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 30, at: 15), 1)
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 30, at: 25), 2)
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 30, at: 30), 2)
+    }
+
+    func test_currentSentenceIndex_weightsByCharacterLength() {
+        // A long first sentence should occupy proportionally more of the window than a short second one.
+        let sentences = ["A very long sentence that takes up most of the page's reading time.", "Short."]
+        let idxEarly = AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 10, at: 1)
+        let idxLate = AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 10, at: 9.9)
+        XCTAssertEqual(idxEarly, 0)
+        XCTAssertEqual(idxLate, 1)
+    }
+
+    func test_currentSentenceIndex_beforePageStart_clampsToFirstSentence() {
+        let sentences = ["one.", "two."]
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 10, pageEnd: 20, at: 0), 0)
+    }
+
+    func test_currentSentenceIndex_afterPageEnd_clampsToLastSentence() {
+        let sentences = ["one.", "two."]
+        XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 10, at: 999), 1)
+    }
 }
