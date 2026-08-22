@@ -57,6 +57,9 @@ class DashboardViewModel: ObservableObject {
 
     // State
     @Published var status: AppStatus = .ready
+    /// Consecutive "no text found" failures per frontmost app name — reset
+    /// on success or on switching apps. See speakSelection().
+    private var selectionFailuresByApp: [String: Int] = [:]
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false        // Model in ONNX session RAM
@@ -219,8 +222,11 @@ class DashboardViewModel: ObservableObject {
             await speak(text: text)
             return
         }
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let frontAppName = frontApp?.localizedName ?? frontApp?.bundleIdentifier ?? "unknown"
+
         guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
-            VoqoraLog.warn("DashboardViewModel", "No text found in selection", ["axTrusted": AXIsProcessTrusted() ? "true" : "false"])
+            VoqoraLog.warn("DashboardViewModel", "No text found in selection", ["axTrusted": AXIsProcessTrusted() ? "true" : "false", "app": frontAppName])
             if !AXIsProcessTrusted() {
                 // Without Accessibility, SelectionManager can never read a
                 // selection — this is the shortcut's most common silent
@@ -231,10 +237,24 @@ class DashboardViewModel: ObservableObject {
                 NSApp.activate(ignoringOtherApps: true)
                 PermissionsService.shared.openAccessibilitySettings()
             } else {
-                showTransientError("Select text in any app, then press Cmd+Shift+.")
+                // "Nothing selected" and "this app can't expose its content
+                // via Accessibility or copy at all" (canvas-rendered PDF
+                // viewers, games, video subtitles) both silently return nil
+                // here — there's no reliable way to tell them apart from a
+                // single attempt. But repeated failures in the SAME app are
+                // a real signal worth surfacing instead of repeating the
+                // identical generic message every time.
+                let failures = (selectionFailuresByApp[frontAppName] ?? 0) + 1
+                selectionFailuresByApp[frontAppName] = failures
+                if failures >= 2 {
+                    showTransientError("Voqora couldn't read text from \(frontAppName). Some apps (games, custom-rendered viewers) don't support this.")
+                } else {
+                    showTransientError("Select text in any app, then press Cmd+Shift+.")
+                }
             }
             return
         }
+        selectionFailuresByApp[frontAppName] = 0
         VoqoraLog.info("DashboardViewModel", "Sending selection to backend", ["chars": "\(text.count)"])
         // Confirms the shortcut actually fired even when Voqora's window is
         // backgrounded — the only in-app feedback otherwise is a toast on a
