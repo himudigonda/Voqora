@@ -62,7 +62,10 @@ struct VoqoraApp: App {
             freopen(logURL.path, "a+", stderr)
             setbuf(stdout, nil)
 
-            print("--- Voqora Frontend Log Started: \(Date()) ---")
+            let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+            let buildNumber = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"
+            let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+            VoqoraLog.info("VoqoraApp", "Frontend log started", ["version": appVersion, "build": buildNumber, "os": osVersion])
         }
 
         // Touch AppActivityMonitor.shared as early as possible — it's lazily
@@ -169,37 +172,37 @@ struct VoqoraApp: App {
     }
 
     private func setupShortcuts(vm: DashboardViewModel) {
-        print("⌨️ KeyboardShortcuts: Initializing registration...")
+        VoqoraLog.info("KeyboardShortcuts", "Initializing registration")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
-            print("⌨️ KeyboardShortcuts: playText triggered")
+            VoqoraLog.info("KeyboardShortcuts", "playText triggered")
             Task { @MainActor in
                 await vm.speakSelection()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .togglePause) {
-            print("⌨️ KeyboardShortcuts: togglePause triggered")
+            VoqoraLog.info("KeyboardShortcuts", "togglePause triggered")
             Task { @MainActor in
                 vm.togglePlayback()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .stopText) {
-            print("⌨️ KeyboardShortcuts: stopText triggered")
+            VoqoraLog.info("KeyboardShortcuts", "stopText triggered")
             Task { @MainActor in
                 vm.stopPlayback()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
-            print("⌨️ KeyboardShortcuts: exportAudio triggered")
+            VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
             Task { @MainActor in
                 vm.exportLastClip()
             }
         }
 
-        print("⌨️ KeyboardShortcuts: All shortcuts registered.")
+        VoqoraLog.info("KeyboardShortcuts", "All shortcuts registered")
     }
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true

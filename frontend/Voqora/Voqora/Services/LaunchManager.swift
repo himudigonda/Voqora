@@ -127,13 +127,13 @@ class LaunchManager: ObservableObject {
         if fm.isExecutableFile(atPath: executableURL.path),
            let stored = try? String(contentsOf: versionMarkerURL, encoding: .utf8),
            stored.trimmingCharacters(in: .whitespacesAndNewlines) == expectedMarker {
-            print("✅ Current bundled backend already extracted — skipping unzip.")
+            VoqoraLog.info("LaunchManager", "Bundled backend already extracted, skipping unzip")
             isReady = true
             return
         }
 
         // ─── Slow path: extract (first launch or after an app update) ───────────────────
-        print("📦 Extracting backend v\(currentVersion)… (first launch or update)")
+        VoqoraLog.info("LaunchManager", "Extracting backend (first launch or update)", ["version": currentVersion])
         let stagingURL = appSupport.appendingPathComponent(".backend-staging-\(UUID().uuidString)")
         do {
             try fm.createDirectory(at: appSupport, withIntermediateDirectories: true)
@@ -204,9 +204,10 @@ class LaunchManager: ObservableObject {
                 encoding: .utf8
             )
 
-            print("✅ Backend extracted successfully.")
+            VoqoraLog.info("LaunchManager", "Backend extracted successfully", ["version": currentVersion])
             isReady = true
         } catch {
+            VoqoraLog.error("LaunchManager", "Backend extraction failed", ["error": String(describing: error), "version": currentVersion])
             self.error = "Launch Error: \(error.localizedDescription)"
         }
     }

@@ -214,13 +214,13 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speakSelection(text: String? = nil) async {
-        print("⌨️ DashboardViewModel: speakSelection triggered")
+        VoqoraLog.info("DashboardViewModel", "speakSelection triggered", ["explicitText": text != nil ? "true" : "false"])
         if let text {
             await speak(text: text)
             return
         }
         guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
-            print("⚠️ DashboardViewModel: No text found in selection.")
+            VoqoraLog.warn("DashboardViewModel", "No text found in selection", ["axTrusted": AXIsProcessTrusted() ? "true" : "false"])
             if !AXIsProcessTrusted() {
                 // Without Accessibility, SelectionManager can never read a
                 // selection — this is the shortcut's most common silent
@@ -235,7 +235,7 @@ class DashboardViewModel: ObservableObject {
             }
             return
         }
-        print("🎤 DashboardViewModel: Sending \(text.count) chars to backend...")
+        VoqoraLog.info("DashboardViewModel", "Sending selection to backend", ["chars": "\(text.count)"])
         // Confirms the shortcut actually fired even when Voqora's window is
         // backgrounded — the only in-app feedback otherwise is a toast on a
         // window the user may not be looking at.
@@ -281,7 +281,7 @@ class DashboardViewModel: ObservableObject {
                     self.currentSpeakTask = nil
                 }
             }
-            print("DEBUG [DashboardVM] Starting new speak task")
+            VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": selectedVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             status = .thinking
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
@@ -310,6 +310,7 @@ class DashboardViewModel: ObservableObject {
 
                 guard !Task.isCancelled, generation == self.speakGeneration else { return }
                 guard receivedAudio else {
+                    VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": selectedVoice])
                     audio.stop()
                     showTransientError("Voqora could not generate audio. Try again.")
                     return
@@ -327,6 +328,7 @@ class DashboardViewModel: ObservableObject {
                 )
             } catch {
                 guard !Task.isCancelled, generation == self.speakGeneration else { return }
+                VoqoraLog.error("DashboardViewModel", "speak() failed", ["error": String(describing: error), "voice": selectedVoice, "chars": "\(cleaned.count)"])
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error))
             }
@@ -428,6 +430,7 @@ class DashboardViewModel: ObservableObject {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
             showActionFeedback("Saved \(urls.count) debug log\(urls.count == 1 ? "" : "s") to Desktop")
         } catch {
+            VoqoraLog.error("DashboardViewModel", "exportLogs failed", ["error": String(describing: error)])
             showTransientError(error.localizedDescription)
         }
     }
@@ -473,7 +476,7 @@ class DashboardViewModel: ObservableObject {
 
                 // Detect backend crash: was online, now offline
                 if wasOnline && !isNowOnline {
-                    print("⚠️ DashboardViewModel: Backend crash detected, cancelling stream")
+                    VoqoraLog.error("DashboardViewModel", "Backend crash detected, cancelling in-flight stream", ["status": "\(status)"])
                     currentSpeakTask?.cancel()
                     currentSpeakTask = nil
                     if status == .speaking || status == .thinking {

@@ -113,7 +113,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                 nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
                 _lastLaunchFailure = "The local speech engine is unavailable."
             }
-            print("❌ Backend binary not ready yet.")
+            VoqoraLog.error("BackendService", "Backend binary not ready yet", ["path": executableURL.path])
             return
         }
 
@@ -176,7 +176,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self.logFileHandle = nil
                 }
             }
-            print("⚠️ Backend process exited (PID: \(terminated.processIdentifier), status: \(terminated.terminationStatus))")
+            VoqoraLog.warn("BackendService", "Backend process exited", ["pid": "\(terminated.processIdentifier)", "exitStatus": "\(terminated.terminationStatus)"])
         }
 
         // Register ownership before starting the child. A binary can fail fast
@@ -195,9 +195,9 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self._isLaunching = false
                 }
             }
-            print("✅ Backend Launched (PID: \(p.processIdentifier))")
+            VoqoraLog.info("BackendService", "Backend launched", ["pid": "\(p.processIdentifier)"])
         } catch {
-            print("❌ Backend Launch Failed: \(error)")
+            VoqoraLog.error("BackendService", "Backend launch failed", ["error": String(describing: error), "path": executableURL.path])
             stateQueue.sync {
                 if self.process === p {
                     self.process = nil
@@ -254,6 +254,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                 exportedURLs.append(destinationURL)
             }
         } catch {
+            VoqoraLog.error("BackendService", "exportLogs failed", ["error": String(describing: error)])
             for url in exportedURLs { try? fileManager.removeItem(at: url) }
             throw LogExportError.couldNotSave
         }
@@ -340,6 +341,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     }
                 }
             } catch {
+                VoqoraLog.error("BackendService", "streamAudio request encoding failed", ["error": String(describing: error)])
                 continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }

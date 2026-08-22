@@ -143,9 +143,7 @@ actor MetricsService {
     ) async {
         guard enabled else { return }
         guard Event.allowedNames.contains(event) else {
-            #if DEBUG
-            print("⚠️ Metrics: unknown event '\(event)' dropped")
-            #endif
+            VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
             return
         }
         let cleanedProps = Props.whitelist(rawProps)
@@ -180,9 +178,7 @@ actor MetricsService {
             "events": batch.map { $0.serialized() },
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            #if DEBUG
-            print("⚠️ Metrics: serialization failed; retaining batch")
-            #endif
+            VoqoraLog.error("MetricsService", "Batch serialization failed, retaining batch", ["batchSize": "\(batch.count)"])
             return
         }
 
@@ -198,20 +194,14 @@ actor MetricsService {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
             guard (200..<300).contains(http.statusCode) else {
-                #if DEBUG
-                print("📡 Metrics: server rejected batch → \(http.statusCode); retaining it")
-                #endif
+                VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
                 return
             }
             outbox.removeFirst(min(batch.count, outbox.count))
             persistOutbox()
-            #if DEBUG
-            print("📡 Metrics: flushed \(batch.count) events → \(http.statusCode)")
-            #endif
+            VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
         } catch {
-            #if DEBUG
-            print("📡 Metrics: flush failed — \(error.localizedDescription)")
-            #endif
+            VoqoraLog.error("MetricsService", "Flush failed", ["error": String(describing: error)])
         }
     }
 
