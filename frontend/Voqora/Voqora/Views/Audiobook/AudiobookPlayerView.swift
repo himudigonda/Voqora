@@ -631,9 +631,9 @@ struct AudiobookPlayerView: View {
         }
         .frame(width: 260)
         .background(.ultraThinMaterial.opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
     }

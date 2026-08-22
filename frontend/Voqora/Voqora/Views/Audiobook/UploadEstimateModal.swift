@@ -332,9 +332,9 @@ private struct StatTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(.ultraThinMaterial.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                 .stroke(.white.opacity(0.08), lineWidth: 1)
         )
     }

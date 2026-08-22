@@ -117,9 +117,9 @@ struct CompletionSummaryModal: View {
         }
         .padding(16)
         .background(.ultraThinMaterial.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                 .stroke(.white.opacity(0.08), lineWidth: 1)
         )
     }
