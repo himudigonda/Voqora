@@ -7,10 +7,15 @@ enum TextProcessor {
         var fixLigatures: Bool
         var expandAbbr: Bool
         var expandNumbers: Bool = false
+        var stripMarkdown: Bool = true
     }
 
     static func sanitize(_ text: String, options: Options) -> String {
         var result = text
+
+        if options.stripMarkdown {
+            result = stripMarkdownSyntax(result)
+        }
 
         // 1. Hyphenation Fix
         // Detects "word- \n next" and joins them
@@ -92,6 +97,52 @@ enum TextProcessor {
         // Reduce multiple spaces to single space
         return cleaned.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Strips Markdown syntax down to the text a listener actually cares about,
+    /// so a shortcut fired over raw Markdown source (a README, notes, GitHub
+    /// content) doesn't read punctuation aloud — "asterisk", "pound", etc.
+    /// Order matters: links/images before emphasis (bracket contents can
+    /// contain `*`/`_`), and emphasis markers widest-to-narrowest so `***x***`
+    /// doesn't get half-matched by the `*x*` pattern first.
+    private static func stripMarkdownSyntax(_ text: String) -> String {
+        var result = text
+
+        func replace(_ pattern: String, with template: String, in s: String) -> String {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines]) else { return s }
+            return regex.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+        }
+
+        // Fenced code blocks: drop the ``` delimiters and any language tag.
+        result = replace("```[a-zA-Z0-9]*\\n?", with: "", in: result)
+
+        // Images/links: ![alt](url) and [text](url) -> just the visible text.
+        result = replace("!?\\[([^\\]]*)\\]\\([^\\)]*\\)", with: "$1", in: result)
+
+        // Headings: leading #'s at the start of a line.
+        result = replace("^#{1,6}\\s*", with: "", in: result)
+
+        // Blockquotes: leading > at the start of a line.
+        result = replace("^>\\s?", with: "", in: result)
+
+        // Horizontal rules on their own line.
+        result = replace("^(-{3,}|\\*{3,}|_{3,})\\s*$", with: "", in: result)
+
+        // Unordered list markers at the start of a line.
+        result = replace("^\\s*[-*+]\\s+", with: "", in: result)
+
+        // Emphasis: ***bold italic***, **bold**, *italic*, __bold__, _italic_, ~~strikethrough~~.
+        result = replace("(\\*\\*\\*|___)(.+?)\\1", with: "$2", in: result)
+        result = replace("(\\*\\*|__)(.+?)\\1", with: "$2", in: result)
+        result = replace("(\\*|_)(.+?)\\1", with: "$2", in: result)
+        result = replace("~~(.+?)~~", with: "$1", in: result)
+
+        // Inline code spans, then any stray unmatched backtick left behind by
+        // an unbalanced fence.
+        result = replace("`([^`]*)`", with: "$1", in: result)
+        result = result.replacingOccurrences(of: "`", with: "")
+
+        return result
     }
 
     private static let spellOutFormatter: NumberFormatter = {

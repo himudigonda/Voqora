@@ -284,7 +284,7 @@ class DashboardViewModel: ObservableObject {
             print("DEBUG [DashboardVM] Starting new speak task")
             status = .thinking
 
-            let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true))
+            let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
             audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
 
             // This resets the AudioService buffers
