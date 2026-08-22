@@ -84,6 +84,16 @@ class GeminiBadResponseError(Exception):
     """Gemini returned an unexpected response."""
 
 
+class GeminiCostCapExceeded(Exception):
+    """Actual running Gemini spend for this book crossed MAX_GEMINI_COST_USD_PER_BOOK.
+
+    Distinct from the pre-flight estimate check at /start: that only ever
+    samples 3 pages, so a book with uneven page density can pass the
+    pre-flight gate and still blow through the cap once real usage is
+    measured. This is the runtime backstop.
+    """
+
+
 class GeminiCleaner:
     _MAX_RETRIES = 3
     _BACKOFF_BASE = 2.0  # 2s, 4s, 8s

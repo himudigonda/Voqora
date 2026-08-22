@@ -30,7 +30,11 @@ from app.core.config import settings as _settings
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore, _now_iso
 from app.services.engine_manager import EngineManager
-from app.services.gemini_cleaner import GeminiAuthError, GeminiCleaner
+from app.services.gemini_cleaner import (
+    GeminiAuthError,
+    GeminiCleaner,
+    GeminiCostCapExceeded,
+)
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
 from app.services.tts import interactive_tts_lock
@@ -616,6 +620,23 @@ class AudiobookService:
         state_lock = asyncio.Lock()
         progress = {"done": done_count}
 
+        # Runtime cost backstop: the /start pre-flight check only samples 3
+        # pages, so a book with uneven page density can pass that gate and
+        # still blow through MAX_GEMINI_COST_USD_PER_BOOK once real usage is
+        # measured — there was previously no check against actual spend at
+        # all. Seed from already-cleaned pages (on resume) so a book doesn't
+        # get a fresh budget every time it's interrupted and resumed.
+        gemini_chars = {"value": 0}
+        if uses_gemini_cleanup:
+            for n in range(1, page_count + 1):
+                cp = AudiobookStore.page_clean_path(book_id, n)
+                if os.path.exists(cp):
+                    try:
+                        with open(cp, encoding="utf-8") as f:
+                            gemini_chars["value"] += len(f.read())
+                    except OSError:
+                        pass
+
         async def clean_one(n: int) -> None:
             async with sem:
                 # Honor /speak preemption (every page acquires after Gemini network call too)
@@ -694,6 +715,19 @@ class AudiobookService:
                     )
                     cleaned = raw_text or "-"
 
+                if uses_gemini_cleanup:
+                    async with state_lock:
+                        gemini_chars["value"] += len(raw_text) + len(cleaned)
+                        running_cost = GeminiCleaner.estimate_cost_usd(
+                            gemini_chars["value"]
+                        )
+                        if running_cost > _settings.MAX_GEMINI_COST_USD_PER_BOOK:
+                            raise GeminiCostCapExceeded(
+                                f"Actual Gemini cost (~${running_cost:.2f}) exceeded the "
+                                f"${_settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} safety cap "
+                                "partway through this book."
+                            )
+
                 out = AudiobookStore.page_clean_path(book_id, n)
                 tmp = out + ".tmp"
                 with open(tmp, "w", encoding="utf-8") as f:
@@ -744,7 +778,18 @@ class AudiobookService:
                     and isinstance(t.exception(), GeminiAuthError)
                     for t in done
                 )
-                if remaining and (cls._cancel_flags.get(book_id) or auth_failed):
+                # A cost-cap breach must stop remaining pages immediately too
+                # — letting siblings keep calling Gemini after the decision
+                # to abort would spend even more, defeating the cap's point.
+                cost_cap_exceeded = any(
+                    t.done()
+                    and not t.cancelled()
+                    and isinstance(t.exception(), GeminiCostCapExceeded)
+                    for t in done
+                )
+                if remaining and (
+                    cls._cancel_flags.get(book_id) or auth_failed or cost_cap_exceeded
+                ):
                     for t in remaining:
                         t.cancel()
         finally:
@@ -755,6 +800,12 @@ class AudiobookService:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         gemini_auth_exc: GeminiAuthError | None = None
+        # Tracked separately from other_exc, at the same priority as
+        # gemini_auth_exc: like an auth failure, a cost-cap breach
+        # proactively cancels sibling tasks (see cost_cap_exceeded above),
+        # which would otherwise make was_cancelled swallow this exception's
+        # specific message behind a generic "Cancelled by user."
+        cost_cap_exc: GeminiCostCapExceeded | None = None
         was_cancelled = False
         other_exc: Exception | None = None
         for t in tasks:
@@ -766,6 +817,8 @@ class AudiobookService:
                 continue
             if isinstance(exc, GeminiAuthError):
                 gemini_auth_exc = gemini_auth_exc or exc
+            elif isinstance(exc, GeminiCostCapExceeded):
+                cost_cap_exc = cost_cap_exc or exc
             elif isinstance(exc, AudiobookCancelled):
                 was_cancelled = True
             else:
@@ -773,6 +826,8 @@ class AudiobookService:
 
         if gemini_auth_exc is not None:
             raise gemini_auth_exc
+        if cost_cap_exc is not None:
+            raise cost_cap_exc
         if was_cancelled:
             raise AudiobookCancelled(book_id)
         if other_exc is not None:

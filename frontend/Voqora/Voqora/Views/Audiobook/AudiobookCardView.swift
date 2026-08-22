@@ -233,11 +233,19 @@ struct AudiobookCardView: View {
     private var caption: some View {
         switch status {
         case .ready:
-            Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
-                .font(vm.appFont(size: 9, weight: .black).monospaced())
-                .kerning(0.8)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                if !book.failedPages.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.orange)
+                }
+                Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
+                    .font(vm.appFont(size: 9, weight: .black).monospaced())
+                    .kerning(0.8)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .help(book.failedPages.isEmpty ? "" : "\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble during cleaning or narration")
         case .failed:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black))

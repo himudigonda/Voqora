@@ -123,6 +123,28 @@ def test_delete_book_removes_dir():
     assert AudiobookStore.delete_book(bid) is False  # second delete
 
 
+@pytest.mark.asyncio
+async def test_update_meta_on_deleted_book_does_not_resurrect_a_zombie_row():
+    """Regression: a pipeline phase still in flight when the user deletes a
+    book (executor-backed work isn't cooperatively cancellable mid-call)
+    used to have its next status update silently re-INSERT a near-empty
+    zombie row via update_meta's read-modify-write. update_meta must be a
+    no-op once the book no longer exists."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.1}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    assert AudiobookStore.delete_book(bid) is True
+    assert AudiobookStore.read_meta(bid) is None
+
+    result = await AudiobookStore.update_meta(bid, status="failed", error="boom")
+
+    assert result == {}
+    assert AudiobookStore.read_meta(bid) is None
+    assert bid not in [b["book_id"] for b in AudiobookStore.list_books()]
+
+
 # ---------- estimation ----------
 
 
@@ -1168,6 +1190,106 @@ async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkey
     assert all(
         b["book_id"] != bid for b in AudiobookStore.list_books()
     ), "a straggler clean_one task resurrected the deleted book's DB row"
+
+
+# ---------- runtime Gemini cost cap ----------
+
+
+@pytest.mark.asyncio
+async def test_phase_clean_aborts_when_actual_cost_exceeds_cap(monkeypatch):
+    """Regression: the /start pre-flight cost gate only ever samples 3 pages,
+    so a book with uneven page density could pass it and then blow through
+    MAX_GEMINI_COST_USD_PER_BOOK with no runtime check at all. _phase_clean
+    must track actual chars sent/received and abort once the running
+    estimate crosses the cap, instead of completing the whole book
+    regardless of real spend."""
+    from app.services import gemini_cleaner as _gc
+    from app.services.audiobook_service import AudiobookService
+    from app.services.gemini_cleaner import GeminiCostCapExceeded
+
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.MAX_GEMINI_COST_USD_PER_BOOK",
+        0.000001,
+    )
+
+    # More pages than _CLEAN_PARALLELISM (4): only the first wave can start
+    # immediately, the rest sit queued behind the semaphore — that queued
+    # backlog is what the fix's proactive cancellation is meant to stop.
+    page_count = 20
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", page_count, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    for n in range(1, page_count + 1):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x" * 200)  # long enough to route through clean_page, not OCR
+
+    calls: list[int] = []
+
+    async def fake_clean_page(api_key, text):
+        calls.append(1)
+        # A small realistic delay so the first wave doesn't complete before
+        # the phase's 100ms cancellation-poll granularity gets a chance to
+        # observe the cap breach and cancel the still-queued pages.
+        await asyncio.sleep(0.05)
+        return "cleaned " + text
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+    )
+
+    with pytest.raises(GeminiCostCapExceeded):
+        await AudiobookService._phase_clean(bid, "fake-key")
+
+    # The near-zero cap means even the first page's chars exceed it, so the
+    # phase must stop well short of processing all 20 pages once the
+    # cancellation poll catches up and cancels the queued backlog.
+    assert len(calls) < page_count
+
+
+@pytest.mark.asyncio
+async def test_phase_clean_seeds_running_cost_from_already_cleaned_pages(monkeypatch):
+    """A resumed book shouldn't get a fresh budget: already-cleaned pages'
+    chars must count toward the cap from the start of the phase."""
+    from app.services import gemini_cleaner as _gc
+    from app.services.audiobook_service import AudiobookService
+    from app.services.gemini_cleaner import GeminiCostCapExceeded
+
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.MAX_GEMINI_COST_USD_PER_BOOK",
+        0.000001,
+    )
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    # Page 1 already cleaned (simulating a resume) — its chars must be
+    # counted even though clean_one won't touch it again.
+    clean_path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(clean_path), exist_ok=True)
+    with open(clean_path, "w") as f:
+        f.write("x" * 500)
+    raw_path = AudiobookStore.page_raw_path(bid, 2)
+    os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+    with open(raw_path, "w") as f:
+        f.write("y" * 200)
+
+    async def fake_clean_page(api_key, text):
+        return "cleaned " + text
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+    )
+
+    with pytest.raises(GeminiCostCapExceeded):
+        await AudiobookService._phase_clean(bid, "fake-key")
 
 
 @pytest.mark.asyncio
