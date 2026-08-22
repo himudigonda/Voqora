@@ -159,7 +159,7 @@ class TTSEngine:
                 "en-us",
             )
         except Exception as e:
-            log.warning("tts.lookahead_error", extra={"error": str(e)})
+            log.warning("tts.lookahead_error", extra={"error": str(e)}, exc_info=True)
             return
 
         if audio is None:
@@ -223,7 +223,7 @@ class TTSEngine:
                 cls._model.create("Hello.", "af_bella", 1.0, "en-us")
                 log.info("tts.ready")
             except Exception as e:
-                log.error("tts.fatal_error", extra={"error": str(e)})
+                log.error("tts.fatal_error", extra={"error": str(e)}, exc_info=True)
                 raise e
 
         # Mark load time so idle_watcher doesn't immediately unload on reload.
@@ -320,6 +320,7 @@ class TTSEngine:
                     log.warning(
                         "tts.segment_error",
                         extra={"seg_preview": seg_text[:30], "error": str(e)},
+                        exc_info=True,
                     )
                     continue
 

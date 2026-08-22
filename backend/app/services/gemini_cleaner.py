@@ -269,6 +269,7 @@ class GeminiCleaner:
                 log.warning(
                     "gemini.section_chunk_failed",
                     extra={"first_page": first_page, "error": str(e)},
+                    exc_info=True,
                 )
                 continue
 

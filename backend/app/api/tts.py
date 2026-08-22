@@ -128,7 +128,7 @@ async def _guarded_wav_stream(wav_generator, lock_holder=None):
         async for chunk in wav_generator:
             yield chunk
     except Exception as e:
-        log.error("speak.stream_error", extra={"error": str(e)})
+        log.error("speak.stream_error", extra={"error": str(e)}, exc_info=True)
     finally:
         if lock_holder is not None and lock_holder.locked():
             lock_holder.release()
@@ -162,7 +162,16 @@ async def speak(req: SpeakRequest):
         # If we acquired the lock but bombed before returning the stream, release.
         if interactive_tts_lock.locked():
             interactive_tts_lock.release()
-        log.error("speak.request_error", extra={"error": str(e)})
+        log.error(
+            "speak.request_error",
+            extra={
+                "error": str(e),
+                "voice": req.voice,
+                "speed": req.speed,
+                "text_len": len(req.text),
+            },
+            exc_info=True,
+        )
         return Response(status_code=500, content=str(e))
 
 

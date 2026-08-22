@@ -106,7 +106,9 @@ async def _render_cover_task(book_id: str, is_pdf: bool) -> None:
         await AudiobookStore.update_meta(book_id, cover_status="ready")
     except Exception as e:
         log.warning(
-            "audiobook.cover_render_failed", extra={"book_id": book_id, "error": str(e)}
+            "audiobook.cover_render_failed",
+            extra={"book_id": book_id, "error": str(e)},
+            exc_info=True,
         )
         await AudiobookStore.update_meta(book_id, cover_status="failed")
 

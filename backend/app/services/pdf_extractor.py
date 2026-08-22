@@ -114,7 +114,9 @@ class PDFExtractor:
                 doc.close()
         except Exception as e:
             log.warning(
-                "pdf.outline_read_failed", extra={"path": pdf_path, "error": str(e)}
+                "pdf.outline_read_failed",
+                extra={"path": pdf_path, "error": str(e)},
+                exc_info=True,
             )
             return None
 

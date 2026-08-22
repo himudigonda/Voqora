@@ -125,6 +125,7 @@ class AudiobookStore:
                     log.warning(
                         "store.bad_legacy_meta",
                         extra={"book_id": entry, "error": str(e)},
+                        exc_info=True,
                     )
         except FileNotFoundError:
             pass

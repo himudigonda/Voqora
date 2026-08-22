@@ -112,6 +112,7 @@ class AudiobookService:
                 log.error(
                     "audiobook.pipeline_fatal",
                     extra={"book_id": book_id, "error": str(e)},
+                    exc_info=True,
                 )
                 if AudiobookStore.read_meta(book_id) is not None:
                     await AudiobookStore.update_meta(
@@ -364,6 +365,7 @@ class AudiobookService:
                 book_id, status="cancelled", error="Cancelled by user."
             )
             cls._emit(book_id, "cancelled", error="Cancelled by user.")
+            log.info("audiobook.cancelled", extra={"book_id": book_id})
         except GeminiAuthError as e:
             await AudiobookStore.update_meta(
                 book_id,
@@ -371,7 +373,19 @@ class AudiobookService:
                 error="Invalid Gemini API key. Update in Settings.",
             )
             cls._emit(book_id, "failed", error=str(e))
+            log.warning("audiobook.failed_bad_api_key", extra={"book_id": book_id})
         except Exception as e:
+            # This was previously silent: it fully handles the exception (no
+            # re-raise), so the outer `_worker_loop`'s pipeline_fatal handler
+            # never sees it either. Every audiobook failure — TTS crash,
+            # cleaning crash, anything unexpected — set status="failed" for
+            # the user with zero trace in the backend log. This is the
+            # pipeline's actual top-level failure path; it must log.
+            log.error(
+                "audiobook.run_pipeline_failed",
+                extra={"book_id": book_id, "error": str(e)},
+                exc_info=True,
+            )
             await AudiobookStore.update_meta(book_id, status="failed", error=str(e))
             cls._emit(book_id, "failed", error=str(e))
         finally:
@@ -541,7 +555,11 @@ class AudiobookService:
                     timeout=120.0,
                 )
             except TimeoutError:
-                log.warning("audiobook.sections_timeout", extra={"book_id": book_id})
+                log.warning(
+                    "audiobook.sections_timeout",
+                    extra={"book_id": book_id},
+                    exc_info=True,
+                )
                 sections = []
             except GeminiAuthError:
                 raise
@@ -549,6 +567,7 @@ class AudiobookService:
                 log.warning(
                     "audiobook.sections_failed",
                     extra={"book_id": book_id, "error": str(e)},
+                    exc_info=True,
                 )
                 sections = []
 
@@ -634,6 +653,7 @@ class AudiobookService:
                             log.warning(
                                 "audiobook.ocr_timeout",
                                 extra={"book_id": book_id, "page": n},
+                                exc_info=True,
                             )
                             cleaned = raw_text or "-"
                     else:
@@ -646,6 +666,7 @@ class AudiobookService:
                             log.warning(
                                 "audiobook.clean_timeout",
                                 extra={"book_id": book_id, "page": n},
+                                exc_info=True,
                             )
                             cleaned = raw_text or "-"
                 except GeminiAuthError:
@@ -654,6 +675,7 @@ class AudiobookService:
                     log.warning(
                         "audiobook.clean_failed",
                         extra={"book_id": book_id, "page": n, "error": str(e)},
+                        exc_info=True,
                     )
                     async with state_lock:
                         failed.append(n)
@@ -815,6 +837,7 @@ class AudiobookService:
                         log.warning(
                             "audiobook.tts_failed",
                             extra={"book_id": book_id, "page": n, "error": str(e)},
+                            exc_info=True,
                         )
                         failed.append(n)
                         # Mark this page distinctly (not shown as matching
@@ -977,6 +1000,7 @@ class AudiobookService:
             log.warning(
                 "audiobook.transcript_write_failed",
                 extra={"book_id": book_id, "error": str(e)},
+                exc_info=True,
             )
 
         # Build actual stats.
