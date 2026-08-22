@@ -300,6 +300,8 @@ struct AudiobookPlayerView: View {
         }
         .buttonStyle(.plain)
         .shadow(color: .cyan.opacity(0.4), radius: 18)
+        .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
+        .help(audio.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
 
     private func transportSmall(systemName: String, help: String, action: @escaping () -> Void) -> some View {

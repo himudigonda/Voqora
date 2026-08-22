@@ -194,7 +194,7 @@ struct MainDashboardView: View {
             }
 
             HStack(spacing: 60) {
-                TransportButton(icon: "backward.fill", size: 20) {
+                TransportButton(icon: "backward.fill", size: 20, accessibilityLabel: "Back 10 seconds") {
                     let target = max(0, audio.currentTime - 10)
                     audio.seek(to: audio.duration > 0 ? target / audio.duration : 0)
                 }
@@ -205,9 +205,12 @@ struct MainDashboardView: View {
                         Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                             .foregroundStyle(colorScheme == .dark ? .black : .white)
                     }
-                }.buttonStyle(.plain)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
+                .help(audio.isPlaying ? "Pause" : "Play")
 
-                TransportButton(icon: "forward.fill", size: 20) {
+                TransportButton(icon: "forward.fill", size: 20, accessibilityLabel: "Forward 10 seconds") {
                     let target = min(audio.duration, audio.currentTime + 10)
                     audio.seek(to: audio.duration > 0 ? target / audio.duration : 1)
                 }
@@ -227,6 +230,7 @@ struct TransportButton: View {
     @EnvironmentObject var vm: DashboardViewModel
     let icon: String
     let size: CGFloat
+    var accessibilityLabel: String? = nil
     let action: () -> Void
 
     var body: some View {
@@ -236,5 +240,20 @@ struct TransportButton: View {
                 .foregroundStyle(.secondary)
         }
         .buttonStyle(.plain)
+        .modifier(OptionalAccessibilityLabel(label: accessibilityLabel))
+    }
+}
+
+/// Applies `.accessibilityLabel`/`.help` only when a label is provided, so
+/// call sites without one (if any remain) don't regress to an empty label.
+private struct OptionalAccessibilityLabel: ViewModifier {
+    let label: String?
+
+    func body(content: Content) -> some View {
+        if let label {
+            content.accessibilityLabel(label).help(label)
+        } else {
+            content
+        }
     }
 }

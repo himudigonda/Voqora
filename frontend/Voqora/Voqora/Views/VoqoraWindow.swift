@@ -307,9 +307,13 @@ struct VoqoraWindow: View {
                 Button { vm.togglePlayback() } label: {
                     Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                 }
+                .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
+                .help(audio.isPlaying ? "Pause" : "Play")
                 Button { vm.stopPlayback() } label: {
                     Image(systemName: "stop.fill")
                 }
+                .accessibilityLabel("Stop")
+                .help("Stop")
             }
             .buttonStyle(.plain)
             .font(.title3)

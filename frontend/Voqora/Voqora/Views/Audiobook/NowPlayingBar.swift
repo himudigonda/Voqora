@@ -73,6 +73,8 @@ struct NowPlayingBar: View {
                             .background(.ultraThinMaterial, in: Circle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(bookVM.audio.isPlaying ? "Pause" : "Play")
+                    .help(bookVM.audio.isPlaying ? "Pause" : "Play")
 
                     Button { bookVM.stopPlayback() } label: {
                         Image(systemName: "xmark")
@@ -81,6 +83,8 @@ struct NowPlayingBar: View {
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Close")
+                    .help("Close")
                 }
             }
             .padding(.horizontal, 14)
