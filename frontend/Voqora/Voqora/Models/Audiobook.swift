@@ -158,6 +158,11 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     let estimatedTokenCount: Int
     let isImageOnly: Bool
     let costWarning: Bool
+    /// Set when this exact file content already exists as another book.
+    /// Warned, not blocked — a deliberate re-import (different voice) is
+    /// still a legitimate use.
+    let duplicateOfBookID: String?
+    let duplicateOfTitle: String?
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -170,6 +175,8 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case estimatedTokenCount = "estimated_token_count"
         case isImageOnly = "is_image_only"
         case costWarning = "cost_warning"
+        case duplicateOfBookID = "duplicate_of_book_id"
+        case duplicateOfTitle = "duplicate_of_title"
     }
 }
 

@@ -22,6 +22,17 @@ _WORDS_PER_PAGE = 400
 class TextExtractor:
     # ---------- text reading ----------
 
+    # Validation is extension-only elsewhere (upload accepts any .txt/.md by
+    # name, no content sniffing) — a binary file renamed to .txt decoded
+    # silently under errors="replace" and sailed through every downstream
+    # check (page_count > 0, etc.) straight into a "successfully completed"
+    # audiobook narrating replacement-character noise. A real UTF-8 text
+    # file essentially never contains U+FFFD; a binary file force-decoded
+    # this way is overwhelmingly replacement characters. This threshold
+    # catches that case without false-positiving on a real document that
+    # happens to contain a handful of genuinely unencodable characters.
+    _MAX_REPLACEMENT_CHAR_RATIO = 0.05
+
     @classmethod
     def read_text(cls, source_path: str) -> str:
         """Return the full plain-text content of a TXT, MD, or DOCX file."""
@@ -34,7 +45,15 @@ class TextExtractor:
             return "\n\n".join(paragraphs)
         else:
             with open(source_path, encoding="utf-8", errors="replace") as f:
-                return f.read()
+                text = f.read()
+            if text:
+                replacement_ratio = text.count("�") / len(text)
+                if replacement_ratio > cls._MAX_REPLACEMENT_CHAR_RATIO:
+                    raise ValueError(
+                        "This file doesn't look like readable text — it may be a "
+                        "binary or corrupted file with a .txt/.md extension."
+                    )
+            return text
 
     @classmethod
     def split_pages(cls, text: str) -> list[str]:

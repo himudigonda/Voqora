@@ -156,11 +156,25 @@ struct UploadEstimateModal: View {
                 .padding(.bottom, 4)
             }
             if useGeminiCleanup && !bookVM.hasStoredKey {
+                // Consistent with the cost/OCR warnings above (both .orange)
+                // — this used to be .yellow for no evident semantic reason,
+                // despite all three being the same "Start is blocked" class
+                // of warning in this same modal.
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     Text("Set a Gemini API key in Preferences first.")
                         .font(vm.appFont(size: 11))
                         .foregroundStyle(.secondary)
+                }
+                .padding(.bottom, 4)
+            }
+            if let duplicateTitle = bookVM.pendingEstimate?.duplicateOfTitle {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.on.doc.fill").foregroundStyle(.orange)
+                    Text("You already imported this exact file as \"\(duplicateTitle)\".")
+                        .font(vm.appFont(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
                 .padding(.bottom, 4)
             }

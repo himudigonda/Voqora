@@ -4,6 +4,7 @@ Split out of the former `endpoints.py` monolith in HARD-031.
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -50,6 +51,13 @@ class AudiobookEstimate(BaseModel):
     estimated_token_count: int
     is_image_only: bool
     cost_warning: bool
+    # Set when this exact file content already exists as another book.
+    # Uploads were previously silently duplicated with no dedupe check at
+    # all — this flags it so the client can warn instead of proceeding
+    # silently, without blocking a deliberate re-import (e.g. narrating the
+    # same document with a different voice).
+    duplicate_of_book_id: str | None = None
+    duplicate_of_title: str | None = None
 
 
 class VerifyKeyRequest(BaseModel):
@@ -163,6 +171,16 @@ async def upload_audiobook(
         )
     title = filename
 
+    content_hash = hashlib.sha256(content).hexdigest()
+    duplicate = next(
+        (
+            b
+            for b in AudiobookStore.list_books()
+            if b.get("source_sha256") == content_hash
+        ),
+        None,
+    )
+
     book_id = AudiobookStore.create_book(title)
     # Wrap everything after book creation so any unexpected failure cleans up
     # the directory and never leaves an orphan row in the DB.
@@ -251,6 +269,7 @@ async def upload_audiobook(
             estimated=estimate,
         )
         meta["file_ext"] = file_ext
+        meta["source_sha256"] = content_hash
         AudiobookStore.write_meta(book_id, meta)
 
         # Render cover off the request path. Pulled out of an inline closure
@@ -268,6 +287,8 @@ async def upload_audiobook(
             estimated_audio_seconds=estimate["audio_seconds"],
             estimated_cost_usd=estimate["cost_usd"],
             is_image_only=is_image_only,
+            duplicate_of_book_id=duplicate.get("book_id") if duplicate else None,
+            duplicate_of_title=duplicate.get("title") if duplicate else None,
         )
 
     except HTTPException:

@@ -1451,6 +1451,51 @@ def test_upload_endpoint_happy_path(monkeypatch):
     assert meta["engine"] == "kokoro"
 
 
+def test_upload_flags_byte_identical_reimport_as_duplicate(monkeypatch):
+    """Regression: re-uploading the exact same file content previously
+    created a fully silent, independent duplicate book with no warning at
+    all — each mint a fresh book_id/uuid4 with no dedupe check anywhere.
+    The endpoint must now flag it via duplicate_of_book_id/title (without
+    blocking a deliberate re-import, e.g. a different voice)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 3))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_word_count", classmethod(lambda cls, p: 50)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_char_count", classmethod(lambda cls, p: 250)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "render_cover", classmethod(lambda cls, b: None)
+    )
+
+    client = TestClient(app)
+    file_bytes = b"%PDF-1.4\n" + b"x" * 200
+
+    first = client.post(
+        "/audiobook", files={"file": ("book.pdf", file_bytes, "application/pdf")}
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["duplicate_of_book_id"] is None
+
+    second = client.post(
+        "/audiobook", files={"file": ("book.pdf", file_bytes, "application/pdf")}
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["duplicate_of_book_id"] == first.json()["book_id"]
+    assert second_body["duplicate_of_title"] == "book.pdf"
+    # Not blocked — a second, independent book is still created.
+    assert second_body["book_id"] != first.json()["book_id"]
+
+
 def test_upload_rejects_empty_pdf():
     """P9: zero-byte uploads should fail at the door."""
     from fastapi.testclient import TestClient
@@ -1780,6 +1825,37 @@ async def test_txt_file_extraction_does_not_call_pdf_extractor(monkeypatch):
     with open(page1, encoding="utf-8") as f:
         content = f.read()
     assert len(content) > 0, "extracted page should be non-empty"
+
+
+def test_read_text_rejects_binary_content_with_txt_extension(tmp_path):
+    """Regression: validation was extension-only — a binary file renamed to
+    .txt decoded silently under errors="replace" and sailed through
+    page_count > 0 straight into a "successfully completed" audiobook
+    narrating replacement-character noise, with zero warning anywhere."""
+    from app.services.text_extractor import TextExtractor
+
+    path = tmp_path / "renamed.txt"
+    # Genuinely arbitrary binary bytes — not valid UTF-8, decodes to mostly
+    # U+FFFD replacement characters under errors="replace".
+    path.write_bytes(bytes(range(256)) * 20)
+
+    with pytest.raises(ValueError, match="doesn't look like readable text"):
+        TextExtractor.read_text(str(path))
+
+
+def test_read_text_accepts_real_text_with_a_few_unencodable_chars(tmp_path):
+    """The replacement-char check must not false-positive on a real document
+    that happens to contain a handful of genuinely unencodable bytes."""
+    from app.services.text_extractor import TextExtractor
+
+    path = tmp_path / "mostly_fine.txt"
+    body = "This is a perfectly normal paragraph of real text. " * 50
+    with open(path, "wb") as f:
+        f.write(body.encode("utf-8"))
+        f.write(b"\xff\xfe")  # a couple of stray invalid bytes
+
+    text = TextExtractor.read_text(str(path))
+    assert "perfectly normal paragraph" in text
 
 
 # ---------- Gemini timeout → raw text fallback ----------
