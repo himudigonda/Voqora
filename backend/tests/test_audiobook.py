@@ -1858,6 +1858,65 @@ def test_read_text_accepts_real_text_with_a_few_unencodable_chars(tmp_path):
     assert "perfectly normal paragraph" in text
 
 
+# ---------- PDF extraction opens the PDF once, not once per page ----------
+
+
+class _FakePage:
+    def __init__(self, text: str):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class _FakePDF:
+    def __init__(self, pages: list[str]):
+        self.pages = [_FakePage(t) for t in pages]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_extract_one_opens_pdf_only_once_for_the_whole_book(monkeypatch, tmp_path):
+    """Regression: extract_one previously reopened/reparsed the entire PDF
+    for every single page (N pages -> N pdfplumber.open calls on a
+    single-threaded executor). It now extracts and writes every page on the
+    first call, mirroring TextExtractor.extract_one's already-established
+    pattern, so a 1000-page book opens the PDF once instead of 1000 times."""
+    from app.services.pdf_extractor import PDFExtractor
+
+    page_texts = [f"Page {i} content." for i in range(1, 11)]
+    open_calls: list[str] = []
+
+    def fake_open(path):
+        open_calls.append(path)
+        return _FakePDF(page_texts)
+
+    monkeypatch.setattr("app.services.pdf_extractor.pdfplumber.open", fake_open)
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    # extract_one resolves the source path via AudiobookStore.pdf_path, which
+    # just needs the book dir to exist (create_book already makes it) — no
+    # real PDF bytes are read since pdfplumber.open is mocked above.
+
+    # Mirrors _phase_extract's sequential loop: call extract_one for every
+    # page in order, the same way the real pipeline does.
+    for n in range(1, 11):
+        PDFExtractor.extract_one(bid, n)
+
+    assert (
+        len(open_calls) == 1
+    ), f"expected 1 pdfplumber.open call, got {len(open_calls)}"
+    for n in range(1, 11):
+        path = AudiobookStore.page_raw_path(bid, n)
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8") as f:
+            assert f.read() == f"Page {n} content."
+
+
 # ---------- Gemini timeout → raw text fallback ----------
 
 

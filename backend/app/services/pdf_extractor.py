@@ -71,15 +71,26 @@ class PDFExtractor:
 
     @classmethod
     def extract_one(cls, book_id: str, page_num: int) -> None:
-        """Extract a single page (1-indexed). Used by callers that emit progress."""
-        pdf_path = AudiobookStore.pdf_path(book_id)
+        """Write page_num's raw text (1-indexed).
+
+        On first call for a book, extracts and writes ALL pages from one
+        PDF open so subsequent calls for pages 2..N find their files and
+        skip I/O entirely — opening/parsing the PDF's structure once
+        instead of once per page. _phase_extract calls this sequentially
+        for n=1..page_count, so page 1's call always fires first and
+        front-loads the rest. Mirrors TextExtractor.extract_one's
+        already-established pattern for the non-PDF path.
+        """
         out = AudiobookStore.page_raw_path(book_id, page_num)
         if os.path.exists(out):
             return
+        pdf_path = AudiobookStore.pdf_path(book_id)
         with pdfplumber.open(pdf_path) as pdf:
-            page = pdf.pages[page_num - 1]
-            text = page.extract_text() or ""
-        cls._atomic_write(out, text)
+            for i, page in enumerate(pdf.pages, start=1):
+                p = AudiobookStore.page_raw_path(book_id, i)
+                if not os.path.exists(p):
+                    text = page.extract_text() or ""
+                    cls._atomic_write(p, text)
 
     # ---------- cover ----------
 
