@@ -386,7 +386,7 @@ class AudioService: NSObject, ObservableObject {
         // BUG FIX: correct duration to exact actual length now that all data has arrived.
         // Estimated duration (text-length / 12 / speed) often overshoots — without this
         // correction the scrub bar never reaches 100%.
-        if lastAudioData.count > 0 {
+        if !lastAudioData.isEmpty {
             duration = Double(lastAudioData.count / 2) / format.sampleRate
         }
         if scheduledBufferCount == 0, isPlaying { stop() }

@@ -113,6 +113,47 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertFalse(audio.isPlaying)
     }
 
+    // MARK: - stopPlayback(fadeOverSeconds:) — audiobook/global-speak interruption fix
+
+    func test_stopPlayback_withFade_cancelsArmedSleepTimer() {
+        // Regression: DashboardViewModel.speak() used to interrupt audiobook
+        // playback via a raw `avm.audio.fadeOutAndStop(...)` + manual
+        // `nowPlaying`/`currentTranscript` clear, bypassing stopPlayback()
+        // entirely -- including cancelSleepTimer(). An armed sleep timer kept
+        // running and later called audio.stop() on whatever became "the
+        // shared audio" next (a new TTS clip, or a subsequently started
+        // audiobook), silently killing it with no explanation. The fix adds
+        // a `fadeOverSeconds` parameter to stopPlayback() itself so the
+        // interruption path gets every other side effect for free.
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let book = makeBook(bookID: "b1", status: "done")
+        viewModel.nowPlaying = book
+        viewModel.startSleepTimer(.endOfBook, currentBook: book)
+        XCTAssertTrue(viewModel.sleepUntilEndOfBook, "precondition: sleep timer armed")
+
+        viewModel.stopPlayback(fadeOverSeconds: 0.12)
+
+        XCTAssertFalse(
+            viewModel.sleepUntilEndOfBook,
+            "an interruption must cancel an armed sleep timer, not leave it running against whatever plays next"
+        )
+        XCTAssertNil(viewModel.sleepTimerEndsAt)
+        XCTAssertNil(viewModel.nowPlaying, "interruption must still clear nowPlaying like a normal stop")
+        XCTAssertNil(viewModel.currentTranscript)
+    }
+
+    func test_stopPlayback_defaultParameter_behavesExactlyAsBefore() {
+        // The no-argument call site (Stop button, etc.) must be unaffected
+        // by adding the optional fadeOverSeconds parameter.
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        viewModel.nowPlaying = makeBook(bookID: "b1")
+
+        viewModel.stopPlayback()
+
+        XCTAssertNil(viewModel.nowPlaying)
+        XCTAssertNil(viewModel.currentTranscript)
+    }
+
     // MARK: - libraryPollInterval (jira-cpu-ram-optimization.md T-6)
 
     func test_libraryPollInterval_foreground_matchesExistingSSECadence() {

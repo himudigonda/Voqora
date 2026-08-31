@@ -1171,6 +1171,208 @@ async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkey
 
 
 @pytest.mark.asyncio
+async def test_phase_section_check_cancel_prevents_zombie_row_after_delete(monkeypatch):
+    """Regression: _phase_section had no _check_cancel() call anywhere,
+    unlike every other phase. A book deleted while Gemini's detect_sections
+    call is still in flight (up to 120s) would have its DB row resurrected
+    by this phase's own update_meta(sections=...) write after request_delete
+    already deleted it — the same zombie-row bug class already fixed for
+    _phase_clean (T-4), never applied to _phase_section."""
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Test.md")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.md", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+
+    release = asyncio.Event()
+
+    async def slow_detect_sections(api_key, pages):
+        await release.wait()
+        return [{"title": "Chapter One", "start_page": 1, "end_page": 2}]
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "detect_sections",
+        AsyncMock(side_effect=slow_detect_sections),
+    )
+
+    section_task = asyncio.create_task(
+        AudiobookService._phase_section(bid, "fake-key", AudiobookStore.read_meta(bid))
+    )
+    await asyncio.sleep(0.05)  # let it enter the (slow) Gemini call
+
+    AudiobookService.cancel(bid)
+    conn = AudiobookStore._connection()
+    with AudiobookStore._conn_lock:
+        conn.execute("DELETE FROM books WHERE book_id = ?", (bid,))
+
+    release.set()  # let the slow call resolve now that cancel + delete happened
+
+    with pytest.raises(AudiobookCancelled):
+        await asyncio.wait_for(section_task, timeout=2.0)
+
+    assert all(
+        b["book_id"] != bid for b in AudiobookStore.list_books()
+    ), "_phase_section resurrected the deleted book's DB row"
+
+
+@pytest.mark.asyncio
+async def test_transcript_write_failure_marks_book_failed_not_done(monkeypatch):
+    """Regression: a transcript.json write failure was silently swallowed —
+    the book still reached status="done" with no transcript on disk, so
+    GET .../transcript 404s forever and retry_failed's resumable_states
+    ({"failed", "needs_key", "cancelled"}) never fires for a "done" book
+    with no failed_pages. Must now surface as status="failed" (resumable)."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    clean_path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(clean_path), exist_ok=True)
+    with open(clean_path, "w") as f:
+        f.write("Page one content.")
+    audio_path = AudiobookStore.page_audio_path(bid, 1)
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+    with open(audio_path, "wb") as f:
+        from app.services.audiobook_service import _wav_header as _wh
+
+        f.write(_wh(1200) + b"\x00" * 1200)
+
+    real_open = open
+
+    def failing_open(path, *args, **kwargs):
+        if str(path).endswith("transcript.json.tmp"):
+            raise OSError("simulated disk failure")
+        return real_open(path, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=failing_open):
+        with pytest.raises(RuntimeError, match="transcript"):
+            await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+
+    # The caller (_run_pipeline) is what actually sets status="failed" on
+    # this exception — verify the exception type/message it relies on, and
+    # that no half-written transcript.json.tmp was left behind.
+    assert not os.path.exists(AudiobookStore.transcript_path(bid) + ".tmp")
+    assert not os.path.exists(AudiobookStore.transcript_path(bid))
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_marks_failed_on_transcript_write_error(monkeypatch):
+    """Integration: _run_pipeline's own except Exception must catch the
+    re-raised transcript-write failure and land the book in status="failed"
+    (a resumable state), not leave it stuck or silently "done"."""
+    from app.services import audiobook_service as _svc
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+
+    async def fake_extract(book_id):
+        return None
+
+    async def fake_clean(book_id, api_key):
+        return None
+
+    async def fake_section(book_id, api_key, meta):
+        return None
+
+    async def fake_tts(book_id, meta):
+        return None
+
+    async def fake_concat_raises(book_id, meta):
+        raise RuntimeError("Failed to write transcript: simulated disk failure")
+
+    monkeypatch.setattr(
+        _svc.AudiobookService,
+        "_phase_extract",
+        classmethod(lambda cls, b: fake_extract(b)),
+    )
+    monkeypatch.setattr(
+        _svc.AudiobookService,
+        "_phase_clean",
+        classmethod(lambda cls, b, k: fake_clean(b, k)),
+    )
+    monkeypatch.setattr(
+        _svc.AudiobookService,
+        "_phase_section",
+        classmethod(lambda cls, b, k, m: fake_section(b, k, m)),
+    )
+    monkeypatch.setattr(
+        _svc.AudiobookService,
+        "_phase_tts",
+        classmethod(lambda cls, b, m: fake_tts(b, m)),
+    )
+    monkeypatch.setattr(
+        _svc.AudiobookService,
+        "_phase_concat",
+        classmethod(lambda cls, b, m: fake_concat_raises(b, m)),
+    )
+
+    await _svc.AudiobookService._run_pipeline(bid)
+
+    final_meta = AudiobookStore.read_meta(bid)
+    assert final_meta["status"] == "failed"
+    assert "transcript" in (final_meta.get("error") or "").lower()
+
+
+# ---------- local (no-LLM) chapter detection for Markdown (T-3 gap) ----------
+
+
+@pytest.mark.asyncio
+async def test_local_markdown_sectioning_produces_real_chapters_no_gemini(monkeypatch):
+    """Regression: local-first (uses_gemini_cleanup=False, the actual
+    default) Markdown books previously always collapsed to one giant
+    section covering the whole book — TextExtractor.read_outline always
+    returns None and the Gemini branch never runs when Gemini cleanup is
+    off, so there was no local signal at all despite Markdown headings
+    being a perfectly good one."""
+    from app.services import audiobook_service as _svc
+    from app.services import gemini_cleaner as _gc
+
+    bid = AudiobookStore.create_book("book.md")
+    md_source = (
+        "# Chapter One\n\nSome opening content that is long enough to fill "
+        "most of a synthetic page on its own, repeated a bit. "
+        + ("word " * 380)
+        + "\n\n# Chapter Two\n\nMore content for the second chapter, "
+        + ("word " * 380)
+    )
+    source_path = AudiobookStore.source_file_path(bid, "md")
+    os.makedirs(os.path.dirname(source_path), exist_ok=True)
+    with open(source_path, "w", encoding="utf-8") as f:
+        f.write(md_source)
+
+    meta = AudiobookStore.initial_meta(
+        bid, "book.md", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    meta["uses_gemini_cleanup"] = False
+    AudiobookStore.write_meta(bid, meta)
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "detect_sections",
+        AsyncMock(side_effect=AssertionError("Gemini must not be called")),
+    )
+
+    await _svc.AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+
+    final_meta = AudiobookStore.read_meta(bid)
+    sections = final_meta["sections"]
+    assert len(sections) >= 2, "expected real chapter detection, not one giant section"
+    titles = [s["title"] for s in sections]
+    assert "Chapter One" in titles
+    assert "Chapter Two" in titles
+
+
+@pytest.mark.asyncio
 async def test_retry_failed_resumes_needs_key_book(monkeypatch):
     """Regression for C2: a book in needs_key state with no failed pages
     must still be enqueued when retry_failed is called (after the user
@@ -1327,6 +1529,63 @@ def test_upload_endpoint_happy_path(monkeypatch):
     assert meta["voice"] == "bf_emma"
     assert meta["speed"] == 1.25
     assert meta["engine"] == "kokoro"
+
+
+def test_upload_extraction_failure_returns_curated_message_not_raw_exception(
+    monkeypatch,
+):
+    """Regression: the 400 path for an unreadable file used to interpolate
+    the raw exception (`f"Could not read file: {e}"`) straight into the
+    user-facing `detail` — library-internal jargon, occasionally an
+    internal path fragment, with no useful action for the user. Must now
+    be a curated, actionable message; the raw exception is only logged."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import pdf_extractor as _pe
+
+    def _raise(cls, p):
+        raise RuntimeError("PyMuPDF: xref table corrupted at offset 0x4f2a, obj 17 0")
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(_raise))
+
+    client = TestClient(app)
+    files = {"file": ("test.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")}
+    response = client.post("/audiobook", files=files)
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "xref" not in detail and "PyMuPDF" not in detail and "0x4f2a" not in detail
+    assert "corrupted" in detail.lower() or "unsupported" in detail.lower()
+
+
+def test_upload_unexpected_failure_returns_curated_message_not_raw_exception(
+    monkeypatch,
+):
+    """Same regression for the outer catch-all (`f"Upload failed: {e}"`) —
+    any unclassified exception during upload must not reach the user
+    verbatim."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 3))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+
+    def _raise(cls, p):
+        raise RuntimeError("secret internal detail: /Users/himudigonda/private/path")
+
+    monkeypatch.setattr(_pe.PDFExtractor, "sample_word_count", classmethod(_raise))
+
+    client = TestClient(app)
+    files = {"file": ("test.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")}
+    response = client.post("/audiobook", files=files)
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert "himudigonda" not in detail and "secret internal detail" not in detail
+    assert detail == "Upload failed. Please try again."
 
 
 def test_upload_rejects_empty_pdf():
@@ -1736,3 +1995,205 @@ async def test_local_clean_phase_never_calls_gemini(monkeypatch):
 
     with open(AudiobookStore.page_clean_path(bid, 1), encoding="utf-8") as f:
         assert f.read() == raw_text
+
+
+# ---------- runtime Gemini cost governor ----------
+
+
+@pytest.mark.asyncio
+async def test_clean_phase_stops_spending_once_cost_cap_reached(monkeypatch):
+    """Regression: the upfront /start cost estimate samples only 3 pages and
+    doesn't model per-page OCR cost for a mixed text/scanned PDF at all —
+    real spend could exceed MAX_GEMINI_COST_USD_PER_BOOK with zero runtime
+    check once processing started. With the cap set effectively to zero,
+    no page should ever reach GeminiCleaner.clean_page; every page must
+    fall back to local cleanup, get marked "cost_capped", and surface via
+    failed_pages/page_failed so the user knows why."""
+    from app.services import audiobook_service as _svc
+    from app.services import gemini_cleaner as _gc
+
+    monkeypatch.setattr(_svc._settings, "MAX_GEMINI_COST_USD_PER_BOOK", 0.0)
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    for n in (1, 2):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("# Heading\n\nSome **bold** page " + str(n) + " content. " * 20)
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "clean_page",
+        AsyncMock(
+            side_effect=AssertionError("Gemini must not be called once cost-capped")
+        ),
+    )
+
+    events: list[dict] = []
+    orig_emit = AudiobookService._emit
+
+    def _capture_emit(cls, book_id, event_type, **data):
+        events.append({"type": event_type, **data})
+        return orig_emit(book_id, event_type, **data)
+
+    with patch.object(AudiobookService, "_emit", classmethod(_capture_emit)):
+        _svc.AudiobookService.initialize()
+        await _svc.AudiobookService._phase_clean(bid, api_key="fake-key")
+
+    final_meta = AudiobookStore.read_meta(bid)
+    assert set(final_meta["failed_pages"]) == {1, 2}
+    assert final_meta["page_status"]["1"] == "cost_capped"
+    assert final_meta["page_status"]["2"] == "cost_capped"
+
+    for n in (1, 2):
+        with open(AudiobookStore.page_clean_path(bid, n), encoding="utf-8") as f:
+            cleaned = f.read()
+        # Local fallback ran (Markdown stripped), not raw passthrough.
+        assert "#" not in cleaned and "**" not in cleaned
+        assert f"page {n} content" in cleaned
+
+    capped_events = [e for e in events if e["type"] == "page_failed"]
+    assert len(capped_events) == 2
+    assert all("cost cap" in e["error"].lower() for e in capped_events)
+
+
+@pytest.mark.asyncio
+async def test_retry_failed_reattempts_gemini_for_cost_capped_page():
+    """A cost-capped page's on-disk clean text is only the local fallback —
+    retry_failed must delete it (like a real cleaning_failed page) so a
+    retry actually re-attempts Gemini, not just re-synthesize the fallback
+    text's audio."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["failed_pages"] = [1]
+    meta["page_status"] = {"1": "cost_capped"}
+    AudiobookStore.write_meta(bid, meta)
+
+    clean_path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(clean_path), exist_ok=True)
+    with open(clean_path, "w") as f:
+        f.write("local fallback text")
+    audio_path = AudiobookStore.page_audio_path(bid, 1)
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+    with open(audio_path, "wb") as f:
+        f.write(b"fake")
+
+    async def fake_enqueue(book_id: str, api_key: str):
+        return None
+
+    with patch.object(
+        AudiobookService, "enqueue", classmethod(lambda cls, b, k: fake_enqueue(b, k))
+    ):
+        await AudiobookService.retry_failed(bid, "fake-key")
+
+    assert not os.path.exists(
+        clean_path
+    ), "cost-capped page's clean text must be deleted to force re-clean"
+    assert not os.path.exists(audio_path)
+
+
+# ---------- end-to-end: real Markdown source through the full local pipeline ----------
+
+
+@pytest.mark.asyncio
+async def test_markdown_source_full_pipeline_produces_speakable_transcript():
+    """Real regression proof for the "TTS reads literal Markdown symbols" bug:
+    a genuine .md source file, run through extract -> clean (no Gemini, the
+    actual default) -> tts (mocked, only synth is mocked) -> concat, must
+    produce a final transcript with no raw Markdown syntax left in it and
+    all real content preserved. Every phase except EngineManager.generate is
+    the real production code path — this is not a unit test of the
+    normalizer in isolation."""
+    from app.services import audiobook_service as _svc
+
+    bid = AudiobookStore.create_book("chapter.md")
+    md_source = (
+        "# Chapter One: Getting Started\n\n"
+        "This is **very important** and *should not* be lost, with a "
+        "[link to the docs](https://example.com/docs) for reference.\n\n"
+        "> A wise narrator once said something worth remembering.\n\n"
+        "- First step\n"
+        "- Second step\n\n"
+        "| Name | Role |\n"
+        "| --- | --- |\n"
+        "| Ada | Engineer |\n\n"
+        "Run `make verify` before you ship anything.\n\n"
+        "---\n\n"
+        "It's the end of the chapter, isn't it?"
+    )
+    source_path = AudiobookStore.source_file_path(bid, "md")
+    os.makedirs(os.path.dirname(source_path), exist_ok=True)
+    with open(source_path, "w", encoding="utf-8") as f:
+        f.write(md_source)
+
+    meta = AudiobookStore.initial_meta(
+        bid, "chapter.md", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    meta["uses_gemini_cleanup"] = False  # the actual real-world default
+    AudiobookStore.write_meta(bid, meta)
+
+    _svc.AudiobookService._queue = None
+    _svc.AudiobookService._worker_task = None
+    _svc.AudiobookService.initialize()
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_yielding,
+        ),
+    ):
+        await _svc.AudiobookService._phase_extract(bid)
+        await _svc.AudiobookService._phase_clean(bid, api_key="")
+        current_meta = AudiobookStore.read_meta(bid)
+        await _svc.AudiobookService._phase_tts(bid, current_meta)
+        await _svc.AudiobookService._phase_concat(bid, current_meta)
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    full_text = " ".join(transcript["pages"].values())
+
+    # No literal Markdown syntax survives into what gets spoken.
+    for forbidden in ("#", "**", "[link to the docs]", "(https://", "```", "| Name"):
+        assert (
+            forbidden not in full_text
+        ), f"raw Markdown syntax leaked through: {forbidden!r}"
+    # A bare "---" horizontal rule line must be gone (a "-" inside a real
+    # word/number is fine; this asserts no standalone rule survived).
+    assert "\n---\n" not in full_text and full_text.strip() != "---"
+
+    # Real content is preserved, not just formatting stripped into nothing.
+    for expected in (
+        "Chapter One",
+        "very important",
+        "should not",
+        "link to the docs",
+        "wise narrator",
+        "First step",
+        "Second step",
+        "Ada",
+        "Engineer",
+        "make verify",
+        "end of the chapter",
+    ):
+        assert expected in full_text, f"real content lost: {expected!r}"
+
+    # Ordinary apostrophes in contractions are untouched (not a Markdown marker).
+    assert "It's" in full_text
+    assert "isn't" in full_text
+
+    # And the pipeline actually reached a playable end state.
+    assert os.path.exists(AudiobookStore.audio_path(bid))

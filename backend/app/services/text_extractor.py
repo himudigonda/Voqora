@@ -27,14 +27,45 @@ class TextExtractor:
         """Return the full plain-text content of a TXT, MD, or DOCX file."""
         ext = os.path.splitext(source_path)[1].lower()
         if ext == ".docx":
-            from docx import Document  # python-docx
+            return cls._read_docx_text(source_path)
+        with open(source_path, encoding="utf-8", errors="replace") as f:
+            return f.read()
 
-            doc = Document(source_path)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            return "\n\n".join(paragraphs)
-        else:
-            with open(source_path, encoding="utf-8", errors="replace") as f:
-                return f.read()
+    @classmethod
+    def _read_docx_text(cls, source_path: str) -> str:
+        """Read a DOCX in document order, including table content.
+
+        `doc.paragraphs` alone omits table cell text entirely — tables live
+        in the separate `doc.tables` collection, unordered relative to
+        paragraphs — so a document with a table would silently lose that
+        content. Walking `doc.element.body`'s raw XML children in order is
+        the standard python-docx way to interleave both. Table rows are
+        rendered pipe-delimited so the downstream cleaning pipeline
+        (Gemini's table rule, or the local Markdown normalizer) recognizes
+        them as tabular content instead of just losing the structure.
+        """
+        from docx import Document  # python-docx
+        from docx.oxml.ns import qn
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+
+        doc = Document(source_path)
+        blocks: list[str] = []
+        for child in doc.element.body.iterchildren():
+            if child.tag == qn("w:p"):
+                text = Paragraph(child, doc).text
+                if text.strip():
+                    blocks.append(text)
+            elif child.tag == qn("w:tbl"):
+                table = Table(child, doc)
+                rows = [
+                    "| " + " | ".join(c.text.strip() for c in row.cells) + " |"
+                    for row in table.rows
+                    if any(c.text.strip() for c in row.cells)
+                ]
+                if rows:
+                    blocks.append("\n".join(rows))
+        return "\n\n".join(blocks)
 
     @classmethod
     def split_pages(cls, text: str) -> list[str]:
@@ -123,6 +154,57 @@ class TextExtractor:
     def read_outline(cls, source_path: str):
         """Text files have no native outline; always fall through to Gemini."""
         return
+
+    # ---------- local (no-LLM) section detection ----------
+
+    _HEADING_RE = re.compile(r"^ {0,3}#{1,6}\s+(.+)$", re.MULTILINE)
+
+    @classmethod
+    def detect_markdown_sections(cls, source_path: str, page_count: int) -> list[dict]:
+        """Chapter detection for a Markdown source with no LLM call.
+
+        Only meaningful for .md sources, which have real '#'..'######'
+        structural headings to key off of — plain TXT/DOCX have no
+        comparable local signal, so those still fall back to one section
+        (the caller only calls this for file_ext == "md"). Page-granularity,
+        not exact offsets: keyed off the same _WORDS_PER_PAGE split used at
+        extraction time, so a heading is attributed to whichever synthetic
+        page it landed on. Returns [] if no headings are found, so the
+        caller falls back to its existing single-section default.
+        """
+        text = cls.read_text(source_path)
+        pages = cls.split_pages(text)
+        if not pages:
+            return []
+
+        starts: list[tuple[int, str]] = []
+        for i, page_text in enumerate(pages, start=1):
+            m = cls._HEADING_RE.search(page_text)
+            if m:
+                starts.append((i, m.group(1).strip()))
+        if not starts:
+            return []
+
+        sections: list[dict] = []
+        for idx, (start_page, title) in enumerate(starts):
+            end_page = starts[idx + 1][0] - 1 if idx + 1 < len(starts) else page_count
+            sections.append(
+                {
+                    "title": title,
+                    "start_page": start_page,
+                    "end_page": max(start_page, end_page),
+                }
+            )
+        if sections[0]["start_page"] > 1:
+            sections.insert(
+                0,
+                {
+                    "title": "Front Matter",
+                    "start_page": 1,
+                    "end_page": sections[0]["start_page"] - 1,
+                },
+            )
+        return sections
 
     # ---------- cover ----------
 

@@ -33,6 +33,7 @@ from app.services.engine_manager import EngineManager
 from app.services.gemini_cleaner import GeminiAuthError, GeminiCleaner
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
+from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.tts import interactive_tts_lock
 
 log = get_logger(__name__)
@@ -212,11 +213,16 @@ class AudiobookService:
             # Books processed before page_status existed have no recorded
             # entry for a failed page — fall back to the previous (safe,
             # if wasteful) behavior of always re-cleaning in that case.
-            cleaning_failed = (
-                page_status.get(str(n), "cleaning_failed") == "cleaning_failed"
+            # "cost_capped" also needs re-cleaning (its clean text on disk
+            # is only the local fallback, written when the per-book Gemini
+            # cap was hit mid-run) — a retry is the user's explicit signal
+            # to spend more against the same cap, so re-attempt Gemini.
+            needs_reclean = page_status.get(str(n), "cleaning_failed") in (
+                "cleaning_failed",
+                "cost_capped",
             )
             paths = [AudiobookStore.page_audio_path(book_id, n)]
-            if cleaning_failed:
+            if needs_reclean:
                 paths.append(AudiobookStore.page_clean_path(book_id, n))
             for p in paths:
                 try:
@@ -525,8 +531,22 @@ class AudiobookService:
                         "end_page": sections[0]["start_page"] - 1,
                     },
                 )
+        elif not bool(meta.get("uses_gemini_cleanup", True)) and file_ext == "md":
+            # Path B (local-first, no LLM call): a Markdown source has real
+            # '#'..'######' structural headings to key chapters off of.
+            # Without this, every local-first (the actual default) Markdown
+            # book fell straight through to the single-giant-section
+            # fallback below — no chapter navigation ever, only Gemini-paid
+            # books or PDFs with an embedded outline got real sections.
+            source_path = AudiobookStore.source_file_path(book_id, file_ext)
+            sections = await loop.run_in_executor(
+                cls._executor,
+                TextExtractor.detect_markdown_sections,
+                source_path,
+                page_count,
+            )
         elif bool(meta.get("uses_gemini_cleanup", True)):
-            # Path B: ask Gemini.
+            # Path C: ask Gemini.
             cleaned_pages: list[str] = []
             for n in range(1, page_count + 1):
                 p = AudiobookStore.page_clean_path(book_id, n)
@@ -560,6 +580,14 @@ class AudiobookService:
                     "end_page": page_count,
                 }
             ]
+
+        # The Gemini section-detection call above can run up to 120s. Without
+        # this check, a book deleted mid-call has its directory/DB row
+        # rmtree'd + deleted by request_delete's 5s wait, then this stale
+        # coroutine's update_meta below resurrects a zombie row for a book
+        # the user already deleted (upsert semantics — same failure class
+        # already fixed for _phase_clean, see the comment near its gather).
+        cls._check_cancel(book_id)
 
         # start_time gets filled in concat phase. Persist now so UI can show titles
         # even before audio is finalized.
@@ -596,6 +624,16 @@ class AudiobookService:
         # Lock around shared state (failed list, done counter, meta writes).
         state_lock = asyncio.Lock()
         progress = {"done": done_count}
+        # Runtime cost governor: the upfront estimate (api/audiobook.py's
+        # /start cap check) samples only 3 pages' char counts and, for a
+        # mixed text/scanned PDF, doesn't model per-page OCR cost at all —
+        # a document with more scanned pages than the sample suggested can
+        # blow well past MAX_GEMINI_COST_USD_PER_BOOK with no runtime check
+        # once processing starts. Track actual incurred cost (same char-
+        # count formula as the estimate) and stop making further Gemini
+        # calls once the real cap is hit, falling back to local cleanup for
+        # the rest rather than spending unboundedly.
+        cost_state = {"spent_usd": 0.0}
 
         async def clean_one(n: int) -> None:
             async with sem:
@@ -610,12 +648,64 @@ class AudiobookService:
                 with open(raw_path, encoding="utf-8") as f:
                     raw_text = f.read()
 
+                async with state_lock:
+                    cost_capped = (
+                        uses_gemini_cleanup
+                        and cost_state["spent_usd"]
+                        >= _settings.MAX_GEMINI_COST_USD_PER_BOOK
+                    )
+
                 try:
                     if not uses_gemini_cleanup:
-                        # The local-first default: normal extracted text is
-                        # narrated as-is. Image-only pages remain blank until
-                        # the user explicitly enables Gemini OCR for the book.
-                        cleaned = raw_text or "-"
+                        # The local-first default: no LLM pass, so strip
+                        # Markdown syntax locally (#, **, *, `, >, |, links)
+                        # rather than letting it reach the TTS phonemizer as
+                        # literal symbols. Image-only pages remain blank
+                        # until the user explicitly enables Gemini OCR.
+                        cleaned = strip_markdown_for_narration(raw_text) or "-"
+                    elif cost_capped:
+                        log.warning(
+                            "audiobook.clean_cost_capped",
+                            extra={"book_id": book_id, "page": n},
+                        )
+                        cleaned = strip_markdown_for_narration(raw_text) or "-"
+                        async with state_lock:
+                            failed.append(n)
+                            current_meta = AudiobookStore.read_meta(book_id) or {}
+                            page_status = dict(current_meta.get("page_status") or {})
+                            page_status[str(n)] = "cost_capped"
+                            await AudiobookStore.update_meta(
+                                book_id, failed_pages=failed, page_status=page_status
+                            )
+                        cls._emit(
+                            book_id,
+                            "page_failed",
+                            phase="cleaning",
+                            page=n,
+                            error="Per-book Gemini cost cap reached; narrated with local cleanup instead.",
+                        )
+                        out = AudiobookStore.page_clean_path(book_id, n)
+                        tmp = out + ".tmp"
+                        with open(tmp, "w", encoding="utf-8") as f:
+                            f.write(cleaned)
+                        os.replace(tmp, out)
+                        async with state_lock:
+                            progress["done"] += 1
+                            await AudiobookStore.update_meta(
+                                book_id,
+                                phase_progress={
+                                    "page_done": progress["done"],
+                                    "page_total": page_count,
+                                },
+                            )
+                        cls._emit(
+                            book_id,
+                            "page_done",
+                            phase="cleaning",
+                            page=n,
+                            total=page_count,
+                        )
+                        return
                     elif is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
                         # Image page (PDF only) — render and OCR+clean via Gemini vision.
                         source_path = AudiobookStore.source_file_path(book_id, file_ext)
@@ -630,6 +720,10 @@ class AudiobookService:
                                 GeminiCleaner.ocr_page(api_key, image_bytes),
                                 timeout=90.0,
                             )
+                            async with state_lock:
+                                cost_state[
+                                    "spent_usd"
+                                ] += GeminiCleaner.estimate_cost_usd(len(cleaned))
                         except TimeoutError:
                             log.warning(
                                 "audiobook.ocr_timeout",
@@ -642,6 +736,12 @@ class AudiobookService:
                                 GeminiCleaner.clean_page(api_key, raw_text),
                                 timeout=90.0,
                             )
+                            async with state_lock:
+                                cost_state[
+                                    "spent_usd"
+                                ] += GeminiCleaner.estimate_cost_usd(
+                                    len(raw_text) + len(cleaned)
+                                )
                         except TimeoutError:
                             log.warning(
                                 "audiobook.clean_timeout",
@@ -974,10 +1074,19 @@ class AudiobookService:
                 json.dump(transcript, f, ensure_ascii=False)
             os.replace(tmp, tpath)
         except Exception as e:
+            # Previously swallowed: the book still reached "done" with no
+            # transcript.json, so GET .../transcript 404s forever and
+            # retry_failed's resumable_states never fires (status="done",
+            # failed_pages empty — nothing marks this as needing a retry).
+            # Re-raising routes through _run_pipeline's own except Exception,
+            # which sets status="failed" (a resumable state) with a clear
+            # error. Safe to retry: audio.wav/meta writes above are already
+            # idempotent, so a retry just cheaply redoes this write.
             log.warning(
                 "audiobook.transcript_write_failed",
                 extra={"book_id": book_id, "error": str(e)},
             )
+            raise RuntimeError(f"Failed to write transcript: {e}") from e
 
         # Build actual stats.
         words_actual = 0

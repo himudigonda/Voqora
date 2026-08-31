@@ -262,12 +262,15 @@ class DashboardViewModel: ObservableObject {
 
         // Mutual exclusion: a hotkey TTS request always interrupts audiobook playback.
         // The backend `/speak` endpoint also acquires a preemption lock so any in-flight
-        // audiobook generation pauses between pages. Here we fade-stop frontend
-        // playback (P11) instead of an abrupt stop so there's no click.
+        // audiobook generation pauses between pages. Routed through
+        // AudiobookViewModel.stopPlayback(fadeOverSeconds:) (not a raw
+        // audio.fadeOutAndStop() + manual state clear) so the interruption
+        // gets the same resume-position save, transcript-task cancellation,
+        // and sleep-timer cancellation as any other stop — a prior version
+        // skipped all three, most importantly leaving an armed sleep timer
+        // running to later stop whatever audio played next for no visible reason.
         if let avm = audiobookVM, avm.nowPlaying != nil {
-            avm.audio.fadeOutAndStop(over: 0.12)
-            avm.nowPlaying = nil
-            avm.currentTranscript = nil
+            avm.stopPlayback(fadeOverSeconds: 0.12)
         }
 
         currentSpeakTask = Task { [weak self] in

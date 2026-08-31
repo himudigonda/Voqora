@@ -40,9 +40,17 @@ final class AudiobookViewModel: ObservableObject {
     @Published var uploadInProgress = false
     @Published var completionSummary: Audiobook? = nil
 
+    /// One document dropped while another upload was already pending.
+    private struct QueuedUpload {
+        let document: URL
+        let voice: String
+        let speed: Double
+        let engine: String
+    }
+
     /// Queue of documents dropped while another upload was already pending.
     /// They are processed one after the other.
-    private var uploadQueue: [(URL, String, Double, String)] = []
+    private var uploadQueue: [QueuedUpload] = []
 
     // Toast / banner for transient errors (B4).
     @Published var toast: Toast? = nil
@@ -256,7 +264,7 @@ final class AudiobookViewModel: ObservableObject {
     func presentEstimate(for document: URL, voice: String, speed: Double, engine: String) {
         if pendingDocument != nil || uploadInProgress {
             // A modal is already up — queue this drop for later.
-            uploadQueue.append((document, voice, speed, engine))
+            uploadQueue.append(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine))
             showToast("Queued '\(document.lastPathComponent)'", kind: .info)
             return
         }
@@ -299,7 +307,7 @@ final class AudiobookViewModel: ObservableObject {
     private func flushUploadQueue() {
         guard !uploadQueue.isEmpty else { return }
         let next = uploadQueue.removeFirst()
-        presentEstimate(for: next.0, voice: next.1, speed: next.2, engine: next.3)
+        presentEstimate(for: next.document, voice: next.voice, speed: next.speed, engine: next.engine)
     }
 
     func startProcessing(useGeminiCleanup: Bool) {
@@ -617,7 +625,18 @@ final class AudiobookViewModel: ObservableObject {
         audio.togglePause()
     }
 
-    func stopPlayback() {
+    /// - Parameter fadeOverSeconds: when set, fades output out over this
+    ///   duration instead of stopping abruptly (used when a higher-priority
+    ///   source, e.g. the global selected-text speech feature, interrupts
+    ///   playback — see DashboardViewModel.speak()). Every other side effect
+    ///   (resume-position save, metrics, transcript-task cancel, sleep-timer
+    ///   cancel) is identical regardless of how the audio itself stops —
+    ///   previously the interruption path bypassed this method entirely and
+    ///   skipped all of them, most importantly the sleep timer: an armed
+    ///   timer kept running and later called `audio.stop()` on whatever
+    ///   later became "the shared audio" (a new TTS clip or a subsequently
+    ///   started audiobook), stopping it with no explanation.
+    func stopPlayback(fadeOverSeconds: TimeInterval? = nil) {
         // Invalidate an in-flight local-file request before touching audio.
         // Without this, a delayed request can schedule a new buffer after
         // the user explicitly pressed Stop.
@@ -638,7 +657,11 @@ final class AudiobookViewModel: ObservableObject {
         }
         transcriptTask?.cancel()
         transcriptTask = nil
-        audio.stop()
+        if let fadeOverSeconds {
+            audio.fadeOutAndStop(over: fadeOverSeconds)
+        } else {
+            audio.stop()
+        }
         nowPlaying = nil
         currentTranscript = nil
         cancelSleepTimer()

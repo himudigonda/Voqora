@@ -186,8 +186,17 @@ async def upload_audiobook(
                 )
                 is_image_only = False
         except Exception as e:
+            # Not curated: the raw exception can be a library-internal
+            # message (parser jargon, occasionally an internal path
+            # fragment) with no useful action for the user. Log it for
+            # diagnostics; the client only ever needs to know what to do.
+            log.warning(
+                "audiobook.upload_could_not_read_file",
+                extra={"book_id": book_id, "error": str(e)},
+            )
             raise HTTPException(
-                status_code=400, detail=f"Could not read file: {e}"
+                status_code=400,
+                detail="Could not read this file. It may be corrupted or in an unsupported format.",
             ) from e
 
         # P9: reject zero-page / zero-content files early.
@@ -273,7 +282,14 @@ async def upload_audiobook(
         raise
     except Exception as e:
         AudiobookStore.delete_book(book_id)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}") from e
+        # Not curated: a bare exception string reaching the user verbatim —
+        # log it server-side, tell the user only what they can act on.
+        log.warning(
+            "audiobook.upload_failed", extra={"book_id": book_id, "error": str(e)}
+        )
+        raise HTTPException(
+            status_code=500, detail="Upload failed. Please try again."
+        ) from e
 
 
 @router.post("/audiobook/{book_id}/start")

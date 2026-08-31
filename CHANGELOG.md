@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.1.1] - 2026-08-31
+
+### Audiobooks — narration quality
+
+- Fixed the local (no-Gemini, the default) cleanup path narrating raw
+  Markdown syntax verbatim — headings, bold/italic markers, links, and table
+  pipes were being read aloud as literal symbols instead of natural speech.
+  Lists and tables are now converted into real spoken sentences instead of
+  disjoint fragments.
+- Extended the same Markdown handling to the optional Gemini cleanup prompt,
+  which previously had no rules for Markdown source documents at all.
+- Fixed DOCX table content being silently dropped during import — table
+  cells were never read by the previous paragraph-only extraction.
+- Markdown documents processed without Gemini cleanup now get real chapter
+  detection from their headings, instead of always collapsing into one
+  section covering the whole book.
+
+### Audiobooks — reliability
+
+- Fixed a race where deleting a book while chapter detection was still
+  running against Gemini could resurrect the deleted book after the fact.
+- A transcript that failed to write to disk no longer leaves a book stuck
+  in a falsely "done" state with a permanently broken transcript; it's now
+  a retryable failure.
+- Added a runtime cap on Gemini cleanup spending per book, so a document
+  costing more than expected (e.g. more scanned pages than the upfront
+  estimate sampled) can no longer exceed the configured per-book limit.
+- Selected-text speech interrupting audiobook playback no longer leaves a
+  sleep timer running in the background — it previously kept counting down
+  and could silently stop whatever played next with no explanation.
+- Error messages from a failed document upload are now clear and actionable
+  instead of occasionally surfacing raw internal detail.
+
+### Audiobooks — accessibility & UX
+
+- Added VoiceOver labels to the playback, transport, and sleep-timer
+  controls in the audiobook player and mini player.
+- Fixed the transcript's auto-scroll-pause not responding to normal
+  trackpad or scroll-wheel scrolling, which is how most people actually
+  scroll on a Mac — it only recognized click-and-drag before.
+
 ## [1.1.0] - 2026-08-20
 
 ### Selection & shortcuts
@@ -83,5 +124,6 @@ newer.
 - Use a clear, manual DMG installation and update flow while the project is
   validating product-market fit without Apple notarization.
 
+[1.1.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.1
 [1.1.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.0
 [1.0.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.0

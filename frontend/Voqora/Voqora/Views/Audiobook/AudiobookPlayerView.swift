@@ -299,6 +299,7 @@ struct AudiobookPlayerView: View {
         }
         .buttonStyle(.plain)
         .shadow(color: .cyan.opacity(0.4), radius: 18)
+        .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
     }
 
     private func transportSmall(systemName: String, help: String, action: @escaping () -> Void) -> some View {
@@ -311,6 +312,11 @@ struct AudiobookPlayerView: View {
         }
         .buttonStyle(.plain)
         .help(help)
+        // `.help()` alone only surfaces as a hover tooltip, not a VoiceOver
+        // name — every transport control (previous/back/forward/next
+        // section) was accessibility-unlabeled despite being some of the
+        // feature's most-used controls.
+        .accessibilityLabel(help)
     }
 
     private var speedAndSleep: some View {
@@ -385,6 +391,7 @@ struct AudiobookPlayerView: View {
         .buttonStyle(.plain)
         .menuStyle(.borderlessButton)
         .help("Sleep timer")
+        .accessibilityLabel("Sleep timer")
     }
 
     // MARK: - Transcript
@@ -424,14 +431,20 @@ struct AudiobookPlayerView: View {
                             }
                         }
                         .padding(20)
+                        // T-13 fix: the real signal for "the user is manually
+                        // scrolling" is AppKit's willStartLiveScrollNotification
+                        // (trackpad/wheel/scrollbar), bridged via LiveScrollDetector
+                        // above. Placed on the scrollable content itself (not the
+                        // ScrollView container) so it becomes a descendant of the
+                        // real underlying NSScrollView and enclosingScrollView
+                        // resolves correctly.
+                        .background(
+                            LiveScrollDetector(onLiveScroll: { userScrolledAt = Date() })
+                        )
                     }
-                    // T-13: user-scroll detection. macOS deployment target is
-                    // 14.0 (below the 15.0 minimum for `.onScrollGeometryChange`),
-                    // so a DragGesture is the documented fallback — it catches
-                    // direct click-drag scrolling; it will not see a pure
-                    // trackpad/scroll-wheel gesture, which AppKit's NSScrollView
-                    // handles outside SwiftUI's gesture system. Good enough to
-                    // suppress auto-scroll for the common "reading ahead" case.
+                    // Kept as a supplementary fallback for a direct click-drag
+                    // on the content (not the common case on macOS, but harmless
+                    // to also catch).
                     .simultaneousGesture(
                         DragGesture(minimumDistance: 2)
                             .onChanged { _ in userScrolledAt = Date() }
