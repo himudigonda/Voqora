@@ -2,12 +2,35 @@ import AppKit
 
 @MainActor
 enum SelectionManager {
+    /// Serializes overlapping calls instead of racing them. Without this, a
+    /// rapid double-press of the shortcut could run two concurrent
+    /// snapshot -> Cmd+C -> poll -> restore cycles against the same system
+    /// pasteboard: call B could snapshot call A's synthetic copy (not the
+    /// user's real prior clipboard) and later "restore" that permanently, or
+    /// call A's restore could fire mid-poll for call B and make it time out
+    /// even though a real selection existed. A second caller now awaits the
+    /// first call's result instead of starting its own pasteboard mutation.
+    private static var inFlightTask: Task<String?, Never>?
+
     static func getSelectedText() async -> String? {
+        if let existing = inFlightTask {
+            VoqoraLog.debug("SelectionManager", "getSelectedText already in flight, awaiting existing call")
+            return await existing.value
+        }
+        let task = Task<String?, Never> {
+            defer { inFlightTask = nil }
+            return await performGetSelectedText()
+        }
+        inFlightTask = task
+        return await task.value
+    }
+
+    private static func performGetSelectedText() async -> String? {
         let frontApp = NSWorkspace.shared.frontmostApplication
         let frontAppName = frontApp?.localizedName ?? frontApp?.bundleIdentifier ?? "unknown"
 
         if let text = axSelectedText(frontAppName: frontAppName) {
-            print("✅ SelectionManager: Found text via AX (\(frontAppName))")
+            VoqoraLog.info("SelectionManager", "Found text via AX", ["app": frontAppName, "chars": "\(text.count)"])
             return text
         }
 
@@ -18,13 +41,13 @@ enum SelectionManager {
         // Fall back to synthesizing Cmd+C. The user's existing clipboard is
         // saved and restored around it so the fallback has no visible
         // side effect.
-        print("⚠️ SelectionManager: AX returned no text for \(frontAppName). Falling back to Clipboard (Cmd+C)...")
+        VoqoraLog.warn("SelectionManager", "AX returned no text, falling back to Clipboard (Cmd+C)", ["app": frontAppName])
         if let text = await getSelectedTextViaClipboard() {
-            print("✅ SelectionManager: Found text via Clipboard fallback (\(frontAppName))")
+            VoqoraLog.info("SelectionManager", "Found text via Clipboard fallback", ["app": frontAppName, "chars": "\(text.count)"])
             return text
         }
 
-        print("⚠️ SelectionManager: No selected text available via AX or Clipboard fallback (\(frontAppName)).")
+        VoqoraLog.warn("SelectionManager", "No selected text available via AX or Clipboard fallback", ["app": frontAppName])
         return nil
     }
 
@@ -35,11 +58,11 @@ enum SelectionManager {
         let result = AXUIElementCopyAttributeValue(systemWideElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
 
         guard result == .success, let focusedElement else {
-            print("⚠️ SelectionManager: AX focused-element lookup failed for \(frontAppName) (error \(result.rawValue)).")
+            VoqoraLog.warn("SelectionManager", "AX focused-element lookup failed", ["app": frontAppName, "axError": "\(result.rawValue)"])
             return nil
         }
         guard CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
-            print("⚠️ SelectionManager: Focused accessibility value for \(frontAppName) was not an element.")
+            VoqoraLog.warn("SelectionManager", "Focused accessibility value was not an element", ["app": frontAppName])
             return nil
         }
 
@@ -51,7 +74,7 @@ enum SelectionManager {
         let textResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedText)
 
         guard textResult == .success, let text = selectedText as? String, !text.isEmpty else {
-            print("⚠️ SelectionManager: AX selected-text lookup for \(frontAppName) failed or was empty (error \(textResult.rawValue)).")
+            VoqoraLog.warn("SelectionManager", "AX selected-text lookup failed or was empty", ["app": frontAppName, "axError": "\(textResult.rawValue)"])
             return nil
         }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,7 +86,10 @@ enum SelectionManager {
         let oldChangeCount = pasteboard.changeCount
 
         // Use the 'annotated' source to ensure macOS sees this as a legitimate user-driven event
-        guard let source = CGEventSource(stateID: .combinedSessionState) else { return nil }
+        guard let source = CGEventSource(stateID: .combinedSessionState) else {
+            VoqoraLog.error("SelectionManager", "Could not create CGEventSource for Cmd+C fallback")
+            return nil
+        }
 
         let cmdKey: CGKeyCode = 0x37
         let cKey: CGKeyCode = 0x08
@@ -100,7 +126,10 @@ enum SelectionManager {
         // pasteboard without us observing the change in time.
         restorePasteboard(savedItems, pasteboard: pasteboard)
 
-        guard let text = copiedText, !text.isEmpty else { return nil }
+        guard let text = copiedText, !text.isEmpty else {
+            VoqoraLog.warn("SelectionManager", "Cmd+C fallback timed out with no pasteboard change (frontmost app has no selection, or ignored the synthetic copy)")
+            return nil
+        }
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

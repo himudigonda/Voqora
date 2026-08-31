@@ -74,6 +74,7 @@ struct NowPlayingBar: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(bookVM.audio.isPlaying ? "Pause" : "Play")
+                    .help(bookVM.audio.isPlaying ? "Pause" : "Play")
 
                     Button { bookVM.stopPlayback() } label: {
                         Image(systemName: "xmark")
@@ -83,15 +84,16 @@ struct NowPlayingBar: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Stop")
+                    .help("Stop")
                 }
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
         }
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                 .stroke(Color.primary.opacity(0.08), lineWidth: 1)
         )
         .padding(.horizontal, 16)

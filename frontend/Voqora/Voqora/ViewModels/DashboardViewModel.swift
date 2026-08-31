@@ -57,6 +57,9 @@ class DashboardViewModel: ObservableObject {
 
     // State
     @Published var status: AppStatus = .ready
+    /// Consecutive "no text found" failures per frontmost app name — reset
+    /// on success or on switching apps. See speakSelection().
+    private var selectionFailuresByApp: [String: Int] = [:]
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false        // Model in ONNX session RAM
@@ -214,13 +217,16 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speakSelection(text: String? = nil) async {
-        print("⌨️ DashboardViewModel: speakSelection triggered")
+        VoqoraLog.info("DashboardViewModel", "speakSelection triggered", ["explicitText": text != nil ? "true" : "false"])
         if let text {
             await speak(text: text)
             return
         }
+        let frontApp = NSWorkspace.shared.frontmostApplication
+        let frontAppName = frontApp?.localizedName ?? frontApp?.bundleIdentifier ?? "unknown"
+
         guard let text = await SelectionManager.getSelectedText(), !text.isEmpty else {
-            print("⚠️ DashboardViewModel: No text found in selection.")
+            VoqoraLog.warn("DashboardViewModel", "No text found in selection", ["axTrusted": AXIsProcessTrusted() ? "true" : "false", "app": frontAppName])
             if !AXIsProcessTrusted() {
                 // Without Accessibility, SelectionManager can never read a
                 // selection — this is the shortcut's most common silent
@@ -231,11 +237,25 @@ class DashboardViewModel: ObservableObject {
                 NSApp.activate(ignoringOtherApps: true)
                 PermissionsService.shared.openAccessibilitySettings()
             } else {
-                showTransientError("Select text in any app, then press Cmd+Shift+.")
+                // "Nothing selected" and "this app can't expose its content
+                // via Accessibility or copy at all" (canvas-rendered PDF
+                // viewers, games, video subtitles) both silently return nil
+                // here — there's no reliable way to tell them apart from a
+                // single attempt. But repeated failures in the SAME app are
+                // a real signal worth surfacing instead of repeating the
+                // identical generic message every time.
+                let failures = (selectionFailuresByApp[frontAppName] ?? 0) + 1
+                selectionFailuresByApp[frontAppName] = failures
+                if failures >= 2 {
+                    showTransientError("Voqora couldn't read text from \(frontAppName). Some apps (games, custom-rendered viewers) don't support this.")
+                } else {
+                    showTransientError("Select text in any app, then press Cmd+Shift+.")
+                }
             }
             return
         }
-        print("🎤 DashboardViewModel: Sending \(text.count) chars to backend...")
+        selectionFailuresByApp[frontAppName] = 0
+        VoqoraLog.info("DashboardViewModel", "Sending selection to backend", ["chars": "\(text.count)"])
         // Confirms the shortcut actually fired even when Voqora's window is
         // backgrounded — the only in-app feedback otherwise is a toast on a
         // window the user may not be looking at.
@@ -284,14 +304,18 @@ class DashboardViewModel: ObservableObject {
                     self.currentSpeakTask = nil
                 }
             }
-            print("DEBUG [DashboardVM] Starting new speak task")
+            VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": selectedVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             status = .thinking
 
-            let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true))
-            audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
+            let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
 
-            // This resets the AudioService buffers
+            // This resets the AudioService buffers. Must run BEFORE
+            // setEstimatedDuration: it unconditionally zeroes `duration`, so
+            // calling it after silently wiped out the estimate on every
+            // single speak() — the scrub bar showed 0:00 during the whole
+            // "thinking" phase instead of an immediate estimate.
             audio.prepareForStream()
+            audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
 
             do {
                 let stream = backend.streamAudio(
@@ -313,6 +337,7 @@ class DashboardViewModel: ObservableObject {
 
                 guard !Task.isCancelled, generation == self.speakGeneration else { return }
                 guard receivedAudio else {
+                    VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": selectedVoice])
                     audio.stop()
                     showTransientError("Voqora could not generate audio. Try again.")
                     return
@@ -330,6 +355,7 @@ class DashboardViewModel: ObservableObject {
                 )
             } catch {
                 guard !Task.isCancelled, generation == self.speakGeneration else { return }
+                VoqoraLog.error("DashboardViewModel", "speak() failed", ["error": String(describing: error), "voice": selectedVoice, "chars": "\(cleaned.count)"])
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error))
             }
@@ -431,6 +457,7 @@ class DashboardViewModel: ObservableObject {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
             showActionFeedback("Saved \(urls.count) debug log\(urls.count == 1 ? "" : "s") to Desktop")
         } catch {
+            VoqoraLog.error("DashboardViewModel", "exportLogs failed", ["error": String(describing: error)])
             showTransientError(error.localizedDescription)
         }
     }
@@ -476,7 +503,7 @@ class DashboardViewModel: ObservableObject {
 
                 // Detect backend crash: was online, now offline
                 if wasOnline && !isNowOnline {
-                    print("⚠️ DashboardViewModel: Backend crash detected, cancelling stream")
+                    VoqoraLog.error("DashboardViewModel", "Backend crash detected, cancelling in-flight stream", ["status": "\(status)"])
                     currentSpeakTask?.cancel()
                     currentSpeakTask = nil
                     if status == .speaking || status == .thinking {

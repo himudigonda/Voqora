@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 
@@ -17,8 +18,10 @@ from app.services.tts import TTSEngine
 # Force asyncio backend for uvicorn compatibility
 os.environ["ANYIO_BACKEND"] = "asyncio"
 
-# Structured JSON logs (S1-G1). Idempotent.
-configure_logging()
+# Structured JSON logs (S1-G1). Idempotent. `settings.LOG_LEVEL` (env
+# LOG_LEVEL=DEBUG) unlocks the log.debug(...) calls in the audiobook/TTS
+# pipeline that are otherwise unconditionally invisible.
+configure_logging(level=getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO))
 log = get_logger("voqora.main")
 
 # PID of the Swift app that spawned us (captured at import time, before any fork).
@@ -68,7 +71,7 @@ async def _load_engine_background() -> None:
         await EngineManager.ensure_loaded()
         log.info("startup.engine_load.ready")
     except Exception as exc:
-        log.error("startup.engine_load.failed", extra={"err": str(exc)})
+        log.error("startup.engine_load.failed", extra={"err": str(exc)}, exc_info=True)
         return
 
     # Wire idle-unload watcher only after the model is in RAM.

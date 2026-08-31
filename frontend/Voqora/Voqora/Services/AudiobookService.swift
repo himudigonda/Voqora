@@ -42,7 +42,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             guard let itemData = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
             if let book = try? decoder.decode(Audiobook.self, from: itemData) { return book }
             if let id = dict["book_id"] as? String {
-                print("⚠️ AudiobookService: skipping corrupt entry for book_id=\(id)")
+                VoqoraLog.warn("AudiobookService", "Skipping corrupt library entry", ["bookID": id])
             }
             return nil
         }
@@ -220,7 +220,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                             }
                         }
                     } catch {
-                        print("[AudiobookService] SSE drop for \(id): \(error)")
+                        VoqoraLog.warn("AudiobookService", "SSE connection dropped", ["bookID": id, "error": String(describing: error), "attempt": "\(attempt)"])
                     }
                     if sawTerminal || bookGone || Task.isCancelled { break }
                     attempt = min(attempt + 1, 4)

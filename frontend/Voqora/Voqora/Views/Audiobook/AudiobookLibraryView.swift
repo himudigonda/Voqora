@@ -313,43 +313,11 @@ struct AudiobookLibraryView: View {
     // MARK: - Drop overlay
 
     private var dropOverlay: some View {
-        ZStack {
-            Color.primary.opacity(0.18).ignoresSafeArea()
-                .background(.ultraThinMaterial)
-            VStack(spacing: 24) {
-                dropIcon
-                Text("DROP TO ADD AUDIOBOOK")
-                    .font(vm.appFont(size: 14, weight: .black))
-                    .kerning(3)
-                    .foregroundStyle(.cyan)
-                Text("PDF, TXT, DOCX, or Markdown — up to 400 pages")
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(48)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .strokeBorder(.cyan.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-            )
-            .padding(60)
-        }
+        DocumentDropOverlay(
+            subtitle: "PDF, TXT, DOCX, or Markdown — up to 400 pages",
+            appFont: vm.appFont
+        )
         .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
-    }
-
-    @ViewBuilder
-    private var dropIcon: some View {
-        if #available(macOS 15.0, *) {
-            Image(systemName: "arrow.down.doc.fill")
-                .font(.system(size: 72, weight: .ultraLight))
-                .foregroundStyle(.cyan)
-                .symbolEffect(.bounce, options: .repeating)
-        } else {
-            Image(systemName: "arrow.down.doc.fill")
-                .font(.system(size: 72, weight: .ultraLight))
-                .foregroundStyle(.cyan)
-        }
     }
 
     // MARK: - Empty state

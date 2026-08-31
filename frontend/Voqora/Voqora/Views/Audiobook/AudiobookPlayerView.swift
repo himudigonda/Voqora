@@ -1,3 +1,4 @@
+import NaturalLanguage
 import SwiftUI
 
 struct AudiobookPlayerView: View {
@@ -60,9 +61,9 @@ struct AudiobookPlayerView: View {
         // detail pane, which receives focus by default.
         .onKeyPress(.space) { bookVM.togglePlayback(); return .handled }
         .onKeyPress(.leftArrow) { bookVM.skip(by: -15); return .handled }
-        .onKeyPress(.rightArrow) { bookVM.skip(by: 15); return .handled }
+        .onKeyPress(.rightArrow) { bookVM.skip(by: 30); return .handled }
         .onKeyPress("j") { bookVM.skip(by: -15); return .handled }
-        .onKeyPress("l") { bookVM.skip(by: 15); return .handled }
+        .onKeyPress("l") { bookVM.skip(by: 30); return .handled }
         .onKeyPress("n") { bookVM.jumpToNextSection(in: book); return .handled }
         .onKeyPress("p") { bookVM.jumpToPreviousSection(in: book); return .handled }
         .onKeyPress("[") { adjustSpeed(-0.25); return .handled }
@@ -300,6 +301,7 @@ struct AudiobookPlayerView: View {
         .buttonStyle(.plain)
         .shadow(color: .cyan.opacity(0.4), radius: 18)
         .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
+        .help(audio.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
 
     private func transportSmall(systemName: String, help: String, action: @escaping () -> Void) -> some View {
@@ -426,7 +428,7 @@ struct AudiobookPlayerView: View {
                         LazyVStack(alignment: .leading, spacing: 14) {
                             ForEach(orderedPages(transcript), id: \.page) { entry in
                                 let isCurrent = isCurrentPage(entry.page, in: transcript)
-                                transcriptRow(entry, isCurrent: isCurrent)
+                                transcriptRow(entry, isCurrent: isCurrent, in: transcript)
                                     .id(entry.page)
                             }
                         }
@@ -493,19 +495,62 @@ struct AudiobookPlayerView: View {
     /// distinctly instead of rendering it identically to a normally-narrated
     /// page. See jira-audiobook-quality.md T-1.
     @ViewBuilder
-    private func transcriptRow(_ entry: PageEntry, isCurrent: Bool) -> some View {
+    private func transcriptRow(_ entry: PageEntry, isCurrent: Bool, in t: AudiobookService.Transcript) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if let status = entry.status {
                 Label(Self.pageStatusCaption(for: status), systemImage: Self.pageStatusIcon(for: status))
                     .font(vm.appFont(size: 10, weight: .bold))
                     .foregroundStyle(.orange)
             }
-            Text(entry.text)
-                .font(vm.appFont(size: isCurrent ? 14 : 13, weight: isCurrent ? .bold : .regular))
-                .foregroundStyle(entry.status != nil ? Color.secondary.opacity(0.6) : (isCurrent ? Color.cyan : Color.secondary))
-                .italic(entry.status != nil)
+            if isCurrent, entry.status == nil {
+                // Only the playing page pays for sentence splitting — a
+                // reader isn't watching every other page tick in real time.
+                currentPageText(entry, in: t)
+            } else {
+                Text(entry.text)
+                    .font(vm.appFont(size: 13, weight: .regular))
+                    .foregroundStyle(entry.status != nil ? Color.secondary.opacity(0.6) : Color.secondary)
+                    .italic(entry.status != nil)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Highlights only the sentence estimated to be playing right now,
+    /// instead of bolding the whole page. Only a per-page start timestamp
+    /// exists (no per-sentence timing from the backend), so the sentence is
+    /// estimated by interpolating playback progress through the page's time
+    /// window proportionally across its sentences' character lengths — an
+    /// estimate, not exact, but far tighter than "the whole paragraph."
+    private func currentPageText(_ entry: PageEntry, in t: AudiobookService.Transcript) -> Text {
+        let sentences = Self.splitIntoSentences(entry.text)
+        guard sentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
+            return Text(entry.text)
+                .font(vm.appFont(size: 14, weight: .bold))
+                .foregroundStyle(Color.cyan)
+        }
+        let current = Self.currentSentenceIndex(in: sentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime)
+
+        return sentences.enumerated().reduce(Text("")) { acc, item in
+            let (idx, sentence) = item
+            let isCurrentSentence = idx == current
+            let piece = Text(sentence)
+                .font(vm.appFont(size: 13, weight: isCurrentSentence ? .bold : .regular))
+                .foregroundStyle(isCurrentSentence ? Color.cyan : Color.secondary)
+            return idx == 0 ? piece : acc + Text(" ") + piece
+        }
+    }
+
+    /// The playing page's [start, end) time window: `end` is the next page
+    /// chronologically (by start time, not necessarily page number + 1), or
+    /// nil if this is the last page — callers fall back to `audio.duration`.
+    private func pageTimeWindow(for page: Int, in t: AudiobookService.Transcript) -> (start: Double, end: Double?)? {
+        refreshTranscriptCacheIfNeeded(t)
+        let sorted = transcriptCache.sortedPageTimes
+        guard let idx = sorted.firstIndex(where: { $0.page == page }) else { return nil }
+        let start = sorted[idx].time
+        let next = idx + 1 < sorted.count ? sorted[idx + 1].time : audio.duration
+        return (start, next > start ? next : nil)
     }
 
     // MARK: - Transcript memoization (T-12)
@@ -598,9 +643,9 @@ struct AudiobookPlayerView: View {
         }
         .frame(width: 260)
         .background(.ultraThinMaterial.opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous)
                 .stroke(Color.primary.opacity(0.06), lineWidth: 1)
         )
     }
@@ -637,13 +682,7 @@ struct AudiobookPlayerView: View {
         audio.setPlaybackRate(Float(clamped))
     }
 
-    private var prettyTitle: String {
-        let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
-        }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 }
 
 // MARK: - Pure, testable logic (T-12, T-13)
@@ -743,6 +782,54 @@ extension AudiobookPlayerView {
     static func currentPageID(in sortedTimes: [PageTimeEntry], at time: Double) -> Int? {
         guard let idx = lastIndex(in: sortedTimes, where: { $0.time }, atOrBefore: time) else { return nil }
         return sortedTimes[idx].page
+    }
+
+    /// Splits page text into sentences for within-page highlight
+    /// granularity, using NaturalLanguage's sentence tokenizer (handles
+    /// abbreviations/decimals/etc. far better than splitting on ". ").
+    /// Falls back to the whole string as one "sentence" if tokenization
+    /// finds no boundaries (e.g. a page with no terminal punctuation).
+    static func splitIntoSentences(_ text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        let tokenizer = NLTokenizer(unit: .sentence)
+        tokenizer.string = text
+        var sentences: [String] = []
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let sentence = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty { sentences.append(sentence) }
+            return true
+        }
+        return sentences.isEmpty ? [text] : sentences
+    }
+
+    /// Estimates which sentence within a page is currently being spoken by
+    /// interpolating `time`'s position across [pageStart, pageEnd)
+    /// proportionally over the sentences' character lengths. This is an
+    /// estimate — only a page-start timestamp exists, not per-sentence ones
+    /// — but it tracks TTS pacing far more tightly than highlighting the
+    /// whole page for its entire duration.
+    static func currentSentenceIndex(
+        in sentences: [String],
+        pageStart: Double,
+        pageEnd: Double?,
+        at time: Double
+    ) -> Int? {
+        guard !sentences.isEmpty else { return nil }
+        guard sentences.count > 1 else { return 0 }
+        guard let pageEnd, pageEnd > pageStart else { return 0 }
+
+        let progress = min(max((time - pageStart) / (pageEnd - pageStart), 0), 1)
+        let charCounts = sentences.map(\.count)
+        let totalChars = charCounts.reduce(0, +)
+        guard totalChars > 0 else { return 0 }
+
+        let target = progress * Double(totalChars)
+        var cumulative = 0.0
+        for (idx, count) in charCounts.enumerated() {
+            cumulative += Double(count)
+            if target < cumulative { return idx }
+        }
+        return sentences.count - 1
     }
 
     /// The section currently playing: the last section (by start time) at

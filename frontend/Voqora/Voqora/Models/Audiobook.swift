@@ -27,6 +27,17 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var id: String { bookID }
 
+    /// `title` with any supported source-file extension stripped. Single
+    /// source of truth for this — it was previously copy-pasted across 5
+    /// views and drifted: 3 correctly stripped every extension
+    /// (AudiobookImportStaging.supportedExtensions), 2 only stripped ".pdf",
+    /// so a .docx/.txt/.md book showed its raw filename in exactly the two
+    /// most-visible spots (the completion modal and the sidebar's "Continue
+    /// Listening" button).
+    var displayTitle: String {
+        AudiobookImportStaging.strippingSupportedExtension(from: title)
+    }
+
     var progressFraction: Double {
         let total = Double(phaseProgress.pageTotal)
         guard total > 0 else { return 0 }
@@ -147,6 +158,11 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     let estimatedTokenCount: Int
     let isImageOnly: Bool
     let costWarning: Bool
+    /// Set when this exact file content already exists as another book.
+    /// Warned, not blocked — a deliberate re-import (different voice) is
+    /// still a legitimate use.
+    let duplicateOfBookID: String?
+    let duplicateOfTitle: String?
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -159,6 +175,8 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case estimatedTokenCount = "estimated_token_count"
         case isImageOnly = "is_image_only"
         case costWarning = "cost_warning"
+        case duplicateOfBookID = "duplicate_of_book_id"
+        case duplicateOfTitle = "duplicate_of_title"
     }
 }
 

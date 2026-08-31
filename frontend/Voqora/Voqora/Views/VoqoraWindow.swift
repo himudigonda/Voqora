@@ -275,7 +275,7 @@ struct VoqoraWindow: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Continue Listening")
                         .font(vm.appFont(size: 13))
-                    Text(prettyTitleForResume(book.title))
+                    Text(book.displayTitle)
                         .font(vm.appFont(size: 10))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -307,9 +307,13 @@ struct VoqoraWindow: View {
                 Button { vm.togglePlayback() } label: {
                     Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                 }
+                .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
+                .help(audio.isPlaying ? "Pause" : "Play")
                 Button { vm.stopPlayback() } label: {
                     Image(systemName: "stop.fill")
                 }
+                .accessibilityLabel("Stop")
+                .help("Stop")
             }
             .buttonStyle(.plain)
             .font(.title3)
@@ -321,12 +325,6 @@ struct VoqoraWindow: View {
         .padding(20)
         .shadow(color: .black.opacity(0.1), radius: 10)
         .animation(.spring(), value: audio.progress)
-    }
-
-    private func prettyTitleForResume(_ title: String) -> String {
-        var t = title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
-        return t
     }
 
     private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -366,30 +364,10 @@ struct VoqoraWindow: View {
     }
 
     private var globalDropOverlay: some View {
-        ZStack {
-            Color.primary.opacity(0.18).ignoresSafeArea()
-                .background(.ultraThinMaterial)
-            VStack(spacing: 22) {
-                Image(systemName: "arrow.down.doc.fill")
-                    .font(.system(size: 64, weight: .ultraLight))
-                    .foregroundStyle(.cyan)
-                Text("DROP TO ADD AUDIOBOOK")
-                    .font(vm.appFont(size: 13, weight: .black))
-                    .kerning(3)
-                    .foregroundStyle(.cyan)
-                Text("\(AudiobookImportStaging.supportedFormatsDescription) files will switch to Audiobooks and start an estimate.")
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(40)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .strokeBorder(.cyan.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-            )
-            .padding(60)
-        }
+        DocumentDropOverlay(
+            subtitle: "\(AudiobookImportStaging.supportedFormatsDescription) files will switch to Audiobooks and start an estimate.",
+            appFont: vm.appFont
+        )
         .animation(.easeInOut(duration: 0.2), value: globalDropHovering)
     }
 

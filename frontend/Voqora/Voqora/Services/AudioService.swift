@@ -163,7 +163,7 @@ class AudioService: NSObject, ObservableObject {
         do {
             try engine.start()
         } catch {
-            print("❌ AudioService: Engine start error: \(error)")
+            VoqoraLog.error("AudioService", "Engine start error", ["error": String(describing: error)])
         }
     }
 
@@ -174,7 +174,7 @@ class AudioService: NSObject, ObservableObject {
                 try engine.start()
                 playerNode.play()
             } catch {
-                print("❌ AudioService: Engine restart after device change failed: \(error)")
+                VoqoraLog.error("AudioService", "Engine restart after device change failed", ["error": String(describing: error)])
                 stop()
             }
         }
@@ -196,7 +196,7 @@ class AudioService: NSObject, ObservableObject {
                 dataToProcess = headerAccumulator.suffix(from: 44)
                 hasStrippedHeader = true
                 headerAccumulator = Data()
-                print("🔊 AudioService: Header stripped. PCM accumulation started.")
+                VoqoraLog.debug("AudioService", "WAV header stripped, PCM accumulation started")
             } else {
                 return
             }
@@ -259,7 +259,7 @@ class AudioService: NSObject, ObservableObject {
             hasStartedPlayback = true
             startTimer()
         } catch {
-            print("❌ AudioService: Start error: \(error)")
+            VoqoraLog.error("AudioService", "Start error", ["error": String(describing: error)])
         }
     }
 
@@ -573,7 +573,7 @@ class AudioService: NSObject, ObservableObject {
             file.framePosition = audiobookFrameOffset
             try file.read(into: buffer, frameCount: chunkFrames)
         } catch {
-            print("❌ AudioService: chunk read error: \(error)")
+            VoqoraLog.error("AudioService", "Audiobook chunk read error", ["error": String(describing: error)])
             return
         }
         audiobookFrameOffset += AVAudioFramePosition(buffer.frameLength)

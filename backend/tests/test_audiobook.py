@@ -123,6 +123,28 @@ def test_delete_book_removes_dir():
     assert AudiobookStore.delete_book(bid) is False  # second delete
 
 
+@pytest.mark.asyncio
+async def test_update_meta_on_deleted_book_does_not_resurrect_a_zombie_row():
+    """Regression: a pipeline phase still in flight when the user deletes a
+    book (executor-backed work isn't cooperatively cancellable mid-call)
+    used to have its next status update silently re-INSERT a near-empty
+    zombie row via update_meta's read-modify-write. update_meta must be a
+    no-op once the book no longer exists."""
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 5, "kokoro", "af_bella", 1.0, {"cost_usd": 0.1}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    assert AudiobookStore.delete_book(bid) is True
+    assert AudiobookStore.read_meta(bid) is None
+
+    result = await AudiobookStore.update_meta(bid, status="failed", error="boom")
+
+    assert result == {}
+    assert AudiobookStore.read_meta(bid) is None
+    assert bid not in [b["book_id"] for b in AudiobookStore.list_books()]
+
+
 # ---------- estimation ----------
 
 
@@ -1170,6 +1192,106 @@ async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkey
     ), "a straggler clean_one task resurrected the deleted book's DB row"
 
 
+# ---------- runtime Gemini cost cap ----------
+
+
+@pytest.mark.asyncio
+async def test_phase_clean_aborts_when_actual_cost_exceeds_cap(monkeypatch):
+    """Regression: the /start pre-flight cost gate only ever samples 3 pages,
+    so a book with uneven page density could pass it and then blow through
+    MAX_GEMINI_COST_USD_PER_BOOK with no runtime check at all. _phase_clean
+    must track actual chars sent/received and abort once the running
+    estimate crosses the cap, instead of completing the whole book
+    regardless of real spend."""
+    from app.services import gemini_cleaner as _gc
+    from app.services.audiobook_service import AudiobookService
+    from app.services.gemini_cleaner import GeminiCostCapExceeded
+
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.MAX_GEMINI_COST_USD_PER_BOOK",
+        0.000001,
+    )
+
+    # More pages than _CLEAN_PARALLELISM (4): only the first wave can start
+    # immediately, the rest sit queued behind the semaphore — that queued
+    # backlog is what the fix's proactive cancellation is meant to stop.
+    page_count = 20
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", page_count, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    for n in range(1, page_count + 1):
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write("x" * 200)  # long enough to route through clean_page, not OCR
+
+    calls: list[int] = []
+
+    async def fake_clean_page(api_key, text):
+        calls.append(1)
+        # A small realistic delay so the first wave doesn't complete before
+        # the phase's 100ms cancellation-poll granularity gets a chance to
+        # observe the cap breach and cancel the still-queued pages.
+        await asyncio.sleep(0.05)
+        return "cleaned " + text
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+    )
+
+    with pytest.raises(GeminiCostCapExceeded):
+        await AudiobookService._phase_clean(bid, "fake-key")
+
+    # The near-zero cap means even the first page's chars exceed it, so the
+    # phase must stop well short of processing all 20 pages once the
+    # cancellation poll catches up and cancels the queued backlog.
+    assert len(calls) < page_count
+
+
+@pytest.mark.asyncio
+async def test_phase_clean_seeds_running_cost_from_already_cleaned_pages(monkeypatch):
+    """A resumed book shouldn't get a fresh budget: already-cleaned pages'
+    chars must count toward the cap from the start of the phase."""
+    from app.services import gemini_cleaner as _gc
+    from app.services.audiobook_service import AudiobookService
+    from app.services.gemini_cleaner import GeminiCostCapExceeded
+
+    monkeypatch.setattr(
+        "app.services.audiobook_service._settings.MAX_GEMINI_COST_USD_PER_BOOK",
+        0.000001,
+    )
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    # Page 1 already cleaned (simulating a resume) — its chars must be
+    # counted even though clean_one won't touch it again.
+    clean_path = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(clean_path), exist_ok=True)
+    with open(clean_path, "w") as f:
+        f.write("x" * 500)
+    raw_path = AudiobookStore.page_raw_path(bid, 2)
+    os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+    with open(raw_path, "w") as f:
+        f.write("y" * 200)
+
+    async def fake_clean_page(api_key, text):
+        return "cleaned " + text
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+    )
+
+    with pytest.raises(GeminiCostCapExceeded):
+        await AudiobookService._phase_clean(bid, "fake-key")
+
+
 @pytest.mark.asyncio
 async def test_phase_section_check_cancel_prevents_zombie_row_after_delete(monkeypatch):
     """Regression: _phase_section had no _check_cancel() call anywhere,
@@ -1588,6 +1710,51 @@ def test_upload_unexpected_failure_returns_curated_message_not_raw_exception(
     assert detail == "Upload failed. Please try again."
 
 
+def test_upload_flags_byte_identical_reimport_as_duplicate(monkeypatch):
+    """Regression: re-uploading the exact same file content previously
+    created a fully silent, independent duplicate book with no warning at
+    all — each mint a fresh book_id/uuid4 with no dedupe check anywhere.
+    The endpoint must now flag it via duplicate_of_book_id/title (without
+    blocking a deliberate re-import, e.g. a different voice)."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 3))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_word_count", classmethod(lambda cls, p: 50)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_char_count", classmethod(lambda cls, p: 250)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "render_cover", classmethod(lambda cls, b: None)
+    )
+
+    client = TestClient(app)
+    file_bytes = b"%PDF-1.4\n" + b"x" * 200
+
+    first = client.post(
+        "/audiobook", files={"file": ("book.pdf", file_bytes, "application/pdf")}
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["duplicate_of_book_id"] is None
+
+    second = client.post(
+        "/audiobook", files={"file": ("book.pdf", file_bytes, "application/pdf")}
+    )
+    assert second.status_code == 200, second.text
+    second_body = second.json()
+    assert second_body["duplicate_of_book_id"] == first.json()["book_id"]
+    assert second_body["duplicate_of_title"] == "book.pdf"
+    # Not blocked — a second, independent book is still created.
+    assert second_body["book_id"] != first.json()["book_id"]
+
+
 def test_upload_rejects_empty_pdf():
     """P9: zero-byte uploads should fail at the door."""
     from fastapi.testclient import TestClient
@@ -1917,6 +2084,96 @@ async def test_txt_file_extraction_does_not_call_pdf_extractor(monkeypatch):
     with open(page1, encoding="utf-8") as f:
         content = f.read()
     assert len(content) > 0, "extracted page should be non-empty"
+
+
+def test_read_text_rejects_binary_content_with_txt_extension(tmp_path):
+    """Regression: validation was extension-only — a binary file renamed to
+    .txt decoded silently under errors="replace" and sailed through
+    page_count > 0 straight into a "successfully completed" audiobook
+    narrating replacement-character noise, with zero warning anywhere."""
+    from app.services.text_extractor import TextExtractor
+
+    path = tmp_path / "renamed.txt"
+    # Genuinely arbitrary binary bytes — not valid UTF-8, decodes to mostly
+    # U+FFFD replacement characters under errors="replace".
+    path.write_bytes(bytes(range(256)) * 20)
+
+    with pytest.raises(ValueError, match="doesn't look like readable text"):
+        TextExtractor.read_text(str(path))
+
+
+def test_read_text_accepts_real_text_with_a_few_unencodable_chars(tmp_path):
+    """The replacement-char check must not false-positive on a real document
+    that happens to contain a handful of genuinely unencodable bytes."""
+    from app.services.text_extractor import TextExtractor
+
+    path = tmp_path / "mostly_fine.txt"
+    body = "This is a perfectly normal paragraph of real text. " * 50
+    with open(path, "wb") as f:
+        f.write(body.encode("utf-8"))
+        f.write(b"\xff\xfe")  # a couple of stray invalid bytes
+
+    text = TextExtractor.read_text(str(path))
+    assert "perfectly normal paragraph" in text
+
+
+# ---------- PDF extraction opens the PDF once, not once per page ----------
+
+
+class _FakePage:
+    def __init__(self, text: str):
+        self._text = text
+
+    def extract_text(self):
+        return self._text
+
+
+class _FakePDF:
+    def __init__(self, pages: list[str]):
+        self.pages = [_FakePage(t) for t in pages]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_extract_one_opens_pdf_only_once_for_the_whole_book(monkeypatch, tmp_path):
+    """Regression: extract_one previously reopened/reparsed the entire PDF
+    for every single page (N pages -> N pdfplumber.open calls on a
+    single-threaded executor). It now extracts and writes every page on the
+    first call, mirroring TextExtractor.extract_one's already-established
+    pattern, so a 1000-page book opens the PDF once instead of 1000 times."""
+    from app.services.pdf_extractor import PDFExtractor
+
+    page_texts = [f"Page {i} content." for i in range(1, 11)]
+    open_calls: list[str] = []
+
+    def fake_open(path):
+        open_calls.append(path)
+        return _FakePDF(page_texts)
+
+    monkeypatch.setattr("app.services.pdf_extractor.pdfplumber.open", fake_open)
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    # extract_one resolves the source path via AudiobookStore.pdf_path, which
+    # just needs the book dir to exist (create_book already makes it) — no
+    # real PDF bytes are read since pdfplumber.open is mocked above.
+
+    # Mirrors _phase_extract's sequential loop: call extract_one for every
+    # page in order, the same way the real pipeline does.
+    for n in range(1, 11):
+        PDFExtractor.extract_one(bid, n)
+
+    assert (
+        len(open_calls) == 1
+    ), f"expected 1 pdfplumber.open call, got {len(open_calls)}"
+    for n in range(1, 11):
+        path = AudiobookStore.page_raw_path(bid, n)
+        assert os.path.exists(path)
+        with open(path, encoding="utf-8") as f:
+            assert f.read() == f"Page {n} content."
 
 
 # ---------- Gemini timeout → raw text fallback ----------

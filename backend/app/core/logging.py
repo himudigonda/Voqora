@@ -107,7 +107,10 @@ class _JsonFormatter(logging.Formatter):
                 payload[k] = repr(v)
 
         if record.exc_info:
-            payload["exc"] = self.formatException(record.exc_info).splitlines()[-1]
+            # The full traceback, not just the exception's final message line
+            # — the file/line/call-stack is exactly what makes a logged
+            # error debuggable instead of a bare "ValueError: something".
+            payload["exc"] = self.formatException(record.exc_info)
 
         return json.dumps(payload, separators=(",", ":"))
 
@@ -116,7 +119,12 @@ _configured = False
 
 
 def configure(level: int = logging.INFO) -> None:
-    """Idempotent root-logger setup. Call once on app startup."""
+    """Idempotent root-logger setup. Call once on app startup.
+
+    `level` gates `log.debug(...)` calls (audiobook pipeline / TTS internals)
+    that exist in the code but are otherwise permanently invisible — see
+    `app.core.config.Settings.LOG_LEVEL`.
+    """
     global _configured
     if _configured:
         return

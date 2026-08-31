@@ -624,7 +624,7 @@ struct PreferenceSection<Content: View>: View {
             }
             .padding(20)
             .background(.ultraThinMaterial.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(.white.opacity(0.1), lineWidth: 1)

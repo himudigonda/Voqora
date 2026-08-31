@@ -125,6 +125,7 @@ class AudiobookStore:
                     log.warning(
                         "store.bad_legacy_meta",
                         extra={"book_id": entry, "error": str(e)},
+                        exc_info=True,
                     )
         except FileNotFoundError:
             pass
@@ -268,9 +269,21 @@ class AudiobookStore:
 
     @classmethod
     async def update_meta(cls, book_id: str, **patch: Any) -> dict[str, Any]:
-        """Read-modify-write under per-book asyncio.Lock + DB transaction."""
+        """Read-modify-write under per-book asyncio.Lock + DB transaction.
+
+        A no-op if the book no longer exists. Book creation always goes
+        through initial_meta()+write_meta(), never through here — so a
+        missing row means the book was deleted, not that this is meant to
+        create one. Without this guard, a book deleted while a pipeline
+        phase was still in flight (executor-backed work isn't cooperatively
+        cancellable mid-call) would have its next status update silently
+        re-INSERT a near-empty zombie row (no title, page_count=0,
+        status="failed") the instant read_meta() returned None.
+        """
         async with cls._lock(book_id):
-            meta = cls.read_meta(book_id) or {}
+            meta = cls.read_meta(book_id)
+            if meta is None:
+                return {}
             meta.update(patch)
             cls.write_meta(book_id, meta)
             return meta

@@ -30,7 +30,11 @@ from app.core.config import settings as _settings
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore, _now_iso
 from app.services.engine_manager import EngineManager
-from app.services.gemini_cleaner import GeminiAuthError, GeminiCleaner
+from app.services.gemini_cleaner import (
+    GeminiAuthError,
+    GeminiCleaner,
+    GeminiCostCapExceeded,
+)
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
 from app.services.text_normalizer import strip_markdown_for_narration
@@ -113,6 +117,7 @@ class AudiobookService:
                 log.error(
                     "audiobook.pipeline_fatal",
                     extra={"book_id": book_id, "error": str(e)},
+                    exc_info=True,
                 )
                 if AudiobookStore.read_meta(book_id) is not None:
                     await AudiobookStore.update_meta(
@@ -370,6 +375,7 @@ class AudiobookService:
                 book_id, status="cancelled", error="Cancelled by user."
             )
             cls._emit(book_id, "cancelled", error="Cancelled by user.")
+            log.info("audiobook.cancelled", extra={"book_id": book_id})
         except GeminiAuthError as e:
             await AudiobookStore.update_meta(
                 book_id,
@@ -377,7 +383,19 @@ class AudiobookService:
                 error="Invalid Gemini API key. Update in Settings.",
             )
             cls._emit(book_id, "failed", error=str(e))
+            log.warning("audiobook.failed_bad_api_key", extra={"book_id": book_id})
         except Exception as e:
+            # This was previously silent: it fully handles the exception (no
+            # re-raise), so the outer `_worker_loop`'s pipeline_fatal handler
+            # never sees it either. Every audiobook failure — TTS crash,
+            # cleaning crash, anything unexpected — set status="failed" for
+            # the user with zero trace in the backend log. This is the
+            # pipeline's actual top-level failure path; it must log.
+            log.error(
+                "audiobook.run_pipeline_failed",
+                extra={"book_id": book_id, "error": str(e)},
+                exc_info=True,
+            )
             await AudiobookStore.update_meta(book_id, status="failed", error=str(e))
             cls._emit(book_id, "failed", error=str(e))
         finally:
@@ -561,7 +579,11 @@ class AudiobookService:
                     timeout=120.0,
                 )
             except TimeoutError:
-                log.warning("audiobook.sections_timeout", extra={"book_id": book_id})
+                log.warning(
+                    "audiobook.sections_timeout",
+                    extra={"book_id": book_id},
+                    exc_info=True,
+                )
                 sections = []
             except GeminiAuthError:
                 raise
@@ -569,6 +591,7 @@ class AudiobookService:
                 log.warning(
                     "audiobook.sections_failed",
                     extra={"book_id": book_id, "error": str(e)},
+                    exc_info=True,
                 )
                 sections = []
 
@@ -634,6 +657,23 @@ class AudiobookService:
         # calls once the real cap is hit, falling back to local cleanup for
         # the rest rather than spending unboundedly.
         cost_state = {"spent_usd": 0.0}
+
+        # Runtime cost backstop: the /start pre-flight check only samples 3
+        # pages, so a book with uneven page density can pass that gate and
+        # still blow through MAX_GEMINI_COST_USD_PER_BOOK once real usage is
+        # measured — there was previously no check against actual spend at
+        # all. Seed from already-cleaned pages (on resume) so a book doesn't
+        # get a fresh budget every time it's interrupted and resumed.
+        gemini_chars = {"value": 0}
+        if uses_gemini_cleanup:
+            for n in range(1, page_count + 1):
+                cp = AudiobookStore.page_clean_path(book_id, n)
+                if os.path.exists(cp):
+                    try:
+                        with open(cp, encoding="utf-8") as f:
+                            gemini_chars["value"] += len(f.read())
+                    except OSError:
+                        pass
 
         async def clean_one(n: int) -> None:
             async with sem:
@@ -728,6 +768,7 @@ class AudiobookService:
                             log.warning(
                                 "audiobook.ocr_timeout",
                                 extra={"book_id": book_id, "page": n},
+                                exc_info=True,
                             )
                             cleaned = raw_text or "-"
                     else:
@@ -746,6 +787,7 @@ class AudiobookService:
                             log.warning(
                                 "audiobook.clean_timeout",
                                 extra={"book_id": book_id, "page": n},
+                                exc_info=True,
                             )
                             cleaned = raw_text or "-"
                 except GeminiAuthError:
@@ -754,6 +796,7 @@ class AudiobookService:
                     log.warning(
                         "audiobook.clean_failed",
                         extra={"book_id": book_id, "page": n, "error": str(e)},
+                        exc_info=True,
                     )
                     async with state_lock:
                         failed.append(n)
@@ -771,6 +814,19 @@ class AudiobookService:
                         book_id, "page_failed", phase="cleaning", page=n, error=str(e)
                     )
                     cleaned = raw_text or "-"
+
+                if uses_gemini_cleanup:
+                    async with state_lock:
+                        gemini_chars["value"] += len(raw_text) + len(cleaned)
+                        running_cost = GeminiCleaner.estimate_cost_usd(
+                            gemini_chars["value"]
+                        )
+                        if running_cost > _settings.MAX_GEMINI_COST_USD_PER_BOOK:
+                            raise GeminiCostCapExceeded(
+                                f"Actual Gemini cost (~${running_cost:.2f}) exceeded the "
+                                f"${_settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} safety cap "
+                                "partway through this book."
+                            )
 
                 out = AudiobookStore.page_clean_path(book_id, n)
                 tmp = out + ".tmp"
@@ -822,7 +878,18 @@ class AudiobookService:
                     and isinstance(t.exception(), GeminiAuthError)
                     for t in done
                 )
-                if remaining and (cls._cancel_flags.get(book_id) or auth_failed):
+                # A cost-cap breach must stop remaining pages immediately too
+                # — letting siblings keep calling Gemini after the decision
+                # to abort would spend even more, defeating the cap's point.
+                cost_cap_exceeded = any(
+                    t.done()
+                    and not t.cancelled()
+                    and isinstance(t.exception(), GeminiCostCapExceeded)
+                    for t in done
+                )
+                if remaining and (
+                    cls._cancel_flags.get(book_id) or auth_failed or cost_cap_exceeded
+                ):
                     for t in remaining:
                         t.cancel()
         finally:
@@ -833,6 +900,12 @@ class AudiobookService:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         gemini_auth_exc: GeminiAuthError | None = None
+        # Tracked separately from other_exc, at the same priority as
+        # gemini_auth_exc: like an auth failure, a cost-cap breach
+        # proactively cancels sibling tasks (see cost_cap_exceeded above),
+        # which would otherwise make was_cancelled swallow this exception's
+        # specific message behind a generic "Cancelled by user."
+        cost_cap_exc: GeminiCostCapExceeded | None = None
         was_cancelled = False
         other_exc: Exception | None = None
         for t in tasks:
@@ -844,6 +917,8 @@ class AudiobookService:
                 continue
             if isinstance(exc, GeminiAuthError):
                 gemini_auth_exc = gemini_auth_exc or exc
+            elif isinstance(exc, GeminiCostCapExceeded):
+                cost_cap_exc = cost_cap_exc or exc
             elif isinstance(exc, AudiobookCancelled):
                 was_cancelled = True
             else:
@@ -851,6 +926,8 @@ class AudiobookService:
 
         if gemini_auth_exc is not None:
             raise gemini_auth_exc
+        if cost_cap_exc is not None:
+            raise cost_cap_exc
         if was_cancelled:
             raise AudiobookCancelled(book_id)
         if other_exc is not None:
@@ -915,6 +992,7 @@ class AudiobookService:
                         log.warning(
                             "audiobook.tts_failed",
                             extra={"book_id": book_id, "page": n, "error": str(e)},
+                            exc_info=True,
                         )
                         failed.append(n)
                         # Mark this page distinctly (not shown as matching
@@ -1085,6 +1163,7 @@ class AudiobookService:
             log.warning(
                 "audiobook.transcript_write_failed",
                 extra={"book_id": book_id, "error": str(e)},
+                exc_info=True,
             )
             raise RuntimeError(f"Failed to write transcript: {e}") from e
 

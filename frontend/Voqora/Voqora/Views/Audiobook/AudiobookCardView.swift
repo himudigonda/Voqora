@@ -6,6 +6,7 @@ struct AudiobookCardView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     let book: Audiobook
     @State private var hovering = false
+    @State private var showDeleteConfirmation = false
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
@@ -74,19 +75,24 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
-            Button(role: .destructive) { bookVM.delete(book) } label: {
+            Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .confirmationDialog(
+            "Delete \"\(prettyTitle)\"?",
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                bookVM.delete(book)
+            }
+        } message: {
+            Text("This permanently deletes the audiobook and its narration. This can't be undone.")
+        }
     }
 
-    private var prettyTitle: String {
-        let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
-        }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 
     @ViewBuilder
     private var cover: some View {
@@ -227,11 +233,19 @@ struct AudiobookCardView: View {
     private var caption: some View {
         switch status {
         case .ready:
-            Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
-                .font(vm.appFont(size: 9, weight: .black).monospaced())
-                .kerning(0.8)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            HStack(spacing: 4) {
+                if !book.failedPages.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(.orange)
+                }
+                Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
+                    .font(vm.appFont(size: 9, weight: .black).monospaced())
+                    .kerning(0.8)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .help(book.failedPages.isEmpty ? "" : "\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble during cleaning or narration")
         case .failed:
             Text(status.caption)
                 .font(vm.appFont(size: 9, weight: .black))

@@ -29,6 +29,10 @@ struct CompletionSummaryModal: View {
                     .padding(.horizontal, 16)
             }
 
+            if !book.failedPages.isEmpty {
+                failedPagesWarning
+            }
+
             statsGrid
 
             Spacer(minLength: 0)
@@ -71,6 +75,35 @@ struct CompletionSummaryModal: View {
         .onAppear { bouncing.toggle() }
     }
 
+    /// The backend already tracks exactly which pages failed to clean or
+    /// narrate (book.failedPages), but nothing surfaced it here — a book
+    /// with degraded pages completed with the same unqualified celebration
+    /// as a fully clean one, and the only way to discover a problem was to
+    /// open the transcript and scroll to the specific page.
+    private var failedPagesWarning: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble")
+                    .font(vm.appFont(size: 12, weight: .bold))
+                Text("Cleaning or narration failed for some pages — check the transcript to see which ones.")
+                    .font(vm.appFont(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+        )
+        .padding(.horizontal, 4)
+    }
+
     private var statsGrid: some View {
         VStack(spacing: 10) {
             statRow("PAGES", "\(book.pageCount)", "doc.text")
@@ -84,9 +117,9 @@ struct CompletionSummaryModal: View {
         }
         .padding(16)
         .background(.ultraThinMaterial.opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
                 .stroke(.white.opacity(0.08), lineWidth: 1)
         )
     }
@@ -105,11 +138,7 @@ struct CompletionSummaryModal: View {
         }
     }
 
-    private var prettyTitle: String {
-        var t = book.title
-        if t.lowercased().hasSuffix(".pdf") { t = String(t.dropLast(4)) }
-        return t
-    }
+    private var prettyTitle: String { book.displayTitle }
 
     private func numberFormat(_ n: Int) -> String {
         let f = NumberFormatter()

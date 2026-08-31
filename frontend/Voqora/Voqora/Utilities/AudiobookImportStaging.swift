@@ -29,6 +29,17 @@ enum AudiobookImportStaging {
         supportedExtensions.contains(sourceURL.pathExtension.lowercased())
     }
 
+    /// Strips a supported source-file extension (case-insensitive) from a
+    /// filename or book title, if present. Single source of truth for
+    /// "pretty title" display — previously copy-pasted across 5 views, 2 of
+    /// which had drifted to only strip ".pdf".
+    nonisolated static func strippingSupportedExtension(from name: String) -> String {
+        for ext in supportedExtensions where name.lowercased().hasSuffix(".\(ext)") {
+            return String(name.dropLast(ext.count + 1))
+        }
+        return name
+    }
+
     static func stageDocument(
         from sourceURL: URL,
         in root: URL = FileManager.default.temporaryDirectory,

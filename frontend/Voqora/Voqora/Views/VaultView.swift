@@ -22,36 +22,54 @@ struct VaultView: View {
         return groups.sorted { $0.key > $1.key }
     }
 
-    var body: some View {
-        List {
-            ForEach(groupedEntries, id: \.0) { date, entries in
-                Section(header: Text(date, style: .date)
-                    .font(dashboardVM.appFont(size: 11, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .kerning(1))
-                {
-                    ForEach(entries) { entry in
-                        VaultEntryRow(entry: entry, selectedEntry: $selectedEntry)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    history.delete(entry: entry)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
-                                }
+    /// Distinguishes "genuinely no history yet" from "search/filter matched
+    /// nothing" — VaultView previously had neither state at all; an empty
+    /// or filtered-to-nothing list just rendered blank with no explanation,
+    /// unlike AudiobookLibraryView's equivalent three-tier state handling.
+    private var showsNoResultsState: Bool {
+        groupedEntries.isEmpty && !(searchText.isEmpty && !showOnlyFavorites)
+    }
 
-                                Button {
-                                    history.toggleFavorite(entry: entry)
-                                } label: {
-                                    Label(entry.isFavorite ? "Unstar" : "Star", systemImage: entry.isFavorite ? "star.slash" : "star.fill")
-                                }
-                                .tint(.yellow)
+    var body: some View {
+        Group {
+            if groupedEntries.isEmpty {
+                if showsNoResultsState {
+                    noResultsState
+                } else {
+                    emptyState
+                }
+            } else {
+                List {
+                    ForEach(groupedEntries, id: \.0) { date, entries in
+                        Section(header: Text(date, style: .date)
+                            .font(dashboardVM.appFont(size: 11, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .kerning(1))
+                        {
+                            ForEach(entries) { entry in
+                                VaultEntryRow(entry: entry, selectedEntry: $selectedEntry)
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                        Button(role: .destructive) {
+                                            history.delete(entry: entry)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+
+                                        Button {
+                                            history.toggleFavorite(entry: entry)
+                                        } label: {
+                                            Label(entry.isFavorite ? "Unstar" : "Star", systemImage: entry.isFavorite ? "star.slash" : "star.fill")
+                                        }
+                                        .tint(.yellow)
+                                    }
                             }
+                        }
                     }
                 }
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
-        .listStyle(.inset)
-        .scrollContentBackground(.hidden)
         .overlay(alignment: .top) {
             if let persistenceError = history.persistenceError {
                 HStack(spacing: 10) {
@@ -103,6 +121,46 @@ struct VaultView: View {
         } message: {
             Text("This removes your saved spoken-text history from this Mac.")
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "text.bubble")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.secondary.opacity(0.4))
+            VStack(spacing: 6) {
+                Text("YOUR VAULT IS EMPTY")
+                    .font(dashboardVM.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text("Select text in any app and press Cmd+Shift+. to hear it — spoken passages are saved here.")
+                    .font(dashboardVM.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var noResultsState: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 96, weight: .ultraLight))
+                .foregroundStyle(.secondary.opacity(0.4))
+            VStack(spacing: 6) {
+                Text("NO MATCHES")
+                    .font(dashboardVM.appFont(size: 12, weight: .black))
+                    .kerning(2)
+                    .foregroundStyle(.secondary)
+                Text(searchText.isEmpty ? "No starred snippets yet." : "No spoken text matches \u{201C}\(searchText)\u{201D}. Try a different search.")
+                    .font(dashboardVM.appFont(size: 14))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

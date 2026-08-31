@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # production. Set DEBUG_ENDPOINTS=1 to enable. See HARD-070.
     DEBUG_ENDPOINTS: bool = False
 
+    # Root logger level. INFO by default; set LOG_LEVEL=DEBUG for full
+    # pipeline detail (TTS lookahead, audiobook chunking) when debugging.
+    LOG_LEVEL: str = "INFO"
+
     # Hard cap on the estimated Gemini cost per audiobook. Estimated values
     # above this are rejected at upload time so a user can't accidentally
     # run up a multi-dollar bill on a 2,000-page book. See HARD-072.
