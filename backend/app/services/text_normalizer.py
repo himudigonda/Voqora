@@ -136,6 +136,15 @@ def _parse_list_block(
     return sentence, i
 
 
+def _ensure_blank_separator(out: list[str], lines: list[str], next_i: int) -> None:
+    """Force a blank line after a heading/list/table block so it reads as its
+    own paragraph in the transcript, matching the script-style formatting the
+    Gemini cleanup path now also produces — even when the source Markdown had
+    no blank line of its own between that block and the next line."""
+    if out and out[-1] != "" and next_i < len(lines) and lines[next_i].strip():
+        out.append("")
+
+
 def strip_markdown_for_narration(text: str) -> str:
     """Convert Markdown source text into natural narration text.
 
@@ -177,6 +186,7 @@ def strip_markdown_for_narration(text: str) -> str:
             if sentence is not None:
                 out.append(sentence)
                 i = next_i
+                _ensure_blank_separator(out, lines, i)
                 continue
 
         item_re = None
@@ -189,12 +199,14 @@ def strip_markdown_for_narration(text: str) -> str:
             if sentence is not None:
                 out.append(sentence)
                 i = next_i
+                _ensure_blank_separator(out, lines, i)
                 continue
 
         header_match = _HEADER_LINE_RE.match(line)
         if header_match:
             out.append(_inline_clean(header_match.group(1)).strip())
             i += 1
+            _ensure_blank_separator(out, lines, i)
             continue
 
         bq_match = _BLOCKQUOTE_LINE_RE.match(line)

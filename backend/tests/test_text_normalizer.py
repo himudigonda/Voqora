@@ -110,3 +110,24 @@ def test_ordinary_apostrophes_in_contractions_are_preserved():
     out = strip_markdown_for_narration("It's a nice day, isn't it?")
     assert "It's" in out
     assert "isn't" in out
+
+
+def test_header_immediately_followed_by_text_gets_a_forced_paragraph_break():
+    """Source Markdown with no blank line between a heading and its body text
+    still reads as two separate paragraphs in the narrated output, matching
+    the Gemini cleanup path's script-style formatting."""
+    out = strip_markdown_for_narration("# Chapter One\nThe story begins here.")
+    assert out.split("\n\n") == ["Chapter One", "The story begins here."]
+
+
+def test_list_immediately_followed_by_text_gets_a_forced_paragraph_break():
+    out = strip_markdown_for_narration("- first item\n- second item\nAfter the list.")
+    paragraphs = out.split("\n\n")
+    assert len(paragraphs) == 2
+    assert "first item" in paragraphs[0]
+    assert paragraphs[1] == "After the list."
+
+
+def test_header_at_end_of_document_has_no_trailing_blank_line():
+    out = strip_markdown_for_narration("Intro.\n\n# The End")
+    assert out == "Intro.\n\nThe End"

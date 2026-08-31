@@ -40,7 +40,9 @@ ABSOLUTE RULES:
    markers entirely and speak only the underlying content — never vocalize
    the punctuation itself:
    - Headings ("#", "##", ...): drop the hashes, speak the heading text as
-     its own sentence (optionally as a natural transition, e.g. "Chapter two.").
+     its own short standalone paragraph (optionally as a natural transition,
+     e.g. "Chapter two."), on its own line, separated from the text around it
+     by a blank line.
    - Bold/italic ("**text**", "*text*", "__text__", "_text_"): drop the
      markers, keep "text".
    - Links ("[label](url)"): speak only "label", drop the URL.
@@ -61,11 +63,17 @@ ABSOLUTE RULES:
 7. For bullet lists: convert to "First, ... Second, ..." or read in order with
    periods.
 8. Reflow text into natural paragraphs. Join broken lines that belong to the
-   same sentence. The result should read like a real audiobook narrator's
-   script — natural spoken sentences, not a character-by-character transcript
-   of the source formatting.
-9. Output ONLY the cleaned narration text. No preamble, no commentary, no
-   markdown, no JSON. Plain prose only.
+   same sentence — a paragraph should be one continuous run of prose with no
+   internal line breaks. The result should read like a real audiobook
+   narrator's script — natural spoken sentences, not a character-by-character
+   transcript of the source formatting.
+9. Format the output as an actual script: separate every paragraph (and every
+   heading, list, and table you produce) from its neighbors with exactly one
+   blank line. Never emit two paragraphs back-to-back on adjacent lines —
+   this blank line is what makes the output look and read like a finished
+   script instead of a raw text dump.
+10. Output ONLY the cleaned narration text. No preamble, no commentary, no
+    markdown, no JSON. Plain prose only, formatted per rule 9.
 
 If the input page is empty or contains no readable content, output the single
 character "-".
@@ -82,11 +90,15 @@ STEP 2 — CLEAN: Apply these rules to the extracted text:
 1. Preserve every meaningful word. Do not summarize, paraphrase, or omit content.
 2. Remove only: page numbers, running headers/footers, hyphenation artifacts
    (e.g., "exam-\\nple" -> "example"), and PDF extraction noise.
-3. Reflow into natural paragraphs; join broken lines belonging to the same sentence.
+3. Reflow into natural paragraphs; join broken lines belonging to the same
+   sentence — a paragraph has no internal line breaks.
 4. Tables: prefix first row with "The following is a table." Convert each row to
    a sentence. End with "End of table.".
 5. Equations: read aloud naturally (e.g., "x squared plus y squared equals z squared").
 6. Bullet lists: convert to "First, ... Second, ..." with periods.
+7. Format the output as an actual script: separate every paragraph, heading,
+   list, and table from its neighbors with exactly one blank line. Never emit
+   two back-to-back on adjacent lines.
 
 Output ONLY the cleaned narration text. No preamble, no commentary, no markdown.
 If the page is blank or unreadable, output the single character "-".

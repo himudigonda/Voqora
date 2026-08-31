@@ -16,7 +16,15 @@ struct AudiobookPlayerView: View {
     @State private var localScrub: Double = 0
     @State private var dragging = false
     @State private var playerSpeed: Double = 1.0
-    @State private var transcriptOpen = false
+    // T-22: a collapsible transcript (closed by default, then opened by
+    // default in T-21) still left a "closed" state that was mostly dead
+    // space at any window size, and Sections was a separate rail that simply
+    // vanished below 1000pt with no replacement. Both problems had the same
+    // root cause: a piece of content that could be entirely absent. Fixed by
+    // making Transcript/Sections two tabs of one panel that is *always*
+    // present and always fills the remaining space — there is no longer a
+    // state where the lower half of the player is empty.
+    @State private var panelTab: ContentTab = .transcript
     @State private var dominantColor: Color = .cyan
     // T-13: last time the user manually scrolled the transcript; suppresses
     // the auto-scroll-on-page-change effect for a short window afterward.
@@ -37,15 +45,19 @@ struct AudiobookPlayerView: View {
             let visibility = AudiobookPlayerLayout.columnVisibility(for: geometry.size.width)
             ZStack(alignment: .topTrailing) {
                 background
-                HStack(alignment: .top, spacing: 24) {
+                // T-22: capped and centered, not just `maxWidth: .infinity` —
+                // on an ultra-wide window an unbounded scrubber/content panel
+                // stretched edge to edge, which is both ugly and imprecise
+                // to click. The cap grows to fit the cover column only when
+                // it's actually showing.
+                HStack(alignment: .top, spacing: 28) {
                     if visibility.showCover {
                         coverColumn
                     }
-                    centerColumn
-                    if visibility.showRail {
-                        sectionsRail
-                    }
+                    mainColumn(showCover: visibility.showCover)
                 }
+                .frame(maxWidth: AudiobookPlayerLayout.maxContentWidth + (visibility.showCover ? 268 : 0))
+                .frame(maxWidth: .infinity)
                 .padding(28)
 
                 sleepTimerMenu
@@ -171,28 +183,64 @@ struct AudiobookPlayerView: View {
         return "AUDIOBOOK"
     }
 
-    // MARK: - Center column
+    // MARK: - Main column
 
-    private var centerColumn: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            VStack(spacing: 28) {
+    /// T-22: replaces the old vertically-`Spacer`-centered layout, which
+    /// left a growing dead zone above/below a fixed-size control cluster as
+    /// the window got taller — the layout simply never used the extra
+    /// space. Now every section stacks top-down with no absorbing `Spacer`,
+    /// and only `contentPanel` (the last element) is allowed to grow, so a
+    /// taller window always turns directly into more usable content instead
+    /// of more empty air.
+    private func mainColumn(showCover: Bool) -> some View {
+        VStack(spacing: 22) {
+            if !showCover {
+                compactHeader
+            }
+            VStack(spacing: 24) {
                 scrubberSection
                 transportSection
             }
-            Spacer(minLength: 0)
-            VStack(spacing: 0) {
-                speedAndSleep
-                if transcriptOpen {
-                    transcriptPanel
-                        .padding(.top, 16)
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-                transcriptToggle
-                    .padding(.top, 10)
-            }
+            speedAndSleep
+            contentPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// T-22: shown in place of `coverColumn` below `coverColumnBreakpoint`.
+    /// The old layout simply dropped the cover art *and* the title/chapter
+    /// label together below that width — there was no way to tell what you
+    /// were listening to without widening the window. This keeps that
+    /// information always visible, just compact.
+    private var compactHeader: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Image(systemName: "book.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.cyan.opacity(0.6))
+                }
+            }
+            .frame(width: 40, height: 56)
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(currentSectionLabel)
+                    .font(vm.appFont(size: 9, weight: .black))
+                    .kerning(1.5)
+                    .foregroundStyle(.cyan)
+                    .lineLimit(1)
+                Text(prettyTitle)
+                    .font(vm.appFont(size: 15, weight: .bold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var scrubberSection: some View {
@@ -396,28 +444,45 @@ struct AudiobookPlayerView: View {
         .accessibilityLabel("Sleep timer")
     }
 
-    // MARK: - Transcript
+    // MARK: - Content panel (Transcript / Sections)
 
-    private var transcriptToggle: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.3)) { transcriptOpen.toggle() }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: transcriptOpen ? "chevron.up.circle" : "text.alignleft")
-                    .font(.system(size: 12, weight: .medium))
-                Text(transcriptOpen ? "Hide Transcript" : "Show Transcript")
-                    .font(vm.appFont(size: 11, weight: .bold))
+    private enum ContentTab: String, CaseIterable, Identifiable {
+        case transcript = "Transcript"
+        case sections = "Sections"
+        var id: String { rawValue }
+    }
+
+    /// T-22: the single always-present, always-space-filling panel that
+    /// replaced the old collapsible transcript strip and the separate
+    /// width-gated sections rail. Both tabs share one card chrome and one
+    /// `maxHeight: .infinity`, so switching tabs never changes how much of
+    /// the window the panel claims — only what's inside it.
+    private var contentPanel: some View {
+        VStack(spacing: 12) {
+            Picker("", selection: $panelTab) {
+                ForEach(ContentTab.allCases) { tab in
+                    Text(tab.rawValue).tag(tab)
+                }
             }
-            .foregroundStyle(transcriptOpen ? Color.cyan : Color.secondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .background(
-                Capsule()
-                    .stroke(transcriptOpen ? Color.cyan.opacity(0.5) : Color.primary.opacity(0.15), lineWidth: 1)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 260)
+
+            Group {
+                switch panelTab {
+                case .transcript: transcriptPanel
+                case .sections: sectionsListContent
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.ultraThinMaterial.opacity(0.4))
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
             )
         }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.2), value: transcriptOpen)
+        .frame(minHeight: 220, maxHeight: .infinity)
     }
 
     private var transcriptPanel: some View {
@@ -425,14 +490,21 @@ struct AudiobookPlayerView: View {
             if let transcript = bookVM.currentTranscript {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
+                        // T-21: an unbounded reading width made the transcript
+                        // stretch edge-to-edge in a wide window — lines far
+                        // longer than comfortable reading measure, another
+                        // shape of "doesn't adapt well to window size." Capped
+                        // and centered instead, like any real reading surface.
+                        LazyVStack(alignment: .leading, spacing: 22) {
                             ForEach(orderedPages(transcript), id: \.page) { entry in
                                 let isCurrent = isCurrentPage(entry.page, in: transcript)
                                 transcriptRow(entry, isCurrent: isCurrent, in: transcript)
                                     .id(entry.page)
                             }
                         }
-                        .padding(20)
+                        .frame(maxWidth: 720)
+                        .frame(maxWidth: .infinity)
+                        .padding(24)
                         // T-13 fix: the real signal for "the user is manually
                         // scrolling" is AppKit's willStartLiveScrollNotification
                         // (trackpad/wheel/scrollbar), bridged via LiveScrollDetector
@@ -476,15 +548,9 @@ struct AudiobookPlayerView: View {
                         }
                     }
                 }
-                .frame(height: 220)
-                .background(.ultraThinMaterial.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-                )
             } else {
                 ProgressView().tint(.cyan).padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -506,9 +572,19 @@ struct AudiobookPlayerView: View {
                 // Only the playing page pays for sentence splitting — a
                 // reader isn't watching every other page tick in real time.
                 currentPageText(entry, in: t)
+                    .lineSpacing(6)
             } else {
-                Text(entry.text)
-                    .font(vm.appFont(size: 13, weight: .regular))
+                // T-21: was `Text(entry.text)` verbatim — any single line
+                // break the cleanup pass left in the raw string (a soft wrap,
+                // a source line that never got reflowed) rendered as a
+                // mid-sentence break, and pages with no separators at all
+                // rendered as one dense, "raw"-looking wall of text. Reflowing
+                // through the same paragraph grouping the highlighted page
+                // uses keeps every page in the transcript consistently
+                // formatted, whether or not it's currently playing.
+                Text(Self.reflowedText(entry.text))
+                    .font(vm.appFont(size: 14, weight: .regular))
+                    .lineSpacing(6)
                     .foregroundStyle(entry.status != nil ? Color.secondary.opacity(0.6) : Color.secondary)
                     .italic(entry.status != nil)
             }
@@ -522,23 +598,52 @@ struct AudiobookPlayerView: View {
     /// estimated by interpolating playback progress through the page's time
     /// window proportionally across its sentences' character lengths — an
     /// estimate, not exact, but far tighter than "the whole paragraph."
+    /// T-21: previously flattened the whole page into one sentence array via
+    /// `splitIntoSentences(entry.text)` and rejoined every sentence with a
+    /// single space, unconditionally — throwing away every paragraph break
+    /// the cleanup pass had produced. That made the one page a reader is
+    /// actually looking at (the currently-playing one) the *worst*-formatted
+    /// row in the transcript: a single dense run-on block regardless of how
+    /// well-structured the source text was. Now sentences are split per
+    /// paragraph (`Self.splitIntoParagraphs`) and paragraph breaks are
+    /// re-inserted between blocks, while the current-sentence index is still
+    /// computed over the full flattened list so timing/highlight behavior
+    /// (and its existing test coverage) is unchanged.
     private func currentPageText(_ entry: PageEntry, in t: AudiobookService.Transcript) -> Text {
-        let sentences = Self.splitIntoSentences(entry.text)
-        guard sentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
-            return Text(entry.text)
-                .font(vm.appFont(size: 14, weight: .bold))
+        let paragraphs = Self.splitIntoParagraphs(entry.text)
+        let sentencesByParagraph = paragraphs.map { Self.splitIntoSentences($0) }
+        let allSentences = sentencesByParagraph.flatMap { $0 }
+        guard allSentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
+            return Text(Self.reflowedText(entry.text))
+                .font(vm.appFont(size: 15, weight: .bold))
                 .foregroundStyle(Color.cyan)
         }
-        let current = Self.currentSentenceIndex(in: sentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime)
+        let current = Self.currentSentenceIndex(
+            in: allSentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime
+        )
 
-        return sentences.enumerated().reduce(Text("")) { acc, item in
-            let (idx, sentence) = item
-            let isCurrentSentence = idx == current
-            let piece = Text(sentence)
-                .font(vm.appFont(size: 13, weight: isCurrentSentence ? .bold : .regular))
-                .foregroundStyle(isCurrentSentence ? Color.cyan : Color.secondary)
-            return idx == 0 ? piece : acc + Text(" ") + piece
+        var result: Text?
+        var globalIndex = 0
+        for sentences in sentencesByParagraph {
+            if result != nil {
+                result = result! + Text("\n\n")
+            }
+            for (sentenceIndex, sentence) in sentences.enumerated() {
+                let isCurrentSentence = globalIndex == current
+                let piece = Text(sentence)
+                    .font(vm.appFont(size: 14, weight: isCurrentSentence ? .bold : .regular))
+                    .foregroundStyle(isCurrentSentence ? Color.cyan : Color.secondary)
+                if result == nil {
+                    result = piece
+                } else if sentenceIndex == 0 {
+                    result = result! + piece
+                } else {
+                    result = result! + Text(" ") + piece
+                }
+                globalIndex += 1
+            }
         }
+        return result ?? Text(Self.reflowedText(entry.text))
     }
 
     /// The playing page's [start, end) time window: `end` is the next page
@@ -602,9 +707,14 @@ struct AudiobookPlayerView: View {
         sectionsCache.sortedSections = Self.sortSections(book.sections)
     }
 
-    // MARK: - Sections rail
+    // MARK: - Sections tab
 
-    private var sectionsRail: some View {
+    /// T-22: was a separate fixed-260pt rail that vanished entirely below
+    /// 1000pt with no replacement — Sections was simply unreachable at any
+    /// window narrower than that. Now one tab of `contentPanel`, always
+    /// reachable regardless of width, sharing the panel's chrome instead of
+    /// carrying its own.
+    private var sectionsListContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("SECTIONS")
@@ -617,7 +727,8 @@ struct AudiobookPlayerView: View {
                     .foregroundStyle(.cyan)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
             Divider()
 
@@ -636,18 +747,14 @@ struct AudiobookPlayerView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.top, 60)
+                        .frame(maxWidth: .infinity)
                     }
                 }
                 .padding(.vertical, 10)
+                .padding(.horizontal, 8)
             }
         }
-        .frame(width: 260)
-        .background(.ultraThinMaterial.opacity(0.4))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous)
-                .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func sectionRow(_ section: AudiobookSection) -> some View {
@@ -800,6 +907,44 @@ extension AudiobookPlayerView {
             return true
         }
         return sentences.isEmpty ? [text] : sentences
+    }
+
+    /// Groups a page's raw text into paragraphs: a run of one or more
+    /// consecutive non-blank lines, joined with a single space (this also
+    /// reflows a soft-wrapped line that never got joined upstream), with any
+    /// blank line acting as a paragraph boundary. Falls back to the whole
+    /// trimmed string as one paragraph if there's no blank-line structure at
+    /// all — text from before the cleanup pass started emitting paragraph
+    /// breaks still renders as continuous prose instead of empty.
+    static func splitIntoParagraphs(_ text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        var paragraphs: [String] = []
+        var current: [String] = []
+        for rawLine in text.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty {
+                if !current.isEmpty {
+                    paragraphs.append(current.joined(separator: " "))
+                    current = []
+                }
+            } else {
+                current.append(line)
+            }
+        }
+        if !current.isEmpty {
+            paragraphs.append(current.joined(separator: " "))
+        }
+        if paragraphs.isEmpty {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [trimmed]
+        }
+        return paragraphs
+    }
+
+    /// A page's text reflowed into blank-line-separated paragraphs, for
+    /// display. Idempotent on text that's already well-formatted.
+    static func reflowedText(_ text: String) -> String {
+        splitIntoParagraphs(text).joined(separator: "\n\n")
     }
 
     /// Estimates which sentence within a page is currently being spoken by

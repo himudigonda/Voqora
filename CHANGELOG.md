@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.1.2] - 2026-08-31
+
+### Audiobooks — player redesign
+
+- Rebuilt the audiobook player's layout from the ground up. It previously
+  used two independent width breakpoints that combined into dead ends: the
+  Sections list vanished entirely below 1000pt with no replacement, and a
+  closed transcript left most of a tall or wide window as empty space with
+  nothing able to grow into it.
+- Transcript and Sections are now two tabs of a single panel that is always
+  present and always fills whatever vertical space the window has — there is
+  no longer a state where the lower half of the player is empty.
+- The transport and reading column is now capped and centered on very wide
+  windows instead of stretching the scrubber and transcript edge to edge.
+- Narrowing the window below the cover-art breakpoint no longer drops the
+  book title and chapter label entirely — a compact inline header replaces
+  the full cover art instead of just disappearing.
+
+### Audiobooks — narration quality
+
+- The Gemini cleanup prompt now explicitly formats its output as a real
+  script — paragraphs, headings, lists, and tables are separated by blank
+  lines — instead of "reflow into paragraphs" with no actual paragraph
+  structure, which produced one dense wall of text.
+- Fixed the currently-playing page in the transcript losing every paragraph
+  break: its sentence-level highlighting used to flatten the whole page and
+  rejoin it with single spaces, making the one page you're actually reading
+  along with the worst-formatted row in the transcript. Paragraph structure
+  is now preserved while still highlighting the current sentence.
+- Every transcript page — not just the current one — is now reflowed
+  consistently, so a raw line break left over from extraction no longer
+  renders as a stray mid-sentence break.
+- The local (no-Gemini) cleanup path now forces a paragraph break after a
+  heading, list, or table even when the source Markdown had none, matching
+  the Gemini path's formatting.
+
 ## [1.1.1] - 2026-08-31
 
 ### Selected-text speech
@@ -157,6 +193,7 @@ newer.
 - Use a clear, manual DMG installation and update flow while the project is
   validating product-market fit without Apple notarization.
 
+[1.1.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.2
 [1.1.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.1
 [1.1.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.0
 [1.0.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.0.0

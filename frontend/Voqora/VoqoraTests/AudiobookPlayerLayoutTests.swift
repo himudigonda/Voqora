@@ -2,30 +2,23 @@
 import XCTest
 
 final class AudiobookPlayerLayoutTests: XCTestCase {
-    func test_wideDetailPaneShowsAllColumns() {
+    func test_wideDetailPaneShowsCover() {
         let visibility = AudiobookPlayerLayout.columnVisibility(for: 1200)
         XCTAssertTrue(visibility.showCover)
-        XCTAssertTrue(visibility.showRail)
     }
 
-    func test_mediumDetailPaneHidesOnlySectionsRail() {
+    func test_narrowDetailPaneHidesCover() {
         let visibility = AudiobookPlayerLayout.columnVisibility(
-            for: AudiobookPlayerLayout.sectionsRailBreakpoint - 1
+            for: AudiobookPlayerLayout.coverColumnBreakpoint - 1
         )
-        XCTAssertTrue(visibility.showCover)
-        XCTAssertFalse(visibility.showRail)
+        XCTAssertFalse(visibility.showCover)
     }
 
-    func test_minimumWindowDetailPaneKeepsOnlyReadingControls() {
-        // 800pt app minimum minus its 280pt maximum sidebar width.
-        let visibility = AudiobookPlayerLayout.columnVisibility(for: 800 - 280)
-        XCTAssertFalse(visibility.showCover)
-        XCTAssertFalse(visibility.showRail)
+    func test_minimumWindowDetailPaneHidesCover() {
+        XCTAssertFalse(AudiobookPlayerLayout.columnVisibility(for: AudiobookPlayerLayout.minWidth).showCover)
     }
 
-    func test_negativeLayoutProposalDoesNotExposeOptionalColumns() {
-        let visibility = AudiobookPlayerLayout.columnVisibility(for: -1)
-        XCTAssertFalse(visibility.showCover)
-        XCTAssertFalse(visibility.showRail)
+    func test_negativeLayoutProposalDoesNotExposeCover() {
+        XCTAssertFalse(AudiobookPlayerLayout.columnVisibility(for: -1).showCover)
     }
 }

@@ -166,6 +166,43 @@ final class AudiobookPlayerViewTests: XCTestCase {
         AudiobookSection(title: title, startPage: startPage, endPage: endPage, startTime: startTime)
     }
 
+    // MARK: - splitIntoParagraphs / reflowedText (T-21: preserve paragraph
+    // structure in the transcript instead of collapsing it away)
+
+    func test_splitIntoParagraphs_blankLineSeparatesParagraphs() {
+        let paragraphs = AudiobookPlayerView.splitIntoParagraphs("First paragraph.\n\nSecond paragraph.")
+        XCTAssertEqual(paragraphs, ["First paragraph.", "Second paragraph."])
+    }
+
+    func test_splitIntoParagraphs_singleNewlinesWithinAParagraphAreReflowedWithASpace() {
+        let paragraphs = AudiobookPlayerView.splitIntoParagraphs("This line wraps\nonto the next\nwithout a blank line.")
+        XCTAssertEqual(paragraphs, ["This line wraps onto the next without a blank line."])
+    }
+
+    func test_splitIntoParagraphs_emptyString_returnsNoParagraphs() {
+        XCTAssertEqual(AudiobookPlayerView.splitIntoParagraphs(""), [])
+    }
+
+    func test_splitIntoParagraphs_noBlankLinesAtAll_fallsBackToOneParagraph() {
+        let paragraphs = AudiobookPlayerView.splitIntoParagraphs("Just one flat run of prose with no breaks.")
+        XCTAssertEqual(paragraphs, ["Just one flat run of prose with no breaks."])
+    }
+
+    func test_splitIntoParagraphs_collapsesMultipleConsecutiveBlankLines() {
+        let paragraphs = AudiobookPlayerView.splitIntoParagraphs("One.\n\n\n\nTwo.")
+        XCTAssertEqual(paragraphs, ["One.", "Two."])
+    }
+
+    func test_reflowedText_joinsParagraphsWithABlankLine() {
+        let out = AudiobookPlayerView.reflowedText("Heading\n\nBody text in its own paragraph.")
+        XCTAssertEqual(out, "Heading\n\nBody text in its own paragraph.")
+    }
+
+    func test_reflowedText_reflowsSoftWrappedLinesWithNoBlankLineIntoOneParagraph() {
+        let out = AudiobookPlayerView.reflowedText("This line wraps\nonto the next.")
+        XCTAssertEqual(out, "This line wraps onto the next.")
+    }
+
     // MARK: - splitIntoSentences / currentSentenceIndex (sentence-level transcript highlight)
 
     func test_splitIntoSentences_splitsOnSentenceBoundaries() {
