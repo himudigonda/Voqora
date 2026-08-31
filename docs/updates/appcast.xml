@@ -10,6 +10,20 @@
             <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <description sparkle:format="markdown"><![CDATA[
+### Selected-text speech
+
+- Fixed the "speak selected text" shortcut reading raw Markdown syntax
+  aloud — headings, emphasis, links, lists, and code fences from things
+  like READMEs and notes are now stripped to natural speech instead of
+  being read as literal symbols.
+- The language field on a speak request is no longer silently discarded —
+  it was always hardcoded to English phonemization regardless of what was
+  actually requested.
+- Repeatedly pressing the shortcut with nothing selected in an app that
+  can't expose its text (canvas-rendered PDF viewers, games) now names the
+  app and says it may not support this, instead of repeating the same
+  generic message forever.
+
 ### Audiobooks — narration quality
 
 - Fixed the local (no-Gemini, the default) cleanup path narrating raw
@@ -24,33 +38,52 @@
 - Markdown documents processed without Gemini cleanup now get real chapter
   detection from their headings, instead of always collapsing into one
   section covering the whole book.
+- A binary file renamed to look like a supported text document is now
+  rejected up front instead of narrating replacement-character noise.
+- Re-uploading the exact same file is now flagged as a duplicate instead of
+  silently creating an independent copy.
+- PDFs now open once per book instead of once per page during import — a
+  meaningful speedup on longer documents.
 
 ### Audiobooks — reliability
 
-- Fixed a race where deleting a book while chapter detection was still
-  running against Gemini could resurrect the deleted book after the fact.
+- Fixed a race where deleting a book while a pipeline phase was still
+  running could resurrect it afterward as an empty ghost entry.
 - A transcript that failed to write to disk no longer leaves a book stuck
   in a falsely "done" state with a permanently broken transcript; it's now
   a retryable failure.
-- Added a runtime cap on Gemini cleanup spending per book, so a document
-  costing more than expected (e.g. more scanned pages than the upfront
-  estimate sampled) can no longer exceed the configured per-book limit.
+- Added a runtime cap on Gemini cleanup spending per book, tracked against
+  actual usage (not just the upfront estimate). Once a book crosses the
+  cap, remaining pages fall back to local narration instead of the book
+  failing outright — you still get a finished audiobook.
 - Selected-text speech interrupting audiobook playback no longer leaves a
   sleep timer running in the background — it previously kept counting down
   and could silently stop whatever played next with no explanation.
 - Error messages from a failed document upload are now clear and actionable
   instead of occasionally surfacing raw internal detail.
+- Deleting an audiobook now asks for confirmation, matching history's
+  existing "clear" confirmation.
+- Fixed the transcript-skip keyboard shortcut moving 15 seconds while its
+  own on-screen button and tooltip both said 30.
+- Backend failures are now logged with a full stack trace instead of a
+  single truncated line — including audiobook processing failures, which
+  previously logged nothing useful for diagnosing what actually broke.
 
 ### Audiobooks — accessibility & UX
 
 - Added VoiceOver labels to the playback, transport, and sleep-timer
-  controls in the audiobook player and mini player.
+  controls in the audiobook player, the mini player, and the main
+  dashboard's play/pause/skip controls.
 - Fixed the transcript's auto-scroll-pause not responding to normal
   trackpad or scroll-wheel scrolling, which is how most people actually
   scroll on a Mac — it only recognized click-and-drag before.
+- The transcript now highlights the sentence currently being read instead
+  of the entire page.
+- History's empty and no-results states are now visible instead of a blank
+  screen.
 
 ]]></description>
-            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.1.1/Voqora-1.1.1.dmg" length="430439103" type="application/octet-stream" sparkle:edSignature="rHqvqJtJXfv5UCZ/aXJnBIf2L/e1fEDoMF6vKiBugou+oKCsHRNU91NPUtJDi8fMn6CM9EHv9DI2kIuryE/kCQ=="/>
+            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.1.1/Voqora-1.1.1.dmg" length="430462472" type="application/octet-stream" sparkle:edSignature="lUX40cTBxF0KkNLFLc53yU5o6CMcgvj3qu8hDHRWxPCMN0JTBhS4SZy38SxOK3Ypr3uDdC0yiS1ND7098jcwCA=="/>
         </item>
     </channel>
 </rss>
