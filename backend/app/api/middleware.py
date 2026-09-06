@@ -37,7 +37,9 @@ class RejectBrowserOriginMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         if request.headers.get("origin") is not None:
-            return PlainTextResponse("Cross-origin requests are not permitted.", status_code=403)
+            return PlainTextResponse(
+                "Cross-origin requests are not permitted.", status_code=403
+            )
         return await call_next(request)
 
 

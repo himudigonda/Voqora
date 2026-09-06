@@ -45,7 +45,9 @@ def test_same_origin_looking_header_is_still_rejected(mock_ensure) -> None:
 
 
 @patch.object(EngineManager, "ensure_loaded")
-def test_post_speak_with_origin_header_is_rejected_before_reaching_the_route(mock_ensure) -> None:
+def test_post_speak_with_origin_header_is_rejected_before_reaching_the_route(
+    mock_ensure,
+) -> None:
     response = _client().post(
         "/speak",
         json={"text": "hello", "voice": "af_bella"},
