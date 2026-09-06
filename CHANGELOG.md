@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.1.3] - 2026-09-06
+
+### Performance
+
+- Fixed a regression that made the "speak selected text" shortcut take
+  3-4 seconds instead of well under a second, and made the backend burn
+  CPU on every use. A privacy fix in 1.1.1 had removed the mechanism that
+  kept the speech engine warm ahead of time, so almost every use paid a
+  full cold-start reload. Restored a warm-ahead-of-time trigger that
+  still never reads clipboard content — it only notices *that* something
+  was copied, the same privacy guarantee as before, just fixed to
+  actually keep the engine warm for real usage.
+- Reduced CPU use in the audiobook player: the currently-playing page's
+  sentence highlight was being fully rebuilt ten times a second during
+  playback, even on ticks where the highlighted sentence hadn't actually
+  changed. It's now only rebuilt when the highlight actually moves.
+
+### Security
+
+- The local backend accepted requests from any source that could reach
+  it on the Mac, including any webpage open in a browser. A malicious
+  site could have silently triggered real speech-synthesis work in the
+  background — no audio would have been heard and no personal data was
+  exposed, but it could run up CPU/battery use without the user's
+  knowledge. The backend now only accepts requests from the Voqora app
+  itself.
+
 ## [1.1.2] - 2026-08-31
 
 ### Audiobooks — player redesign
@@ -193,6 +220,7 @@ newer.
 - Use a clear, manual DMG installation and update flow while the project is
   validating product-market fit without Apple notarization.
 
+[1.1.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.3
 [1.1.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.2
 [1.1.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.1
 [1.1.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.0
