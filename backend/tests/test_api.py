@@ -80,3 +80,16 @@ def test_engine_post_unknown():
     """Test POST /engine with unknown engine returns 400."""
     response = client.post("/engine", json={"engine": "kitten"})
     assert response.status_code == 400
+
+
+def test_prewarm_rejects_text_over_speak_length_limit():
+    """PrewarmRequest.text must carry the same bound as SpeakRequest.text —
+    otherwise it's a cheaper DoS amplifier than /speak for the same cost."""
+    response = client.post("/prewarm", json={"text": "a" * 50_001})
+    assert response.status_code == 422
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_prewarm_accepts_text_at_speak_length_limit(mock_ensure):
+    response = client.post("/prewarm", json={"text": "a" * 50_000})
+    assert response.status_code == 200

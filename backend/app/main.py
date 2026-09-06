@@ -7,7 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.audiobook import router as audiobook_router
-from app.api.middleware import CorrelationMiddleware
+from app.api.middleware import CorrelationMiddleware, RejectBrowserOriginMiddleware
 from app.api.tts import router as tts_router
 from app.core.config import settings
 from app.core.logging import configure as configure_logging
@@ -104,6 +104,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, lifespan=lifespan)
 app.add_middleware(CorrelationMiddleware)
+# Added last so it wraps outermost and rejects browser-originated cross-origin
+# requests before correlation/logging overhead runs. See HARD-004 in
+# core/config.py for why 127.0.0.1 alone isn't sufficient access control.
+app.add_middleware(RejectBrowserOriginMiddleware)
 
 
 app.include_router(tts_router)

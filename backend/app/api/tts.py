@@ -53,7 +53,9 @@ class SpeakRequest(BaseModel):
 
 
 class PrewarmRequest(BaseModel):
-    text: str | None = None
+    # Same bound as SpeakRequest.text — unbounded here would make this an
+    # easier DoS amplifier than /speak for the same cost.
+    text: str | None = Field(default=None, max_length=50_000)
     voice: VoiceName | None = None
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
 
