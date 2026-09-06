@@ -63,6 +63,9 @@ class DashboardViewModel: ObservableObject {
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
     @Published var isModelLoaded = false        // Model in ONNX session RAM
+    /// Last-seen NSPasteboard.changeCount, used only to detect *that* a copy
+    /// happened — never to read what was copied. See startPrewarmObservers().
+    private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
     /// A concise recovery message when the app-owned local engine exits before
     /// it can answer health checks. It keeps a damaged/blocked backend from
     /// looking like an indefinitely blank player while automatic retries run.
@@ -539,9 +542,55 @@ class DashboardViewModel: ObservableObject {
         heartbeatTask = nil
     }
 
-    /// Pre-warm the model when Voqora becomes active, hiding the cold start
-    /// without polling or reading the user's clipboard in the background.
+    /// Pre-warm the model ahead of the hotkey, hiding the ~1-2s cold ONNX
+    /// reload without ever reading the user's clipboard content.
+    ///
+    /// Two signals trigger a bare, content-free `prewarm()` (model load only,
+    /// no lookahead — we don't have the text and don't want it):
+    /// 1. The clipboard changes — user likely just copied something they're
+    ///    about to speak. Only `changeCount` is observed, never the string
+    ///    value, and only when the new pasteboard item is plausibly text
+    ///    (checked by declared type, not content) so image/file copies don't
+    ///    trigger a pointless model load.
+    /// 2. The app becomes active — user switched to Voqora directly.
+    ///
+    /// Both signals are gated on `!isModelLoaded`: once warm, further copies
+    /// are free no-ops (no network call, no backend work) until the backend's
+    /// 5-minute idle-unload drops it again. Without this gate a long copy-paste
+    /// session would fire one HTTP round-trip per copy for zero benefit.
+    static func shouldPrewarmOnPasteboardChange(
+        currentChangeCount: Int,
+        lastChangeCount: Int,
+        isBackendOnline: Bool,
+        isModelLoaded: Bool,
+        hasReadableStringContent: Bool
+    ) -> Bool {
+        guard isBackendOnline, !isModelLoaded else { return false }
+        guard currentChangeCount != lastChangeCount else { return false }
+        return hasReadableStringContent
+    }
+
     private func startPrewarmObservers() {
+        Timer.publish(every: 1.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self else { return }
+                let pasteboard = NSPasteboard.general
+                let current = pasteboard.changeCount
+                defer { self.lastPasteboardChangeCount = current }
+                // Type check only — never touches the actual clipboard content.
+                let shouldPrewarm = Self.shouldPrewarmOnPasteboardChange(
+                    currentChangeCount: current,
+                    lastChangeCount: self.lastPasteboardChangeCount,
+                    isBackendOnline: self.isBackendOnline,
+                    isModelLoaded: self.isModelLoaded,
+                    hasReadableStringContent: pasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.string.rawValue])
+                )
+                guard shouldPrewarm else { return }
+                Task { await self.backend.prewarm() }
+            }
+            .store(in: &cancellables)
+
         // App focus only loads the model. No text is inspected until the user
         // explicitly activates the selected-text shortcut.
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)

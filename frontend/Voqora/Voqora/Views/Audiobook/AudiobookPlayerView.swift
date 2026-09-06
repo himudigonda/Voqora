@@ -37,6 +37,7 @@ struct AudiobookPlayerView: View {
     // in the same pass that refreshed them.
     @State private var transcriptCache = TranscriptPageCache()
     @State private var sectionsCache = SectionsCache()
+    @State private var highlightCache = HighlightCache()
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
@@ -610,21 +611,39 @@ struct AudiobookPlayerView: View {
     /// computed over the full flattened list so timing/highlight behavior
     /// (and its existing test coverage) is unchanged.
     private func currentPageText(_ entry: PageEntry, in t: AudiobookService.Transcript) -> Text {
-        let paragraphs = Self.splitIntoParagraphs(entry.text)
-        let sentencesByParagraph = paragraphs.map { Self.splitIntoSentences($0) }
-        let allSentences = sentencesByParagraph.flatMap { $0 }
-        guard allSentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
+        // The paragraph/sentence split only depends on the page's text, which
+        // is static once loaded — but this function used to redo it on every
+        // 0.1s playback tick (via `audio.currentTime`), along with rebuilding
+        // the entire concatenated `Text` tree, even on ticks where the
+        // estimated current sentence hadn't actually changed. Both are now
+        // memoized in `highlightCache` (same in-place-mutated-@State-class
+        // pattern as `transcriptCache` above) so a tick only rebuilds the
+        // `Text` tree when the highlighted sentence actually moves.
+        if highlightCache.bookID != t.bookID || highlightCache.page != entry.page {
+            highlightCache.bookID = t.bookID
+            highlightCache.page = entry.page
+            highlightCache.sentencesByParagraph = Self.splitIntoParagraphs(entry.text).map { Self.splitIntoSentences($0) }
+            highlightCache.allSentences = highlightCache.sentencesByParagraph.flatMap { $0 }
+            highlightCache.lastCurrentIndex = nil
+            highlightCache.cachedText = nil
+        }
+
+        guard highlightCache.allSentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
             return Text(Self.reflowedText(entry.text))
                 .font(vm.appFont(size: 15, weight: .bold))
                 .foregroundStyle(Color.cyan)
         }
         let current = Self.currentSentenceIndex(
-            in: allSentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime
+            in: highlightCache.allSentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime
         )
+
+        if let cachedText = highlightCache.cachedText, highlightCache.lastCurrentIndex == current {
+            return cachedText
+        }
 
         var result: Text?
         var globalIndex = 0
-        for sentences in sentencesByParagraph {
+        for sentences in highlightCache.sentencesByParagraph {
             if result != nil {
                 result = result! + Text("\n\n")
             }
@@ -643,7 +662,10 @@ struct AudiobookPlayerView: View {
                 globalIndex += 1
             }
         }
-        return result ?? Text(Self.reflowedText(entry.text))
+        let built = result ?? Text(Self.reflowedText(entry.text))
+        highlightCache.lastCurrentIndex = current
+        highlightCache.cachedText = built
+        return built
     }
 
     /// The playing page's [start, end) time window: `end` is the next page
@@ -838,6 +860,20 @@ extension AudiobookPlayerView {
     final class SectionsCache {
         var sourceSections: [AudiobookSection] = []
         var sortedSections: [AudiobookSection] = []
+    }
+
+    /// Memoizes `currentPageText`'s paragraph/sentence split (depends only on
+    /// the page's text) and its built `Text` tree (depends on the estimated
+    /// current-sentence index, which advances far slower than the 0.1s
+    /// playback tick that used to rebuild it every time). Same
+    /// in-place-mutated-@State-class rationale as `TranscriptPageCache`.
+    final class HighlightCache {
+        var bookID: String?
+        var page: Int?
+        var sentencesByParagraph: [[String]] = []
+        var allSentences: [String] = []
+        var lastCurrentIndex: Int?
+        var cachedText: Text?
     }
 
     /// Sorted ascending by page number. Pure — the transcript's `pages`

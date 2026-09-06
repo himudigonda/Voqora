@@ -340,4 +340,45 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: true, isBackgrounded: true), 30_000_000_000)
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: false, isBackgrounded: true), 30_000_000_000)
     }
+
+    // MARK: - shouldPrewarmOnPasteboardChange (content-blind clipboard prewarm)
+
+    func test_shouldPrewarmOnPasteboardChange_firesOnNewTextCopyWhileColdAndOnline() {
+        XCTAssertTrue(DashboardViewModel.shouldPrewarmOnPasteboardChange(
+            currentChangeCount: 2, lastChangeCount: 1,
+            isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: true
+        ))
+    }
+
+    func test_shouldPrewarmOnPasteboardChange_skipsWhenModelAlreadyLoaded() {
+        // The core "don't burn CPU for no reason" guard: once warm, repeated
+        // copies during a session are free no-ops until the backend idle-unloads.
+        XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
+            currentChangeCount: 2, lastChangeCount: 1,
+            isBackendOnline: true, isModelLoaded: true, hasReadableStringContent: true
+        ))
+    }
+
+    func test_shouldPrewarmOnPasteboardChange_skipsWhenBackendOffline() {
+        XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
+            currentChangeCount: 2, lastChangeCount: 1,
+            isBackendOnline: false, isModelLoaded: false, hasReadableStringContent: true
+        ))
+    }
+
+    func test_shouldPrewarmOnPasteboardChange_skipsWhenChangeCountUnchanged() {
+        XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
+            currentChangeCount: 1, lastChangeCount: 1,
+            isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: true
+        ))
+    }
+
+    func test_shouldPrewarmOnPasteboardChange_skipsNonTextCopiesLikeImagesOrFiles() {
+        // Only the declared pasteboard type is checked here (never content),
+        // so an image/file copy shouldn't trigger a pointless model load.
+        XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
+            currentChangeCount: 2, lastChangeCount: 1,
+            isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: false
+        ))
+    }
 }
