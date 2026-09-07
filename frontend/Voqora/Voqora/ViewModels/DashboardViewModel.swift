@@ -481,7 +481,6 @@ class DashboardViewModel: ObservableObject {
         actionFeedback = nil
     }
 
-
     /// Poll aggressively (500 ms) while backend is offline/starting up, then
     /// relax to 5 s once stable — this cuts the "waiting for backend" window
     /// from up to 5 s to under 500 ms in normal operation. While the app is
@@ -494,13 +493,54 @@ class DashboardViewModel: ObservableObject {
         return isBackgrounded ? max(baseDelay, 30_000_000_000) : baseDelay
     }
 
+    struct HeartbeatOutcome: Equatable {
+        let isOnline: Bool
+        let consecutiveFailures: Int
+        let shouldForceRestart: Bool
+    }
+
+    /// A single missed poll (thermal throttling, Spotlight indexing, a busy
+    /// Mac) used to be treated as a crash outright, instantly cancelling
+    /// in-flight playback and flashing OFFLINE. Require `crashThreshold`
+    /// consecutive failures before reporting offline; recovery (offline ->
+    /// online) still reports immediately on the very next success.
+    ///
+    /// If failures keep piling up well past that point, the backend is
+    /// likely wedged (event loop deadlock) rather than actually down —
+    /// `BackendService.start()` is a no-op whenever it still holds a process
+    /// handle, so nothing else would ever recover it. `shouldForceRestart`
+    /// fires once every `hungProcessRestartInterval` failures so a caller
+    /// holding a live process handle can force a fresh one periodically.
+    static func heartbeatOutcome(
+        rawOnline: Bool,
+        wasOnline: Bool,
+        previousConsecutiveFailures: Int,
+        crashThreshold: Int = 2,
+        hungProcessRestartInterval: Int = 10
+    ) -> HeartbeatOutcome {
+        let consecutiveFailures = rawOnline ? 0 : previousConsecutiveFailures + 1
+        let isNowOnline = rawOnline || (wasOnline && consecutiveFailures < crashThreshold)
+        let shouldForceRestart = !isNowOnline
+            && consecutiveFailures > 0
+            && consecutiveFailures % hungProcessRestartInterval == 0
+        return HeartbeatOutcome(isOnline: isNowOnline, consecutiveFailures: consecutiveFailures, shouldForceRestart: shouldForceRestart)
+    }
+
     func startHeartbeat() {
         guard heartbeatTask == nil else { return }
         heartbeatTask = Task {
             var wasOnline = false
+            var consecutiveFailures = 0
+
             while !Task.isCancelled {
                 let health = await backend.checkHealth()
-                let isNowOnline = health.isOnline
+                let outcome = Self.heartbeatOutcome(
+                    rawOnline: health.isOnline,
+                    wasOnline: wasOnline,
+                    previousConsecutiveFailures: consecutiveFailures
+                )
+                consecutiveFailures = outcome.consecutiveFailures
+                let isNowOnline = outcome.isOnline
                 isBackendOnline = isNowOnline
                 isModelLoaded = health.isModelLoaded
 
@@ -522,6 +562,10 @@ class DashboardViewModel: ObservableObject {
                     backend.clearLaunchFailure()
                     backendRecoveryMessage = nil
                 } else {
+                    if outcome.shouldForceRestart, backend.hasOwnedProcess {
+                        VoqoraLog.error("DashboardViewModel", "Backend unresponsive with a live process handle, forcing restart", ["consecutiveFailures": "\(consecutiveFailures)"])
+                        backend.forceRestart()
+                    }
                     let launching = backend.isLaunching
                     isBackendInitializing = launching
                     backendRecoveryMessage = backend.lastLaunchFailure

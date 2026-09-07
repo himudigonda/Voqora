@@ -113,12 +113,20 @@ struct MainDashboardView: View {
             Spacer()
 
             HStack(spacing: 12) {
-                Text((vm.actionFeedback ?? vm.status.message).uppercased())
+                // Falls back to the connectivity state instead of the default
+                // "Ready" whenever the backend isn't actually online — this
+                // badge used to show "READY" at the same time the indicator
+                // to its left showed red "OFFLINE", which read as contradictory.
+                Text((vm.actionFeedback ?? (vm.isBackendOnline ? vm.status.message : (vm.backendRecoveryMessage == nil ? "Offline" : "Retrying"))).uppercased())
                     .font(vm.appFont(size: 10, weight: .bold))
                     .kerning(1.5)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
-                    .foregroundStyle(vm.actionFeedback == nil ? AnyShapeStyle(Color.primary) : AnyShapeStyle(Color.green))
+                    .foregroundStyle(
+                        vm.actionFeedback != nil ? AnyShapeStyle(Color.green)
+                            : !vm.isBackendOnline ? AnyShapeStyle(Color.red)
+                            : AnyShapeStyle(Color.primary)
+                    )
                     .background(Capsule().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.1)))
 
                 if audio.duration > 0 {

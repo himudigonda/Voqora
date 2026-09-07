@@ -143,6 +143,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             self.logFileHandle = handle
         }
 
+        var loggedWriteFailure = false
         pipe.fileHandleForReading.readabilityHandler = { [weak self] readHandle in
             let data = readHandle.availableData
             if data.isEmpty { return }
@@ -150,7 +151,19 @@ final class BackendService: NSObject, @unchecked Sendable {
             // concurrent log lines don't interleave inside a single write).
             self?.stateQueue.async {
                 if let lh = self?.logFileHandle {
-                    try? lh.write(contentsOf: data)
+                    do {
+                        try lh.write(contentsOf: data)
+                    } catch {
+                        // Silent here previously meant a real crash could leave
+                        // the exported backend.log empty with zero indication
+                        // why. Log once (not per-chunk — this runs on every
+                        // backend stdout line) so a full disk/permission loss
+                        // is at least visible in the app's own diagnostic log.
+                        if !loggedWriteFailure {
+                            loggedWriteFailure = true
+                            VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["error": String(describing: error)])
+                        }
+                    }
                 }
             }
             if let str = String(data: data, encoding: .utf8) {
@@ -211,6 +224,17 @@ final class BackendService: NSObject, @unchecked Sendable {
                 _lastLaunchFailure = "The local speech engine could not start."
             }
         }
+    }
+
+    /// Terminates the current process (if any) and immediately attempts to
+    /// relaunch it. `start()` is normally a no-op whenever `process != nil` —
+    /// that's correct for an actually-healthy process, but leaves no recovery
+    /// path if the process is alive per macOS yet wedged (e.g. a deadlocked
+    /// event loop) and stops answering `/health`. Callers use this to force
+    /// a fresh process when sustained health-check failures indicate a hang.
+    func forceRestart() {
+        stop()
+        start()
     }
 
     func stop() {

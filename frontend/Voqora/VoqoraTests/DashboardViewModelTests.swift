@@ -341,6 +341,55 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: false, isBackgrounded: true), 30_000_000_000)
     }
 
+    // MARK: - heartbeatOutcome (single-poll-miss no longer kills playback)
+
+    func test_heartbeatOutcome_singleMissWhileOnline_isDebouncedNotReportedOffline() {
+        let outcome = DashboardViewModel.heartbeatOutcome(
+            rawOnline: false, wasOnline: true, previousConsecutiveFailures: 0
+        )
+        XCTAssertTrue(outcome.isOnline, "one missed poll must not flip the app to OFFLINE / cancel playback")
+        XCTAssertEqual(outcome.consecutiveFailures, 1)
+        XCTAssertFalse(outcome.shouldForceRestart)
+    }
+
+    func test_heartbeatOutcome_secondConsecutiveMissWhileOnline_reportsOffline() {
+        let outcome = DashboardViewModel.heartbeatOutcome(
+            rawOnline: false, wasOnline: true, previousConsecutiveFailures: 1
+        )
+        XCTAssertFalse(outcome.isOnline)
+        XCTAssertEqual(outcome.consecutiveFailures, 2)
+    }
+
+    func test_heartbeatOutcome_recoveryIsImmediate_noDebounceOnTheWayBackOnline() {
+        let outcome = DashboardViewModel.heartbeatOutcome(
+            rawOnline: true, wasOnline: false, previousConsecutiveFailures: 5
+        )
+        XCTAssertTrue(outcome.isOnline)
+        XCTAssertEqual(outcome.consecutiveFailures, 0)
+    }
+
+    func test_heartbeatOutcome_alreadyOffline_reportsRawStateImmediately() {
+        let outcome = DashboardViewModel.heartbeatOutcome(
+            rawOnline: false, wasOnline: false, previousConsecutiveFailures: 0
+        )
+        XCTAssertFalse(outcome.isOnline)
+    }
+
+    func test_heartbeatOutcome_sustainedFailuresPastInterval_requestsForceRestartOnce() {
+        let atThreshold = DashboardViewModel.heartbeatOutcome(
+            rawOnline: false, wasOnline: false, previousConsecutiveFailures: 9,
+            hungProcessRestartInterval: 10
+        )
+        XCTAssertEqual(atThreshold.consecutiveFailures, 10)
+        XCTAssertTrue(atThreshold.shouldForceRestart, "a live-but-unresponsive backend must eventually be force-restarted, not stay OFFLINE forever")
+
+        let justPast = DashboardViewModel.heartbeatOutcome(
+            rawOnline: false, wasOnline: false, previousConsecutiveFailures: 10,
+            hungProcessRestartInterval: 10
+        )
+        XCTAssertFalse(justPast.shouldForceRestart, "should not fire again until the next interval boundary")
+    }
+
     // MARK: - shouldPrewarmOnPasteboardChange (content-blind clipboard prewarm)
 
     func test_shouldPrewarmOnPasteboardChange_firesOnNewTextCopyWhileColdAndOnline() {

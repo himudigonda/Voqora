@@ -14,6 +14,10 @@ struct VoqoraWindow: View {
     @Environment(\.colorScheme) var colorScheme
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
+    // Tracked so the startup prepare() work can be cancelled if the window
+    // disappears before it finishes — previously an unstructured `Task` with
+    // no cancellation, harmless only because of downstream idempotency guards.
+    @State private var launchTask: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
@@ -152,8 +156,9 @@ struct VoqoraWindow: View {
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
             // Prepare backend if needed
-            Task {
+            launchTask = Task {
                 await launchManager.prepare()
+                guard !Task.isCancelled else { return }
                 if launchManager.isReady {
                     vm.startBackgroundWork()
                 }
@@ -176,6 +181,10 @@ struct VoqoraWindow: View {
                 // answered, so this is a silent no-op for anyone who denied it.
                 permissions.requestAccessibility()
             }
+        }
+        .onDisappear {
+            launchTask?.cancel()
+            launchTask = nil
         }
         .onChange(of: onboarding.version) { _, _ in
             if !onboarding.needsOnboarding {
