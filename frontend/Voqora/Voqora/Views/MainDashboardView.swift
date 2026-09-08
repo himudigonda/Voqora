@@ -5,17 +5,37 @@ struct MainDashboardView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     // Local state
     @State private var localProgress: Double = 0
     @State private var isEditingSlider = false
     @State private var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
 
+    /// The app's accent, resolved once per body pass — matches
+    /// `VoqoraWindow`'s own `accentColor` pattern.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
+    /// A faint, OPAQUE accent wash for the visualizer's ambience glow —
+    /// deliberately `subtle` rather than a translucent `Color.cyan.opacity`,
+    /// so the glow reads the same regardless of what's behind it.
+    private var ambienceGlow: Color {
+        Color(
+            Palette.accentRamp(
+                for: vm.accentColorID,
+                appearance: colorScheme,
+                increaseContrast: colorSchemeContrast == .increased
+            ).subtle
+        )
+    }
+
     var body: some View {
         ZStack {
             // AMBIENCE
             Circle()
-                .fill(vm.status == .speaking ? AnyShapeStyle(Color.cyan.opacity(colorScheme == .dark ? 0.12 : 0.08)) : AnyShapeStyle(Color.clear))
+                .fill(vm.status == .speaking ? AnyShapeStyle(ambienceGlow) : AnyShapeStyle(Color.clear))
                 .frame(width: 450, height: 450)
                 .blur(radius: 90)
                 .animation(.easeInOut(duration: 1.2), value: vm.status)
@@ -38,15 +58,15 @@ struct MainDashboardView: View {
         HStack(spacing: 14) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(.orange)
+                .foregroundStyle(Palette.warning)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Accessibility Access Required")
                     .font(vm.appFont(size: 12, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Palette.warning)
                 Text("Voqora needs Accessibility permission to read your selected text. Without it, Cmd+Shift+. won't work.")
                     .font(vm.appFont(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -56,13 +76,13 @@ struct MainDashboardView: View {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.orange)
+            .tint(Palette.warning)
             .font(vm.appFont(size: 11, weight: .semibold))
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
-        .background(Color.orange.opacity(colorScheme == .dark ? 0.12 : 0.08))
-        .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.orange.opacity(0.25)), alignment: .bottom)
+        .background(Palette.surfaceRaised)
+        .overlay(Rectangle().frame(height: 1).foregroundStyle(Palette.separator), alignment: .bottom)
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             hasAccessibilityPermission = AXIsProcessTrusted()
         }
@@ -72,32 +92,32 @@ struct MainDashboardView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("VOQORA")
-                    .font(vm.appFont(size: 11, weight: .black))
-                    .kerning(3)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
 
                 HStack(spacing: 6) {
                     if vm.isBackendOnline {
                         Circle()
-                            .fill(Color.green)
+                            .fill(Palette.success)
                             .frame(width: 6, height: 6)
                         Text("SYSTEM ONLINE")
-                            .font(vm.appFont(size: 9, weight: .bold))
-                            .foregroundStyle(.green)
+                            .font(vm.font(.chip))
+                            .foregroundStyle(Palette.success)
                     } else if vm.isBackendInitializing {
                         Circle()
-                            .fill(Color.yellow)
+                            .fill(Palette.warning)
                             .frame(width: 6, height: 6)
                         Text("INITIALIZING...")
-                            .font(vm.appFont(size: 9, weight: .bold))
-                            .foregroundStyle(.yellow)
+                            .font(vm.font(.chip))
+                            .foregroundStyle(Palette.warning)
                     } else {
                         Circle()
-                            .fill(Color.red)
+                            .fill(Palette.danger)
                             .frame(width: 6, height: 6)
                         Text(vm.backendRecoveryMessage == nil ? "OFFLINE" : "RETRYING LOCAL ENGINE")
-                            .font(vm.appFont(size: 9, weight: .bold))
-                            .foregroundStyle(.red)
+                            .font(vm.font(.chip))
+                            .foregroundStyle(Palette.danger)
                     }
                 }
                 .id("\(vm.isBackendOnline)-\(vm.isBackendInitializing)")
@@ -105,7 +125,7 @@ struct MainDashboardView: View {
                 if let recovery = vm.backendRecoveryMessage {
                     Text(recovery + " Voqora is retrying automatically.")
                         .font(vm.appFont(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -118,16 +138,16 @@ struct MainDashboardView: View {
                 // badge used to show "READY" at the same time the indicator
                 // to its left showed red "OFFLINE", which read as contradictory.
                 Text((vm.actionFeedback ?? (vm.isBackendOnline ? vm.status.message : (vm.backendRecoveryMessage == nil ? "Offline" : "Retrying"))).uppercased())
-                    .font(vm.appFont(size: 10, weight: .bold))
-                    .kerning(1.5)
+                    .font(vm.font(.chip))
+                    .kerning(0.6)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 4)
                     .foregroundStyle(
-                        vm.actionFeedback != nil ? AnyShapeStyle(Color.green)
-                            : !vm.isBackendOnline ? AnyShapeStyle(Color.red)
-                            : AnyShapeStyle(Color.primary)
+                        vm.actionFeedback != nil ? AnyShapeStyle(Palette.success)
+                            : !vm.isBackendOnline ? AnyShapeStyle(Palette.danger)
+                            : AnyShapeStyle(Palette.textPrimary)
                     )
-                    .background(Capsule().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.1)))
+                    .background(Capsule().stroke(Palette.separator, lineWidth: 1))
 
                 if audio.duration > 0 {
                     Button {
@@ -136,12 +156,12 @@ struct MainDashboardView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "square.and.arrow.down.fill")
                             Text("SAVE")
-                                .font(vm.appFont(size: 10, weight: .black))
+                                .font(vm.font(.chip))
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 4)
-                        .background(Color.cyan)
-                        .foregroundStyle(.black)
+                        .background(accentColor)
+                        .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast))
                         .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
@@ -155,11 +175,11 @@ struct MainDashboardView: View {
     private var visualizerSection: some View {
         VStack(spacing: 30) {
             ZStack {
-                Circle().stroke(lineWidth: 1).foregroundStyle(.primary.opacity(0.05)).frame(width: 260, height: 260)
+                Circle().stroke(lineWidth: 1).foregroundStyle(Palette.separator).frame(width: 260, height: 260)
 
                 Circle()
                     .stroke(lineWidth: 1.5)
-                    .foregroundStyle(vm.status == .speaking ? AnyShapeStyle(Color.cyan.opacity(0.6)) : AnyShapeStyle(Color.primary.opacity(0.05)))
+                    .foregroundStyle(vm.status == .speaking ? AnyShapeStyle(accentColor) : AnyShapeStyle(Palette.separator))
                     .frame(width: 200, height: 200)
                     .scaleEffect(vm.status == .speaking ? 1.08 : 1.0)
                     .animation(
@@ -177,7 +197,7 @@ struct MainDashboardView: View {
             VStack(spacing: 12) {
                 Text(vm.currentVoiceDisplay.uppercased()) // Simplified display logic
                     .font(vm.appFont(size: 14, weight: .bold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textSecondary)
 
                 let total = audio.duration
                 let current = isEditingSlider ? localProgress * total : audio.currentTime
@@ -245,7 +265,7 @@ struct TransportButton: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(vm.appFont(size: size, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.textSecondary)
         }
         .buttonStyle(.plain)
         .modifier(OptionalAccessibilityLabel(label: accessibilityLabel))

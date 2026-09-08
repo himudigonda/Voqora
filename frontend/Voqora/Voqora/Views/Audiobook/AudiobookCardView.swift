@@ -7,8 +7,26 @@ struct AudiobookCardView: View {
     let book: Audiobook
     @State private var hovering = false
     @State private var showDeleteConfirmation = false
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
+
+    /// The app's accent, resolved once per body pass — matches
+    /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
+    /// The full five-shade ramp, needed for the cover placeholder's gradient
+    /// (opaque `subtle`/`muted` shades rather than a translucent cyan wash).
+    private var accentRamp: AccentRamp {
+        Palette.accentRamp(
+            for: vm.accentColorID,
+            appearance: colorScheme,
+            increaseContrast: colorSchemeContrast == .increased
+        )
+    }
 
     /// T-16: cover width/height ratio (was a hardcoded 180x252 that didn't
     /// track the grid's adaptive column). Applied via `.aspectRatio` so the
@@ -39,7 +57,7 @@ struct AudiobookCardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(prettyTitle)
                     .font(vm.appFont(size: 13, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
                 caption
@@ -97,8 +115,8 @@ struct AudiobookCardView: View {
     @ViewBuilder
     private var cover: some View {
         ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(Palette.surfaceRaised)
                 .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
                 .overlay {
                     AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { phase in
@@ -111,21 +129,25 @@ struct AudiobookCardView: View {
                             placeholderCover
                         }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
                 }
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                        .stroke(Palette.separator, lineWidth: 1)
                 )
                 .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
                 .overlay(stateOverlay)
 
             if hovering && status.isReady {
                 Circle()
-                    .fill(.cyan)
+                    .fill(accentColor)
                     .frame(width: 44, height: 44)
-                    .overlay(Image(systemName: "play.fill").font(.system(size: 16, weight: .black)).foregroundStyle(.white))
-                    .shadow(color: .cyan.opacity(0.5), radius: 12)
+                    .overlay(
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 16, weight: .black))
+                            .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast))
+                    )
+                    .shadow(color: accentColor.opacity(0.5), radius: 12)
                     .padding(14)
                     .transition(.scale.combined(with: .opacity))
             }
@@ -135,17 +157,23 @@ struct AudiobookCardView: View {
     @ViewBuilder
     private var placeholderCover: some View {
         ZStack {
+            // Opaque ramp shades rather than a translucent cyan wash — a
+            // `subtle`/`muted` fill reads the same regardless of what's
+            // behind it, and the ink below is `textPrimary` (rather than a
+            // hardcoded `.white`) precisely because `subtle`/`muted` flip
+            // from light-on-light to dark-on-dark between appearances, the
+            // same way `textPrimary` itself does.
             LinearGradient(
-                colors: [.cyan.opacity(0.6), .cyan.opacity(0.1)],
+                colors: [Color(accentRamp.muted), Color(accentRamp.subtle)],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             )
             VStack(spacing: 6) {
                 Image(systemName: "book.fill")
                     .font(.system(size: 36, weight: .ultraLight))
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(Palette.textPrimary.opacity(0.7))
                 Text(prettyTitle)
                     .font(vm.appFont(size: 11, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Palette.textPrimary.opacity(0.85))
                     .lineLimit(3)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 12)
@@ -158,23 +186,23 @@ struct AudiobookCardView: View {
         switch status {
         case .queued:
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.4))
-                ProgressView().tint(.cyan).scaleEffect(0.8)
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.4))
+                ProgressView().tint(accentColor).scaleEffect(0.8)
             }
         case .extracting, .cleaning, .generating, .sectioning:
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous).fill(.black.opacity(0.35))
+                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.35))
                 progressRing
                     .frame(width: 56, height: 56)
                     .padding(12)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
         case .needsKey:
-            cornerBadge(systemName: "key.fill", color: .yellow)
+            cornerBadge(systemName: "key.fill", color: Palette.warning)
         case .failed:
-            cornerBadge(systemName: "exclamationmark.triangle.fill", color: .red)
+            cornerBadge(systemName: "exclamationmark.triangle.fill", color: Palette.danger)
         case .cancelled:
-            cornerBadge(systemName: "stop.circle.fill", color: .secondary)
+            cornerBadge(systemName: "stop.circle.fill", color: Palette.textSecondary)
         case .ready:
             EmptyView()
         }
@@ -185,17 +213,17 @@ struct AudiobookCardView: View {
         let pct = progressFraction
         ZStack {
             Circle()
-                .fill(.ultraThinMaterial)
+                .fill(Palette.surfaceRaised)
             Circle()
-                .stroke(Color.primary.opacity(0.08), lineWidth: 3)
+                .stroke(Palette.separator, lineWidth: 3)
             Circle()
                 .trim(from: 0, to: pct)
-                .stroke(Color.cyan, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .stroke(accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .animation(.easeOut(duration: 0.4), value: pct)
             Text("\(Int(pct * 100))%")
                 .font(vm.appFont(size: 11, weight: .black).monospaced())
-                .foregroundStyle(.cyan)
+                .foregroundStyle(accentColor)
         }
     }
 
@@ -204,7 +232,7 @@ struct AudiobookCardView: View {
             .font(.system(size: 18, weight: .black))
             .foregroundStyle(color)
             .padding(8)
-            .background(.ultraThinMaterial, in: Circle())
+            .voqoraSurface(.floating, in: Circle())
             .padding(10)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
@@ -219,7 +247,7 @@ struct AudiobookCardView: View {
                 ForEach(0..<16, id: \.self) { i in
                     let height = 4 + 14 * abs(sin(phase + Double(i) * 0.4))
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(Color.cyan.opacity(0.85))
+                        .fill(accentColor.opacity(0.85))
                         .frame(width: 3, height: height)
                 }
             }
@@ -237,38 +265,38 @@ struct AudiobookCardView: View {
                 if !book.failedPages.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: 8))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Palette.warning)
                 }
                 Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
-                    .font(vm.appFont(size: 9, weight: .black).monospaced())
-                    .kerning(0.8)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.chip).monospaced())
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
                     .lineLimit(1)
             }
             .help(book.failedPages.isEmpty ? "" : "\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble during cleaning or narration")
         case .failed:
             Text(status.caption)
-                .font(vm.appFont(size: 9, weight: .black))
-                .kerning(1)
-                .foregroundStyle(.red)
+                .font(vm.font(.chip))
+                .kerning(0.6)
+                .foregroundStyle(Palette.danger)
                 .lineLimit(1)
         case .cancelled:
             Text(status.caption)
-                .font(vm.appFont(size: 9, weight: .black))
-                .kerning(1)
-                .foregroundStyle(.secondary)
+                .font(vm.font(.chip))
+                .kerning(0.6)
+                .foregroundStyle(Palette.textSecondary)
                 .lineLimit(1)
         case .needsKey:
             Text(status.caption)
-                .font(vm.appFont(size: 9, weight: .black))
-                .kerning(1)
-                .foregroundStyle(.yellow)
+                .font(vm.font(.chip))
+                .kerning(0.6)
+                .foregroundStyle(Palette.warning)
                 .lineLimit(1)
         default:
             Text(status.caption)
-                .font(vm.appFont(size: 9, weight: .black).monospaced())
-                .kerning(1)
-                .foregroundStyle(.cyan)
+                .font(vm.font(.chip).monospaced())
+                .kerning(0.6)
+                .foregroundStyle(accentColor)
                 .contentTransition(.numericText())
                 .lineLimit(1)
         }

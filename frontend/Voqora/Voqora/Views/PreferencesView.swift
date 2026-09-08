@@ -11,6 +11,8 @@ struct PreferencesView: View {
     @EnvironmentObject var installer: GuidedInstallerService
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var updater: AppUpdater
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
     @State private var emailDraft: String = ""
@@ -20,16 +22,23 @@ struct PreferencesView: View {
     @State private var emailRemoving = false
     @State private var emailRemovalQueued = false
 
+    /// The app's accent, resolved once per body pass — every row, button,
+    /// and link in this screen reads through this rather than a hardcoded
+    /// `.cyan`.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
                 // Header
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Preferences")
-                        .font(vm.appFont(size: 34, weight: .bold))
+                        .font(vm.font(.pageTitle))
                     Text("Configure Voqora to match your workflow.")
                         .font(vm.appFont(size: 14))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                 }
                 .padding(.bottom, 8)
 
@@ -37,22 +46,22 @@ struct PreferencesView: View {
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Optional email")
-                            .font(vm.appFont(size: 14, weight: .bold))
+                            .font(vm.font(.sectionTitle))
                         Text("Voqora works without an account. Add an email only if you want voluntary returning installs to be recognised in aggregate adoption metrics. We never collect your text or files, and you can remove your email at any time.")
-                            .font(vm.appFont(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         Text("Email address")
-                            .font(vm.appFont(size: 11, weight: .semibold))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.sectionHeader))
+                            .foregroundStyle(Palette.textSecondary)
 
                         HStack(alignment: .center, spacing: 10) {
                             TextField("name@example.com", text: $emailDraft)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.emailAddress)
                                 .disableAutocorrection(true)
-                                .font(vm.appFont(size: 13))
+                                .font(vm.font(.rowTitle))
                             Button {
                                 submitEmail()
                             } label: {
@@ -63,35 +72,35 @@ struct PreferencesView: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(.cyan)
+                            .tint(accentColor)
                             .disabled(!canSaveEmail || emailSubmitting)
                             .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
                         }
 
                         if let err = emailError {
-                            Text(err).font(vm.appFont(size: 11)).foregroundStyle(.red)
+                            Text(err).font(vm.font(.rowSubtitle)).foregroundStyle(Palette.danger)
                         } else if emailRemovalQueued || identity.hasPendingRemoval {
                             Text("Email removed from this Mac. Voqora will retry removing the optional server contact when it is online.")
-                                .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else if emailSaved {
                             HStack(spacing: 4) {
-                                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                                Text("Saved. Thanks!").font(vm.appFont(size: 11)).foregroundStyle(.green)
+                                Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
+                                Text("Saved. Thanks!").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
                             }
                         } else if let current = identity.email {
                             HStack {
                                 Text("Email saved for this Mac")
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
                                 Spacer()
                                 Button(emailRemoving ? "Removing…" : "Remove") {
                                     removeEmail()
                                 }
                                     .buttonStyle(.plain)
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.red)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.danger)
                                     .disabled(emailRemoving)
                             }
                             .accessibilityLabel("Saved email: \(current)")
@@ -99,8 +108,8 @@ struct PreferencesView: View {
                             Text(emailDraft.isEmpty || canSaveEmail
                                 ? "No email saved. Voqora works fully without one."
                                 : "Enter a valid email to enable Save.")
-                                .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
                         }
                     }
                 }
@@ -113,14 +122,14 @@ struct PreferencesView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
                             Label("System Notifications", systemImage: "bell")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                             Spacer()
                             notificationsStatusBadge
                         }
 
                         Text("Notifies you when an audiobook finishes converting, when Voqora starts speaking a selection, and when an update is available.")
-                            .font(vm.appFont(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         if permissions.notificationsStatus == .denied {
@@ -137,7 +146,7 @@ struct PreferencesView: View {
                                 Label("Enable Notifications", systemImage: "bell.badge")
                             }
                             .buttonStyle(.borderedProminent)
-                            .tint(.cyan)
+                            .tint(accentColor)
                         }
                     }
                 }
@@ -146,8 +155,8 @@ struct PreferencesView: View {
                 PreferenceSection(title: "Setup", icon: "checklist") {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Need to review permissions or the first-use guide?")
-                            .font(vm.appFont(size: 12))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
                         Button {
                             onboarding.reset()
                         } label: {
@@ -162,7 +171,7 @@ struct PreferencesView: View {
                     VStack(spacing: 20) {
                         HStack {
                             Label("Active Voice", systemImage: "person.wave.2")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                             Spacer()
                             Picker("", selection: $vm.selectedVoice) {
                                 ForEach(vm.availableVoices, id: \.id) { voice in
@@ -174,35 +183,35 @@ struct PreferencesView: View {
                         }
 
                         Text("Kokoro delivers high-quality, expressive voices.")
-                            .font(vm.appFont(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Speech Speed", systemImage: "gauge.with.needle")
-                                    .font(vm.appFont(size: 14))
+                                    .font(vm.font(.rowTitle))
                                 Spacer()
                                 Text("\(String(format: "%.1f", vm.speechSpeed))x")
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
-                                    .foregroundStyle(.cyan)
+                                    .foregroundStyle(accentColor)
                                     .fontWeight(.bold)
                             }
                             Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0)
-                                .tint(.cyan)
+                                .tint(accentColor)
                         }
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Master Volume", systemImage: "speaker.wave.3")
-                                    .font(vm.appFont(size: 14))
+                                    .font(vm.font(.rowTitle))
                                 Spacer()
                                 Text("\(Int(vm.speechVolume * 100))%")
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
-                                    .foregroundStyle(.cyan)
+                                    .foregroundStyle(accentColor)
                                     .fontWeight(.bold)
                             }
                             Slider(value: $vm.speechVolume, in: 0.0 ... 1.5)
-                                .tint(.cyan)
+                                .tint(accentColor)
                         }
                     }
                 }
@@ -213,22 +222,22 @@ struct PreferencesView: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Label("Gemini API Key", systemImage: "key.fill")
-                                    .font(vm.appFont(size: 14))
+                                    .font(vm.font(.rowTitle))
                                 Spacer()
                                 if bookVM.keyVerified {
                                     HStack(spacing: 4) {
                                         Image(systemName: "checkmark.seal.fill")
                                         Text("VERIFIED")
                                     }
-                                    .font(vm.appFont(size: 9, weight: .black))
-                                    .kerning(1)
-                                    .foregroundStyle(.green)
+                                    .font(vm.font(.chip))
+                                    .kerning(0.6)
+                                    .foregroundStyle(Palette.success)
                                 }
                             }
                             HStack {
                                 SecureField("AIza...", text: $bookVM.draftKey)
                                     .textFieldStyle(.roundedBorder)
-                                    .font(vm.appFont(size: 13).monospaced())
+                                    .font(vm.font(.rowTitle).monospaced())
                                 Button {
                                     bookVM.verifyAndSaveKey()
                                 } label: {
@@ -239,20 +248,20 @@ struct PreferencesView: View {
                                     }
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .tint(.cyan)
+                                .tint(accentColor)
                                 .disabled(bookVM.draftKey.trimmingCharacters(in: .whitespaces).isEmpty || bookVM.verifyingKey)
                             }
                             HStack {
                                 Link("Get a key from aistudio.google.com",
                                      destination: URL(string: "https://aistudio.google.com/apikey")!)
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.cyan)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(accentColor)
                                 Spacer()
                                 if bookVM.hasStoredKey {
                                     Button("Remove") { bookVM.removeKey() }
                                         .buttonStyle(.plain)
-                                        .font(vm.appFont(size: 11))
-                                        .foregroundStyle(.red)
+                                        .font(vm.font(.rowSubtitle))
+                                        .foregroundStyle(Palette.danger)
                                 }
                             }
                         }
@@ -261,7 +270,7 @@ struct PreferencesView: View {
 
                         HStack {
                             Label("Default Voice", systemImage: "person.wave.2")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                             Spacer()
                             Picker("", selection: $bookVM.defaultBookVoice) {
                                 ForEach(vm.availableVoices, id: \.id) { voice in
@@ -273,26 +282,26 @@ struct PreferencesView: View {
                         }
 
                         Text("Audiobook generation uses this voice. Clipboard TTS continues to use the live 'Active Voice' above.")
-                            .font(vm.appFont(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
 
                         Divider()
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Default Speed", systemImage: "gauge.with.needle")
-                                    .font(vm.appFont(size: 14))
+                                    .font(vm.font(.rowTitle))
                                 Spacer()
                                 Text(String(format: "%.2fx", bookVM.defaultBookSpeed))
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
-                                    .foregroundStyle(.cyan)
+                                    .foregroundStyle(accentColor)
                             }
-                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75...2.0).tint(.cyan)
+                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75...2.0).tint(accentColor)
                         }
 
                         Text("Text-based documents are narrated locally by default. You can opt into Gemini cleanup for a difficult document, and scanned PDFs need Gemini OCR before they can be narrated.")
-                            .font(vm.appFont(size: 11))
-                            .foregroundStyle(.secondary)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
                     }
                 }
 
@@ -302,10 +311,10 @@ struct PreferencesView: View {
                         Toggle(isOn: $vm.enableDucking) {
                             VStack(alignment: .leading) {
                                 Text("Music Ducking")
-                                    .font(vm.appFont(size: 16))
+                                    .font(vm.font(.paneTitle))
                                 Text("Attenuates background music while Voqora is speaking.")
-                                    .font(vm.appFont(size: 12))
-                                    .foregroundStyle(.secondary)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
                             }
                         }
 
@@ -314,10 +323,10 @@ struct PreferencesView: View {
                         Toggle(isOn: $vm.cleanURLs) {
                             VStack(alignment: .leading) {
                                 Text("Sanitize URLs")
-                                    .font(vm.appFont(size: 16))
+                                    .font(vm.font(.paneTitle))
                                 Text("Automatically removes complex URLs and handles from spoken text.")
-                                    .font(vm.appFont(size: 12))
-                                    .foregroundStyle(.secondary)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
                             }
                         }
                     }
@@ -338,15 +347,15 @@ struct PreferencesView: View {
 
                         HStack {
                             Text("Shortcuts are global and work from any app.")
-                                .font(vm.appFont(size: 12))
-                                .foregroundStyle(.secondary)
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
                             Spacer()
                             Button("Reset to Defaults") {
                                 resetShortcuts()
                             }
                             .buttonStyle(.borderless)
-                            .font(vm.appFont(size: 12))
-                            .foregroundStyle(.red)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.danger)
                         }
                     }
                 }
@@ -356,7 +365,7 @@ struct PreferencesView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Text("Theme")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                             Spacer()
                             Picker("", selection: $vm.appTheme) {
                                 Text("System").tag("system")
@@ -372,10 +381,10 @@ struct PreferencesView: View {
                         HStack(alignment: .top) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Typography")
-                                    .font(vm.appFont(size: 14, weight: .bold))
+                                    .font(vm.font(.sectionTitle))
                                 Text("Current: \(vm.selectedFontName)")
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.cyan)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(accentColor)
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 12) {
@@ -393,11 +402,10 @@ struct PreferencesView: View {
                                     vm.showFontPanel()
                                 } label: {
                                     Label("More Fonts...", systemImage: "textformat.size")
-                                        .font(vm.appFont(size: 11, weight: .semibold))
+                                        .font(vm.font(.sectionHeader))
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 6)
-                                        .background(.ultraThinMaterial)
-                                        .clipShape(Capsule())
+                                        .voqoraSurface(.control, in: Capsule())
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -407,7 +415,7 @@ struct PreferencesView: View {
 
                         Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {
                             Text("Start at Login")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                         }
                         .toggleStyle(.switch)
 
@@ -415,7 +423,7 @@ struct PreferencesView: View {
 
                         Toggle(isOn: $showMenuBarIcon) {
                             Text("Show Menu Bar Icon")
-                                .font(vm.appFont(size: 14))
+                                .font(vm.font(.rowTitle))
                         }
                         .toggleStyle(.switch)
 
@@ -430,10 +438,10 @@ struct PreferencesView: View {
                         )) {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Anonymous Analytics")
-                                    .font(vm.appFont(size: 14, weight: .bold))
+                                    .font(vm.font(.sectionTitle))
                                 Text("Help improve Voqora by sharing anonymous usage statistics with himudigonda.me")
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
                             }
                         }
                         .help("We collect anonymous activity counts, never text, filenames, audio, or API keys. An email is sent only if you choose to provide one in Identity settings.")
@@ -443,11 +451,11 @@ struct PreferencesView: View {
                         VStack(alignment: .leading, spacing: 9) {
                             if let latest = updater.latestGitHubVersion {
                                 HStack(spacing: 6) {
-                                    Image(systemName: "arrow.up.circle.fill").foregroundStyle(.cyan)
+                                    Image(systemName: "arrow.up.circle.fill").foregroundStyle(accentColor)
                                     Text("Voqora \(latest) is available.")
                                         .font(vm.appFont(size: 12, weight: .semibold))
                                     Link("Open the releases page", destination: GuidedInstallerService.releasePageURL)
-                                        .font(vm.appFont(size: 12))
+                                        .font(vm.font(.rowSubtitle))
                                 }
                             }
 
@@ -456,25 +464,25 @@ struct PreferencesView: View {
                                     installer.downloadAndOpenLatest()
                                 } label: {
                                     Label(installer.state.isBusy ? "Preparing installer…" : "Download latest installer", systemImage: "arrow.down.circle")
-                                        .font(vm.appFont(size: 13, weight: .medium))
+                                        .font(vm.font(.button))
                                 }
                                 .buttonStyle(.borderedProminent)
-                                .tint(.cyan)
+                                .tint(accentColor)
                                 .disabled(installer.state.isBusy)
 
                                 Link("View releases on GitHub", destination: GuidedInstallerService.releasePageURL)
-                                    .font(vm.appFont(size: 11, weight: .medium))
+                                    .font(vm.font(.rowSubtitle))
 
                                 Spacer()
 
                                 Text("v" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"))
-                                    .font(vm.appFont(size: 11))
-                                    .foregroundStyle(.secondary)
+                                    .font(vm.font(.caption))
+                                    .foregroundStyle(Palette.textTertiary)
                             }
 
                             Text(installer.state.message ?? "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to Applications. It never replaces the app automatically.")
-                                .font(vm.appFont(size: 11))
-                                .foregroundStyle(installer.state.isFailure ? .red : .secondary)
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(installer.state.isFailure ? Palette.danger : Palette.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
 
                             if case .failed = installer.state {
@@ -489,19 +497,19 @@ struct PreferencesView: View {
                             vm.exportLastClip()
                         } label: {
                             Label("Export Last Clip to Desktop", systemImage: "square.and.arrow.down")
-                                .font(vm.appFont(size: 13, weight: .bold))
+                                .font(vm.font(.button))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                         }
                         .buttonStyle(.borderedProminent)
-                        .tint(.cyan)
+                        .tint(accentColor)
                         .help("Manually export the most recently generated audio clip.")
 
                         Button {
                             vm.exportLogs()
                         } label: {
                             Label("Export Debug Logs", systemImage: "doc.text.fill")
-                                .font(vm.appFont(size: 13, weight: .bold))
+                                .font(vm.font(.button))
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 8)
                         }
@@ -538,22 +546,22 @@ struct PreferencesView: View {
         switch permissions.notificationsStatus {
         case .authorized, .provisional:
             HStack(spacing: 4) {
-                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
                 Text("ENABLED")
             }
-            .font(vm.appFont(size: 9, weight: .black))
-            .kerning(1)
-            .foregroundStyle(.green)
+            .font(vm.font(.chip))
+            .kerning(0.6)
+            .foregroundStyle(Palette.success)
         case .denied:
             Text("DENIED")
-                .font(vm.appFont(size: 9, weight: .black))
-                .kerning(1)
-                .foregroundStyle(.red)
+                .font(vm.font(.chip))
+                .kerning(0.6)
+                .foregroundStyle(Palette.danger)
         case .notDetermined, .unknown:
             Text("NOT ENABLED")
-                .font(vm.appFont(size: 9, weight: .black))
-                .kerning(1)
-                .foregroundStyle(.secondary)
+                .font(vm.font(.chip))
+                .kerning(0.6)
+                .foregroundStyle(Palette.textTertiary)
         }
     }
 
@@ -588,7 +596,7 @@ struct ShortcutRow: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(vm.appFont(size: 14, weight: .medium))
+                .font(vm.font(.button))
             Spacer()
             KeyboardShortcuts.Recorder(for: name)
         }
@@ -597,6 +605,8 @@ struct ShortcutRow: View {
 
 struct PreferenceSection<Content: View>: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
     let title: String
     let icon: String
     let content: Content
@@ -607,28 +617,27 @@ struct PreferenceSection<Content: View>: View {
         self.content = content()
     }
 
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(accentColor)
                     .font(.headline)
                 Text(title.uppercased())
-                    .font(vm.appFont(size: 13, weight: .bold))
-                    .foregroundStyle(.secondary)
-                    .kerning(1)
+                    .font(vm.font(.sectionHeader))
+                    .foregroundStyle(Palette.textSecondary)
+                    .kerning(0.6)
             }
 
             VStack {
                 content
             }
             .padding(20)
-            .background(.ultraThinMaterial.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.white.opacity(0.1), lineWidth: 1)
-            )
+            .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
         }
     }
 }

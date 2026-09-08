@@ -16,15 +16,15 @@ final class CoverColorExtractor {
         if let task = inFlight[url] { return await task.value }
 
         let task = Task<Color, Never> { [weak self] in
-            guard let self else { return .cyan }
+            guard let self else { return Palette.textTertiary }
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                guard let image = NSImage(data: data) else { return .cyan }
+                guard let image = NSImage(data: data) else { return Palette.textTertiary }
                 let color = Self.computeDominantColor(image)
                 self.cache[url] = color
                 return color
             } catch {
-                return .cyan
+                return Palette.textTertiary
             }
         }
         inFlight[url] = task
@@ -37,7 +37,7 @@ final class CoverColorExtractor {
         // Downscale to 32x32 then average. Heavy bias toward saturated pixels.
         let target = NSSize(width: 32, height: 32)
         guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            return .cyan
+            return Palette.textTertiary
         }
         let width = 32
         let height = 32
@@ -48,7 +48,7 @@ final class CoverColorExtractor {
             bitsPerComponent: 8, bytesPerRow: width * 4,
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return .cyan }
+        ) else { return Palette.textTertiary }
         ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: target.width, height: target.height))
 
         // Weighted average: pixels with high saturation count more.
@@ -68,7 +68,7 @@ final class CoverColorExtractor {
             bSum += b * weight
             weightSum += weight
         }
-        guard weightSum > 0 else { return .cyan }
+        guard weightSum > 0 else { return Palette.textTertiary }
         return Color(red: rSum / weightSum, green: gSum / weightSum, blue: bSum / weightSum)
     }
 }

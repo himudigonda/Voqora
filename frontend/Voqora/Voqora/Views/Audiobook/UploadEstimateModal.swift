@@ -5,6 +5,8 @@ struct UploadEstimateModal: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     let documentURL: URL
 
@@ -12,6 +14,10 @@ struct UploadEstimateModal: View {
     /// turned on; image-only PDFs need it because local extraction has no text
     /// to narrate.
     @State private var useGeminiCleanup = false
+
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         VStack(spacing: 18) {
@@ -47,26 +53,26 @@ struct UploadEstimateModal: View {
         }
         .padding(28)
         .frame(width: 520, height: 640)
-        .background(.ultraThinMaterial)
-        .background(adaptiveSheetBackground)
+        .voqoraSurface(.floating, in: Rectangle())
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("NEW AUDIOBOOK")
-                    .font(vm.appFont(size: 9, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.cyan)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(accentColor)
                 Text(prettyTitle)
                     .font(vm.appFont(size: 18, weight: .bold))
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(1)
             }
             Spacer()
             Button { cancel() } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 22))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textSecondary)
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
@@ -76,10 +82,9 @@ struct UploadEstimateModal: View {
 
     private var cover: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+            Color.clear
                 .frame(width: 140, height: 196)
-                .shadow(color: .black.opacity(0.3), radius: 14, y: 8)
+                .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             if let pdf = PDFDocument(url: documentURL),
                let page = pdf.page(at: 0) {
                 // S7: PDFPage.thumbnail renders the page properly at the
@@ -95,7 +100,7 @@ struct UploadEstimateModal: View {
             } else {
                 Image(systemName: "doc.fill")
                     .font(.system(size: 40))
-                    .foregroundStyle(.cyan.opacity(0.5))
+                    .foregroundStyle(accentColor.opacity(0.5))
             }
         }
         .padding(.top, 4)
@@ -104,16 +109,16 @@ struct UploadEstimateModal: View {
     private func statsGrid(for est: AudiobookEstimateResponse) -> some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                StatTile(label: "PAGES", value: "\(est.pageCount)", icon: "doc.text", appFont: vm.appFont)
-                StatTile(label: "WORDS", value: numberFormat(est.wordCountEstimate), icon: "textformat", appFont: vm.appFont)
+                StatTile(label: "PAGES", value: "\(est.pageCount)", icon: "doc.text", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "WORDS", value: numberFormat(est.wordCountEstimate), icon: "textformat", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
-                StatTile(label: "PROCESSING", value: "~\(DurationFormatter.short(est.estimatedProcessingSeconds))", icon: "clock", appFont: vm.appFont)
-                StatTile(label: "AUDIO", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont)
+                StatTile(label: "PROCESSING", value: "~\(DurationFormatter.short(est.estimatedProcessingSeconds))", icon: "clock", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "AUDIO", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
-                StatTile(label: "GEMINI TOKENS", value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF", icon: "number", appFont: vm.appFont)
-                StatTile(label: "GEMINI COST", value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF", icon: "dollarsign.circle", appFont: vm.appFont)
+                StatTile(label: "GEMINI TOKENS", value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF", icon: "number", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "GEMINI COST", value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF", icon: "dollarsign.circle", appFont: vm.appFont, accentColor: accentColor)
             }
         }
     }
@@ -122,58 +127,59 @@ struct UploadEstimateModal: View {
         VStack(spacing: 10) {
             if useGeminiCleanup, est.costWarning {
                 HStack(spacing: 8) {
-                    Image(systemName: "dollarsign.circle.fill").foregroundStyle(.orange)
+                    Image(systemName: "dollarsign.circle.fill").foregroundStyle(Palette.warning)
                     Text("This book's estimated Gemini cost is \(formatCost(est.estimatedCostUsd)). Proceed anyway?")
                         .font(vm.appFont(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                         .lineLimit(2)
                 }
                 .padding(10)
-                .background(Color.orange.opacity(0.1))
+                .background(Palette.warning.opacity(0.1))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             Toggle(isOn: $useGeminiCleanup) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Use Gemini cleanup for this book")
                         .font(vm.appFont(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.textPrimary)
                     Text("Optional for text documents. When enabled, page text and scanned-PDF images are sent transiently to Google Gemini for cleanup or OCR.")
                         .font(vm.appFont(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                         .lineLimit(3)
                 }
             }
             .toggleStyle(.checkbox)
             .padding(10)
-            .background(Color.cyan.opacity(0.06))
+            .background(accentColor.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             if est.isImageOnly, !useGeminiCleanup {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.viewfinder").foregroundStyle(.orange)
+                    Image(systemName: "doc.viewfinder").foregroundStyle(Palette.warning)
                     Text("This scanned PDF needs Gemini OCR. Turn on cleanup to continue.")
                         .font(vm.appFont(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                 }
                 .padding(.bottom, 4)
             }
             if useGeminiCleanup && !bookVM.hasStoredKey {
-                // Consistent with the cost/OCR warnings above (both .orange)
+                // Consistent with the cost/OCR warnings above (both warning-toned)
                 // — this used to be .yellow for no evident semantic reason,
                 // despite all three being the same "Start is blocked" class
                 // of warning in this same modal.
                 HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
                     Text("Set a Gemini API key in Preferences first.")
                         .font(vm.appFont(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                 }
                 .padding(.bottom, 4)
             }
             if let duplicateTitle = bookVM.pendingEstimate?.duplicateOfTitle {
                 HStack(spacing: 8) {
-                    Image(systemName: "doc.on.doc.fill").foregroundStyle(.orange)
+                    Image(systemName: "doc.on.doc.fill").foregroundStyle(Palette.warning)
                     Text("You already imported this exact file as \"\(duplicateTitle)\".")
                         .font(vm.appFont(size: 11))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                         .lineLimit(2)
                 }
                 .padding(.bottom, 4)
@@ -188,7 +194,7 @@ struct UploadEstimateModal: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.voqoraSecondary)
 
             Button {
                 if useGeminiCleanup && !bookVM.keyVerified {
@@ -207,7 +213,7 @@ struct UploadEstimateModal: View {
             } label: {
                 if bookVM.startingProcessing {
                     HStack(spacing: 8) {
-                        ProgressView().tint(.white).scaleEffect(0.75)
+                        ProgressView().tint(vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast)).scaleEffect(0.75)
                         Text("Starting…")
                     }
                     .frame(maxWidth: .infinity)
@@ -220,8 +226,7 @@ struct UploadEstimateModal: View {
                         .font(vm.appFont(size: 13, weight: .bold))
                 }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.cyan)
+            .buttonStyle(.voqoraPrimary)
             .disabled(Self.isStartDisabled(
                 startingProcessing: bookVM.startingProcessing,
                 isImageOnly: bookVM.pendingEstimate?.isImageOnly ?? false,
@@ -236,7 +241,7 @@ struct UploadEstimateModal: View {
         Button { cancel() } label: {
             Text("Close").frame(maxWidth: .infinity).padding(.vertical, 8)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.voqoraSecondary)
     }
 
     /// T-19: pure Start-Processing disabled-condition, kept testable without
@@ -259,10 +264,10 @@ struct UploadEstimateModal: View {
 
     private var loadingState: some View {
         VStack(spacing: 16) {
-            ProgressView().tint(.cyan)
+            ProgressView().tint(accentColor)
             Text("Reading your file...")
                 .font(vm.appFont(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.textSecondary)
         }
         .frame(maxHeight: .infinity)
     }
@@ -271,10 +276,10 @@ struct UploadEstimateModal: View {
         VStack(spacing: 14) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 32))
-                .foregroundStyle(.red)
+                .foregroundStyle(Palette.danger)
             Text(bookVM.loadingError ?? "Could not read this file.")
                 .font(vm.appFont(size: 13))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
         }
@@ -300,14 +305,6 @@ struct UploadEstimateModal: View {
         bookVM.cancelUpload()
         dismiss()
     }
-
-    private var adaptiveSheetBackground: some View {
-        LinearGradient(
-            colors: [.cyan.opacity(0.05), .clear],
-            startPoint: .top, endPoint: .bottom
-        )
-        .ignoresSafeArea()
-    }
 }
 
 private struct StatTile: View {
@@ -315,27 +312,24 @@ private struct StatTile: View {
     let value: String
     let icon: String
     let appFont: (CGFloat, Font.Weight) -> Font
+    var accentColor: Color = .accentColor
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Image(systemName: icon).foregroundStyle(.cyan).font(.system(size: 11))
+                Image(systemName: icon).foregroundStyle(accentColor).font(.system(size: 11))
                 Text(label)
-                    .font(appFont(9, .black))
-                    .kerning(1.5)
-                    .foregroundStyle(.secondary)
+                    .font(appFont(9, .medium))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
             }
             Text(value)
                 .font(appFont(18, .bold).monospaced())
+                .foregroundStyle(Palette.textPrimary)
                 .contentTransition(.numericText())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.ultraThinMaterial.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                .stroke(.white.opacity(0.08), lineWidth: 1)
-        )
+        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
     }
 }

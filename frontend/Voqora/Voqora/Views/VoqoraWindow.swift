@@ -12,6 +12,7 @@ struct VoqoraWindow: View {
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var permissions: PermissionsService
     @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
     // Tracked so the startup prepare() work can be cancelled if the window
@@ -19,70 +20,74 @@ struct VoqoraWindow: View {
     // no cancellation, harmless only because of downstream idempotency guards.
     @State private var launchTask: Task<Void, Never>?
 
+    /// The app's accent, resolved once per body pass — GRiT's own rows,
+    /// buttons and links all read through this same call rather than a
+    /// hardcoded `.cyan`.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 0) {
                 // APP BRANDING HEADER
-                HStack(spacing: 12) {
+                HStack(spacing: DesignTokens.Spacing.md) {
                     Image(nsImage: NSApplication.shared.applicationIconImage)
                         .resizable()
                         .interpolation(.high)
                         .scaledToFit()
-                        .frame(width: 36, height: 36)
+                        .frame(width: 32, height: 32)
 
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text("Voqora")
-                            .font(vm.appFont(size: 16, weight: .bold))
-                    }
+                    Text("Voqora")
+                        .font(vm.font(.paneTitle))
+                        .foregroundStyle(Palette.textPrimary)
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 24)
+                .padding(.horizontal, DesignTokens.Layout.paneInset)
+                .padding(.top, DesignTokens.Spacing.xl)
+                .padding(.bottom, DesignTokens.Spacing.lg)
 
                 sidebarNavigation
 
-                Spacer()
+                Spacer(minLength: DesignTokens.Spacing.xl)
 
                 // SYSTEM / PREFERENCES AT BOTTOM
-                VStack(spacing: 8) {
-                    Divider().padding(.horizontal, 20).opacity(0.3)
+                VStack(spacing: DesignTokens.Spacing.xs) {
+                    Rectangle()
+                        .fill(Palette.separator)
+                        .frame(height: 1)
+                        .padding(.horizontal, DesignTokens.Layout.paneInset)
+                        .padding(.bottom, DesignTokens.Spacing.xs)
 
-                    Button {
+                    PaneRow(isSelected: vm.selectedTab == "preferences", action: {
                         vm.selectedTab = "preferences"
+                    }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(vm.font(.rowTitle))
+                            .frame(width: 20)
                     } label: {
-                        HStack {
-                            Image(systemName: "gearshape.fill")
-                            Text("Preferences")
-                                .font(vm.appFont(size: 13, weight: .medium))
-                            Spacer()
-                        }
-                        .padding(.vertical, 8)
-                        .padding(.horizontal, 12)
-                        .background(vm.selectedTab == "preferences" ? Color.cyan.opacity(0.15) : Color.clear)
-                        .foregroundStyle(vm.selectedTab == "preferences" ? .cyan : .primary)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        Text("Preferences")
+                            .font(vm.font(.rowTitle))
                     }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 16)
                 }
-                .padding(.bottom, 8)
+                .padding(.horizontal, DesignTokens.Spacing.sm)
 
                 // DEVELOPER ATTRIBUTION
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                     Text("DEVELOPED BY")
-                        .font(vm.appFont(size: 8, weight: .black))
-                        .kerning(1)
-                        .foregroundStyle(.secondary.opacity(0.5))
+                        .font(vm.font(.sectionHeader))
+                        .kerning(0.6)
+                        .foregroundStyle(Palette.textTertiary)
 
                     Text("Himansh Mudigonda")
-                        .font(vm.appFont(size: 11, weight: .bold))
-                        .foregroundStyle(.secondary)
+                        .font(vm.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textSecondary)
 
-                    HStack(spacing: 18) {
+                    HStack(spacing: DesignTokens.Spacing.lg) {
                         Link(destination: URL(string: "https://github.com/himudigonda")!) {
                             Image("github") // Explicit Asset
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 36, height: 36)
+                                .frame(width: 30, height: 30)
                         }
                         .help("GitHub")
 
@@ -90,7 +95,7 @@ struct VoqoraWindow: View {
                             Image("linkedin") // Explicit Asset
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 36, height: 36)
+                                .frame(width: 30, height: 30)
                         }
                         .help("LinkedIn")
 
@@ -98,15 +103,17 @@ struct VoqoraWindow: View {
                             Image(systemName: "globe") // System Icon
                                 .resizable()
                                 .aspectRatio(contentMode: .fit)
-                                .frame(width: 28, height: 28)
+                                .frame(width: 24, height: 24)
                                 .padding(4)
                         }
                         .help("Website")
                     }
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(accentColor)
                 }
-                .padding(24)
+                .padding(DesignTokens.Layout.paneInset)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
+            .background(Palette.surfaceSunken)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             ZStack(alignment: .bottom) {
@@ -153,6 +160,10 @@ struct VoqoraWindow: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.isNowPlayingBarVisible)
         }
         .frame(minWidth: 800, minHeight: 600)
+        // So standard system controls (Toggle, Slider, focus rings, plain
+        // `.buttonStyle(.borderedProminent)` buttons) pick up the chosen
+        // accent ramp too, not just views explicitly styled against it.
+        .tint(accentColor)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
             // Prepare backend if needed
@@ -208,13 +219,18 @@ struct VoqoraWindow: View {
                 ZStack {
                     adaptiveBackdrop
 
-                    VStack(spacing: 20) {
+                    VStack(spacing: DesignTokens.Spacing.lg) {
                         if let error = launchManager.error {
                             Image(systemName: "exclamationmark.triangle.fill")
                                 .font(.system(size: 40))
-                                .foregroundStyle(.red)
-                            Text("Launch Failed").font(vm.appFont(size: 18, weight: .bold))
-                            Text(error).foregroundStyle(.secondary).multilineTextAlignment(.center).padding(.horizontal)
+                                .foregroundStyle(Palette.danger)
+                            Text("Launch Failed")
+                                .font(vm.font(.sectionTitle))
+                                .foregroundStyle(Palette.textPrimary)
+                            Text(error)
+                                .foregroundStyle(Palette.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
 
                             Button("Try Again") {
                                 launchManager.error = nil
@@ -226,9 +242,13 @@ struct VoqoraWindow: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
+                            .tint(accentColor)
                         } else {
                             ProgressView()
-                            Text("Initializing Voqora...").font(vm.appFont(size: 16, weight: .medium))
+                                .tint(accentColor)
+                            Text("Initializing Voqora...")
+                                .font(vm.font(.rowTitle))
+                                .foregroundStyle(Palette.textSecondary)
                         }
                     }
                 }
@@ -248,27 +268,38 @@ struct VoqoraWindow: View {
         }
     }
 
+    /// A plain `VStack` of `PaneRow`s rather than a native `List` — a
+    /// `List(.sidebar)` paints its own vibrant/translucent material, which is
+    /// exactly the "glass" look this design language replaces. Matches
+    /// GRiT's own nav rail (`AppSidebarView`) shape for shape.
     private var sidebarNavigation: some View {
-        List(selection: $vm.selectedTab) {
-            Section("Library") {
-                sidebarLink("Now Playing", icon: "play.circle.fill", value: "home")
-                sidebarLink("The Vault", icon: "clock.arrow.circlepath", value: "history")
+        VStack(alignment: .leading, spacing: DesignTokens.Layout.sectionGap) {
+            PaneSection("Library") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Now Playing", icon: "play.circle.fill", value: "home")
+                    sidebarLink("The Vault", icon: "clock.arrow.circlepath", value: "history")
+                }
             }
-            Section("Audiobooks") {
-                sidebarLink("Library", icon: "books.vertical.fill", value: "books")
-                if let resume = bookVM.continueListeningBook {
-                    continueListeningButton(for: resume)
+            PaneSection("Audiobooks") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Library", icon: "books.vertical.fill", value: "books")
+                    if let resume = bookVM.continueListeningBook {
+                        continueListeningButton(for: resume)
+                    }
                 }
             }
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
+        .padding(.horizontal, DesignTokens.Spacing.sm)
     }
 
     private func sidebarLink(_ title: String, icon: String, value: String) -> some View {
-        NavigationLink(value: value) {
-            Label(title, systemImage: icon)
-                .font(vm.appFont(size: 13))
+        PaneRow(isSelected: vm.selectedTab == value, action: { vm.selectedTab = value }) {
+            Image(systemName: icon)
+                .font(vm.font(.rowTitle))
+                .frame(width: 20)
+        } label: {
+            Text(title)
+                .font(vm.font(.rowTitle))
         }
     }
 
@@ -278,38 +309,46 @@ struct VoqoraWindow: View {
             bookVM.play(book)
             bookVM.openPlayer(for: book.bookID)
         } label: {
-            HStack {
+            HStack(spacing: DesignTokens.Layout.rowIconGap) {
                 Image(systemName: "play.circle")
-                    .foregroundStyle(.cyan)
+                    .font(vm.font(.rowTitle))
+                    .foregroundStyle(accentColor)
+                    .frame(width: 20)
                 VStack(alignment: .leading, spacing: 0) {
                     Text("Continue Listening")
-                        .font(vm.appFont(size: 13))
+                        .font(vm.font(.rowTitle))
                     Text(book.displayTitle)
-                        .font(vm.appFont(size: 10))
-                        .foregroundStyle(.secondary)
+                        .font(vm.font(.caption))
+                        .foregroundStyle(Palette.textTertiary)
                         .lineLimit(1)
                 }
-                Spacer()
+                Spacer(minLength: 0)
             }
-            .padding(.vertical, 4)
+            .padding(.horizontal, DesignTokens.Layout.rowInsetHorizontal)
+            .padding(.vertical, DesignTokens.Layout.rowInsetVertical)
+            .frame(minHeight: DesignTokens.Layout.rowMinHeight)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .foregroundStyle(Palette.textPrimary)
     }
 
     private var miniPlayerHUD: some View {
         HStack(spacing: 20) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(vm.status == .speaking ? "SPEAKING" : "PAUSED")
-                    .font(vm.appFont(size: 8, weight: .black))
-                    .foregroundStyle(.cyan)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(accentColor)
                 Text(history.history.first?.text ?? "Reading...")
                     .font(vm.appFont(size: 11, weight: .medium))
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(1)
             }
             .frame(width: 250, alignment: .leading)
 
             ProgressView(value: audio.progress)
-                .tint(.cyan)
+                .tint(accentColor)
                 .scaleEffect(x: 1, y: 0.5)
 
             HStack(spacing: 12) {
@@ -326,13 +365,12 @@ struct VoqoraWindow: View {
             }
             .buttonStyle(.plain)
             .font(.title3)
+            .foregroundStyle(Palette.textPrimary)
         }
         .padding(.horizontal, 25)
         .padding(.vertical, 15)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 15))
+        .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         .padding(20)
-        .shadow(color: .black.opacity(0.1), radius: 10)
         .animation(.spring(), value: audio.progress)
     }
 
@@ -381,7 +419,7 @@ struct VoqoraWindow: View {
     }
 
     private var adaptiveBackdrop: some View {
-        Color(.windowBackgroundColor)
+        Palette.surfaceBase
             .ignoresSafeArea()
     }
 }

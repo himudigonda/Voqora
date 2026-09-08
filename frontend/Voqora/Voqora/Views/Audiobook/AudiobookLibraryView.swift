@@ -24,12 +24,20 @@ enum LibrarySheet: Identifiable {
 struct AudiobookLibraryView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var hoveringDrop = false
     @State private var showImporter = false
     @State private var searchText = ""
     @State private var sort: SortMode = .recent
     @State private var path: [AudiobookRoute] = []
+
+    /// The app's accent, resolved once per body pass — matches
+    /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     enum SortMode: String, CaseIterable, Identifiable {
         case recent, alpha, duration
@@ -326,15 +334,18 @@ struct AudiobookLibraryView: View {
         VStack(spacing: 22) {
             Image(systemName: "books.vertical")
                 .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(.secondary.opacity(0.4))
+                .foregroundStyle(Palette.textTertiary.opacity(0.4))
             VStack(spacing: 6) {
+                // Heavy black-weight kerned all-caps was the old techy
+                // aesthetic; a semibold sectionTitle with a light kern reads
+                // much closer to GRiT's tone for a headline this size.
                 Text("YOUR SHELF IS EMPTY")
-                    .font(vm.appFont(size: 12, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.sectionTitle))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
                 Text("Drop a PDF, TXT, DOCX, or Markdown file anywhere on this window to begin.")
-                    .font(vm.appFont(size: 14))
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
             }
             Button { showImporter = true } label: {
                 Label("Choose a File", systemImage: "plus")
@@ -342,7 +353,7 @@ struct AudiobookLibraryView: View {
                     .padding(.vertical, 10)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.cyan)
+            .tint(accentColor)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -353,15 +364,15 @@ struct AudiobookLibraryView: View {
         VStack(spacing: 22) {
             Image(systemName: "wifi.exclamationmark")
                 .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(.red.opacity(0.6))
+                .foregroundStyle(Palette.danger.opacity(0.6))
             VStack(spacing: 6) {
                 Text("COULDN'T LOAD YOUR LIBRARY")
-                    .font(vm.appFont(size: 12, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.sectionTitle))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
                 Text("Voqora couldn't reach the backend. Check that it's running and try again.")
-                    .font(vm.appFont(size: 14))
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -371,7 +382,7 @@ struct AudiobookLibraryView: View {
                     .padding(.vertical, 10)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.red)
+            .tint(Palette.danger)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -382,15 +393,15 @@ struct AudiobookLibraryView: View {
         VStack(spacing: 22) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(.secondary.opacity(0.4))
+                .foregroundStyle(Palette.textTertiary.opacity(0.4))
             VStack(spacing: 6) {
                 Text("NO MATCHES")
-                    .font(vm.appFont(size: 12, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.sectionTitle))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
                 Text("No audiobooks match “\(searchText)”. Try a different search.")
-                    .font(vm.appFont(size: 14))
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -410,18 +421,21 @@ private struct SkeletonCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             // T-16: track the grid's adaptive column instead of a hard 180pt,
-            // matching AudiobookCardView's cover fix.
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+            // matching AudiobookCardView's cover fix. An opaque neutral fill
+            // (rather than `.ultraThinMaterial`) so the shimmer placeholder
+            // reads as a stable flat shape, not a smeared blur of whatever
+            // scrolls beneath it.
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
+                .fill(Palette.controlFill)
                 .aspectRatio(AudiobookCardView.coverAspectRatio, contentMode: .fit)
                 .overlay(shimmer)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Palette.controlFill)
                 .frame(width: 130, height: 12)
                 .overlay(shimmer)
             RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Palette.controlFill)
                 .frame(width: 90, height: 9)
                 .overlay(shimmer)
         }

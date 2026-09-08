@@ -3,10 +3,16 @@ import SwiftUI
 struct VaultView: View {
     @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var dashboardVM: DashboardViewModel
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var searchText = ""
     @State private var showOnlyFavorites = false
     @State private var selectedEntry: HistoryEntry? = nil
     @State private var showClearHistoryConfirmation = false
+
+    private var accentColor: Color {
+        dashboardVM.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     /// Group entries by day
     private var groupedEntries: [(Date, [HistoryEntry])] {
@@ -42,9 +48,9 @@ struct VaultView: View {
                 List {
                     ForEach(groupedEntries, id: \.0) { date, entries in
                         Section(header: Text(date, style: .date)
-                            .font(dashboardVM.appFont(size: 11, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .kerning(1))
+                            .font(dashboardVM.font(.sectionHeader))
+                            .foregroundStyle(Palette.textSecondary)
+                            .kerning(0.6))
                         {
                             ForEach(entries) { entry in
                                 VaultEntryRow(entry: entry, selectedEntry: $selectedEntry)
@@ -74,16 +80,17 @@ struct VaultView: View {
             if let persistenceError = history.persistenceError {
                 HStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Palette.warning)
                     Text(persistenceError)
-                        .font(dashboardVM.appFont(size: 11, weight: .medium))
+                        .font(dashboardVM.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textPrimary)
                     Spacer()
                     Button("Try again") { history.retryPersistence() }
-                        .buttonStyle(.bordered)
+                        .buttonStyle(.voqoraSecondary)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(Color.orange.opacity(0.12))
+                .background(Palette.warning.opacity(0.12))
             }
         }
         .navigationTitle("Vault")
@@ -96,7 +103,7 @@ struct VaultView: View {
                 HStack(spacing: 15) {
                     Button { showOnlyFavorites.toggle() } label: {
                         Image(systemName: showOnlyFavorites ? "star.fill" : "star")
-                            .foregroundStyle(showOnlyFavorites ? .yellow : .secondary)
+                            .foregroundStyle(showOnlyFavorites ? .yellow : Palette.textSecondary)
                     }
                     .help("Show starred snippets only")
 
@@ -127,15 +134,15 @@ struct VaultView: View {
         VStack(spacing: 22) {
             Image(systemName: "text.bubble")
                 .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(.secondary.opacity(0.4))
+                .foregroundStyle(Palette.textTertiary.opacity(0.5))
             VStack(spacing: 6) {
                 Text("YOUR VAULT IS EMPTY")
-                    .font(dashboardVM.appFont(size: 12, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(dashboardVM.font(.sectionTitle))
+                    .kerning(0.4)
+                    .foregroundStyle(Palette.textSecondary)
                 Text("Select text in any app and press Cmd+Shift+. to hear it — spoken passages are saved here.")
-                    .font(dashboardVM.appFont(size: 14))
-                    .foregroundStyle(.secondary)
+                    .font(dashboardVM.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -147,15 +154,15 @@ struct VaultView: View {
         VStack(spacing: 22) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(.secondary.opacity(0.4))
+                .foregroundStyle(Palette.textTertiary.opacity(0.5))
             VStack(spacing: 6) {
                 Text("NO MATCHES")
-                    .font(dashboardVM.appFont(size: 12, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(dashboardVM.font(.sectionTitle))
+                    .kerning(0.4)
+                    .foregroundStyle(Palette.textSecondary)
                 Text(searchText.isEmpty ? "No starred snippets yet." : "No spoken text matches \u{201C}\(searchText)\u{201D}. Try a different search.")
-                    .font(dashboardVM.appFont(size: 14))
-                    .foregroundStyle(.secondary)
+                    .font(dashboardVM.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 40)
             }
@@ -167,15 +174,21 @@ struct VaultView: View {
 struct VaultEntryRow: View {
     @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var dashboardVM: DashboardViewModel
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
     let entry: HistoryEntry
     @Binding var selectedEntry: HistoryEntry?
+
+    private var accentColor: Color {
+        dashboardVM.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack {
                 Text(entry.timestamp, style: .time)
-                    .font(dashboardVM.appFont(size: 10, weight: .regular))
-                    .foregroundColor(.cyan)
+                    .font(dashboardVM.font(.caption))
+                    .foregroundColor(accentColor)
                 Spacer()
 
                 if entry.isFavorite {
@@ -186,12 +199,12 @@ struct VaultEntryRow: View {
 
                 Text(entry.voice)
                     .font(dashboardVM.appFont(size: 8, weight: .regular))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(Palette.textSecondary)
             }
             Text(entry.text)
                 .lineLimit(3)
                 .font(dashboardVM.appFont(size: 15, weight: .medium))
-                .foregroundStyle(.primary.opacity(0.9))
+                .foregroundStyle(Palette.textPrimary.opacity(0.9))
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
@@ -222,7 +235,13 @@ struct VaultEntryRow: View {
 struct VaultEntryDetailView: View {
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
     let entry: HistoryEntry
+
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -230,24 +249,27 @@ struct VaultEntryDetailView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(entry.timestamp, style: .date)
                         .font(vm.appFont(size: 12, weight: .bold))
+                        .foregroundStyle(Palette.textPrimary)
                     Text(entry.voice.uppercased())
-                        .font(vm.appFont(size: 10, weight: .black))
-                        .foregroundStyle(.cyan)
+                        .font(vm.font(.sectionHeader))
+                        .kerning(0.6)
+                        .foregroundStyle(accentColor)
                 }
                 Spacer()
                 Button { dismiss() } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 20))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                 }
                 .buttonStyle(.plain)
             }
             .padding(24)
-            .background(.ultraThinMaterial)
+            .voqoraSurface(.raised, in: Rectangle())
 
             ScrollView {
                 Text(entry.text)
                     .font(vm.appFont(size: 18, weight: .regular))
+                    .foregroundStyle(Palette.textPrimary)
                     .lineSpacing(8)
                     .padding(32)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -261,32 +283,21 @@ struct VaultEntryDetailView: View {
                     }
                 } label: {
                     Label("RE-SPEAK", systemImage: "play.fill")
-                        .font(vm.appFont(size: 12, weight: .black))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(Color.cyan)
-                        .foregroundStyle(.black)
-                        .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.voqoraPrimary)
 
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(entry.text, forType: .string)
                 } label: {
                     Label("COPY", systemImage: "doc.on.doc.fill")
-                        .font(vm.appFont(size: 12, weight: .bold))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.voqoraSecondary)
             }
             .padding(24)
-            .background(.ultraThinMaterial)
+            .voqoraSurface(.raised, in: Rectangle())
         }
         .frame(minWidth: 500, minHeight: 400)
-        .background(Color(NSColor.windowBackgroundColor))
+        .background(Palette.surfaceBase)
     }
 }

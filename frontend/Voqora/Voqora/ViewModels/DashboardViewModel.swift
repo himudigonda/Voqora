@@ -93,6 +93,7 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
     @AppStorage("telemetryEnabled") var telemetryEnabled = true
     @AppStorage("selectedFontName") var selectedFontName = "System Rounded"
+    @AppStorage("accentColorID") var accentColorID: AccentColorOption = .teal
 
     /// Helper to get Font
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {

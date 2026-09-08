@@ -4,6 +4,12 @@ import SwiftUI
 struct AudiobookToastView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         if let toast = bookVM.toast {
@@ -13,26 +19,24 @@ struct AudiobookToastView: View {
                     .font(.system(size: 14, weight: .bold))
                 Text(toast.message)
                     .font(vm.appFont(size: 12, weight: .medium))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(Self.lineLimit(for: toast.kind))
                 Spacer(minLength: 8)
                 Button { bookVM.dismissToast() } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Palette.textSecondary)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(color(for: toast.kind).opacity(0.4), lineWidth: 1)
+                    .strokeBorder(color(for: toast.kind).opacity(0.4), lineWidth: 1)
             )
-            .shadow(color: .black.opacity(0.25), radius: 14, y: 6)
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .frame(maxWidth: 520)
@@ -50,9 +54,9 @@ struct AudiobookToastView: View {
 
     private func color(for kind: AudiobookViewModel.Toast.Kind) -> Color {
         switch kind {
-        case .error: return .red
-        case .info: return .cyan
-        case .success: return .green
+        case .error: return Palette.danger
+        case .info: return accentColor
+        case .success: return Palette.success
         }
     }
 

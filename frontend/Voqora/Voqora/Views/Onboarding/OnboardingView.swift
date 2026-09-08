@@ -17,6 +17,8 @@ struct OnboardingView: View {
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var step: Int = 0
     @State private var emailDraft: String = ""
@@ -59,9 +61,22 @@ struct OnboardingView: View {
 
     // MARK: - Chrome
 
+    /// Voqora's default accent (teal) — `DashboardViewModel` isn't reachable
+    /// from this view's environment (see `VoqoraWindow.swift`, where
+    /// `OnboardingView()` is only handed `coordinator`/`permissions`/
+    /// `identity`), so this reads `Palette` directly rather than routing
+    /// through `vm.accentColor`.
+    private var accentColor: Color {
+        Palette.accentColors(
+            for: .teal,
+            appearance: colorScheme,
+            increaseContrast: colorSchemeContrast == .increased
+        ).accent
+    }
+
     private var backdrop: some View {
         LinearGradient(
-            colors: [Color(nsColor: .windowBackgroundColor), Color(nsColor: .controlBackgroundColor)],
+            colors: [Palette.surfaceSunken, Palette.surfaceBase],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -72,7 +87,7 @@ struct OnboardingView: View {
         HStack(spacing: 6) {
             ForEach(0 ..< stepCount, id: \.self) { idx in
                 Capsule()
-                    .fill(idx <= step ? Color.cyan : Color.secondary.opacity(0.25))
+                    .fill(idx <= step ? accentColor : Palette.separator)
                     .frame(height: 4)
                     .animation(.spring(response: 0.3), value: step)
             }
@@ -115,12 +130,12 @@ struct OnboardingView: View {
             if step == stepCount - 1 {
                 Button(OnboardingCopy.doneButton) { coordinator.markCompleted() }
                     .buttonStyle(.borderedProminent)
-                    .tint(.cyan)
+                    .tint(accentColor)
                     .keyboardShortcut(.defaultAction)
             } else {
                 Button(OnboardingCopy.nextButton) { withAnimation { step += 1 } }
                     .buttonStyle(.borderedProminent)
-                    .tint(.cyan)
+                    .tint(accentColor)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canAdvance)
                     .help(advanceBlockedReason ?? "")
@@ -156,11 +171,12 @@ struct OnboardingView: View {
                 .scaledToFit()
                 .frame(width: 76, height: 76)
             Text(OnboardingCopy.welcomeTitle)
-                .font(.system(size: 32, weight: .bold))
+                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.welcomeBody)
-                .font(.system(size: 15))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 15, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -172,10 +188,11 @@ struct OnboardingView: View {
                 kbd("⌘"); kbd("⇧"); kbd(".")
             }
             Text(OnboardingCopy.hotkeyTitle)
-                .font(.system(size: 26, weight: .bold))
+                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.hotkeyBody)
-                .font(.system(size: 15))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 15, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -185,12 +202,13 @@ struct OnboardingView: View {
         VStack(spacing: 22) {
             Image(systemName: "hand.tap.fill")
                 .font(.system(size: 52))
-                .foregroundStyle(.cyan.gradient)
+                .foregroundStyle(accentColor)
             Text(OnboardingCopy.axTitle)
-                .font(.system(size: 24, weight: .bold))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.axBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 14, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -203,7 +221,7 @@ struct OnboardingView: View {
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.cyan)
+                .tint(accentColor)
                 .disabled(permissions.accessibilityGranted)
 
                 statusRow(
@@ -219,12 +237,13 @@ struct OnboardingView: View {
         VStack(spacing: 22) {
             Image(systemName: "bell.badge.fill")
                 .font(.system(size: 52))
-                .foregroundStyle(.cyan.gradient)
+                .foregroundStyle(accentColor)
             Text(OnboardingCopy.notifTitle)
-                .font(.system(size: 24, weight: .bold))
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.notifBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 14, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -237,7 +256,7 @@ struct OnboardingView: View {
                         .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.cyan)
+                .tint(accentColor)
                 .disabled(permissions.notificationsStatus == .authorized)
 
                 notificationsStatusLabel
@@ -250,16 +269,16 @@ struct OnboardingView: View {
         switch permissions.notificationsStatus {
         case .authorized:
             HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                Text(OnboardingCopy.notifGrantedLabel).foregroundStyle(.green)
-            }.font(.system(size: 12))
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+                Text(OnboardingCopy.notifGrantedLabel).foregroundStyle(Palette.success)
+            }.font(.system(size: 12, design: .rounded))
         case .denied:
             HStack(spacing: 6) {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(.orange)
-                Text(OnboardingCopy.notifDeniedLabel).foregroundStyle(.secondary)
-            }.font(.system(size: 12))
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.warning)
+                Text(OnboardingCopy.notifDeniedLabel).foregroundStyle(Palette.textSecondary)
+            }.font(.system(size: 12, design: .rounded))
         default:
-            Text(" ").font(.system(size: 12))
+            Text(" ").font(.system(size: 12, design: .rounded))
         }
     }
 
@@ -267,13 +286,14 @@ struct OnboardingView: View {
         VStack(spacing: 18) {
             Image(systemName: "envelope.fill")
                 .font(.system(size: 52))
-                .foregroundStyle(.cyan.gradient)
+                .foregroundStyle(accentColor)
             Text(OnboardingCopy.identityTitle)
-                .font(.system(size: 22, weight: .bold))
+                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.identityBody)
-                .font(.system(size: 14))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 14, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -292,22 +312,22 @@ struct OnboardingView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(.cyan)
+                .tint(accentColor)
                 .disabled(!canSaveEmail || emailSubmitting)
                 .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
             }
 
             if let err = emailError {
-                Text(err).font(.system(size: 11)).foregroundStyle(.red)
+                Text(err).font(.system(size: 11, design: .rounded)).foregroundStyle(Palette.danger)
             } else if emailSaved {
                 HStack(spacing: 4) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                    Text(OnboardingCopy.identitySavedLabel).foregroundStyle(.green)
-                }.font(.system(size: 12))
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
+                    Text(OnboardingCopy.identitySavedLabel).foregroundStyle(Palette.success)
+                }.font(.system(size: 12, design: .rounded))
             } else {
                 Text(emailDraft.isEmpty || canSaveEmail ? " " : "Enter a valid email to enable Save")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundStyle(Palette.textSecondary)
             }
         }
     }
@@ -320,12 +340,13 @@ struct OnboardingView: View {
         VStack(spacing: 22) {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 64))
-                .foregroundStyle(.green.gradient)
+                .foregroundStyle(Palette.success)
             Text(OnboardingCopy.privacyTitle)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.privacyBody)
-                .font(.system(size: 15))
-                .foregroundStyle(.primary.opacity(0.78))
+                .font(.system(size: 15, design: .rounded))
+                .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -353,24 +374,18 @@ struct OnboardingView: View {
     private func statusRow(isGranted: Bool, grantedLabel: String, pendingLabel: String) -> some View {
         HStack(spacing: 6) {
             Image(systemName: isGranted ? "checkmark.circle.fill" : "clock.fill")
-                .foregroundStyle(isGranted ? .green : .orange)
+                .foregroundStyle(isGranted ? Palette.success : Palette.warning)
             Text(isGranted ? grantedLabel : pendingLabel)
-                .foregroundStyle(isGranted ? .green : .secondary)
+                .foregroundStyle(isGranted ? Palette.success : Palette.textSecondary)
         }
-        .font(.system(size: 12))
+        .font(.system(size: 12, design: .rounded))
     }
 
     private func kbd(_ label: String) -> some View {
         Text(label)
             .font(.system(size: 26, weight: .bold, design: .monospaced))
+            .foregroundStyle(Palette.textPrimary)
             .frame(width: 56, height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(.background.opacity(0.7))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(.secondary.opacity(0.5), lineWidth: 1)
-            )
+            .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
     }
 }

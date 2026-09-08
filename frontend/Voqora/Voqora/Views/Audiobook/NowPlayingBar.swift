@@ -6,9 +6,17 @@ import SwiftUI
 struct NowPlayingBar: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     var onTap: () -> Void
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
+
+    /// The app's accent, resolved once per body pass — matches
+    /// `VoqoraWindow`'s own `accentColor` pattern.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         if let book = bookVM.nowPlaying {
@@ -19,12 +27,12 @@ struct NowPlayingBar: View {
     @ViewBuilder
     private func content(for book: Audiobook) -> some View {
         VStack(spacing: 0) {
-            // Cyan progress underline at the very top
+            // Accent progress underline at the very top
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    Rectangle().fill(Color.primary.opacity(0.06))
+                    Rectangle().fill(Palette.separator)
                     Rectangle()
-                        .fill(.cyan)
+                        .fill(accentColor)
                         .frame(width: geo.size.width * bookVM.audio.progress)
                         .animation(.linear(duration: 0.1), value: bookVM.audio.progress)
                 }
@@ -36,7 +44,7 @@ struct NowPlayingBar: View {
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")
-                        .foregroundStyle(.cyan.opacity(0.6))
+                        .foregroundStyle(accentColor.opacity(0.6))
                 }
                 .frame(width: 40, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -44,33 +52,34 @@ struct NowPlayingBar: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(prettyTitle(book))
                         .font(vm.appFont(size: 12, weight: .bold))
+                        .foregroundStyle(Palette.textPrimary)
                         .lineLimit(1)
                     if let section = bookVM.currentSection(in: book) {
                         Text(section.title.uppercased())
-                            .font(vm.appFont(size: 9, weight: .black))
-                            .kerning(1)
-                            .foregroundStyle(.cyan)
+                            .font(vm.font(.sectionHeader))
+                            .kerning(0.6)
+                            .foregroundStyle(accentColor)
                             .lineLimit(1)
                     } else {
                         Text("AUDIOBOOK")
-                            .font(vm.appFont(size: 9, weight: .black))
-                            .kerning(1)
-                            .foregroundStyle(.cyan)
+                            .font(vm.font(.sectionHeader))
+                            .kerning(0.6)
+                            .foregroundStyle(accentColor)
                     }
                 }
                 Spacer()
 
                 Text("\(DurationFormatter.clock(bookVM.audio.currentTime)) / \(DurationFormatter.clock(bookVM.audio.duration))")
-                    .font(vm.appFont(size: 10).monospaced())
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.caption).monospaced())
+                    .foregroundStyle(Palette.textSecondary)
 
                 HStack(spacing: 8) {
                     Button { bookVM.togglePlayback() } label: {
                         Image(systemName: bookVM.audio.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 13, weight: .black))
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(Palette.textPrimary)
                             .frame(width: 32, height: 32)
-                            .background(.ultraThinMaterial, in: Circle())
+                            .voqoraSurface(.control, in: Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(bookVM.audio.isPlaying ? "Pause" : "Play")
@@ -79,7 +88,7 @@ struct NowPlayingBar: View {
                     Button { bookVM.stopPlayback() } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Palette.textSecondary)
                             .frame(width: 28, height: 28)
                     }
                     .buttonStyle(.plain)
@@ -90,15 +99,15 @@ struct NowPlayingBar: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
         }
-        .background(.ultraThinMaterial)
+        // `voqoraSurface` only paints a background/border behind `content` —
+        // it doesn't clip it — and the progress underline above spans the
+        // bar's full width with square corners, so an explicit clip is still
+        // needed to round them off (matching the old `.ultraThinMaterial` +
+        // `.clipShape` pairing this replaces).
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
+        .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
-        .shadow(color: .black.opacity(0.25), radius: 16, y: 6)
         .onTapGesture { onTap() }
     }
 

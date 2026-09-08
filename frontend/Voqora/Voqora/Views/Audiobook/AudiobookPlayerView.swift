@@ -11,6 +11,7 @@ struct AudiobookPlayerView: View {
     @EnvironmentObject var audio: AudioService
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     let book: Audiobook
     @State private var localScrub: Double = 0
@@ -25,7 +26,10 @@ struct AudiobookPlayerView: View {
     // present and always fills the remaining space — there is no longer a
     // state where the lower half of the player is empty.
     @State private var panelTab: ContentTab = .transcript
-    @State private var dominantColor: Color = .cyan
+    // Neutral placeholder until `CoverColorExtractor` samples the actual
+    // cover art in `.onAppear` below — the old neon `.cyan` default briefly
+    // flashed on every player open before the real sample arrived.
+    @State private var dominantColor: Color = .gray
     // T-13: last time the user manually scrolled the transcript; suppresses
     // the auto-scroll-on-page-change effect for a short window afterward.
     @State private var userScrolledAt: Date? = nil
@@ -40,6 +44,19 @@ struct AudiobookPlayerView: View {
     @State private var highlightCache = HighlightCache()
 
     private let baseURL = URL(string: "http://127.0.0.1:10101")!
+
+    /// The app's accent, resolved once per body pass — every hardcoded
+    /// `.cyan` in this view reads through this instead.
+    private var accentColor: Color {
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
+
+    /// The ink for text/icons drawn ON an `accentColor` fill (e.g. the play
+    /// button). Not `.white`/`.black` — the dark ramp can put `base` at a
+    /// light OKLCH lightness where a fixed ink fails contrast.
+    private var onAccentColor: Color {
+        vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -143,18 +160,22 @@ struct AudiobookPlayerView: View {
         VStack(alignment: .leading, spacing: 16) {
             ZStack {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Palette.surfaceRaised)
                     .frame(width: 240, height: 336)
                 AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .font(.system(size: 48))
-                        .foregroundStyle(.cyan.opacity(0.6))
+                        .foregroundStyle(accentColor.opacity(0.6))
                 }
                 .frame(width: 240, height: 336)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Palette.separator, lineWidth: 1)
+            )
             .shadow(
                 color: audio.isPlaying ? dominantColor.opacity(0.45) : .black.opacity(0.45),
                 radius: audio.isPlaying ? 42 : 30,
@@ -165,12 +186,12 @@ struct AudiobookPlayerView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(currentSectionLabel)
-                    .font(vm.appFont(size: 9, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.cyan)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(accentColor)
                 Text(prettyTitle)
                     .font(vm.appFont(size: 22, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(2)
                     .frame(width: 240, alignment: .leading)
             }
@@ -217,27 +238,31 @@ struct AudiobookPlayerView: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(.ultraThinMaterial)
+                    .fill(Palette.surfaceRaised)
                 AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .font(.system(size: 16))
-                        .foregroundStyle(.cyan.opacity(0.6))
+                        .foregroundStyle(accentColor.opacity(0.6))
                 }
             }
             .frame(width: 40, height: 56)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Palette.separator, lineWidth: 1)
+            )
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(currentSectionLabel)
-                    .font(vm.appFont(size: 9, weight: .black))
-                    .kerning(1.5)
-                    .foregroundStyle(.cyan)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(accentColor)
                     .lineLimit(1)
                 Text(prettyTitle)
                     .font(vm.appFont(size: 15, weight: .bold))
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Palette.textPrimary)
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
@@ -253,26 +278,26 @@ struct AudiobookPlayerView: View {
                 ZStack(alignment: .leading) {
                     // Track
                     Capsule()
-                        .fill(Color.primary.opacity(0.12))
+                        .fill(Palette.controlFill)
                         .frame(height: 4)
                     // Filled portion
                     Capsule()
-                        .fill(Color.cyan)
+                        .fill(accentColor)
                         .frame(width: max(0, w * progress), height: 4)
                     // Section-boundary ticks
                     ForEach(book.sections) { section in
                         let total = max(1.0, book.totalAudioSeconds)
                         Capsule()
-                            .fill(Color.primary.opacity(0.45))
+                            .fill(Palette.controlBorder)
                             .frame(width: 2, height: 10)
                             .offset(x: w * (section.startTime / total) - 1, y: -3)
                     }
                     // Thumb
                     Circle()
-                        .fill(Color.white)
+                        .fill(Palette.surfaceRaised)
                         .frame(width: 14, height: 14)
                         .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
-                        .overlay(Circle().stroke(Color.primary.opacity(0.12), lineWidth: 0.5))
+                        .overlay(Circle().stroke(Palette.separator, lineWidth: 0.5))
                         .offset(x: max(0, w * progress - 7))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -298,17 +323,17 @@ struct AudiobookPlayerView: View {
                 if let remain = bookVM.sleepRemainingSeconds {
                     Label("Sleep in \(DurationFormatter.clock(remain))", systemImage: "moon.zzz.fill")
                         .font(vm.appFont(size: 10, weight: .bold).monospaced())
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(accentColor)
                 } else if bookVM.sleepUntilEndOfBook {
                     Label("Until end of book", systemImage: "moon.zzz.fill")
                         .font(vm.appFont(size: 10, weight: .bold))
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(accentColor)
                 }
                 Spacer()
                 Text("-" + DurationFormatter.clock(max(0, audio.duration - audio.currentTime)))
             }
             .font(vm.appFont(size: 11, weight: .medium).monospaced())
-            .foregroundStyle(.secondary)
+            .foregroundStyle(Palette.textSecondary)
         }
     }
 
@@ -338,17 +363,17 @@ struct AudiobookPlayerView: View {
     private var playButton: some View {
         Button { bookVM.togglePlayback() } label: {
             ZStack {
-                Circle().fill(.white).frame(width: 72, height: 72)
+                Circle().fill(accentColor).frame(width: 72, height: 72)
                     .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-                    .overlay(Circle().stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+                    .overlay(Circle().stroke(Palette.separator, lineWidth: 0.5))
                 Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 26, weight: .black))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(onAccentColor)
                     .offset(x: audio.isPlaying ? 0 : 2)
             }
         }
         .buttonStyle(.plain)
-        .shadow(color: .cyan.opacity(0.4), radius: 18)
+        .shadow(color: accentColor.opacity(0.4), radius: 18)
         .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
         .help(audio.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
@@ -357,9 +382,9 @@ struct AudiobookPlayerView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(.primary)
+                .foregroundStyle(Palette.textPrimary)
                 .frame(width: 44, height: 44)
-                .background(Color.primary.opacity(0.06), in: Circle())
+                .background(Palette.controlFill, in: Circle())
         }
         .buttonStyle(.plain)
         .help(help)
@@ -383,10 +408,10 @@ struct AudiobookPlayerView: View {
             } label: {
                 Text(String(format: "%.2gx", playerSpeed))
                     .font(vm.appFont(size: 12, weight: .bold).monospaced())
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(accentColor)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
-                    .background(Capsule().stroke(.cyan.opacity(0.45), lineWidth: 1))
+                    .background(Capsule().stroke(accentColor.opacity(0.45), lineWidth: 1))
             }
             .buttonStyle(.plain)
 
@@ -394,13 +419,13 @@ struct AudiobookPlayerView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: audio.volume < 0.05 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textSecondary)
                     .font(.system(size: 12))
                 Slider(value: Binding(
                     get: { Double(audio.volume) },
                     set: { audio.setVolume(Float($0)) }
                 ), in: 0...1.5)
-                .tint(.cyan)
+                .tint(accentColor)
                 .frame(width: 110)
             }
 
@@ -408,10 +433,10 @@ struct AudiobookPlayerView: View {
                 Button { bookVM.cancelSleepTimer() } label: {
                     Label("Cancel Sleep", systemImage: "moon.zzz.fill")
                         .font(vm.appFont(size: 11, weight: .bold))
-                        .foregroundStyle(.cyan)
+                        .foregroundStyle(accentColor)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Capsule().stroke(.cyan.opacity(0.45), lineWidth: 1))
+                        .background(Capsule().stroke(accentColor.opacity(0.45), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
             }
@@ -435,9 +460,9 @@ struct AudiobookPlayerView: View {
         } label: {
             Image(systemName: "moon.zzz")
                 .font(.system(size: 16))
-                .foregroundStyle(bookVM.sleepRemainingSeconds == nil && !bookVM.sleepUntilEndOfBook ? Color.secondary : Color.cyan)
+                .foregroundStyle(bookVM.sleepRemainingSeconds == nil && !bookVM.sleepUntilEndOfBook ? Palette.textSecondary : accentColor)
                 .frame(width: 32, height: 32)
-                .background(.ultraThinMaterial, in: Circle())
+                .voqoraSurface(.floating, in: Circle())
         }
         .buttonStyle(.plain)
         .menuStyle(.borderlessButton)
@@ -476,12 +501,7 @@ struct AudiobookPlayerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.ultraThinMaterial.opacity(0.4))
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.primary.opacity(0.06), lineWidth: 1)
-            )
+            .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         }
         .frame(minHeight: 220, maxHeight: .infinity)
     }
@@ -550,7 +570,7 @@ struct AudiobookPlayerView: View {
                     }
                 }
             } else {
-                ProgressView().tint(.cyan).padding()
+                ProgressView().tint(accentColor).padding()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -567,7 +587,7 @@ struct AudiobookPlayerView: View {
             if let status = entry.status {
                 Label(Self.pageStatusCaption(for: status), systemImage: Self.pageStatusIcon(for: status))
                     .font(vm.appFont(size: 10, weight: .bold))
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Palette.warning)
             }
             if isCurrent, entry.status == nil {
                 // Only the playing page pays for sentence splitting — a
@@ -586,7 +606,7 @@ struct AudiobookPlayerView: View {
                 Text(Self.reflowedText(entry.text))
                     .font(vm.appFont(size: 14, weight: .regular))
                     .lineSpacing(6)
-                    .foregroundStyle(entry.status != nil ? Color.secondary.opacity(0.6) : Color.secondary)
+                    .foregroundStyle(entry.status != nil ? Palette.textTertiary : Palette.textSecondary)
                     .italic(entry.status != nil)
             }
         }
@@ -631,7 +651,7 @@ struct AudiobookPlayerView: View {
         guard highlightCache.allSentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
             return Text(Self.reflowedText(entry.text))
                 .font(vm.appFont(size: 15, weight: .bold))
-                .foregroundStyle(Color.cyan)
+                .foregroundStyle(accentColor)
         }
         let current = Self.currentSentenceIndex(
             in: highlightCache.allSentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime
@@ -651,7 +671,7 @@ struct AudiobookPlayerView: View {
                 let isCurrentSentence = globalIndex == current
                 let piece = Text(sentence)
                     .font(vm.appFont(size: 14, weight: isCurrentSentence ? .bold : .regular))
-                    .foregroundStyle(isCurrentSentence ? Color.cyan : Color.secondary)
+                    .foregroundStyle(isCurrentSentence ? accentColor : Palette.textSecondary)
                 if result == nil {
                     result = piece
                 } else if sentenceIndex == 0 {
@@ -740,13 +760,13 @@ struct AudiobookPlayerView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("SECTIONS")
-                    .font(vm.appFont(size: 11, weight: .black))
-                    .kerning(2)
-                    .foregroundStyle(.secondary)
+                    .font(vm.font(.sectionHeader))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
                 Spacer()
                 Text("\(book.sections.count)")
                     .font(vm.appFont(size: 11, weight: .bold).monospaced())
-                    .foregroundStyle(.cyan)
+                    .foregroundStyle(accentColor)
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -763,10 +783,10 @@ struct AudiobookPlayerView: View {
                         VStack(spacing: 8) {
                             Image(systemName: "list.bullet.rectangle")
                                 .font(.system(size: 28))
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(Palette.textTertiary)
                             Text("No sections")
                                 .font(vm.appFont(size: 11))
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Palette.textSecondary)
                         }
                         .padding(.top, 60)
                         .frame(maxWidth: .infinity)
@@ -783,22 +803,22 @@ struct AudiobookPlayerView: View {
         let isCurrent = currentSection()?.id == section.id
         return HStack(spacing: 10) {
             Rectangle()
-                .fill(isCurrent ? Color.cyan : Color.clear)
+                .fill(isCurrent ? accentColor : Color.clear)
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(section.title)
                     .font(vm.appFont(size: 12, weight: isCurrent ? .bold : .medium))
-                    .foregroundStyle(isCurrent ? Color.cyan : Color.primary)
+                    .foregroundStyle(isCurrent ? accentColor : Palette.textPrimary)
                     .lineLimit(2)
                 Text("\(DurationFormatter.clock(section.startTime))  •  pp. \(section.startPage)–\(section.endPage)")
                     .font(vm.appFont(size: 9, weight: .medium).monospaced())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Palette.textSecondary)
             }
             Spacer()
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(isCurrent ? Color.cyan.opacity(0.12) : Color.clear)
+        .background(isCurrent ? accentColor.opacity(0.12) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture { bookVM.seek(toSeconds: section.startTime) }
     }
