@@ -1,7 +1,9 @@
-"""Compose a clean, light Voqora DMG installer background.
+"""Compose the Voqora DMG installer background.
 
 Finder owns the app and Applications icons. The artwork only gives the two
-targets a readable, calm context.
+targets a readable, calm context — matching the app's own warm-ivory/clay
+"Anthropic/Claude" design language (see frontend/Voqora/Voqora/DesignSystem/
+Palette.swift) rather than the earlier cyan/purple ambient-glow look.
 """
 
 from pathlib import Path
@@ -15,9 +17,23 @@ ROOT = Path(__file__).resolve().parent
 OUTPUT = ROOT / "dmg_background_voqora.png"
 FONTS = ROOT.parent / "frontend/Voqora/Voqora/Resources/Fonts"
 
+# Palette.swift's light-mode hex values, ported by hand — this script has no
+# access to the app's OKLCH ramp engine, so the accent uses the same raw
+# Anthropic "clay" seed (#D97757) Palette.swift itself is calibrated from.
+SURFACE_BASE = (250, 249, 245, 255)  # Palette.surfaceBase, light
+TEXT_PRIMARY = (24, 24, 23, 255)  # Palette.textPrimary, light
+TEXT_SECONDARY = (82, 81, 78, 255)  # Palette.textSecondary, light
+CLAY = (217, 119, 87, 255)  # Anthropic clay, Palette's `clay` accent seed
+CLAY_FAINT = (217, 119, 87, 26)  # clay at low alpha, for the wave motif
+
 
 def font(weight: str, size: int) -> ImageFont.FreeTypeFont:
-    for candidate in (FONTS / f"Poppins-{weight}.ttf", Path("/System/Library/Fonts/Helvetica.ttc")):
+    candidates = (
+        FONTS / f"GoogleSans-{weight}.ttf",
+        FONTS / f"Poppins-{weight}.ttf",
+        Path("/System/Library/Fonts/Helvetica.ttc"),
+    )
+    for candidate in candidates:
         if candidate.exists():
             return ImageFont.truetype(candidate, size)
     return ImageFont.load_default()
@@ -28,61 +44,50 @@ def centered(draw: ImageDraw.ImageDraw, text: str, y: int, face: ImageFont.FreeT
     draw.text(((W - (box[2] - box[0])) // 2, y), text, font=face, fill=fill)
 
 
-base = Image.new("RGBA", (W, H), (255, 255, 255, 255))
+base = Image.new("RGBA", (W, H), SURFACE_BASE)
 
-# A white canvas with Voqora's cool, airy audio signature. The colour lives in
-# the background light and waveform, never in separate cards around Finder UI.
-light = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-light_draw = ImageDraw.Draw(light)
-light_draw.ellipse((-170, -200, 760, 630), fill=(53, 204, 255, 52))
-light_draw.ellipse((590, -100, 1490, 710), fill=(139, 92, 246, 40))
-light_draw.ellipse((285, 310, 1040, 1030), fill=(16, 185, 129, 22))
-light = light.filter(ImageFilter.GaussianBlur(105))
-base = Image.alpha_composite(base, light)
-
+# A single flat clay wave, echoing the app icon's own wave mark — no colored
+# glow blobs, matching the flat, minimal language the rest of the app moved to.
 waves = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 waves_draw = ImageDraw.Draw(waves)
-for index in range(11):
-    baseline = 365 + index * 11
-    amplitude = 18 + index * 2
-    phase = index * 0.42
+for index in range(7):
+    baseline = 400 + index * 6
+    amplitude = 22 + index * 3
+    phase = index * 0.5
     points = [
-        (x, int(baseline + sin(x / 92 + phase) * amplitude + sin(x / 38 + phase) * 4))
+        (x, int(baseline + sin(x / 110 + phase) * amplitude))
         for x in range(-10, W + 10, 6)
     ]
-    colour = (20, 184, 232, 40) if index % 2 == 0 else (124, 58, 237, 32)
-    waves_draw.line(points, fill=colour, width=2)
-waves = waves.filter(ImageFilter.GaussianBlur(0.35))
+    alpha = 30 - index * 3
+    waves_draw.line(points, fill=(*CLAY[:3], max(alpha, 6)), width=2)
 base = Image.alpha_composite(base, waves)
 
 # One literal instruction. Finder already labels the app and Applications;
 # repeating those labels in the background makes the installer harder to scan.
 header = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 header_draw = ImageDraw.Draw(header)
-centered(header_draw, "Install Voqora", 52, font("SemiBold", 42), (20, 34, 51, 255))
+# "Bold"/"Regular" match the bundled GoogleSans-*.ttf filenames — there is
+# no GoogleSans-SemiBold.ttf in Resources/Fonts (only Light/Regular/Medium/
+# Bold/Black, see DashboardViewModel.googleSansPostScriptName), so asking
+# for "SemiBold" here would silently fall through to Poppins instead.
+centered(header_draw, "Install Voqora", 52, font("Bold", 42), TEXT_PRIMARY)
 centered(
     header_draw,
     "Drag the app into Applications",
     112,
     font("Regular", 24),
-    (83, 104, 125, 255),
+    TEXT_SECONDARY,
 )
-header_draw.rounded_rectangle((510, 170, 810, 174), radius=2, fill=(20, 183, 232, 255))
-
-# A subtle route sits precisely between Finder's two icon positions
-# (x=330 and x=990, y=400 at 2x) without asking the user to read twice.
-route = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-route_draw = ImageDraw.Draw(route)
-route_draw.line((520, 420, 800, 420), fill=(70, 184, 239, 45), width=18)
-route = route.filter(ImageFilter.GaussianBlur(12))
+header_draw.rounded_rectangle((510, 170, 810, 174), radius=2, fill=CLAY)
 base = Image.alpha_composite(base, header)
-base = Image.alpha_composite(base, route)
 
+# A plain clay arrow sits precisely between Finder's two icon positions
+# (x=330 and x=990, y=400 at 2x) without asking the user to read twice.
 overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
 draw = ImageDraw.Draw(overlay)
-draw.line((520, 420, 790, 420), fill=(36, 159, 219, 210), width=4)
-draw.polygon(((817, 420), (780, 398), (780, 442)), fill=(23, 154, 219, 255))
-
+draw.line((520, 420, 790, 420), fill=CLAY, width=4)
+draw.polygon(((817, 420), (780, 398), (780, 442)), fill=CLAY)
 base = Image.alpha_composite(base, overlay)
+
 base.convert("RGB").save(OUTPUT, "PNG", dpi=(144, 144))
 print(f"Background saved to {OUTPUT}")

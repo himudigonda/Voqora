@@ -17,9 +17,8 @@
 //  **Accents** are generated in OKLCH by `ColorRamp` from a hue/chroma seed.
 //  Voqora ships the same six named options GRiT does — `clay`, `sage`,
 //  `slate`, `plum`, `ochre`, `teal` — so an accent picked in either app is the
-//  same color. Voqora's own identity was built around cyan/teal, so its
-//  default is `teal` rather than GRiT's `clay`; nothing else about the ramp
-//  differs.
+//  same color. Voqora's default is `clay` — Anthropic's own `#D97757` —
+//  matching GRiT's default exactly; nothing else about the ramp differs.
 //
 
 import AppKit

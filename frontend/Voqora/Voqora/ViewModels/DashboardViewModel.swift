@@ -92,8 +92,11 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
     @AppStorage("telemetryEnabled") var telemetryEnabled = true
-    @AppStorage("selectedFontName") var selectedFontName = "System Rounded"
-    @AppStorage("accentColorID") var accentColorID: AccentColorOption = .teal
+    @AppStorage("selectedFontName") var selectedFontName = "Google Sans"
+    @AppStorage("accentColorID") var accentColorID: AccentColorOption = .clay
+    @AppStorage("appIconID") var appIconID: AppIconOption = .waveLight {
+        didSet { appIconID.apply() }
+    }
 
     /// Helper to get Font
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
@@ -116,6 +119,14 @@ class DashboardViewModel: ObservableObject {
             // at all) once enough distinct weights are requested. Picking
             // the actual matching file avoids synthesis entirely.
             .custom(Self.poppinsPostScriptName(for: weight), size: size)
+        case "Google Sans":
+            // Same static-weight-file constraint as Poppins above — five
+            // bundled cuts (Light/Regular/Medium/Bold/Black, mixing the
+            // "17pt" UI-optical-size static family with two Flex-derived
+            // static instances for the tiers "17pt" doesn't ship), matched
+            // by their real embedded PostScript name rather than the
+            // on-disk filename, which differs from it.
+            .custom(Self.googleSansPostScriptName(for: weight), size: size)
         default:
             .custom(selectedFontName, size: size).weight(weight)
         }
@@ -128,6 +139,16 @@ class DashboardViewModel: ObservableObject {
         case .semibold, .medium: "Poppins-Medium"
         case .light, .thin, .ultraLight: "Poppins-Light"
         default: "Poppins-Regular"
+        }
+    }
+
+    private static func googleSansPostScriptName(for weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: "GoogleSansFlex24pt-Black"
+        case .bold: "GoogleSans17pt-Bold"
+        case .semibold, .medium: "GoogleSans17pt-Medium"
+        case .light, .thin, .ultraLight: "GoogleSansFlex24pt-Light"
+        default: "GoogleSans17pt-Regular"
         }
     }
 

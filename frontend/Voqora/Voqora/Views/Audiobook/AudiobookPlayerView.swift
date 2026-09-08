@@ -136,22 +136,15 @@ struct AudiobookPlayerView: View {
 
     // MARK: - Background
 
+    // NOT a `dominantColor`-tinted, blurred ambient-glow ZStack — that
+    // per-cover "mood lighting" predates the flat GRiT/Anthropic redesign
+    // and reads as a different, inconsistent design language next to every
+    // other screen's plain `Palette` surface. `dominantColor` is still used
+    // for the cover's own play-state shadow tint below, just not to light
+    // up the whole background.
     private var background: some View {
-        ZStack {
-            Color(.windowBackgroundColor)
-            Circle()
-                .fill(dominantColor.opacity(colorScheme == .dark ? 0.32 : 0.14))
-                .frame(width: 450, height: 450)
-                .blur(radius: 120)
-                .offset(x: -180, y: -120)
-            Circle()
-                .fill(dominantColor.opacity(colorScheme == .dark ? 0.22 : 0.10))
-                .frame(width: 360, height: 360)
-                .blur(radius: 100)
-                .offset(x: 220, y: 220)
-        }
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.6), value: dominantColor)
+        Palette.surfaceBase
+            .ignoresSafeArea()
     }
 
     // MARK: - Cover column

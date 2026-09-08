@@ -47,7 +47,14 @@ struct VoqoraWindow: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // APP BRANDING HEADER
                     HStack(spacing: DesignTokens.Spacing.md) {
-                        Image(nsImage: NSApplication.shared.applicationIconImage)
+                        // NOT `NSApplication.shared.applicationIconImage` —
+                        // that property isn't Combine/SwiftUI-observable, so
+                        // this row never re-rendered when the user picked a
+                        // different icon in Preferences even though the
+                        // Dock/Finder icon itself changed correctly. Reading
+                        // through `vm.appIconID` (an `@AppStorage` on the
+                        // already-observed view model) makes this reactive.
+                        Image(nsImage: NSImage(named: vm.appIconID.assetName) ?? NSApplication.shared.applicationIconImage)
                             .resizable()
                             .interpolation(.high)
                             .scaledToFit()

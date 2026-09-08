@@ -166,6 +166,45 @@ struct PreferencesView: View {
                     }
                 }
 
+                // Section: Appearance
+                PreferenceSection(title: "Appearance", icon: "paintpalette") {
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Accent Color")
+                                .font(vm.font(.sectionTitle))
+                            Text("Colors every highlight, selected row, and primary button across Voqora.")
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
+
+                            HStack(spacing: 14) {
+                                ForEach(AccentColorOption.allCases, id: \.self) { option in
+                                    AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
+                                        vm.accentColorID = option
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("App Icon")
+                                .font(vm.font(.sectionTitle))
+                            Text("Changes the Dock and Finder icon immediately.")
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
+
+                            HStack(spacing: 16) {
+                                ForEach(AppIconOption.allCases) { option in
+                                    AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
+                                        vm.appIconID = option
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Section: Voice Engine
                 PreferenceSection(title: "Voice Engine", icon: "cpu") {
                     VStack(spacing: 20) {
@@ -389,12 +428,13 @@ struct PreferencesView: View {
                             Spacer()
                             VStack(alignment: .trailing, spacing: 12) {
                                 Picker("", selection: $vm.selectedFontName) {
+                                    Text("Google Sans").tag("Google Sans")
+                                    Text("Poppins").tag("Poppins")
+                                    Divider()
                                     Text("System Rounded").tag("System Rounded")
                                     Text("System Standard").tag("System Standard")
                                     Text("System Mono").tag("System Mono")
                                     Text("System Serif").tag("System Serif")
-                                    Divider()
-                                    Text("Poppins").tag("Poppins")
                                 }
                                 .frame(width: 200)
 
@@ -600,6 +640,84 @@ struct ShortcutRow: View {
             Spacer()
             KeyboardShortcuts.Recorder(for: name)
         }
+    }
+}
+
+/// One tappable circle in the accent-color picker, filled with `option`'s
+/// own resolved color rather than a static swatch — it re-resolves with
+/// the current color scheme and Increase Contrast, same as every other
+/// accent read in the app.
+struct AccentSwatchButton: View {
+    @Environment(\.colorScheme) var colorScheme
+    @Environment(\.colorSchemeContrast) var colorSchemeContrast
+    let option: AccentColorOption
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var swatchColor: Color {
+        Palette.accentColors(for: option, appearance: colorScheme, increaseContrast: colorSchemeContrast == .increased).accent
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Circle()
+                .fill(swatchColor)
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Circle()
+                        .strokeBorder(Palette.textPrimary, lineWidth: isSelected ? 2 : 0)
+                        .padding(-3)
+                )
+                .overlay {
+                    if isSelected {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Palette.onAccentColor(for: option, appearance: colorScheme, increaseContrast: colorSchemeContrast == .increased))
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.displayName)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .help(option.displayName)
+    }
+}
+
+/// One tappable preview in the app-icon picker. Loads the actual asset
+/// catalog image rather than redrawing the wave, so the preview can never
+/// drift from what `AppIconOption.apply()` sets as the real Dock/Finder icon.
+struct AppIconChoiceButton: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    let option: AppIconOption
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Group {
+                    if let nsImage = NSImage(named: option.assetName) {
+                        Image(nsImage: nsImage).resizable()
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(isSelected ? Palette.textPrimary : Palette.separator, lineWidth: isSelected ? 2 : 1)
+                )
+
+                Text(option.displayName)
+                    .font(vm.font(.caption))
+                    .foregroundStyle(isSelected ? Palette.textPrimary : Palette.textSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option.displayName)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .help(option.displayName)
     }
 }
 

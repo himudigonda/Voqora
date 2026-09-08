@@ -40,6 +40,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             self?.disableSplitViewAutosave()
         }
+        // Re-applies the user's last-chosen app icon (Dock + Finder) on
+        // every launch — a plain `NSImage` override doesn't persist across
+        // relaunches on its own, only the stored preference does.
+        AppIconOption.applyStored()
     }
 
     private func disableSplitViewAutosave() {
