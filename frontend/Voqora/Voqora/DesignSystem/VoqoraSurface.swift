@@ -50,16 +50,24 @@ enum VoqoraSurface {
         }
     }
 
-    var shadow: (color: Color, radius: CGFloat, y: CGFloat)? {
+    var shadow: SurfaceShadow? {
         switch self {
         case .chrome, .canvas, .raised, .control: nil
         // Tuned to read at the same weight in both appearances: a shadow
         // that looks right on the light ivory is invisible on the dark
         // charcoal, so the dark side leans on the border and a wider,
         // softer falloff rather than a darker one.
-        case .floating: (Color.black.opacity(0.18), 28, 10)
+        case .floating: SurfaceShadow(color: Color.black.opacity(0.18), radius: 28, y: 10)
         }
     }
+}
+
+/// A named type rather than a 3-member tuple — clearer at call sites, and
+/// keeps SwiftLint's `large_tuple` rule quiet.
+struct SurfaceShadow {
+    let color: Color
+    let radius: CGFloat
+    let y: CGFloat
 }
 
 extension View {

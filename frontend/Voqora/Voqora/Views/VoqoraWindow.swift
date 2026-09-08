@@ -256,9 +256,13 @@ struct VoqoraWindow: View {
         }
         .animation(.default, value: launchManager.isReady)
     }
+}
 
+// Split out of the struct body to keep it under SwiftLint's
+// `type_body_length` — plain private members, not a separate API surface.
+private extension VoqoraWindow {
     @ViewBuilder
-    private var detailContent: some View {
+    var detailContent: some View {
         switch vm.selectedTab {
         case "home": MainDashboardView()
         case "history": VaultView()
