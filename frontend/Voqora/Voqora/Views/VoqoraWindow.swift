@@ -29,90 +29,107 @@ struct VoqoraWindow: View {
 
     var body: some View {
         NavigationSplitView {
-            VStack(alignment: .leading, spacing: 0) {
-                // APP BRANDING HEADER
-                HStack(spacing: DesignTokens.Spacing.md) {
-                    Image(nsImage: NSApplication.shared.applicationIconImage)
-                        .resizable()
-                        .interpolation(.high)
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
+            // A `ZStack` of two independently top/bottom-pinned stacks,
+            // NOT a single `VStack` with an interior `Spacer()` — on this
+            // machine, `NavigationSplitView`'s sidebar column was observed
+            // proposing a wildly-oversized height to its content (an
+            // absolute ~1500-1600pt, independent of the column's real
+            // on-screen size), which a flexible `Spacer()` dutifully
+            // expanded to fill, pushing the branding header off the top of
+            // the visible window and the preferences/attribution block off
+            // the bottom. Reproduced on unmodified pre-redesign code and
+            // across Debug/Release, so it isn't specific to this file's own
+            // styling — but pinning each block to its own edge via
+            // `.frame(maxHeight: .infinity, alignment:)` instead of relying
+            // on `Spacer()` to negotiate the split sidesteps it regardless
+            // of root cause.
+            ZStack {
+                VStack(alignment: .leading, spacing: 0) {
+                    // APP BRANDING HEADER
+                    HStack(spacing: DesignTokens.Spacing.md) {
+                        Image(nsImage: NSApplication.shared.applicationIconImage)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 32, height: 32)
 
-                    Text("Voqora")
-                        .font(vm.font(.paneTitle))
-                        .foregroundStyle(Palette.textPrimary)
-                }
-                .padding(.horizontal, DesignTokens.Layout.paneInset)
-                .padding(.top, DesignTokens.Spacing.xl)
-                .padding(.bottom, DesignTokens.Spacing.lg)
-
-                sidebarNavigation
-
-                Spacer(minLength: DesignTokens.Spacing.xl)
-
-                // SYSTEM / PREFERENCES AT BOTTOM
-                VStack(spacing: DesignTokens.Spacing.xs) {
-                    Rectangle()
-                        .fill(Palette.separator)
-                        .frame(height: 1)
-                        .padding(.horizontal, DesignTokens.Layout.paneInset)
-                        .padding(.bottom, DesignTokens.Spacing.xs)
-
-                    PaneRow(isSelected: vm.selectedTab == "preferences", action: {
-                        vm.selectedTab = "preferences"
-                    }) {
-                        Image(systemName: "gearshape.fill")
-                            .font(vm.font(.rowTitle))
-                            .frame(width: 20)
-                    } label: {
-                        Text("Preferences")
-                            .font(vm.font(.rowTitle))
+                        Text("Voqora")
+                            .font(vm.font(.paneTitle))
+                            .foregroundStyle(Palette.textPrimary)
                     }
+                    .padding(.horizontal, DesignTokens.Layout.paneInset)
+                    .padding(.top, DesignTokens.Spacing.xl)
+                    .padding(.bottom, DesignTokens.Spacing.lg)
+
+                    sidebarNavigation
                 }
-                .padding(.horizontal, DesignTokens.Spacing.sm)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
-                // DEVELOPER ATTRIBUTION
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                    Text("DEVELOPED BY")
-                        .font(vm.font(.sectionHeader))
-                        .kerning(0.6)
-                        .foregroundStyle(Palette.textTertiary)
+                VStack(spacing: 0) {
+                    // SYSTEM / PREFERENCES AT BOTTOM
+                    VStack(spacing: DesignTokens.Spacing.xs) {
+                        Rectangle()
+                            .fill(Palette.separator)
+                            .frame(height: 1)
+                            .padding(.horizontal, DesignTokens.Layout.paneInset)
+                            .padding(.bottom, DesignTokens.Spacing.xs)
 
-                    Text("Himansh Mudigonda")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-
-                    HStack(spacing: DesignTokens.Spacing.lg) {
-                        Link(destination: URL(string: "https://github.com/himudigonda")!) {
-                            Image("github") // Explicit Asset
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 30, height: 30)
+                        PaneRow(isSelected: vm.selectedTab == "preferences", action: {
+                            vm.selectedTab = "preferences"
+                        }) {
+                            Image(systemName: "gearshape.fill")
+                                .font(vm.font(.rowTitle))
+                                .frame(width: 20)
+                        } label: {
+                            Text("Preferences")
+                                .font(vm.font(.rowTitle))
                         }
-                        .help("GitHub")
-
-                        Link(destination: URL(string: "https://www.linkedin.com/in/himudigonda")!) {
-                            Image("linkedin") // Explicit Asset
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 30, height: 30)
-                        }
-                        .help("LinkedIn")
-
-                        Link(destination: URL(string: "https://himudigonda.me")!) {
-                            Image(systemName: "globe") // System Icon
-                                .resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(width: 24, height: 24)
-                                .padding(4)
-                        }
-                        .help("Website")
                     }
-                    .foregroundStyle(accentColor)
+                    .padding(.horizontal, DesignTokens.Spacing.sm)
+
+                    // DEVELOPER ATTRIBUTION
+                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                        Text("DEVELOPED BY")
+                            .font(vm.font(.sectionHeader))
+                            .kerning(0.6)
+                            .foregroundStyle(Palette.textTertiary)
+
+                        Text("Himansh Mudigonda")
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
+
+                        HStack(spacing: DesignTokens.Spacing.lg) {
+                            Link(destination: URL(string: "https://github.com/himudigonda")!) {
+                                Image("github") // Explicit Asset
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 30, height: 30)
+                            }
+                            .help("GitHub")
+
+                            Link(destination: URL(string: "https://www.linkedin.com/in/himudigonda")!) {
+                                Image("linkedin") // Explicit Asset
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 30, height: 30)
+                            }
+                            .help("LinkedIn")
+
+                            Link(destination: URL(string: "https://himudigonda.me")!) {
+                                Image(systemName: "globe") // System Icon
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fit)
+                                    .frame(width: 24, height: 24)
+                                    .padding(4)
+                            }
+                            .help("Website")
+                        }
+                        .foregroundStyle(accentColor)
+                    }
+                    .padding(DesignTokens.Layout.paneInset)
                 }
-                .padding(DesignTokens.Layout.paneInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
-            .frame(maxHeight: .infinity, alignment: .top)
             .background(Palette.surfaceSunken)
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {

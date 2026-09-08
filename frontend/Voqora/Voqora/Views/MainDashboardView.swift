@@ -1,16 +1,15 @@
-import ApplicationServices
 import SwiftUI
 
 struct MainDashboardView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
+    @EnvironmentObject var permissions: PermissionsService
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     // Local state
     @State private var localProgress: Double = 0
     @State private var isEditingSlider = false
-    @State private var hasAccessibilityPermission: Bool = AXIsProcessTrusted()
 
     /// The app's accent, resolved once per body pass — matches
     /// `VoqoraWindow`'s own `accentColor` pattern.
@@ -42,7 +41,7 @@ struct MainDashboardView: View {
 
             VStack(spacing: 0) {
                 headerSection
-                if !hasAccessibilityPermission {
+                if !permissions.accessibilityGranted {
                     accessibilityBanner
                 }
                 Spacer()
@@ -51,7 +50,6 @@ struct MainDashboardView: View {
                 footerSection
             }
         }
-        .onAppear { hasAccessibilityPermission = AXIsProcessTrusted() }
     }
 
     private var accessibilityBanner: some View {
@@ -64,10 +62,22 @@ struct MainDashboardView: View {
                 Text("Accessibility Access Required")
                     .font(vm.appFont(size: 12, weight: .bold))
                     .foregroundStyle(Palette.warning)
+                // NOT `.fixedSize(horizontal: false, vertical: true)`. That
+                // modifier here — a wrapping `Text` inside an `HStack` that
+                // also holds a `Spacer()`, itself nested inside
+                // `NavigationSplitView` — was found to corrupt the height
+                // NavigationSplitView computes for the ENTIRE window: the
+                // sidebar's branding/nav and this screen's own header/footer
+                // all got pushed off the top and bottom of the visible
+                // window, while only content between two `Spacer()`s (the
+                // audio visualizer) stayed on-screen. Reproduced identically
+                // regardless of window size, display scaling, or Debug vs
+                // Release. `Text` already wraps within the width `HStack`
+                // gives it without this modifier; it bought nothing here
+                // that was worth the layout corruption.
                 Text("Voqora needs Accessibility permission to read your selected text. Without it, Cmd+Shift+. won't work.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Spacer()
@@ -83,9 +93,6 @@ struct MainDashboardView: View {
         .padding(.vertical, 14)
         .background(Palette.surfaceRaised)
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Palette.separator), alignment: .bottom)
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            hasAccessibilityPermission = AXIsProcessTrusted()
-        }
     }
 
     private var headerSection: some View {

@@ -32,14 +32,36 @@ final class PermissionsService: ObservableObject {
     }
 
     private var pollTask: Task<Void, Never>?
+    /// Re-checks Accessibility whenever the app becomes active — the common
+    /// path is the user leaving Voqora, flipping the toggle in System
+    /// Settings, and returning. One subscription here instead of each
+    /// screen that shows a permission banner keeping its own: a second,
+    /// independent `.onReceive(NSApplication.didBecomeActiveNotification)`
+    /// in `MainDashboardView` (mirroring this one for its own local
+    /// `@State`) was found to corrupt that view's `NavigationSplitView`
+    /// layout under rapid activate/deactivate cycles — every app switch
+    /// pushed its header and footer off the top and bottom of the window.
+    /// Centralizing the refresh here removes the duplicate subscription
+    /// entirely rather than papering over its effect.
+    private var activationObserver: NSObjectProtocol?
 
     init() {
         refreshAccessibility()
         Task { await refreshNotifications() }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshAccessibility()
+        }
     }
 
     deinit {
         pollTask?.cancel()
+        if let activationObserver {
+            NotificationCenter.default.removeObserver(activationObserver)
+        }
     }
 
     // MARK: - Polling lifecycle
