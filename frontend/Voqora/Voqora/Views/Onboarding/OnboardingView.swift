@@ -25,6 +25,11 @@ struct OnboardingView: View {
     @State private var emailSubmitting: Bool = false
     @State private var emailError: String?
     @State private var emailSaved: Bool = false
+    /// Reads the same `UserDefaults` key `DashboardViewModel.accentColorID`
+    /// writes — `@AppStorage` needs no environment object to do that, so
+    /// this stays correct if the compiled default ever changes again
+    /// without this view needing `DashboardViewModel` threaded into it.
+    @AppStorage("accentColorID") private var accentColorID: AccentColorOption = .clay
 
     private let stepCount = 6
 
@@ -61,14 +66,14 @@ struct OnboardingView: View {
 
     // MARK: - Chrome
 
-    /// Voqora's default accent (teal) — `DashboardViewModel` isn't reachable
-    /// from this view's environment (see `VoqoraWindow.swift`, where
-    /// `OnboardingView()` is only handed `coordinator`/`permissions`/
-    /// `identity`), so this reads `Palette` directly rather than routing
-    /// through `vm.accentColor`.
+    /// `DashboardViewModel` isn't reachable from this view's environment
+    /// (see `VoqoraWindow.swift`, where `OnboardingView()` is only handed
+    /// `coordinator`/`permissions`/`identity`), so this reads `Palette`
+    /// directly with the `@AppStorage`-backed `accentColorID` above rather
+    /// than routing through `vm.accentColor`.
     private var accentColor: Color {
         Palette.accentColors(
-            for: .teal,
+            for: accentColorID,
             appearance: colorScheme,
             increaseContrast: colorSchemeContrast == .increased
         ).accent

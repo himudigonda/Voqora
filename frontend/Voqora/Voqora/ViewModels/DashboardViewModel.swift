@@ -97,6 +97,12 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("appIconID") var appIconID: AppIconOption = .waveLight {
         didSet { appIconID.apply() }
     }
+    /// The bundle version this profile last recorded seeing — compared
+    /// against `CFBundleShortVersionString` on every launch so `VoqoraWindow`
+    /// can detect "this launch is the first one after an update" and land on
+    /// `AboutView`. Empty on a fresh profile, which is what keeps a brand
+    /// new install's own first launch from being mistaken for an update.
+    @AppStorage("lastSeenAppVersion") var lastSeenAppVersion: String = ""
 
     /// Helper to get Font
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {

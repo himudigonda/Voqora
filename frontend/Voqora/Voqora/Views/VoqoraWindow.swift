@@ -91,49 +91,25 @@ struct VoqoraWindow: View {
                             Text("Preferences")
                                 .font(vm.font(.rowTitle))
                         }
+
+                        // Replaces the old sidebar-footer "DEVELOPED BY" block
+                        // (name, three link icons, cramped into the nav rail)
+                        // with a single row into a proper About screen that
+                        // carries version/build, an update check, and the
+                        // same credit links with room to breathe.
+                        PaneRow(isSelected: vm.selectedTab == "about", action: {
+                            vm.selectedTab = "about"
+                        }) {
+                            Image(systemName: "info.circle.fill")
+                                .font(vm.font(.rowTitle))
+                                .frame(width: 20)
+                        } label: {
+                            Text("About")
+                                .font(vm.font(.rowTitle))
+                        }
                     }
                     .padding(.horizontal, DesignTokens.Spacing.sm)
-
-                    // DEVELOPER ATTRIBUTION
-                    VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-                        Text("DEVELOPED BY")
-                            .font(vm.font(.sectionHeader))
-                            .kerning(0.6)
-                            .foregroundStyle(Palette.textTertiary)
-
-                        Text("Himansh Mudigonda")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
-
-                        HStack(spacing: DesignTokens.Spacing.lg) {
-                            Link(destination: URL(string: "https://github.com/himudigonda")!) {
-                                Image("github") // Explicit Asset
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 30, height: 30)
-                            }
-                            .help("GitHub")
-
-                            Link(destination: URL(string: "https://www.linkedin.com/in/himudigonda")!) {
-                                Image("linkedin") // Explicit Asset
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 30, height: 30)
-                            }
-                            .help("LinkedIn")
-
-                            Link(destination: URL(string: "https://himudigonda.me")!) {
-                                Image(systemName: "globe") // System Icon
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fit)
-                                    .frame(width: 24, height: 24)
-                                    .padding(4)
-                            }
-                            .help("Website")
-                        }
-                        .foregroundStyle(accentColor)
-                    }
-                    .padding(DesignTokens.Layout.paneInset)
+                    .padding(.bottom, DesignTokens.Spacing.sm)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             }
@@ -216,6 +192,21 @@ struct VoqoraWindow: View {
                 // answered, so this is a silent no-op for anyone who denied it.
                 permissions.requestAccessibility()
             }
+
+            // A returning user (onboarding already complete) whose bundle
+            // version differs from the last one this profile recorded just
+            // got updated — land on About so they see what changed and that
+            // the credit links still work, same destination first-time users
+            // reach right after the wizard closes below. `lastSeenAppVersion`
+            // starts empty, so a fresh install's own first launch never
+            // matches this — only a version CHANGE does.
+            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+            if !onboarding.needsOnboarding, !vm.lastSeenAppVersion.isEmpty, vm.lastSeenAppVersion != currentVersion {
+                vm.selectedTab = "about"
+            }
+            if !currentVersion.isEmpty {
+                vm.lastSeenAppVersion = currentVersion
+            }
         }
         .onDisappear {
             launchTask?.cancel()
@@ -224,6 +215,7 @@ struct VoqoraWindow: View {
         .onChange(of: onboarding.version) { _, _ in
             if !onboarding.needsOnboarding {
                 showOnboarding = false
+                vm.selectedTab = "about"
             } else {
                 showOnboarding = true
             }
@@ -292,6 +284,7 @@ private extension VoqoraWindow {
         case "history": VaultView()
         case "books": AudiobookLibraryView()
         case "preferences": PreferencesView()
+        case "about": AboutView()
         default: MainDashboardView()
         }
     }
