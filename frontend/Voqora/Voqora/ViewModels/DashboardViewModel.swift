@@ -107,9 +107,27 @@ class DashboardViewModel: ObservableObject {
         case "System Standard":
             .system(size: size, weight: weight, design: .default)
         case "Poppins":
-            .custom("Poppins-Regular", size: size).weight(weight)
+            // The bundle ships five static Poppins weights (Light/Regular/
+            // Medium/Bold/Black — registered via ATSApplicationFontsPath),
+            // not a variable font. Asking `.weight(_)` to synthesize a
+            // heavier/lighter weight on top of "Poppins-Regular" alone
+            // fails silently in this environment (CoreText logs "Unable to
+            // update Font Descriptor's weight" and the text doesn't render
+            // at all) once enough distinct weights are requested. Picking
+            // the actual matching file avoids synthesis entirely.
+            .custom(Self.poppinsPostScriptName(for: weight), size: size)
         default:
             .custom(selectedFontName, size: size).weight(weight)
+        }
+    }
+
+    private static func poppinsPostScriptName(for weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: "Poppins-Black"
+        case .bold: "Poppins-Bold"
+        case .semibold, .medium: "Poppins-Medium"
+        case .light, .thin, .ultraLight: "Poppins-Light"
+        default: "Poppins-Regular"
         }
     }
 
