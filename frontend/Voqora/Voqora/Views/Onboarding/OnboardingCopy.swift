@@ -49,6 +49,7 @@ enum OnboardingCopy {
     skip this step and nothing else changes.
     """
     static let notifGrantButton = "Allow notifications"
+    static let notifOpenSettingsButton = "Open Notification Settings"
     static let notifGrantedLabel = "Allowed"
     static let notifDeniedLabel = "Disabled (you can change this in System Settings)"
 

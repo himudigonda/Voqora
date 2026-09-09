@@ -1,5 +1,56 @@
 # Changelog
 
+## [1.2.0] - 2026-09-08
+
+### Redesign
+
+- Voqora has a new look throughout, matching the warm, minimal
+  "Anthropic/Claude" design language: a new default accent color (a warm
+  clay/orange, replacing the previous teal), a new minimalist wave app
+  icon in two variants — pick your favorite in Preferences → App Icon,
+  and it updates the Dock and Finder icon immediately — and Google Sans
+  as the new default typeface. Every screen was restyled: the dashboard,
+  audiobook library and player, history, and settings.
+- Added a proper About screen (Preferences' neighbor in the sidebar):
+  version and build number, developer credits and links with room to
+  read them, and an explicit "Check for Updates" button that didn't
+  exist anywhere in the app before now. It opens automatically right
+  after first-run setup finishes, and again after any future update.
+- Removed the audiobook player's colored ambient background glow — a
+  leftover from before this redesign that no longer matched the rest of
+  the app.
+- The first-run setup wizard now matches the rest of the redesign too:
+  its progress bar and icons use your actual accent color instead of
+  the old teal, and its text uses whichever typeface you've chosen in
+  Preferences instead of always falling back to the system font.
+
+### Fixed
+
+- Playback could get stuck reporting "Speaking" indefinitely, with the
+  time display climbing past its actual length with nothing audible
+  playing. Could be triggered by an audio-device change mid-playback
+  (Bluetooth connecting/disconnecting, a screen share starting, AirPods
+  switching), and separately, more commonly, by scrubbing the progress
+  bar or using the ±10 second skip buttons — either could leave playback
+  silently stuck until forced to stop.
+- If you'd already granted (or explicitly declined) permission to read
+  selected text, the app no longer force-opens System Settings on every
+  single launch — that's now a quiet, in-app indicator instead of an
+  unprompted interruption you have to dismiss every time.
+- If notifications were denied at the OS level, the setup wizard's
+  "Allow notifications" button now takes you to System Settings to fix
+  it, instead of silently doing nothing (macOS itself never re-prompts
+  after a denial).
+- A redundant Keychain read during startup could, in rare cases (a
+  locked or out-of-sync login keychain, an iCloud Keychain resync),
+  leave the whole app hanging before a window ever appeared. That read
+  now happens in the background and can never block startup.
+
+### Installer
+
+- The DMG installer's background artwork now matches the app's own new
+  look instead of the previous cyan/purple theme.
+
 ## [1.1.3] - 2026-09-06
 
 ### Performance

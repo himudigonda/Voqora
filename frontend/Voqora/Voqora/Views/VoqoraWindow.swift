@@ -183,14 +183,21 @@ struct VoqoraWindow: View {
                     showOnboarding = true
                 }
             } else if !permissions.accessibilityGranted {
-                // A completed setup can still end up without Accessibility —
-                // revoked in System Settings, or (for a locally rebuilt
-                // candidate) invalidated because every rebuild changes the
-                // app's code signature. Don't wait for the user to find the
-                // dashboard banner or replay onboarding: ask again immediately.
-                // macOS itself suppresses the system dialog once already
-                // answered, so this is a silent no-op for anyone who denied it.
-                permissions.requestAccessibility()
+                // NOT `permissions.requestAccessibility()` — that force-opens
+                // System Settings' Accessibility pane, and this branch runs
+                // on every single launch a completed setup still lacks the
+                // permission, including for someone who deliberately chose
+                // "Continue without access" in the wizard on the explicit
+                // promise (`OnboardingCopy.swift`) that they could enable it
+                // later in Preferences. Doing that unconditionally on every
+                // launch broke that promise into a repeating, unprompted
+                // System Settings pop-open — exactly the kind of behavior a
+                // public release can't ship. `refreshAccessibility()` only
+                // updates the published status so the dashboard's own
+                // persistent banner (which already owns a manual "Open
+                // Settings" button) can react to it; nothing here yanks focus
+                // away from the app.
+                permissions.refreshAccessibility()
             }
 
             // A returning user (onboarding already complete) whose bundle
@@ -213,9 +220,16 @@ struct VoqoraWindow: View {
             launchTask = nil
         }
         .onChange(of: onboarding.version) { _, _ in
+            // NOT `vm.selectedTab = "about"` here — that was sending EVERY
+            // first-run completion to the About screen, contradicting the
+            // wizard's own "Get started" button (`OnboardingCopy.swift`),
+            // which promises entry into the product, not a credits page.
+            // The update-detected branch in `.onAppear` above already routes
+            // a RETURNING user to About after a version change; a fresh
+            // completion should just fall through to `selectedTab`'s
+            // existing "home" default.
             if !onboarding.needsOnboarding {
                 showOnboarding = false
-                vm.selectedTab = "about"
             } else {
                 showOnboarding = true
             }

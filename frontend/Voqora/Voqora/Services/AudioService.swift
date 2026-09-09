@@ -231,9 +231,25 @@ class AudioService: NSObject, ObservableObject {
             }
 
             scheduledBufferCount += 1
+            // `gen`/the `audiobookGeneration` guard below: every OTHER place
+            // in this file that calls `playerNode.stop()` mid-session
+            // (`seek`, `seekAudiobook`, the `stop()` method itself) bumps
+            // `audiobookGeneration` first specifically because
+            // `AVAudioPlayerNode.stop()` fires the completion handlers of
+            // buffers that were still queued, not just ones that actually
+            // finished playing. This handler was the one place that never
+            // captured/checked it: `seek(to:)` calling `playerNode.stop()`
+            // flushed whatever TTS buffers this handler had scheduled and
+            // hadn't yet played, each firing here with `scheduledBufferCount`
+            // ticking down — and since `seek(to:)` sets `isPlaying = true`
+            // synchronously right after, the stale handler that happened to
+            // bring the count to zero satisfied every condition below and
+            // force-stopped the playback the user had just resumed/skipped
+            // to, immediately after starting it.
+            let gen = audiobookGeneration
             playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
+                    guard let self, gen == self.audiobookGeneration else { return }
                     scheduledBufferCount -= 1
                     if !isStreamActive, scheduledBufferCount == 0, isPlaying {
                         playbackCompleted = true
@@ -346,6 +362,7 @@ class AudioService: NSObject, ObservableObject {
 
     func seek(to percentage: Double) {
         guard !lastAudioData.isEmpty else { return }
+        audiobookGeneration += 1  // invalidate stale handlers before stop fires them — see playChunk's own comment
         playerNode.stop()
         scheduledBufferCount = 0
 

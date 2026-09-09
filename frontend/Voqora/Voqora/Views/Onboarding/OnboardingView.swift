@@ -30,6 +30,16 @@ struct OnboardingView: View {
     /// this stays correct if the compiled default ever changes again
     /// without this view needing `DashboardViewModel` threaded into it.
     @AppStorage("accentColorID") private var accentColorID: AccentColorOption = .clay
+    /// Same reasoning as `accentColorID` above, for the same reason: every
+    /// body-text `.font()` call in this file was hardcoded to
+    /// `.system(..., design: .rounded)`, ignoring whatever font the user
+    /// actually has selected in Preferences → Typography — the only screen
+    /// in the app that did. `DashboardViewModel.appFont(size:weight:)` has
+    /// the real weight-mapping logic (Poppins/Google Sans ship discrete
+    /// static weight files rather than a variable font, so `.weight(_)`
+    /// can't synthesize on top of them); mirrored here rather than threading
+    /// `DashboardViewModel` into this view's environment.
+    @AppStorage("selectedFontName") private var selectedFontName: String = "Google Sans"
 
     private let stepCount = 6
 
@@ -98,6 +108,12 @@ struct OnboardingView: View {
             }
         }
         .frame(maxWidth: 480)
+        // Step position was conveyed purely by capsule fill color, which
+        // VoiceOver can't perceive — a VoiceOver user got no "step 3 of 6"
+        // announcement at all from this custom-drawn control.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Progress")
+        .accessibilityValue("Step \(step + 1) of \(stepCount)")
     }
 
     @ViewBuilder
@@ -176,11 +192,11 @@ struct OnboardingView: View {
                 .scaledToFit()
                 .frame(width: 76, height: 76)
             Text(OnboardingCopy.welcomeTitle)
-                .font(.system(size: 32, weight: .bold, design: .rounded))
+                .font(appFont(size: 32, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.welcomeBody)
-                .font(.system(size: 15, design: .rounded))
+                .font(appFont(size: 15))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -193,10 +209,10 @@ struct OnboardingView: View {
                 kbd("⌘"); kbd("⇧"); kbd(".")
             }
             Text(OnboardingCopy.hotkeyTitle)
-                .font(.system(size: 26, weight: .bold, design: .rounded))
+                .font(appFont(size: 26, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.hotkeyBody)
-                .font(.system(size: 15, design: .rounded))
+                .font(appFont(size: 15))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -209,10 +225,10 @@ struct OnboardingView: View {
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
             Text(OnboardingCopy.axTitle)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.axBody)
-                .font(.system(size: 14, design: .rounded))
+                .font(appFont(size: 14))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -244,21 +260,35 @@ struct OnboardingView: View {
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
             Text(OnboardingCopy.notifTitle)
-                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.notifBody)
-                .font(.system(size: 14, design: .rounded))
+                .font(appFont(size: 14))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 12) {
                 Button {
-                    Task { await permissions.requestNotifications() }
+                    // Once macOS has denied notifications, it will never
+                    // re-prompt from `requestNotifications()` (see
+                    // `PermissionsService`'s own comment on that) — that
+                    // left this button a silent no-op with no way inside
+                    // the wizard to reach the Notifications pane, unlike
+                    // the Accessibility step just before it. Mirrors that
+                    // step's own pattern: open the settings pane directly.
+                    if permissions.notificationsStatus == .denied {
+                        permissions.openNotificationSettings()
+                    } else {
+                        Task { await permissions.requestNotifications() }
+                    }
                 } label: {
-                    Label(OnboardingCopy.notifGrantButton, systemImage: "bell")
-                        .frame(minWidth: 220)
-                        .padding(.vertical, 6)
+                    Label(
+                        permissions.notificationsStatus == .denied ? OnboardingCopy.notifOpenSettingsButton : OnboardingCopy.notifGrantButton,
+                        systemImage: permissions.notificationsStatus == .denied ? "gear" : "bell"
+                    )
+                    .frame(minWidth: 220)
+                    .padding(.vertical, 6)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(accentColor)
@@ -276,14 +306,14 @@ struct OnboardingView: View {
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
                 Text(OnboardingCopy.notifGrantedLabel).foregroundStyle(Palette.success)
-            }.font(.system(size: 12, design: .rounded))
+            }.font(appFont(size: 12))
         case .denied:
             HStack(spacing: 6) {
                 Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.warning)
                 Text(OnboardingCopy.notifDeniedLabel).foregroundStyle(Palette.textSecondary)
-            }.font(.system(size: 12, design: .rounded))
+            }.font(appFont(size: 12))
         default:
-            Text(" ").font(.system(size: 12, design: .rounded))
+            Text(" ").font(appFont(size: 12))
         }
     }
 
@@ -293,11 +323,11 @@ struct OnboardingView: View {
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
             Text(OnboardingCopy.identityTitle)
-                .font(.system(size: 22, weight: .bold, design: .rounded))
+                .font(appFont(size: 22, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
                 .multilineTextAlignment(.center)
             Text(OnboardingCopy.identityBody)
-                .font(.system(size: 14, design: .rounded))
+                .font(appFont(size: 14))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -323,15 +353,15 @@ struct OnboardingView: View {
             }
 
             if let err = emailError {
-                Text(err).font(.system(size: 11, design: .rounded)).foregroundStyle(Palette.danger)
+                Text(err).font(appFont(size: 11)).foregroundStyle(Palette.danger)
             } else if emailSaved {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
                     Text(OnboardingCopy.identitySavedLabel).foregroundStyle(Palette.success)
-                }.font(.system(size: 12, design: .rounded))
+                }.font(appFont(size: 12))
             } else {
                 Text(emailDraft.isEmpty || canSaveEmail ? " " : "Enter a valid email to enable Save")
-                    .font(.system(size: 12, design: .rounded))
+                    .font(appFont(size: 12))
                     .foregroundStyle(Palette.textSecondary)
             }
         }
@@ -347,10 +377,10 @@ struct OnboardingView: View {
                 .font(.system(size: 64))
                 .foregroundStyle(Palette.success)
             Text(OnboardingCopy.privacyTitle)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
             Text(OnboardingCopy.privacyBody)
-                .font(.system(size: 15, design: .rounded))
+                .font(appFont(size: 15))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
@@ -383,7 +413,7 @@ struct OnboardingView: View {
             Text(isGranted ? grantedLabel : pendingLabel)
                 .foregroundStyle(isGranted ? Palette.success : Palette.textSecondary)
         }
-        .font(.system(size: 12, design: .rounded))
+        .font(appFont(size: 12))
     }
 
     private func kbd(_ label: String) -> some View {
@@ -392,5 +422,49 @@ struct OnboardingView: View {
             .foregroundStyle(Palette.textPrimary)
             .frame(width: 56, height: 56)
             .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+    }
+}
+
+// Split out of the struct body to keep it under SwiftLint's
+// `type_body_length` — plain private members, not a separate API surface.
+// Same pattern already used for this reason in `VoqoraWindow.swift`.
+private extension OnboardingView {
+    func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        switch selectedFontName {
+        case "System Rounded":
+            .system(size: size, weight: weight, design: .rounded)
+        case "System Mono":
+            .system(size: size, weight: weight, design: .monospaced)
+        case "System Serif":
+            .system(size: size, weight: weight, design: .serif)
+        case "System Standard":
+            .system(size: size, weight: weight, design: .default)
+        case "Poppins":
+            .custom(Self.poppinsPostScriptName(for: weight), size: size)
+        case "Google Sans":
+            .custom(Self.googleSansPostScriptName(for: weight), size: size)
+        default:
+            .custom(selectedFontName, size: size).weight(weight)
+        }
+    }
+
+    static func poppinsPostScriptName(for weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: "Poppins-Black"
+        case .bold: "Poppins-Bold"
+        case .semibold, .medium: "Poppins-Medium"
+        case .light, .thin, .ultraLight: "Poppins-Light"
+        default: "Poppins-Regular"
+        }
+    }
+
+    static func googleSansPostScriptName(for weight: Font.Weight) -> String {
+        switch weight {
+        case .black, .heavy: "GoogleSansFlex24pt-Black"
+        case .bold: "GoogleSans17pt-Bold"
+        case .semibold, .medium: "GoogleSans17pt-Medium"
+        case .light, .thin, .ultraLight: "GoogleSansFlex24pt-Light"
+        default: "GoogleSans17pt-Regular"
+        }
     }
 }

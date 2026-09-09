@@ -102,9 +102,9 @@ struct CompletionSummaryModal: View {
         }
         .padding(12)
         .background(Palette.warning.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                 .stroke(Palette.warning.opacity(0.3), lineWidth: 1)
         )
         .padding(.horizontal, 4)
