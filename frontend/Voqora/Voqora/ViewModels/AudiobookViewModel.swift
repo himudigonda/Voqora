@@ -158,23 +158,28 @@ final class AudiobookViewModel: ObservableObject {
         }
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.listBooks = listBooks ?? { try await resolvedService.list() }
-        // NOT a synchronous `KeychainService.has`/`get` call here — this
-        // runs inside `VoqoraApp.init()`, before any window exists.
-        // `SecItemCopyMatching` can block waiting on a Keychain
-        // authorization dialog (a locked/out-of-sync login keychain, an
-        // iCloud Keychain resync, or — reliably reproduced during local
-        // dev builds, where every rebuild changes the signing identity —
-        // a signing-identity re-prompt with nobody present to answer it),
-        // and a synchronous read here means the ENTIRE app hangs before a
-        // single window appears, with no error and no way out but Force
-        // Quit. `Task.detached` moves the actual blocking call off both
-        // the init path and the main thread entirely, so even a
-        // pathological hang here only ever leaves the "Gemini API Key"
-        // verified badge unpopulated until it resolves — never the app.
+        // NOT a synchronous `KeychainService.has`/`get` call here, and NOT
+        // `Task.detached` either — this runs inside `VoqoraApp.init()`,
+        // before any window exists. `SecItemCopyMatching` can block waiting
+        // on a Keychain authorization dialog (a locked/out-of-sync login
+        // keychain, an iCloud Keychain resync, or — reliably reproduced
+        // during local dev builds, where every rebuild changes the signing
+        // identity — a signing-identity re-prompt with nobody present to
+        // answer it). A first attempt used `Task.detached`, verified fixed
+        // by the test suite — but a `sample` of the actual release archive
+        // launching for real showed the SAME main-thread hang: Swift's
+        // cooperative thread pool does not guarantee a detached task's
+        // synchronous body actually runs off the main thread — under real
+        // launch-time contention (AVAudioEngine setup, KeyboardShortcuts
+        // registration, MetricsService all starting around the same
+        // window), it scheduled this blocking call onto the idle main
+        // thread anyway. Plain `DispatchQueue.global().async` uses
+        // libdispatch's own thread pool instead, which carries no such
+        // ambiguity for a purely synchronous blocking call like this one.
         self.keyVerified = false
-        Task.detached { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let stored = KeychainService.get(.geminiAPIKey)
-            await MainActor.run {
+            DispatchQueue.main.async {
                 guard let self else { return }
                 self.keyVerified = stored != nil
                 if let stored {
