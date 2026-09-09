@@ -285,6 +285,31 @@ class AudioService: NSObject, ObservableObject {
                 if !isDragging {
                     progress = duration > 0 ? min(1.0, currentTime / duration) : 0
                 }
+
+                // SAFETY NET: the only other path that ever calls `stop()` is
+                // the buffer-completion-handler chain in `playChunk`/
+                // `finishStream` reaching `scheduledBufferCount == 0`. That
+                // chain depends on `AVAudioPlayerNode.scheduleBuffer`'s
+                // completion handler firing for every buffer — which it does
+                // not reliably do across an engine reconfiguration.
+                // `handleEngineConfigChange` above restarts the engine on
+                // any audio-device change (Bluetooth connect/disconnect, a
+                // screen share starting, AirPods switching) and replays
+                // `playerNode.play()`, but buffers scheduled before that
+                // restart can be silently orphaned — their completion
+                // handlers never fire, `scheduledBufferCount` never reaches
+                // zero, and `isPlaying` is stuck true forever while this
+                // render-clock-driven `currentTime` keeps climbing well past
+                // the real duration with nothing actually audible. Once the
+                // stream is done supplying new audio AND playback has run
+                // comfortably past the exact rendered length `finishStream`
+                // corrected `duration` to, there is nothing left to wait
+                // for — end it here regardless of whether that handler chain
+                // ever completes.
+                if !isStreamActive, duration > 0, currentTime >= duration + 0.75 {
+                    playbackCompleted = true
+                    stop()
+                }
             }
     }
 
