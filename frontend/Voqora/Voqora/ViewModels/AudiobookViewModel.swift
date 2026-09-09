@@ -158,9 +158,29 @@ final class AudiobookViewModel: ObservableObject {
         }
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.listBooks = listBooks ?? { try await resolvedService.list() }
-        self.keyVerified = KeychainService.has(.geminiAPIKey)
-        if let stored = KeychainService.get(.geminiAPIKey) {
-            self.draftKey = stored
+        // NOT a synchronous `KeychainService.has`/`get` call here — this
+        // runs inside `VoqoraApp.init()`, before any window exists.
+        // `SecItemCopyMatching` can block waiting on a Keychain
+        // authorization dialog (a locked/out-of-sync login keychain, an
+        // iCloud Keychain resync, or — reliably reproduced during local
+        // dev builds, where every rebuild changes the signing identity —
+        // a signing-identity re-prompt with nobody present to answer it),
+        // and a synchronous read here means the ENTIRE app hangs before a
+        // single window appears, with no error and no way out but Force
+        // Quit. `Task.detached` moves the actual blocking call off both
+        // the init path and the main thread entirely, so even a
+        // pathological hang here only ever leaves the "Gemini API Key"
+        // verified badge unpopulated until it resolves — never the app.
+        self.keyVerified = false
+        Task.detached { [weak self] in
+            let stored = KeychainService.get(.geminiAPIKey)
+            await MainActor.run {
+                guard let self else { return }
+                self.keyVerified = stored != nil
+                if let stored {
+                    self.draftKey = stored
+                }
+            }
         }
         // Clear saved position when a book plays to its natural end.
         // T-10: reads `audio.completedSessionID` (the book identity AudioService
