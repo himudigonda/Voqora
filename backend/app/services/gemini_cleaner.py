@@ -16,11 +16,21 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 # Pricing constants (Gemini 2.5 Flash, May 2026). Update if rates change.
-# https://ai.google.dev/gemini-api/docs/pricing
-INPUT_USD_PER_M_TOKENS = 0.15  # $0.15/M tokens (<=200k ctx)
-OUTPUT_USD_PER_M_TOKENS = 0.60  # $0.60/M tokens (<=200k ctx)
+# Halved from standard rates since all calls below run on the Flex service
+# tier (50% discount). https://ai.google.dev/gemini-api/docs/pricing
+# https://ai.google.dev/gemini-api/docs/flex-inference
+INPUT_USD_PER_M_TOKENS = 0.075  # $0.15/M standard, Flex = 50%
+OUTPUT_USD_PER_M_TOKENS = 0.30  # $0.60/M standard, Flex = 50%
 
 MODEL_NAME = "gemini-2.5-flash"
+
+# Flex service tier: 50% cheaper than standard, best-effort/sheddable capacity
+# (minutes-scale latency, can 503 under load). We retry with backoff and, after
+# repeated capacity errors, fall back to the Standard tier (see _with_retry) so
+# a Flex crunch can't stall audiobook generation indefinitely. The long client
+# timeout is only used for Flex calls, to tolerate its queuing.
+# https://ai.google.dev/gemini-api/docs/flex-inference
+FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)  # 15 min, per Google's guidance
 
 GEMINI_CLEAN_SYSTEM_PROMPT = """\
 You are a strict text-cleaning assistant preparing page text — from a PDF,
@@ -117,30 +127,58 @@ class GeminiBadResponseError(Exception):
     """Gemini returned an unexpected response."""
 
 
+class GeminiCapacityError(Exception):
+    """Flex tier at capacity (503/UNAVAILABLE) — recoverable by falling back to Standard."""
+
+
 class GeminiCleaner:
-    _MAX_RETRIES = 3
-    _BACKOFF_BASE = 2.0  # 2s, 4s, 8s
+    _MAX_RETRIES = 4
+    _BACKOFF_BASE = 2.0  # 2s, 4s, 8s, 16s
+    # Consecutive Flex 503s before the remaining attempts switch to Standard tier.
+    _FLEX_FALLBACK_AFTER = 2
 
     # ---------- retry helper (DRY for clean_page + ocr_page) ----------
 
     @classmethod
-    async def _with_retry(cls, label: str, coro_factory):
-        """Run `coro_factory()` up to _MAX_RETRIES times with exponential backoff.
+    async def _with_retry(
+        cls,
+        label: str,
+        coro_factory,
+        start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
+    ):
+        """Run `coro_factory(tier)` up to _MAX_RETRIES times with exponential backoff.
+
+        Starts on `start_tier` (Flex by default). After `_FLEX_FALLBACK_AFTER`
+        consecutive GeminiCapacityError responses on Flex, the remaining
+        attempts switch to the Standard tier (full price, but reliable) so a
+        Flex capacity crunch can't stall audiobook generation indefinitely.
 
         - GeminiAuthError → re-raised immediately (won't recover on retry).
-        - GeminiRateLimitError / GeminiBadResponseError / generic Exception
-          → sleep _BACKOFF_BASE * 2^attempt and retry.
+        - GeminiCapacityError / GeminiRateLimitError / GeminiBadResponseError /
+          generic Exception → sleep _BACKOFF_BASE * 2^attempt and retry.
         - All attempts exhausted → re-raise the last seen exception, or a
           GeminiBadResponseError with `label` if none was captured.
 
         See HARD-034 — extracted from duplicated loops in clean_page/ocr_page.
         """
         last_exc: Exception | None = None
+        tier = start_tier
+        flex_capacity_failures = 0
         for attempt in range(cls._MAX_RETRIES):
             try:
-                return await coro_factory()
+                return await coro_factory(tier)
             except GeminiAuthError:
                 raise
+            except GeminiCapacityError as e:
+                last_exc = e
+                if tier == types.ServiceTier.FLEX:
+                    flex_capacity_failures += 1
+                    if flex_capacity_failures >= cls._FLEX_FALLBACK_AFTER:
+                        log.warning(
+                            "gemini.flex_capacity_fallback",
+                            extra={"label": label, "attempt": attempt},
+                        )
+                        tier = types.ServiceTier.STANDARD
             except (GeminiRateLimitError, GeminiBadResponseError) as e:
                 last_exc = e
             except Exception as e:
@@ -154,8 +192,17 @@ class GeminiCleaner:
     @staticmethod
     def _reraise_typed(e: Exception) -> None:
         msg = str(e).lower()
+        code = getattr(e, "code", None)
+        # Flex capacity/sheddable failures (503/UNAVAILABLE) — checked first
+        # since they're an unambiguous, specific signal (unlike the broad
+        # "model" keyword below) and are recoverable by falling back to the
+        # Standard tier (see _with_retry).
+        if code == 503 or any(
+            k in msg for k in ("503", "unavailable", "overloaded", "capacity")
+        ):
+            raise GeminiCapacityError(str(e)) from e
         # Model-not-found / 404 → transient bad-response, NOT an auth error.
-        # Check this first so "invalid model" doesn't fall into the auth bucket.
+        # Check this before auth so "invalid model" doesn't fall into that bucket.
         if any(k in msg for k in ("not found", "404", "model", "does not exist")):
             raise GeminiBadResponseError(str(e)) from e
         # True auth failures: bad key, wrong project, permission denied.
@@ -185,15 +232,19 @@ class GeminiCleaner:
         if not raw_text.strip():
             return "-"
         return await cls._with_retry(
-            "clean_page", lambda: cls._async_clean(api_key, raw_text)
+            "clean_page", lambda tier: cls._async_clean(api_key, raw_text, tier)
         )
 
     @classmethod
-    async def _async_clean(cls, api_key: str, raw_text: str) -> str:
-        client = genai.Client(api_key=api_key)
+    async def _async_clean(
+        cls, api_key: str, raw_text: str, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+    ) -> str:
+        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        client = genai.Client(api_key=api_key, http_options=http_options)
         config = types.GenerateContentConfig(
             system_instruction=GEMINI_CLEAN_SYSTEM_PROMPT,
             temperature=0.1,
+            service_tier=tier,
         )
         try:
             resp = await client.aio.models.generate_content(
@@ -212,13 +263,16 @@ class GeminiCleaner:
     async def ocr_page(cls, api_key: str, image_bytes: bytes) -> str:
         """OCR + clean a scanned page image via Gemini vision. Retries on transient errors."""
         return await cls._with_retry(
-            "ocr_page", lambda: cls._async_ocr(api_key, image_bytes)
+            "ocr_page", lambda tier: cls._async_ocr(api_key, image_bytes, tier)
         )
 
     @classmethod
-    async def _async_ocr(cls, api_key: str, image_bytes: bytes) -> str:
-        client = genai.Client(api_key=api_key)
-        config = types.GenerateContentConfig(temperature=0.1)
+    async def _async_ocr(
+        cls, api_key: str, image_bytes: bytes, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+    ) -> str:
+        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        client = genai.Client(api_key=api_key, http_options=http_options)
+        config = types.GenerateContentConfig(temperature=0.1, service_tier=tier)
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         try:
             resp = await client.aio.models.generate_content(
@@ -294,7 +348,10 @@ class GeminiCleaner:
         all_sections: list[dict] = []
         for first_page, text in chunks:
             try:
-                resp_text = await cls._async_section_call(api_key, text)
+                resp_text = await cls._with_retry(
+                    "detect_sections",
+                    lambda tier, text=text: cls._async_section_call(api_key, text, tier),
+                )
                 parsed = cls._parse_sections_json(resp_text, max_page=len(pages))
                 parsed = [s for s in parsed if s["start_page"] >= first_page]
                 all_sections.extend(parsed)
@@ -309,12 +366,16 @@ class GeminiCleaner:
         return cls._stitch_sections(all_sections, page_count=len(pages))
 
     @classmethod
-    async def _async_section_call(cls, api_key: str, joined_text: str) -> str:
-        client = genai.Client(api_key=api_key)
+    async def _async_section_call(
+        cls, api_key: str, joined_text: str, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+    ) -> str:
+        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        client = genai.Client(api_key=api_key, http_options=http_options)
         config = types.GenerateContentConfig(
             system_instruction=cls.SECTION_PROMPT,
             temperature=0.1,
             response_mime_type="application/json",
+            service_tier=tier,
         )
         try:
             resp = await client.aio.models.generate_content(
@@ -395,9 +456,18 @@ class GeminiCleaner:
 
     @classmethod
     async def verify_key(cls, api_key: str) -> bool:
-        """Lightweight key check: tiny generation. Returns True if key works."""
+        """Lightweight key check: tiny generation. Returns True if key works.
+
+        Forced onto the Standard tier (default timeout) rather than Flex —
+        key verification is a user-facing, latency-sensitive check and must
+        not be subject to Flex's minutes-scale best-effort queuing.
+        """
         try:
-            await cls.clean_page(api_key, "Say 'ok'.")
+            await cls._with_retry(
+                "verify_key",
+                lambda tier: cls._async_clean(api_key, "Say 'ok'.", tier),
+                start_tier=types.ServiceTier.STANDARD,
+            )
             return True
         except GeminiAuthError:
             return False

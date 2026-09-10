@@ -11,9 +11,11 @@ import pytest
 from app.services.gemini_cleaner import (
     GeminiAuthError,
     GeminiBadResponseError,
+    GeminiCapacityError,
     GeminiCleaner,
     GeminiRateLimitError,
 )
+from app.services.gemini_cleaner import types as gemini_types
 
 # ---------- error classification ----------
 
@@ -63,6 +65,64 @@ def test_reraise_typed_classifies_model_not_found_as_bad_response(msg: str) -> N
 def test_reraise_typed_falls_through_to_bad_response() -> None:
     with pytest.raises(GeminiBadResponseError):
         GeminiCleaner._reraise_typed(RuntimeError("unspecified server error"))
+
+
+@pytest.mark.parametrize(
+    "msg",
+    ["503 UNAVAILABLE. The model is overloaded", "service unavailable", "at capacity"],
+)
+def test_reraise_typed_classifies_capacity_errors(msg: str) -> None:
+    with pytest.raises(GeminiCapacityError):
+        GeminiCleaner._reraise_typed(RuntimeError(msg))
+
+
+def test_reraise_typed_classifies_capacity_by_error_code() -> None:
+    class FakeApiError(Exception):
+        code = 503
+
+    with pytest.raises(GeminiCapacityError):
+        GeminiCleaner._reraise_typed(FakeApiError("server error"))
+
+
+# ---------- Flex -> Standard fallback ----------
+
+
+def test_with_retry_falls_back_to_standard_after_repeated_flex_capacity_errors(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
+    seen_tiers: list = []
+
+    async def flaky_then_ok(tier):
+        seen_tiers.append(tier)
+        if tier == gemini_types.ServiceTier.FLEX:
+            raise GeminiCapacityError("503 UNAVAILABLE")
+        return "cleaned on standard"
+
+    result = asyncio.run(GeminiCleaner._with_retry("test", flaky_then_ok))
+    assert result == "cleaned on standard"
+    # Two Flex attempts (hits _FLEX_FALLBACK_AFTER), then Standard succeeds.
+    assert seen_tiers == [
+        gemini_types.ServiceTier.FLEX,
+        gemini_types.ServiceTier.FLEX,
+        gemini_types.ServiceTier.STANDARD,
+    ]
+
+
+def test_with_retry_never_falls_back_below_flex_fallback_threshold(monkeypatch) -> None:
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
+    seen_tiers: list = []
+
+    async def one_flex_failure_then_ok(tier):
+        seen_tiers.append(tier)
+        if len(seen_tiers) == 1:
+            raise GeminiCapacityError("503 UNAVAILABLE")
+        return "ok"
+
+    result = asyncio.run(GeminiCleaner._with_retry("test", one_flex_failure_then_ok))
+    assert result == "ok"
+    # A single Flex 503 is below the fallback threshold — retry stays on Flex.
+    assert seen_tiers == [gemini_types.ServiceTier.FLEX, gemini_types.ServiceTier.FLEX]
 
 
 # ---------- cost / token estimation ----------
@@ -220,21 +280,36 @@ def test_clean_page_exhausts_retries_then_raises(monkeypatch) -> None:
 
 
 def test_verify_key_true_on_success() -> None:
-    with patch.object(GeminiCleaner, "clean_page", new=AsyncMock(return_value="ok")):
+    with patch.object(GeminiCleaner, "_async_clean", new=AsyncMock(return_value="ok")):
         assert asyncio.run(GeminiCleaner.verify_key("good")) is True
 
 
 def test_verify_key_false_on_auth_failure() -> None:
     with patch.object(
-        GeminiCleaner, "clean_page", new=AsyncMock(side_effect=GeminiAuthError("bad"))
+        GeminiCleaner, "_async_clean", new=AsyncMock(side_effect=GeminiAuthError("bad"))
     ):
         assert asyncio.run(GeminiCleaner.verify_key("bad")) is False
 
 
-def test_verify_key_false_on_any_other_exception() -> None:
+def test_verify_key_false_on_any_other_exception(monkeypatch) -> None:
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
     with patch.object(
         GeminiCleaner,
-        "clean_page",
+        "_async_clean",
         new=AsyncMock(side_effect=RuntimeError("network")),
     ):
         assert asyncio.run(GeminiCleaner.verify_key("k")) is False
+
+
+def test_verify_key_uses_standard_tier_not_flex() -> None:
+    """Key verification must never be subject to Flex's best-effort queuing."""
+    seen_tiers: list = []
+
+    async def capture_tier(_api_key, _text, tier):
+        seen_tiers.append(tier)
+        return "ok"
+
+    with patch.object(GeminiCleaner, "_async_clean", side_effect=capture_tier):
+        assert asyncio.run(GeminiCleaner.verify_key("good")) is True
+
+    assert seen_tiers == [gemini_types.ServiceTier.STANDARD]

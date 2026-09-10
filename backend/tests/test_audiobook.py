@@ -1584,7 +1584,7 @@ async def test_gemini_clean_page_retries_then_succeeds(monkeypatch):
 
     calls = {"n": 0}
 
-    async def flaky_async(api_key, raw):
+    async def flaky_async(api_key, raw, tier=None):
         calls["n"] += 1
         if calls["n"] < 2:
             raise GeminiBadResponseError("transient")
@@ -1605,7 +1605,7 @@ async def test_gemini_auth_error_does_not_retry(monkeypatch):
 
     calls = {"n": 0}
 
-    async def auth_failing(api_key, raw):
+    async def auth_failing(api_key, raw, tier=None):
         calls["n"] += 1
         raise GeminiAuthError("bad key")
 
