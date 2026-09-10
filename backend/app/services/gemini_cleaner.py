@@ -241,7 +241,10 @@ class GeminiCleaner:
 
     @classmethod
     async def _async_clean(
-        cls, api_key: str, raw_text: str, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+        cls,
+        api_key: str,
+        raw_text: str,
+        tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
         client = genai.Client(api_key=api_key, http_options=http_options)
@@ -272,7 +275,10 @@ class GeminiCleaner:
 
     @classmethod
     async def _async_ocr(
-        cls, api_key: str, image_bytes: bytes, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+        cls,
+        api_key: str,
+        image_bytes: bytes,
+        tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
         client = genai.Client(api_key=api_key, http_options=http_options)
@@ -354,7 +360,9 @@ class GeminiCleaner:
             try:
                 resp_text = await cls._with_retry(
                     "detect_sections",
-                    lambda tier, text=text: cls._async_section_call(api_key, text, tier),
+                    lambda tier, text=text: cls._async_section_call(
+                        api_key, text, tier
+                    ),
                 )
                 parsed = cls._parse_sections_json(resp_text, max_page=len(pages))
                 parsed = [s for s in parsed if s["start_page"] >= first_page]
@@ -371,7 +379,10 @@ class GeminiCleaner:
 
     @classmethod
     async def _async_section_call(
-        cls, api_key: str, joined_text: str, tier: "types.ServiceTier" = types.ServiceTier.FLEX
+        cls,
+        api_key: str,
+        joined_text: str,
+        tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
         client = genai.Client(api_key=api_key, http_options=http_options)

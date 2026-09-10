@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.1] - 2026-09-10
+
+### Fixed
+
+- Audiobook creation (text cleaning, OCR, and chapter detection) could fail
+  outright for some Gemini API keys, because the app was still requesting a
+  model Google had discontinued for new accounts. Switched to Google's
+  current Gemini Flash model.
+
+### Reliability & cost
+
+- Gemini processing now runs on Google's lower-cost "Flex" inference tier by
+  default, cutting the AI-processing cost of building an audiobook by up to
+  50%. If that tier is temporarily overloaded, the app automatically retries
+  and falls back to full-price processing rather than stalling or failing —
+  checking your API key in Preferences always uses the reliable tier so it
+  stays fast.
+
 ## [1.2.0] - 2026-09-08
 
 ### Redesign
