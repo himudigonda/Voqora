@@ -1,4 +1,4 @@
-"""GeminiCleaner — text-cleaning and OCR via Gemini 2.5 Flash (google.genai SDK).
+"""GeminiCleaner — text-cleaning and OCR via Gemini 3.8 Flash (google.genai SDK).
 
 The user's API key is sent per-request (X-Gemini-Api-Key header from Swift).
 Never persisted on disk.
@@ -15,14 +15,18 @@ from app.core.logging import get_logger
 
 log = get_logger(__name__)
 
-# Pricing constants (Gemini 2.5 Flash, May 2026). Update if rates change.
+# Pricing constants (Gemini 3.8 Flash, Sept 2026). Update if rates change.
+# Standard is $0.75/M input, $3.75/M output through 2026-12-31 (rises to
+# $1.50 / $7.50 on 2027-01-01 — revisit these constants before then).
 # Halved from standard rates since all calls below run on the Flex service
 # tier (50% discount). https://ai.google.dev/gemini-api/docs/pricing
 # https://ai.google.dev/gemini-api/docs/flex-inference
-INPUT_USD_PER_M_TOKENS = 0.075  # $0.15/M standard, Flex = 50%
-OUTPUT_USD_PER_M_TOKENS = 0.30  # $0.60/M standard, Flex = 50%
+INPUT_USD_PER_M_TOKENS = 0.375  # $0.75/M standard, Flex = 50%
+OUTPUT_USD_PER_M_TOKENS = 1.875  # $3.75/M standard, Flex = 50%
 
-MODEL_NAME = "gemini-2.5-flash"
+# gemini-2.5-flash was sunset for new users (404: "no longer available to new
+# users") as of Sept 2026 — migrated to gemini-3.8-flash.
+MODEL_NAME = "gemini-3.8-flash"
 
 # Flex service tier: 50% cheaper than standard, best-effort/sheddable capacity
 # (minutes-scale latency, can 503 under load). We retry with backoff and, after
