@@ -4,6 +4,32 @@
         <title>Voqora updates</title>
         <description>Updates will appear here after the first signed release.</description>
         <item>
+            <title>1.2.1</title>
+            <pubDate>Thu, 10 Sep 2026 10:17:02 -0700</pubDate>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>1.2.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[
+### Fixed
+
+- Audiobook creation (text cleaning, OCR, and chapter detection) could fail
+  outright for some Gemini API keys, because the app was still requesting a
+  model Google had discontinued for new accounts. Switched to Google's
+  current Gemini Flash model.
+
+### Reliability & cost
+
+- Gemini processing now runs on Google's lower-cost "Flex" inference tier by
+  default, cutting the AI-processing cost of building an audiobook by up to
+  50%. If that tier is temporarily overloaded, the app automatically retries
+  and falls back to full-price processing rather than stalling or failing —
+  checking your API key in Preferences always uses the reliable tier so it
+  stays fast.
+
+]]></description>
+            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.2.1/Voqora-1.2.1.dmg" length="429758762" type="application/octet-stream" sparkle:edSignature="F8B7KL5oLNKnrAhCs4PJM0EvZA2xeT/rN7sTtMjGITez04Q7l4Pn5CZKA5Vj89ZlQdq7I50RWcZD2cQqUd9hAQ=="/>
+        </item>
+        <item>
             <title>1.2.0</title>
             <pubDate>Tue, 08 Sep 2026 22:35:50 -0700</pubDate>
             <sparkle:version>12</sparkle:version>
@@ -96,50 +122,6 @@
 
 ]]></description>
             <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.1.3/Voqora-1.1.3.dmg" length="430518903" type="application/octet-stream" sparkle:edSignature="W3r9xgvUGEwPCMqeC4ouWHD8vLbVwTWZVaD9WDf0wtsJcrA7O+195lySvRWZAAEt0C2JRs+K3si5eWtpwuT/DA=="/>
-        </item>
-        <item>
-            <title>1.1.2</title>
-            <pubDate>Mon, 31 Aug 2026 13:32:04 -0700</pubDate>
-            <sparkle:version>10</sparkle:version>
-            <sparkle:shortVersionString>1.1.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[
-### Audiobooks — player redesign
-
-- Rebuilt the audiobook player's layout from the ground up. It previously
-  used two independent width breakpoints that combined into dead ends: the
-  Sections list vanished entirely below 1000pt with no replacement, and a
-  closed transcript left most of a tall or wide window as empty space with
-  nothing able to grow into it.
-- Transcript and Sections are now two tabs of a single panel that is always
-  present and always fills whatever vertical space the window has — there is
-  no longer a state where the lower half of the player is empty.
-- The transport and reading column is now capped and centered on very wide
-  windows instead of stretching the scrubber and transcript edge to edge.
-- Narrowing the window below the cover-art breakpoint no longer drops the
-  book title and chapter label entirely — a compact inline header replaces
-  the full cover art instead of just disappearing.
-
-### Audiobooks — narration quality
-
-- The Gemini cleanup prompt now explicitly formats its output as a real
-  script — paragraphs, headings, lists, and tables are separated by blank
-  lines — instead of "reflow into paragraphs" with no actual paragraph
-  structure, which produced one dense wall of text.
-- Fixed the currently-playing page in the transcript losing every paragraph
-  break: its sentence-level highlighting used to flatten the whole page and
-  rejoin it with single spaces, making the one page you're actually reading
-  along with the worst-formatted row in the transcript. Paragraph structure
-  is now preserved while still highlighting the current sentence.
-- Every transcript page — not just the current one — is now reflowed
-  consistently, so a raw line break left over from extraction no longer
-  renders as a stray mid-sentence break.
-- The local (no-Gemini) cleanup path now forces a paragraph break after a
-  heading, list, or table even when the source Markdown had none, matching
-  the Gemini path's formatting.
-
-]]></description>
-            <enclosure url="https://github.com/himudigonda/Voqora/releases/download/v1.1.2/Voqora-1.1.2.dmg" length="430500099" type="application/octet-stream" sparkle:edSignature="hK8EuF/+YRJWLz1T9IWPuXeZYaPqed4cZuQJNHH6N7cPeXDl/8+4QEKKxo5Ztv8sa3p4jfCnYut1SMYgcQAaAA=="/>
         </item>
     </channel>
 </rss>
