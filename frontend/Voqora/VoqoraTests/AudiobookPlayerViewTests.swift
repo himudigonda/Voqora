@@ -261,4 +261,97 @@ final class AudiobookPlayerViewTests: XCTestCase {
         let sentences = ["one.", "two."]
         XCTAssertEqual(AudiobookPlayerView.currentSentenceIndex(in: sentences, pageStart: 0, pageEnd: 10, at: 999), 1)
     }
+
+    // MARK: - Sentence-anchored auto-scroll (paragraphIndex)
+
+    /// Auto-scroll used to anchor to whole pages (~400 words, 2-3 minutes of
+    /// audio) while the highlight advanced sentence by sentence, so on any
+    /// page taller than the viewport the highlighted sentence scrolled out of
+    /// view and nothing brought it back until the next page boundary. The
+    /// scroll target is now the paragraph containing the current sentence,
+    /// which this maps from the flattened sentence index.
+
+    func testParagraphIndexMapsFirstSentenceToFirstParagraph() {
+        let paragraphs = [["a.", "b."], ["c."], ["d.", "e.", "f."]]
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 0, in: paragraphs), 0)
+    }
+
+    func testParagraphIndexMapsAcrossParagraphBoundaries() {
+        let paragraphs = [["a.", "b."], ["c."], ["d.", "e.", "f."]]
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 1, in: paragraphs), 0)
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 2, in: paragraphs), 1)
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 3, in: paragraphs), 2)
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 5, in: paragraphs), 2)
+    }
+
+    func testParagraphIndexClampsPastTheEnd() {
+        // The sentence index is an interpolation, so it can overshoot at the
+        // very end of a page; clamping keeps the scroll target valid.
+        let paragraphs = [["a."], ["b."]]
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 99, in: paragraphs), 1)
+    }
+
+    func testParagraphIndexHandlesEmptyInput() {
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 0, in: []), 0)
+    }
+
+    func testParagraphIndexSkipsEmptyParagraphs() {
+        let paragraphs = [[], ["a.", "b."], []] as [[String]]
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 0, in: paragraphs), 1)
+        XCTAssertEqual(AudiobookPlayerView.paragraphIndex(forSentence: 1, in: paragraphs), 1)
+    }
+
+    // MARK: - Transcript structure (joinLines / isHeadingLike)
+
+    func testJoinLinesRejoinsSoftWrappedProse() {
+        // A source that hard-wraps prose must not show mid-sentence breaks.
+        let out = AudiobookPlayerView.joinLines(
+            ["The mechanism underneath both stories, and the one", "worth understanding, is this."]
+        )
+        XCTAssertEqual(out, "The mechanism underneath both stories, and the one worth understanding, is this.")
+    }
+
+    func testJoinLinesKeepsCompletedSentencesOnSeparateLines() {
+        // Was: every line joined with a space unconditionally, so a five-item
+        // list and every row of a table collapsed into one dense blob.
+        let out = AudiobookPlayerView.joinLines(["First, alpha.", "Second, beta.", "Third, gamma."])
+        XCTAssertEqual(out, "First, alpha.\nSecond, beta.\nThird, gamma.")
+    }
+
+    func testJoinLinesHandlesClosingPunctuation() {
+        let out = AudiobookPlayerView.joinLines(["He said \"stop.\"", "Then he left."])
+        XCTAssertEqual(out, "He said \"stop.\"\nThen he left.")
+    }
+
+    func testJoinLinesOnEmptyAndSingleInput() {
+        XCTAssertEqual(AudiobookPlayerView.joinLines([]), "")
+        XCTAssertEqual(AudiobookPlayerView.joinLines(["only line"]), "only line")
+    }
+
+    func testHeadingLikeMatchesShortUnpunctuatedTitles() {
+        XCTAssertTrue(AudiobookPlayerView.isHeadingLike("The one line I have to know cold"))
+        XCTAssertTrue(AudiobookPlayerView.isHeadingLike("Pricing"))
+        XCTAssertTrue(AudiobookPlayerView.isHeadingLike("SECTION 2 — THE CASE FILE"))
+    }
+
+    func testHeadingLikeRejectsOrdinaryProse() {
+        // False positives look broken (a real sentence blown up into a title),
+        // so the rule is deliberately conservative.
+        XCTAssertFalse(AudiobookPlayerView.isHeadingLike("This is a sentence."))
+        XCTAssertFalse(AudiobookPlayerView.isHeadingLike("A clause that trails off,"))
+        XCTAssertFalse(AudiobookPlayerView.isHeadingLike(""))
+        XCTAssertFalse(AudiobookPlayerView.isHeadingLike("First, alpha.\nSecond, beta."))
+        XCTAssertFalse(
+            AudiobookPlayerView.isHeadingLike(
+                "A line with no terminal punctuation that nonetheless runs on far too long to be a title"
+            )
+        )
+    }
+
+    func testSplitIntoParagraphsPreservesListStructure() {
+        let paragraphs = AudiobookPlayerView.splitIntoParagraphs(
+            "Intro paragraph.\n\nFirst, alpha.\nSecond, beta.\n\nAfter list."
+        )
+        XCTAssertEqual(paragraphs, ["Intro paragraph.", "First, alpha.\nSecond, beta.", "After list."])
+    }
 }

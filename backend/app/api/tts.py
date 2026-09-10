@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
 from app.services.engine_manager import EngineManager
+from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.tts import TTSEngine, interactive_tts_lock
 
 router = APIRouter()
@@ -46,7 +47,13 @@ class SpeakRequest(BaseModel):
     @field_validator("text")
     @classmethod
     def require_meaningful_text(cls, value: str) -> str:
-        value = value.strip()
+        # Normalize at the API boundary, not in the client. The Swift app has
+        # its own lighter-weight strip, but the backend must not depend on a
+        # client having run it -- /speak is the one endpoint that takes
+        # arbitrary user text (a clipboard selection, often lifted straight out
+        # of a README) and hands it to the phonemizer. Without this, anything
+        # the client missed gets vocalized as "hash", "asterisk", "pipe".
+        value = strip_markdown_for_narration(value.strip())
         if not value:
             raise ValueError("text must not be blank")
         return value
@@ -56,6 +63,19 @@ class PrewarmRequest(BaseModel):
     # Same bound as SpeakRequest.text — unbounded here would make this an
     # easier DoS amplifier than /speak for the same cost.
     text: str | None = Field(default=None, max_length=50_000)
+
+    @field_validator("text")
+    @classmethod
+    def normalize_text(cls, value: str | None) -> str | None:
+        # Must match SpeakRequest's normalization exactly: the lookahead cache
+        # is keyed on the first *segment* of the text, so if prewarm cached a
+        # segment built from un-stripped text, the /speak that follows would
+        # compute a different key and miss the cache entirely -- silently
+        # wasting the warm-up this endpoint exists to provide.
+        if value is None:
+            return None
+        return strip_markdown_for_narration(value)
+
     voice: VoiceName | None = None
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
 

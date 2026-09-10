@@ -14,6 +14,7 @@ import re
 from PIL import Image, ImageDraw
 
 from app.services.audiobook_store import AudiobookStore
+from app.services.text_normalizer import strip_markdown_for_narration
 
 # Target words per synthetic page. 400 words ≈ 2-3 minutes of audio.
 _WORDS_PER_PAGE = 400
@@ -86,12 +87,43 @@ class TextExtractor:
                     blocks.append("\n".join(rows))
         return "\n\n".join(blocks)
 
+    # A fenced code block may legitimately contain blank lines, which the
+    # paragraph splitter would otherwise treat as block boundaries -- cutting
+    # the fence in half across two pages. Each page is then cleaned
+    # independently with no fence state carried between them, so page one's
+    # unterminated fence swallowed the rest of that page and page two's
+    # orphaned closing fence was misread as a new *opening* fence that
+    # swallowed all the prose after it. Both losses were silent: no error, no
+    # log, no failed_pages entry.
+    _FENCE_RE = re.compile(r"^ {0,3}(?:```|~~~)")
+
+    @classmethod
+    def _split_blocks(cls, text: str) -> list[str]:
+        """Split on blank lines, but never inside a fenced code block."""
+        blocks: list[str] = []
+        current: list[str] = []
+        in_fence = False
+        for line in text.split("\n"):
+            if cls._FENCE_RE.match(line):
+                in_fence = not in_fence
+                current.append(line)
+                continue
+            if not line.strip() and not in_fence:
+                if current:
+                    blocks.append("\n".join(current))
+                    current = []
+                continue
+            current.append(line)
+        if current:
+            blocks.append("\n".join(current))
+        return blocks
+
     @classmethod
     def split_pages(cls, text: str) -> list[str]:
         """Split text into ~_WORDS_PER_PAGE-word pages at paragraph boundaries."""
-        # Normalise line endings, then split on blank lines.
+        # Normalise line endings, then split on blank lines (fence-aware).
         text = text.replace("\r\n", "\n").replace("\r", "\n")
-        raw_paras = re.split(r"\n{2,}", text)
+        raw_paras = cls._split_blocks(text)
         paragraphs = [p.strip() for p in raw_paras if p.strip()]
 
         pages: list[str] = []
@@ -200,7 +232,13 @@ class TextExtractor:
         for i, page_text in enumerate(pages, start=1):
             m = cls._HEADING_RE.search(page_text)
             if m:
-                starts.append((i, m.group(1).strip()))
+                # The captured heading is raw Markdown -- "# **Chapter _One_**"
+                # yielded a section title of literally "**Chapter _One_**" in
+                # the Sections tab. Titles are displayed text, so they get the
+                # same treatment as narrated text.
+                title = strip_markdown_for_narration(m.group(1)).strip()
+                if title:
+                    starts.append((i, title))
         if not starts:
             return []
 

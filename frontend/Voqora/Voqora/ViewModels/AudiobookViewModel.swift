@@ -259,15 +259,24 @@ final class AudiobookViewModel: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                // S1: skip the poll if any book has an active SSE subscription
-                // — SSE is the source of truth and will keep state fresh.
-                // We still poll occasionally to pick up library-level changes
-                // (new books from another window, deletions etc.) so use a
-                // longer interval when an SSE is live.
+                // SSE is the source of truth for a *subscribed book's* live
+                // state, and refresh() honors that — it will not overwrite
+                // processingState for a book that has an active subscription
+                // (see the guard in refresh()). But only a library-level GET
+                // can see a book that was added or deleted, and SSE is
+                // per-book, so it can never report one.
+                //
+                // This used to skip the refresh entirely whenever any SSE was
+                // live, which meant a single generating book froze the whole
+                // library for as long as it ran: new books never appeared,
+                // deletions never applied, and a book left in a stale
+                // processingState could never self-heal — and a card whose
+                // state says "processing" is not tappable, so it stayed dead
+                // until the app was relaunched. The longer interval below was
+                // always meant to be the throttle for this case, not a total
+                // skip.
                 let hasActiveSSE = !self.sseTasks.isEmpty
-                if !hasActiveSSE {
-                    await self.refresh()
-                }
+                await self.refresh()
                 let interval = Self.libraryPollInterval(
                     hasActiveSSE: hasActiveSSE,
                     isBackgrounded: AppActivityMonitor.shared.isBackgrounded
@@ -794,7 +803,18 @@ final class AudiobookViewModel: ObservableObject {
         sleepTimerTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            self.audio.stop()
+            // Routed through stopPlayback (not a raw audio.stop()) for the same
+            // reason the hotkey-interrupt path is — see stopPlayback's own doc
+            // comment. This one was missed when that fix landed, and it is the
+            // worst place to miss it: the entire point of a sleep timer is that
+            // the listener is asleep when it fires, so nothing that goes wrong
+            // is observed until morning. A raw stop skipped the resume-position
+            // save (losing up to the whole timer's worth of progress, or
+            // restarting the book at 0:00 on a first session), left nowPlaying
+            // stale, and left the player in a state where the next Play resumed
+            // a node with no scheduled buffers — UI showing "playing", moving
+            // progress bar, and silence.
+            self.stopPlayback(fadeOverSeconds: 1.5)
             self.sleepTimerEndsAt = nil
             self.sleepTimerTask = nil
         }

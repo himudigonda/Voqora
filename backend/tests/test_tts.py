@@ -291,3 +291,50 @@ def test_initialize_disables_onnx_spinning():
     mock_session_options.add_session_config_entry.assert_called_once_with(
         "session.intra_op.allow_spinning", "0"
     )
+
+
+# ---------- /speak normalizes at the API boundary ----------
+
+
+def test_speak_request_strips_markdown_at_the_boundary():
+    """The backend must not trust a client to have stripped Markdown.
+
+    /speak is the one endpoint that takes arbitrary user text -- a clipboard
+    selection, often lifted straight out of a README -- and hands it to the
+    phonemizer. It previously applied only .strip(), so anything the Swift
+    client's own (weaker) stripper missed was vocalized as "hash",
+    "asterisk", "pipe".
+    """
+    from app.api.tts import SpeakRequest
+    from app.services.text_normalizer import has_residual_markup
+
+    req = SpeakRequest(
+        text="## Section name\n\n**Bold** and `code`.\n\n> A quote.\n\n| a | b |"
+    )
+    assert has_residual_markup(req.text) == [], req.text
+    assert "Section name" in req.text
+    assert "Bold" in req.text
+
+
+def test_prewarm_normalization_matches_speak():
+    """Otherwise the lookahead cache silently never hits.
+
+    The cache is keyed on the first *segment* of the text. If /prewarm cached
+    a segment built from un-stripped text while /speak strips, the two compute
+    different keys and the warm-up this endpoint exists to provide is wasted.
+    """
+    from app.api.tts import PrewarmRequest, SpeakRequest
+
+    md = "# Title\n\nSome **bold** text to narrate."
+    assert PrewarmRequest(text=md).text == SpeakRequest(text=md).text
+
+
+def test_speak_rejects_text_that_is_entirely_markup():
+    """Stripping can empty the input; that must 422, not synthesize silence."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.tts import SpeakRequest
+
+    with pytest.raises(ValidationError):
+        SpeakRequest(text="---\n\n```\n```")

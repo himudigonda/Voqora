@@ -30,10 +30,17 @@ from app.core.config import settings as _settings
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore, _now_iso
 from app.services.engine_manager import EngineManager
-from app.services.gemini_cleaner import GeminiAuthError, GeminiCleaner
+from app.services.gemini_cleaner import (
+    FLEX_HTTP_OPTIONS,
+    GeminiAuthError,
+    GeminiCleaner,
+)
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
-from app.services.text_normalizer import strip_markdown_for_narration
+from app.services.text_normalizer import (
+    has_residual_markup,
+    strip_markdown_for_narration,
+)
 from app.services.tts import interactive_tts_lock
 
 log = get_logger(__name__)
@@ -41,6 +48,19 @@ log = get_logger(__name__)
 # Pages with fewer extractable chars than this are treated as image-only
 # and routed through Gemini vision OCR instead of text cleaning.
 _OCR_TEXT_THRESHOLD = 50
+
+# Per-page ceiling for a Gemini cleaning/OCR call, including GeminiCleaner's
+# internal retry chain (4 attempts, 2s/4s/8s backoff).
+#
+# This was 90s, chosen when every call ran on the Standard tier. v1.2.1 moved
+# cleaning and OCR to the Flex tier, which Google documents as best-effort,
+# sheddable, minutes-scale capacity -- gemini_cleaner sets a 15-minute HTTP
+# timeout to match. The caller was never updated, so the pipeline granted the
+# HTTP client 15 minutes and itself 90 seconds: ordinary Flex queuing tripped
+# the outer wait_for, killed the whole retry chain, and fell back to raw
+# uncleaned text. That is why headings started being narrated as "hash hash
+# hash". Derived from FLEX_HTTP_OPTIONS so the two can no longer drift apart.
+_GEMINI_PAGE_TIMEOUT_S = FLEX_HTTP_OPTIONS.timeout / 1000.0
 
 # Re-exported for test imports — single definition in settings.AUDIO_SAMPLE_RATE
 # since HARD-035. Keep the local name so existing call sites keep compiling.
@@ -610,9 +630,20 @@ class AudiobookService:
 
         # start_time gets filled in concat phase. Persist now so UI can show titles
         # even before audio is finalized.
+        # Section titles are displayed text, so they get the same Markdown
+        # strip as narrated text -- a title lifted from "# **Chapter _One_**"
+        # was rendered literally, asterisks and all, in the Sections tab.
         await AudiobookStore.update_meta(
             book_id,
-            sections=[{**s, "start_time": 0.0} for s in sections],
+            sections=[
+                {
+                    **s,
+                    "title": strip_markdown_for_narration(s.get("title", "")).strip()
+                    or s.get("title", ""),
+                    "start_time": 0.0,
+                }
+                for s in sections
+            ],
         )
         cls._emit(book_id, "phase_finished", phase="sectioning")
 
@@ -668,6 +699,31 @@ class AudiobookService:
                     except OSError:
                         pass
 
+        async def mark_page_failed(n: int, status: str, error: str = "") -> None:
+            """Record a page as needing regeneration and tell the UI.
+
+            Every failure branch in this phase funnels through here. The two
+            timeout branches used to skip it entirely, which made them the only
+            failures that never reached `failed_pages` -- and `retry_failed()`
+            iterates exactly that list, so "Retry failed pages" silently
+            refused to touch the very pages that had fallen back to raw,
+            uncleaned text. Re-running produced an identical result every time
+            and only a full re-upload cleared it.
+            """
+            async with state_lock:
+                failed.append(n)
+                # Mark this as a *cleaning* failure (as opposed to a TTS-only
+                # failure) so retry_failed knows this page's clean text
+                # actually needs to be regenerated, not just its audio
+                # re-synthesized.
+                current_meta = AudiobookStore.read_meta(book_id) or {}
+                page_status = dict(current_meta.get("page_status") or {})
+                page_status[str(n)] = status
+                await AudiobookStore.update_meta(
+                    book_id, failed_pages=failed, page_status=page_status
+                )
+            cls._emit(book_id, "page_failed", phase="cleaning", page=n, error=error)
+
         async def clean_one(n: int) -> None:
             async with sem:
                 # Honor /speak preemption (every page acquires after Gemini network call too)
@@ -686,58 +742,45 @@ class AudiobookService:
                         GeminiCleaner.estimate_cost_usd(gemini_chars["value"])
                         >= _settings.MAX_GEMINI_COST_USD_PER_BOOK
                     )
+                    if uses_gemini_cleanup and not cost_capped:
+                        # Reserve this page's cost against the shared counter
+                        # *before* releasing the lock, rather than only adding
+                        # it after the call returns. With _CLEAN_PARALLELISM
+                        # pages in flight, all of them used to read the same
+                        # pre-call snapshot and pass the check together, so the
+                        # cap could be overshot by up to that many full page
+                        # calls -- expensive when they are OCR image pages. The
+                        # reservation is the input estimate (output is added on
+                        # completion below); over-reserving is the safe
+                        # direction for a spend cap.
+                        gemini_chars["value"] += len(raw_text)
 
                 try:
                     if not uses_gemini_cleanup:
-                        # The local-first default: no LLM pass, so strip
-                        # Markdown syntax locally (#, **, *, `, >, |, links)
-                        # rather than letting it reach the TTS phonemizer as
-                        # literal symbols. Image-only pages remain blank
-                        # until the user explicitly enables Gemini OCR.
-                        cleaned = strip_markdown_for_narration(raw_text) or "-"
+                        # The local-first default: no LLM pass. The shared
+                        # strip at the write site below is the whole cleanup
+                        # for this branch. Image-only pages remain blank until
+                        # the user explicitly enables Gemini OCR.
+                        cleaned = raw_text
                     elif cost_capped:
+                        # Narrate this page with local cleanup instead of
+                        # Gemini. Falls through to the shared write site rather
+                        # than duplicating the write/progress/emit sequence and
+                        # returning early, as it used to -- that copy was a
+                        # second place the narration invariant had to be
+                        # remembered, which is exactly how the other branches
+                        # drifted out of sync in the first place.
                         log.warning(
                             "audiobook.clean_cost_capped",
                             extra={"book_id": book_id, "page": n},
                         )
-                        cleaned = strip_markdown_for_narration(raw_text) or "-"
-                        async with state_lock:
-                            failed.append(n)
-                            current_meta = AudiobookStore.read_meta(book_id) or {}
-                            page_status = dict(current_meta.get("page_status") or {})
-                            page_status[str(n)] = "cost_capped"
-                            await AudiobookStore.update_meta(
-                                book_id, failed_pages=failed, page_status=page_status
-                            )
-                        cls._emit(
-                            book_id,
-                            "page_failed",
-                            phase="cleaning",
-                            page=n,
-                            error="Per-book Gemini cost cap reached; narrated with local cleanup instead.",
+                        cleaned = raw_text
+                        await mark_page_failed(
+                            n,
+                            "cost_capped",
+                            "Per-book Gemini cost cap reached; "
+                            "narrated with local cleanup instead.",
                         )
-                        out = AudiobookStore.page_clean_path(book_id, n)
-                        tmp = out + ".tmp"
-                        with open(tmp, "w", encoding="utf-8") as f:
-                            f.write(cleaned)
-                        os.replace(tmp, out)
-                        async with state_lock:
-                            progress["done"] += 1
-                            await AudiobookStore.update_meta(
-                                book_id,
-                                phase_progress={
-                                    "page_done": progress["done"],
-                                    "page_total": page_count,
-                                },
-                            )
-                        cls._emit(
-                            book_id,
-                            "page_done",
-                            phase="cleaning",
-                            page=n,
-                            total=page_count,
-                        )
-                        return
                     elif is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
                         # Image page (PDF only) — render and OCR+clean via Gemini vision.
                         source_path = AudiobookStore.source_file_path(book_id, file_ext)
@@ -750,7 +793,7 @@ class AudiobookService:
                         try:
                             cleaned = await asyncio.wait_for(
                                 GeminiCleaner.ocr_page(api_key, image_bytes),
-                                timeout=90.0,
+                                timeout=_GEMINI_PAGE_TIMEOUT_S,
                             )
                         except TimeoutError:
                             log.warning(
@@ -758,12 +801,13 @@ class AudiobookService:
                                 extra={"book_id": book_id, "page": n},
                                 exc_info=True,
                             )
-                            cleaned = raw_text or "-"
+                            cleaned = raw_text
+                            await mark_page_failed(n, "cleaning_failed")
                     else:
                         try:
                             cleaned = await asyncio.wait_for(
                                 GeminiCleaner.clean_page(api_key, raw_text),
-                                timeout=90.0,
+                                timeout=_GEMINI_PAGE_TIMEOUT_S,
                             )
                         except TimeoutError:
                             log.warning(
@@ -771,7 +815,8 @@ class AudiobookService:
                                 extra={"book_id": book_id, "page": n},
                                 exc_info=True,
                             )
-                            cleaned = raw_text or "-"
+                            cleaned = raw_text
+                            await mark_page_failed(n, "cleaning_failed")
                 except GeminiAuthError:
                     raise
                 except Exception as e:
@@ -780,32 +825,51 @@ class AudiobookService:
                         extra={"book_id": book_id, "page": n, "error": str(e)},
                         exc_info=True,
                     )
-                    async with state_lock:
-                        failed.append(n)
-                        # Mark this as a *cleaning* failure (as opposed to a
-                        # TTS-only failure) so retry_failed knows this page's
-                        # clean text actually needs to be regenerated, not
-                        # just its audio re-synthesized.
-                        current_meta = AudiobookStore.read_meta(book_id) or {}
-                        page_status = dict(current_meta.get("page_status") or {})
-                        page_status[str(n)] = "cleaning_failed"
-                        await AudiobookStore.update_meta(
-                            book_id, failed_pages=failed, page_status=page_status
-                        )
-                    cls._emit(
-                        book_id, "page_failed", phase="cleaning", page=n, error=str(e)
-                    )
-                    cleaned = raw_text or "-"
+                    cleaned = raw_text
+                    await mark_page_failed(n, "cleaning_failed", str(e))
 
-                if uses_gemini_cleanup:
+                if uses_gemini_cleanup and not cost_capped:
                     async with state_lock:
-                        gemini_chars["value"] += len(raw_text) + len(cleaned)
+                        # Input was already reserved before the call; add only
+                        # the output now so the total isn't double-counted.
+                        gemini_chars["value"] += len(cleaned)
                         # Crossing the cap here just updates the shared
                         # counter — the next page(s) to reach the pre-check
                         # above see it and route to local cleanup instead of
                         # Gemini. Not raised/aborted: this page's own call
                         # already happened and produced good text, so there
                         # is no reason to discard it or fail the whole book.
+
+                # THE INVARIANT: nothing reaches the transcript or the TTS
+                # phonemizer without a deterministic Markdown-stripping pass.
+                #
+                # Every branch above converges here -- Gemini success, Gemini
+                # timeout, Gemini error, cost-capped, and the local-first
+                # default -- so this is the one place that has to be right.
+                # Previously the strip was applied on only two of those five
+                # branches, and the three that skipped it wrote raw source text
+                # straight to disk, where the TTS phase read it back and
+                # narrated "#" as "hash" and "**" as "asterisk".
+                #
+                # Safe to run over text Gemini already cleaned: the pass is
+                # idempotent (pinned by test_strip_is_idempotent), so a
+                # well-cleaned page is unchanged by it.
+                if uses_gemini_cleanup and not cost_capped:
+                    residual = has_residual_markup(cleaned)
+                    if residual:
+                        # The model is instructed not to emit Markdown, but
+                        # nothing enforced it before. Not an error -- the strip
+                        # below fixes it -- but worth seeing in the logs if it
+                        # starts happening often.
+                        log.warning(
+                            "audiobook.gemini_residual_markup",
+                            extra={
+                                "book_id": book_id,
+                                "page": n,
+                                "constructs": residual,
+                            },
+                        )
+                cleaned = strip_markdown_for_narration(cleaned) or "-"
 
                 out = AudiobookStore.page_clean_path(book_id, n)
                 tmp = out + ".tmp"

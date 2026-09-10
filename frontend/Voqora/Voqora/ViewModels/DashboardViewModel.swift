@@ -574,7 +574,11 @@ class DashboardViewModel: ObservableObject {
 
     func startHeartbeat() {
         guard heartbeatTask == nil else { return }
-        heartbeatTask = Task {
+        // [weak self] to match startPolling/subscribe — self owns
+        // heartbeatTask, so a strong capture here is a retain cycle
+        // (self -> heartbeatTask -> closure -> self).
+        heartbeatTask = Task { [weak self] in
+            guard let self else { return }
             var wasOnline = false
             var consecutiveFailures = 0
 
@@ -598,7 +602,19 @@ class DashboardViewModel: ObservableObject {
                     if status == .speaking || status == .thinking {
                         status = .ready
                     }
-                    audio.stop()
+                    // Audiobook playback reads a local WAV and never talks to
+                    // the backend, so a TTS-engine crash must not corrupt it.
+                    // An unconditional audio.stop() here bypassed
+                    // AudiobookViewModel.stopPlayback and left exactly the
+                    // broken state described there — stale nowPlaying, unsaved
+                    // resume position, phantom playback on the next Play — for
+                    // a listener whose book had nothing to do with the crash.
+                    // Same routing as stopPlayback() and speak() below.
+                    if let avm = audiobookVM, avm.nowPlaying != nil {
+                        avm.stopPlayback()
+                    } else {
+                        audio.stop()
+                    }
                 }
 
                 wasOnline = isNowOnline

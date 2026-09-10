@@ -31,8 +31,13 @@ enum TextProcessor {
         }
 
         if options.cleanURLs {
+            // Replaced with a bare word, not "[link]". The bracketed form was
+            // substituted *after* stripMarkdownSyntax had already run, so it
+            // introduced fresh bracket characters that nothing downstream
+            // removed — the cleanup step handing the phonemizer new punctuation
+            // to vocalize.
             let regex = try? NSRegularExpression(pattern: "https?://\\S+", options: .caseInsensitive)
-            result = regex?.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "[link]") ?? result
+            result = regex?.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "link") ?? result
         }
 
         if options.cleanHandles {
@@ -128,13 +133,41 @@ enum TextProcessor {
         // Horizontal rules on their own line.
         result = replace("^(-{3,}|\\*{3,}|_{3,})\\s*$", with: "", in: result)
 
+        // HTML tags — the backend twin strips these; this one never did, so a
+        // selection lifted from a README narrated "<br>" and friends.
+        result = replace("</?[A-Za-z][A-Za-z0-9-]*(?:\\s[^<>\\n]*)?/?>", with: "", in: result)
+
         // Unordered list markers at the start of a line.
         result = replace("^\\s*[-*+]\\s+", with: "", in: result)
+
+        // Ordered list markers ("1.", "2)"). Without this the number survived
+        // and normalizeNumbers then rewrote "1." to the spoken word "one."
+        result = replace("^\\s*\\d+[.)]\\s+", with: "", in: result)
+
+        // Task-list checkboxes left behind by the list-marker rules above.
+        result = replace("^\\[[ xX]\\]\\s*", with: "", in: result)
+
+        // Setext heading underlines. The rule above covers "---"/"***"/"___"
+        // but not "===", so a setext H1 underline was read as a run of "equals".
+        result = replace("^={2,}\\s*$", with: "", in: result)
+
+        // Table pipes. Not handled at all before, so "|" reached the phonemizer.
+        result = replace("^\\s*\\|?[\\s:|-]*\\|[\\s:|-]*$", with: "", in: result)
+        result = result.replacingOccurrences(of: "|", with: " ")
 
         // Emphasis: ***bold italic***, **bold**, *italic*, __bold__, _italic_, ~~strikethrough~~.
         result = replace("(\\*\\*\\*|___)(.+?)\\1", with: "$2", in: result)
         result = replace("(\\*\\*|__)(.+?)\\1", with: "$2", in: result)
-        result = replace("(\\*|_)(.+?)\\1", with: "$2", in: result)
+        // Single-delimiter emphasis is anchored: the delimiter must sit at a
+        // word boundary and hug its content, and the content may not contain
+        // another delimiter. The old "(\\*|_)(.+?)\\1" paired the first
+        // delimiter on a line with the nearest later one *anywhere* on that
+        // line, which silently corrupted ordinary text rather than markup:
+        //   "value_a and value_b" -> "valuea and valueb"
+        //   "5 * 3 and 4 * 8"     -> "5 3 and 4 8"   (operators deleted)
+        //   "get_user_name"       -> "getusername"
+        result = replace("(?<![\\*\\w])\\*(?!\\s)([^\\*\\n]+?)(?<!\\s)\\*(?![\\*\\w])", with: "$1", in: result)
+        result = replace("(?<![\\w_])_(?!\\s)([^_\\n]+?)(?<!\\s)_(?![\\w_])", with: "$1", in: result)
         result = replace("~~(.+?)~~", with: "$1", in: result)
 
         // Inline code spans, then any stray unmatched backtick left behind by

@@ -22,6 +22,7 @@ from app.services.audiobook_service import (
     _wav_header,
 )
 from app.services.audiobook_store import AudiobookStore
+from app.services.text_normalizer import has_residual_markup
 
 
 @pytest.fixture(autouse=True)
@@ -2196,10 +2197,13 @@ def test_extract_one_opens_pdf_only_once_for_the_whole_book(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
+async def test_gemini_timeout_falls_back_to_locally_cleaned_text(monkeypatch):
     """When GeminiCleaner.clean_page raises asyncio.TimeoutError the pipeline
-    must degrade gracefully: the cleaned output file is written with the raw
-    text so downstream TTS can still proceed.  No hang, no crash, no empty file.
+    must degrade gracefully -- no hang, no crash, no empty file -- by writing
+    the *locally cleaned* text, never the raw source.
+
+    Writing raw text here is what made headings narrate as "hash hash hash":
+    the fallback bypassed the Markdown strip that every other branch applied.
     """
     from app.services import audiobook_service as _svc
     from app.services import gemini_cleaner as _gc
@@ -2211,7 +2215,11 @@ async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
     meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(bid, meta)
 
-    raw_text = "Raw page text that should survive the Gemini timeout."
+    # Deliberately full of Markdown. The previous fixture was plain prose, so
+    # it could not distinguish "fell back to raw text" from "fell back to
+    # *stripped* raw text" -- and the assertion pinned the former, which is
+    # what shipped "hash hash hash" to listeners.
+    raw_text = "## Section title\n\n**Bold claim** and `code`.\n\n> A quote."
     raw_path = AudiobookStore.page_raw_path(bid, 1)
     os.makedirs(os.path.dirname(raw_path), exist_ok=True)
     with open(raw_path, "w", encoding="utf-8") as f:
@@ -2232,7 +2240,19 @@ async def test_gemini_timeout_falls_back_to_raw_text(monkeypatch):
     assert os.path.exists(clean_path), "clean file must exist after timeout fallback"
     with open(clean_path, encoding="utf-8") as f:
         result = f.read()
-    assert result == raw_text, "fallback content must equal the original raw text"
+
+    # Degrades gracefully -- but never by narrating raw Markdown.
+    assert has_residual_markup(result) == [], result
+    assert "Section title" in result
+    assert "Bold claim" in result
+    assert "A quote." in result
+
+    # And the page is marked failed, so "Retry failed pages" can actually
+    # re-attempt it. The timeout branches used to skip this, making them the
+    # only failures retry_failed could never see.
+    meta = AudiobookStore.read_meta(bid)
+    assert 1 in (meta.get("failed_pages") or [])
+    assert (meta.get("page_status") or {}).get("1") == "cleaning_failed"
 
 
 @pytest.mark.asyncio
@@ -2470,3 +2490,108 @@ async def test_markdown_source_full_pipeline_produces_speakable_transcript():
 
     # And the pipeline actually reached a playable end state.
     assert os.path.exists(AudiobookStore.audio_path(bid))
+
+
+# ---------- the narration invariant: no branch may write raw Markdown ----------
+
+_MARKDOWN_PAGE = """\
+---
+title: Front matter that must not be narrated
+---
+
+## The one line I have to know cold
+
+> A fleet manager has dozens of KPIs and no analyst.
+> FleetHQ reads all of them every morning.
+
+**The second-best line**, for when someone wants the shorter version:
+
+| Metric | Value |
+| --- | --- |
+| Uptime | 99.9% |
+
+- [ ] First action
+- [x] Second action
+
+`inline_code` and a [link](https://example.com).
+"""
+
+
+def _seed_markdown_book(uses_gemini: bool):
+    bid = AudiobookStore.create_book("Test.md")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.md", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = uses_gemini
+    meta["file_ext"] = "md"
+    AudiobookStore.write_meta(bid, meta)
+    raw_path = AudiobookStore.page_raw_path(bid, 1)
+    os.makedirs(os.path.dirname(raw_path), exist_ok=True)
+    with open(raw_path, "w", encoding="utf-8") as f:
+        f.write(_MARKDOWN_PAGE)
+    return bid
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "branch",
+    ["local_only", "gemini_success", "gemini_timeout", "gemini_error", "cost_capped"],
+)
+async def test_no_clean_branch_ever_writes_raw_markdown(branch, monkeypatch):
+    """The narration invariant, asserted across every branch of _phase_clean.
+
+    This is the regression test for the bug that shipped in v1.2.1: three of
+    the five branches (OCR timeout, clean timeout, generic exception) wrote the
+    raw source straight to the clean file, so the TTS phase narrated "##" as
+    "hash hash" and "**" as "asterisk". Two branches stripped correctly, which
+    is why the failure looked intermittent rather than systematic.
+
+    Parametrized deliberately: fixing one branch in isolation is exactly how
+    this kept coming back.
+    """
+    from app.services import audiobook_service as _svc
+    from app.services import gemini_cleaner as _gc
+
+    uses_gemini = branch != "local_only"
+    bid = _seed_markdown_book(uses_gemini)
+
+    if branch == "gemini_success":
+        # A well-behaved model returns clean prose; the shared strip must be a
+        # no-op over it rather than mangling good output.
+        monkeypatch.setattr(
+            _gc.GeminiCleaner,
+            "clean_page",
+            AsyncMock(return_value="The one line I have to know cold.\n\nA quote."),
+        )
+    elif branch == "gemini_timeout":
+        monkeypatch.setattr(
+            _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=TimeoutError())
+        )
+    elif branch == "gemini_error":
+        monkeypatch.setattr(
+            _gc.GeminiCleaner,
+            "clean_page",
+            AsyncMock(side_effect=RuntimeError("upstream exploded")),
+        )
+    elif branch == "cost_capped":
+        monkeypatch.setattr(_svc._settings, "MAX_GEMINI_COST_USD_PER_BOOK", 0.0)
+        monkeypatch.setattr(
+            _gc.GeminiCleaner,
+            "clean_page",
+            AsyncMock(side_effect=AssertionError("must not call Gemini when capped")),
+        )
+
+    _svc.AudiobookService.initialize()
+    await _svc.AudiobookService._phase_clean(bid, api_key="test-key")
+
+    with open(AudiobookStore.page_clean_path(bid, 1), encoding="utf-8") as f:
+        result = f.read()
+
+    assert (
+        has_residual_markup(result) == []
+    ), f"branch {branch!r} wrote narratable Markdown: {result!r}"
+    # Content preservation: stripping must not be achieved by deleting text.
+    if branch != "gemini_success":
+        assert "The one line I have to know cold" in result
+        assert "fleet manager" in result
+        assert "Front matter that must not be narrated" not in result

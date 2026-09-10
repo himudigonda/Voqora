@@ -26,7 +26,19 @@ struct LiveScrollDetector: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    // Retry attachment on every update. The single deferred attempt above is
+    // best-effort: if the view is not yet inside its NSScrollView on that one
+    // runloop turn, `attach` returns without installing the observer, and with
+    // an empty updateNSView it never got a second chance — silently, for the
+    // life of the view. The failure is invisible but consequential: with no
+    // observer, `userScrolledAt` is never set, `shouldAutoScroll` always
+    // returns true, and auto-scroll yanks the transcript away from a reader
+    // who has deliberately scrolled elsewhere — exactly the bug this type was
+    // written to fix. `attach` is idempotent (it no-ops once `observer` is
+    // non-nil), so retrying costs nothing.
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.attach(to: nsView)
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(onLiveScroll: onLiveScroll)

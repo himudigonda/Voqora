@@ -1,5 +1,72 @@
 # Changelog
 
+## [1.3.0] - 2026-09-10
+
+### Fixed — narration no longer reads formatting aloud
+
+- Audiobooks and the Speak Selection shortcut could read formatting symbols
+  out loud — a heading narrated as "hash hash hash", bold text as "asterisk",
+  a table as a run of "pipe". This affected any Markdown source, and could
+  appear partway through a book that had otherwise narrated correctly.
+
+  The cause was a timeout: v1.2.1 moved AI text cleanup to Google's slower
+  "Flex" tier without extending how long the app waits for it, so cleanup
+  routinely timed out and fell back to narrating the raw source. Two related
+  problems made it stick — the pages affected were the only ones the "Retry
+  failed pages" button could not see, so retrying changed nothing, and only
+  some of the cleanup paths stripped formatting at all.
+
+  Cleaning now happens in one place that every path goes through, so no
+  failure can bypass it, and it is checked automatically before any text is
+  narrated.
+
+- Text could be silently deleted from a narration. A sentence containing "<"
+  or ">" (an inequality, a generic type) lost everything between them — "If
+  x < y then swap them. Otherwise if a > b, stop." was narrated as "If x b,
+  stop." Identifiers like `get_user_name` were narrated as "getusername", and
+  multiplication signs were dropped from "5 * 3". A fenced code block split
+  across a page boundary destroyed prose on both sides of the split.
+
+- Chapter titles in the Sections list showed raw formatting, e.g.
+  "**Chapter _One_**".
+
+- Scanned-page OCR had no instruction to remove formatting at all.
+
+- An invalid Gemini API key could be misreported as a temporary error, so the
+  app silently degraded every page instead of telling you to fix the key.
+
+### Improved — transcripts are formatted properly
+
+- Bulleted and numbered lists render as separate items instead of collapsing
+  into one dense paragraph, and table rows appear one per line. Headings are
+  now visibly headings rather than the same size as body text. Text wrapped
+  mid-sentence by the source document is rejoined instead of breaking.
+
+- Both AI cleanup prompts were rewritten to produce a properly structured
+  narration script.
+
+### Fixed — playback and library
+
+- The transcript now scrolls to follow the sentence being narrated. It
+  previously only scrolled once per page — every two to three minutes — so
+  the highlighted sentence drifted off screen and stayed there. Scrolling
+  manually pauses the follow for twelve seconds, then resumes.
+
+- The sleep timer no longer loses your place. When it fired it skipped saving
+  your position and left the player in a state where pressing play showed
+  progress but produced no sound.
+
+- A text-to-speech engine crash no longer interferes with audiobook playback,
+  which is unrelated to it.
+
+- The library now updates while a book is generating. Previously a single
+  book in progress froze the whole library: newly added books did not appear,
+  deletions did not apply, and a book left in a stale state stayed unopenable
+  until the app was restarted.
+
+- The transcript panel updates as pages are generated instead of freezing at
+  whatever had loaded when it opened.
+
 ## [1.2.1] - 2026-09-10
 
 ### Fixed

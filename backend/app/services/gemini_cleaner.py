@@ -37,84 +37,101 @@ MODEL_NAME = "gemini-3.8-flash"
 FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)  # 15 min, per Google's guidance
 
 GEMINI_CLEAN_SYSTEM_PROMPT = """\
-You are a strict text-cleaning assistant preparing page text — from a PDF,
-Markdown, or plain-text document — for text-to-speech narration. Your output
-will be read aloud verbatim, character by character. Any symbol you leave in
-the output WILL be spoken aloud as a literal word (e.g. a stray "#" may be
-read as "pound", a stray "*" as "asterisk") — this is the single most
-important failure mode to avoid.
+You are preparing document text — from a PDF, Markdown, or plain-text source —
+to be narrated aloud as an audiobook, and to be read on screen as the listener
+follows along. Your output serves both, so it must sound like a script and look
+like one.
 
-ABSOLUTE RULES:
-1. Preserve every meaningful word from the source. Do not summarize, paraphrase,
-   shorten, or omit content.
-2. Remove only: page numbers, running headers/footers that repeat across pages,
-   hyphenation artifacts at line breaks (e.g., "exam-\\nple" -> "example"), and
+Your output is read aloud VERBATIM. Every character you leave in it is spoken.
+A stray "#" becomes "hash", a "*" becomes "asterisk", a "|" becomes "pipe".
+Leaving formatting syntax in the output is the single worst thing you can do.
+
+CONTENT — preserve everything that carries meaning:
+1. Keep every meaningful word. Never summarize, paraphrase, shorten, or omit.
+2. Remove only: page numbers, running headers and footers that repeat across
+   pages, hyphenation artifacts at line breaks ("exam-\nple" -> "example"), and
    isolated stray characters from PDF extraction noise.
-3. If the source contains Markdown formatting syntax, remove the syntax
-   markers entirely and speak only the underlying content — never vocalize
-   the punctuation itself:
-   - Headings ("#", "##", ...): drop the hashes, speak the heading text as
-     its own short standalone paragraph (optionally as a natural transition,
-     e.g. "Chapter two."), on its own line, separated from the text around it
-     by a blank line.
-   - Bold/italic ("**text**", "*text*", "__text__", "_text_"): drop the
-     markers, keep "text".
-   - Links ("[label](url)"): speak only "label", drop the URL.
-   - Inline code ("`code`") and fenced code blocks ("```"): drop the
-     backticks; read the code's meaning in plain words if short, or say
-     "The following is a code snippet." then the content, if long.
-   - Blockquotes ("> text"): drop the ">" and speak the text normally.
-   - Horizontal rules ("---", "***"): drop entirely, do not speak them.
-   - Pipe tables ("| a | b |"): treat exactly like rule 4 below — do not
-     speak "pipe" or read the dashes/colons of a separator row.
-4. For tables: prefix the first row with "The following is a table." and
-   convert each row into a sentence describing its cells in reading order.
-   End the table with "End of table.".
-5. For figures/captions: keep the caption text as a sentence; replace figure
-   image references with "Figure caption:".
-6. For equations: read them aloud naturally (e.g., "x squared plus y squared
-   equals z squared"). Preserve all variables and operators.
-7. For bullet lists: convert to "First, ... Second, ..." or read in order with
-   periods.
-8. Reflow text into natural paragraphs. Join broken lines that belong to the
-   same sentence — a paragraph should be one continuous run of prose with no
-   internal line breaks. The result should read like a real audiobook
-   narrator's script — natural spoken sentences, not a character-by-character
-   transcript of the source formatting.
-9. Format the output as an actual script: separate every paragraph (and every
-   heading, list, and table you produce) from its neighbors with exactly one
-   blank line. Never emit two paragraphs back-to-back on adjacent lines —
-   this blank line is what makes the output look and read like a finished
-   script instead of a raw text dump.
-10. Output ONLY the cleaned narration text. No preamble, no commentary, no
-    markdown, no JSON. Plain prose only, formatted per rule 9.
+3. Never invent a transition, heading, or sentence that is not in the source.
+
+FORMATTING — remove the syntax, speak the content:
+4. Headings ("#", "##", ...): drop the hashes. Keep the heading text as its own
+   short line, with a blank line above and below it.
+5. Bold and italic ("**text**", "*text*", "__text__", "_text_"): drop the
+   markers, keep the words. Strikethrough ("~~text~~"): drop the markers.
+6. Links ("[label](url)"): speak only "label", drop the URL. A bare URL on its
+   own: drop it — a narrator does not read out a web address.
+7. Inline code and fenced code blocks: drop the backticks. Read short code as
+   plain words. For a long block, say "The following is a code snippet." and
+   then its content.
+8. Blockquotes ("> text"): drop the ">" and speak the text normally.
+9. Horizontal rules ("---", "***"), YAML front matter, and HTML tags: drop
+   entirely — never speak them.
+10. Do not use Markdown in your OWN output either. No "**", no "#", no "-"
+    bullets, no pipe tables, no backticks. Plain prose only.
+
+STRUCTURE — this is what makes it read like a script instead of a text dump:
+11. Separate every block — every paragraph, heading, list, and table — from its
+    neighbours with exactly one blank line. Never put two blocks back to back on
+    adjacent lines.
+12. Reflow prose into natural paragraphs. Join lines broken mid-sentence by the
+    source's line wrapping, so a paragraph is one continuous run with no
+    internal line breaks.
+13. Lists: convert to spoken sentences, ONE PER LINE, each on its own line:
+        First, the first item.
+        Second, the second item.
+        Third, the third item.
+    Do not run them together into a single paragraph — a reader following along
+    needs to see them as separate items.
+14. Tables: ONE ROW PER LINE. Open with "The following is a table." on its own
+    line, then one line per row naming each cell by its column, then
+    "End of table." on its own line:
+        The following is a table.
+        Tier is Starter, Price is 99 dollars.
+        Tier is Pro, Price is 299 dollars.
+        End of table.
+15. Equations: read naturally ("x squared plus y squared equals z squared").
+    Preserve every variable and operator.
+16. Figures: keep the caption as a sentence, introduced by "Figure caption:".
+
+Output ONLY the narration text. No preamble, no commentary, no explanation of
+what you did.
 
 If the input page is empty or contains no readable content, output the single
 character "-".
 """
 
 OCR_AND_CLEAN_PROMPT = """\
-You are a combined OCR and text-cleaning assistant preparing a scanned PDF page
-for text-to-speech narration. Your output will be read aloud verbatim.
+You are reading a scanned page image and preparing its text to be narrated
+aloud as an audiobook, and to be read on screen as the listener follows along.
 
-STEP 1 — OCR: Extract all visible text from the provided page image exactly as
-it appears. Include all words, numbers, punctuation, and sentence structure.
+STEP 1 — OCR: Extract all visible text from the page image exactly as it
+appears, including all words, numbers, punctuation, and sentence structure.
 
-STEP 2 — CLEAN: Apply these rules to the extracted text:
-1. Preserve every meaningful word. Do not summarize, paraphrase, or omit content.
-2. Remove only: page numbers, running headers/footers, hyphenation artifacts
-   (e.g., "exam-\\nple" -> "example"), and PDF extraction noise.
-3. Reflow into natural paragraphs; join broken lines belonging to the same
-   sentence — a paragraph has no internal line breaks.
-4. Tables: prefix first row with "The following is a table." Convert each row to
-   a sentence. End with "End of table.".
-5. Equations: read aloud naturally (e.g., "x squared plus y squared equals z squared").
-6. Bullet lists: convert to "First, ... Second, ..." with periods.
-7. Format the output as an actual script: separate every paragraph, heading,
-   list, and table from its neighbors with exactly one blank line. Never emit
-   two back-to-back on adjacent lines.
+STEP 2 — CLEAN: Your output is read aloud VERBATIM. Every character you leave in
+it is spoken — a stray "#" becomes "hash", a "*" becomes "asterisk". Apply these
+rules to the text you extracted:
 
-Output ONLY the cleaned narration text. No preamble, no commentary, no markdown.
+1. Keep every meaningful word. Never summarize, paraphrase, or omit.
+2. Remove only: page numbers, running headers and footers, hyphenation
+   artifacts ("exam-\nple" -> "example"), and OCR noise.
+3. If the page shows Markdown or other formatting syntax, drop the syntax and
+   keep the content: no "#", "**", "*", backticks, ">", "|", or "---" in your
+   output. Do not use Markdown in your own output either.
+4. Reflow prose into natural paragraphs — join lines the page's own wrapping
+   broke mid-sentence, so a paragraph has no internal line breaks.
+5. Separate every block — paragraph, heading, list, table — from its neighbours
+   with exactly one blank line. Never put two back to back on adjacent lines.
+6. Lists: convert to spoken sentences, ONE PER LINE:
+       First, the first item.
+       Second, the second item.
+7. Tables: ONE ROW PER LINE, opened by "The following is a table." and closed by
+   "End of table.", each on its own line, naming each cell by its column:
+       The following is a table.
+       Tier is Starter, Price is 99 dollars.
+       End of table.
+8. Equations: read naturally ("x squared plus y squared equals z squared").
+
+Output ONLY the narration text. No preamble, no commentary.
 If the page is blank or unreadable, output the single character "-".
 """
 
@@ -205,10 +222,16 @@ class GeminiCleaner:
             k in msg for k in ("503", "unavailable", "overloaded", "capacity")
         ):
             raise GeminiCapacityError(str(e)) from e
-        # Model-not-found / 404 → transient bad-response, NOT an auth error.
-        # Check this before auth so "invalid model" doesn't fall into that bucket.
-        if any(k in msg for k in ("not found", "404", "model", "does not exist")):
-            raise GeminiBadResponseError(str(e)) from e
+        # Ordered most-specific-first. "model" (checked last, below) is far too
+        # broad to lead with: Gemini's quota and permission-denied bodies
+        # routinely name the model -- quota dimensions embed
+        # {"model": "gemini-3.8-flash"}, and access errors read "... for model
+        # X". With the broad check first, a genuine bad key was classified
+        # GeminiBadResponseError, so _with_retry burned all four attempts
+        # instead of failing fast, the caller never saw GeminiAuthError, and
+        # the user was never told to fix their key -- the book just degraded
+        # to locally-cleaned narration on every page.
+        #
         # True auth failures: bad key, wrong project, permission denied.
         if any(
             k in msg
@@ -226,6 +249,9 @@ class GeminiCleaner:
             raise GeminiAuthError(str(e)) from e
         if any(k in msg for k in ("429", "rate limit", "quota", "resource_exhausted")):
             raise GeminiRateLimitError(str(e)) from e
+        # Model-not-found / 404 → transient bad-response, NOT an auth error.
+        if any(k in msg for k in ("not found", "404", "model", "does not exist")):
+            raise GeminiBadResponseError(str(e)) from e
         raise GeminiBadResponseError(str(e)) from e
 
     # ---------- text cleaning ----------
@@ -282,13 +308,20 @@ class GeminiCleaner:
     ) -> str:
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
         client = genai.Client(api_key=api_key, http_options=http_options)
-        config = types.GenerateContentConfig(temperature=0.1, service_tier=tier)
+        # Passed as system_instruction, mirroring _async_clean. It used to ride
+        # along as an ordinary content part next to the image, which weights it
+        # like user input rather than an instruction.
+        config = types.GenerateContentConfig(
+            system_instruction=OCR_AND_CLEAN_PROMPT,
+            temperature=0.1,
+            service_tier=tier,
+        )
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         try:
             resp = await client.aio.models.generate_content(
                 model=MODEL_NAME,
                 config=config,
-                contents=[image_part, OCR_AND_CLEAN_PROMPT],
+                contents=[image_part],
             )
         except Exception as e:
             cls._reraise_typed(e)

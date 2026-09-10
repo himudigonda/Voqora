@@ -554,11 +554,17 @@ struct AudiobookPlayerView: View {
                     // not on every render. T-13: suppressed for a short
                     // window after a detected manual scroll so auto-scroll
                     // doesn't fight a user reading ahead/back.
-                    .onChange(of: currentPageID(in: transcript)) { _, newPage in
-                        guard let newPage else { return }
+                    // Fires whenever the *paragraph* being narrated changes —
+                    // every few seconds — rather than only at page boundaries
+                    // two to three minutes apart, so the highlighted sentence
+                    // stays on screen instead of drifting off it. Still
+                    // suppressed for a window after a detected manual scroll so
+                    // auto-scroll doesn't fight a reader who has moved away.
+                    .onChange(of: currentScrollAnchor(in: transcript)) { _, newAnchor in
+                        guard let newAnchor else { return }
                         guard Self.shouldAutoScroll(userScrolledAt: userScrolledAt, now: Date()) else { return }
                         withAnimation(.easeOut(duration: 0.4)) {
-                            proxy.scrollTo(newPage, anchor: .center)
+                            proxy.scrollTo(newAnchor, anchor: .center)
                         }
                     }
                 }
@@ -585,8 +591,16 @@ struct AudiobookPlayerView: View {
             if isCurrent, entry.status == nil {
                 // Only the playing page pays for sentence splitting — a
                 // reader isn't watching every other page tick in real time.
-                currentPageText(entry, in: t)
-                    .lineSpacing(6)
+                // One view per paragraph so each is an addressable scroll
+                // target; see ParagraphAnchor.
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(currentPageParagraphs(entry, in: t).enumerated()), id: \.offset) { index, paragraph in
+                        paragraph
+                            .lineSpacing(6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .id(ParagraphAnchor(page: entry.page, paragraph: index))
+                    }
+                }
             } else {
                 // T-21: was `Text(entry.text)` verbatim — any single line
                 // break the cleanup pass left in the raw string (a soft wrap,
@@ -596,11 +610,24 @@ struct AudiobookPlayerView: View {
                 // through the same paragraph grouping the highlighted page
                 // uses keeps every page in the transcript consistently
                 // formatted, whether or not it's currently playing.
-                Text(Self.reflowedText(entry.text))
-                    .font(vm.appFont(size: 14, weight: .regular))
-                    .lineSpacing(6)
-                    .foregroundStyle(entry.status != nil ? Palette.textTertiary : Palette.textSecondary)
-                    .italic(entry.status != nil)
+                // Rendered per paragraph, like the playing page, so headings
+                // get heading typography everywhere rather than only on the one
+                // row that happens to be playing.
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(Array(Self.splitIntoParagraphs(entry.text).enumerated()), id: \.offset) { _, paragraph in
+                        let heading = entry.status == nil && Self.isHeadingLike(paragraph)
+                        Text(paragraph)
+                            .font(vm.appFont(size: heading ? 17 : 14, weight: heading ? .bold : .regular))
+                            .lineSpacing(6)
+                            .foregroundStyle(
+                                entry.status != nil
+                                    ? Palette.textTertiary
+                                    : (heading ? Palette.textPrimary : Palette.textSecondary)
+                            )
+                            .italic(entry.status != nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -623,62 +650,164 @@ struct AudiobookPlayerView: View {
     /// re-inserted between blocks, while the current-sentence index is still
     /// computed over the full flattened list so timing/highlight behavior
     /// (and its existing test coverage) is unchanged.
-    private func currentPageText(_ entry: PageEntry, in t: AudiobookService.Transcript) -> Text {
-        // The paragraph/sentence split only depends on the page's text, which
-        // is static once loaded — but this function used to redo it on every
-        // 0.1s playback tick (via `audio.currentTime`), along with rebuilding
-        // the entire concatenated `Text` tree, even on ticks where the
-        // estimated current sentence hadn't actually changed. Both are now
-        // memoized in `highlightCache` (same in-place-mutated-@State-class
-        // pattern as `transcriptCache` above) so a tick only rebuilds the
-        // `Text` tree when the highlighted sentence actually moves.
-        if highlightCache.bookID != t.bookID || highlightCache.page != entry.page {
-            highlightCache.bookID = t.bookID
-            highlightCache.page = entry.page
-            highlightCache.sentencesByParagraph = Self.splitIntoParagraphs(entry.text).map { Self.splitIntoSentences($0) }
-            highlightCache.allSentences = highlightCache.sentencesByParagraph.flatMap { $0 }
-            highlightCache.lastCurrentIndex = nil
-            highlightCache.cachedText = nil
-        }
+    /// Scroll target inside the transcript: one paragraph of one page.
+    ///
+    /// Auto-scroll used to anchor to whole pages. A page is ~400 words — two
+    /// to three minutes of audio — while the highlight advances sentence by
+    /// sentence, so on any page taller than the viewport the highlighted
+    /// sentence drifted off screen within seconds and nothing brought it back
+    /// until the next page boundary minutes later. That is what "auto-scroll
+    /// doesn't work" meant in practice: it was working exactly as written, at
+    /// a granularity far too coarse to be useful.
+    struct ParagraphAnchor: Hashable {
+        let page: Int
+        let paragraph: Int
+    }
 
-        guard highlightCache.allSentences.count > 1, let window = pageTimeWindow(for: entry.page, in: t) else {
-            return Text(Self.reflowedText(entry.text))
-                .font(vm.appFont(size: 15, weight: .bold))
-                .foregroundStyle(accentColor)
+    /// Populates `highlightCache` for `entry` if it isn't already current.
+    ///
+    /// `text` is part of the key, not just `(bookID, page)`: a page's text can
+    /// be rewritten under the same identity — a retried page, or one
+    /// re-cleaned while the book is still generating — and keying on identity
+    /// alone pinned the stale sentence split forever.
+    private func refreshHighlightCacheIfNeeded(_ entry: PageEntry, in t: AudiobookService.Transcript) {
+        guard highlightCache.bookID != t.bookID
+            || highlightCache.page != entry.page
+            || highlightCache.text != entry.text
+        else { return }
+        highlightCache.bookID = t.bookID
+        highlightCache.page = entry.page
+        highlightCache.text = entry.text
+        // Split paragraph -> line -> sentence, not paragraph -> sentence. The
+        // cleanup pass puts list items and table rows on deliberate separate
+        // lines; flattening a paragraph straight to sentences threw those line
+        // breaks away, so a table rebuilt here rendered as one run-on line even
+        // though the stored text and splitIntoParagraphs had both preserved it.
+        highlightCache.linesByParagraph = Self.splitIntoParagraphs(entry.text).map { paragraph in
+            paragraph.components(separatedBy: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+                .map { Self.splitIntoSentences($0) }
         }
-        let current = Self.currentSentenceIndex(
-            in: highlightCache.allSentences, pageStart: window.start, pageEnd: window.end, at: audio.currentTime
+        highlightCache.sentencesByParagraph = highlightCache.linesByParagraph.map { $0.flatMap { $0 } }
+        highlightCache.allSentences = highlightCache.sentencesByParagraph.flatMap { $0 }
+        highlightCache.lastCurrentIndex = nil
+        highlightCache.cachedParagraphs = nil
+    }
+
+    /// Index of the sentence estimated to be playing right now, or nil when
+    /// this page has no usable timing to interpolate through.
+    private func currentSentence(_ entry: PageEntry, in t: AudiobookService.Transcript) -> Int? {
+        refreshHighlightCacheIfNeeded(entry, in: t)
+        guard highlightCache.allSentences.count > 1,
+              let window = pageTimeWindow(for: entry.page, in: t) else { return nil }
+        return Self.currentSentenceIndex(
+            in: highlightCache.allSentences,
+            pageStart: window.start,
+            pageEnd: window.end,
+            at: audio.currentTime
         )
+    }
 
-        if let cachedText = highlightCache.cachedText, highlightCache.lastCurrentIndex == current {
-            return cachedText
+    /// The playing page as one `Text` per paragraph, with only the sentence
+    /// estimated to be playing right now emphasized.
+    ///
+    /// Returns an array rather than one concatenated `Text` so each paragraph
+    /// can carry its own `.id` and therefore be a scroll target — a single
+    /// `Text` is one view and can only be scrolled to as a whole, which is
+    /// what limited auto-scroll to page granularity.
+    ///
+    /// Only a per-page start timestamp exists (no per-sentence timing from the
+    /// backend), so the sentence is estimated by interpolating playback
+    /// progress through the page's time window proportionally across its
+    /// sentences' character lengths — an estimate, but far tighter than
+    /// highlighting the whole paragraph. Memoized so a 0.1s playback tick only
+    /// rebuilds when the highlighted sentence actually moves.
+    private func currentPageParagraphs(_ entry: PageEntry, in t: AudiobookService.Transcript) -> [Text] {
+        refreshHighlightCacheIfNeeded(entry, in: t)
+        guard let current = currentSentence(entry, in: t) else {
+            return [
+                Text(Self.reflowedText(entry.text))
+                    .font(vm.appFont(size: 15, weight: .bold))
+                    .foregroundStyle(accentColor)
+            ]
+        }
+        if let cached = highlightCache.cachedParagraphs, highlightCache.lastCurrentIndex == current {
+            return cached
         }
 
-        var result: Text?
+        var built: [Text] = []
         var globalIndex = 0
-        for sentences in highlightCache.sentencesByParagraph {
-            if result != nil {
-                result = result! + Text("\n\n")
+        for (paragraphIndex, sentences) in highlightCache.sentencesByParagraph.enumerated() {
+            let joined = sentences.joined(separator: " ")
+            if Self.isHeadingLike(joined) {
+                // Rendered whole rather than per sentence: a heading is one
+                // short phrase, and an outer .font() cannot override the fonts
+                // already baked into concatenated Text pieces.
+                let isCurrentHeading = (globalIndex...globalIndex + sentences.count).contains(current)
+                built.append(
+                    Text(joined)
+                        .font(vm.appFont(size: 17, weight: .bold))
+                        .foregroundStyle(isCurrentHeading ? accentColor : Palette.textPrimary)
+                )
+                globalIndex += sentences.count
+                continue
             }
-            for (sentenceIndex, sentence) in sentences.enumerated() {
-                let isCurrentSentence = globalIndex == current
-                let piece = Text(sentence)
-                    .font(vm.appFont(size: 14, weight: isCurrentSentence ? .bold : .regular))
-                    .foregroundStyle(isCurrentSentence ? accentColor : Palette.textSecondary)
-                if result == nil {
-                    result = piece
-                } else if sentenceIndex == 0 {
-                    result = result! + piece
-                } else {
-                    result = result! + Text(" ") + piece
+            var paragraph: Text?
+            for line in highlightCache.linesByParagraph[paragraphIndex] {
+                var isFirstOfLine = true
+                for sentence in line {
+                    let isCurrentSentence = globalIndex == current
+                    let piece = Text(sentence)
+                        .font(vm.appFont(size: 14, weight: isCurrentSentence ? .bold : .regular))
+                        .foregroundStyle(isCurrentSentence ? accentColor : Palette.textSecondary)
+                    if paragraph == nil {
+                        paragraph = piece
+                    } else {
+                        // Newline between lines, space within one -- this is what
+                        // keeps a list item or table row on its own row.
+                        paragraph = paragraph! + Text(isFirstOfLine ? "\n" : " ") + piece
+                    }
+                    isFirstOfLine = false
+                    globalIndex += 1
                 }
-                globalIndex += 1
             }
+            if let paragraph { built.append(paragraph) }
         }
-        let built = result ?? Text(Self.reflowedText(entry.text))
+        if built.isEmpty {
+            built = [Text(Self.reflowedText(entry.text))]
+        }
         highlightCache.lastCurrentIndex = current
-        highlightCache.cachedText = built
+        highlightCache.cachedParagraphs = built
         return built
+    }
+
+    /// The paragraph the reader should be looking at right now — the auto-scroll
+    /// target. Falls back to the page's first paragraph when the current page
+    /// has no usable timing or is a failed page (which renders as a single
+    /// block with no per-paragraph anchors).
+    private func currentScrollAnchor(in t: AudiobookService.Transcript) -> ParagraphAnchor? {
+        guard let page = currentPageID(in: t) else { return nil }
+        guard let entry = orderedPages(t).first(where: { $0.page == page }),
+              entry.status == nil,
+              let sentence = currentSentence(entry, in: t)
+        else { return ParagraphAnchor(page: page, paragraph: 0) }
+        return ParagraphAnchor(
+            page: page,
+            paragraph: Self.paragraphIndex(forSentence: sentence, in: highlightCache.sentencesByParagraph)
+        )
+    }
+
+    /// Which paragraph a flat sentence index falls in. Pure — the sentence
+    /// index is computed over every sentence on the page flattened together,
+    /// so it has to be walked back to a paragraph to scroll to.
+    static func paragraphIndex(forSentence sentence: Int, in sentencesByParagraph: [[String]]) -> Int {
+        var remaining = sentence
+        for (index, sentences) in sentencesByParagraph.enumerated() {
+            if remaining < sentences.count { return index }
+            remaining -= sentences.count
+        }
+        return max(0, sentencesByParagraph.count - 1)
     }
 
     /// The playing page's [start, end) time window: `end` is the next page
@@ -717,9 +846,21 @@ struct AudiobookPlayerView: View {
         currentPageID(in: t) == page
     }
 
+    // Keyed on the transcript's *content*, not just its book identity, the way
+    // refreshSectionsCacheIfNeeded already compares `sourceSections`. Guarding
+    // on bookID alone meant the cache never refreshed while a book was still
+    // generating: pages stream in under the same bookID, so the panel froze at
+    // whatever subset had arrived when it first rendered and never showed the
+    // rest. Comparing counts (not the full dictionaries) keeps this cheap
+    // enough to run on every render, which is the point of the cache.
     private func refreshTranscriptCacheIfNeeded(_ t: AudiobookService.Transcript) {
-        guard transcriptCache.bookID != t.bookID else { return }
+        guard transcriptCache.bookID != t.bookID
+            || transcriptCache.pageCount != t.pages.count
+            || transcriptCache.timeCount != t.pageToTime.count
+        else { return }
         transcriptCache.bookID = t.bookID
+        transcriptCache.pageCount = t.pages.count
+        transcriptCache.timeCount = t.pageToTime.count
         transcriptCache.orderedPages = Self.sortPages(t.pages, pageStatus: t.pageStatus)
         transcriptCache.sortedPageTimes = Self.sortPageTimes(t.pageToTime)
     }
@@ -864,6 +1005,8 @@ extension AudiobookPlayerView {
     /// extra render.
     final class TranscriptPageCache {
         var bookID: String?
+        var pageCount: Int = -1
+        var timeCount: Int = -1
         var orderedPages: [PageEntry] = []
         var sortedPageTimes: [PageTimeEntry] = []
     }
@@ -875,7 +1018,7 @@ extension AudiobookPlayerView {
         var sortedSections: [AudiobookSection] = []
     }
 
-    /// Memoizes `currentPageText`'s paragraph/sentence split (depends only on
+    /// Memoizes `currentPageParagraphs`' paragraph/sentence split (depends only on
     /// the page's text) and its built `Text` tree (depends on the estimated
     /// current-sentence index, which advances far slower than the 0.1s
     /// playback tick that used to rebuild it every time). Same
@@ -883,10 +1026,12 @@ extension AudiobookPlayerView {
     final class HighlightCache {
         var bookID: String?
         var page: Int?
+        var text: String = ""
+        var linesByParagraph: [[[String]]] = []
         var sentencesByParagraph: [[String]] = []
         var allSentences: [String] = []
         var lastCurrentIndex: Int?
-        var cachedText: Text?
+        var cachedParagraphs: [Text]?
     }
 
     /// Sorted ascending by page number. Pure — the transcript's `pages`
@@ -965,6 +1110,59 @@ extension AudiobookPlayerView {
     /// trimmed string as one paragraph if there's no blank-line structure at
     /// all — text from before the cleanup pass started emitting paragraph
     /// breaks still renders as continuous prose instead of empty.
+    /// Whether a block reads as a heading rather than body prose.
+    ///
+    /// The cleanup pass emits headings as their own short block with a blank
+    /// line either side and no terminal punctuation (both the local normalizer
+    /// and the Gemini prompt are explicit about this), which is exactly the
+    /// shape this matches. Without it every heading rendered in the same size
+    /// and weight as body text, so a transcript had no visible structure at all
+    /// — just an unbroken column of paragraphs.
+    ///
+    /// Deliberately conservative: a false negative renders a heading as
+    /// ordinary prose, which is merely plain. A false positive would blow up a
+    /// real sentence into a title, which looks broken — hence the length cap
+    /// and the single-line and no-terminal-punctuation requirements.
+    static func isHeadingLike(_ paragraph: String) -> Bool {
+        let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 70 else { return false }
+        guard !trimmed.contains("\n") else { return false }
+        guard let last = trimmed.last, !".!?,;:".contains(last) else { return false }
+        // A heading is a title, not a clause — several words at most.
+        return trimmed.split(separator: " ").count <= 12
+    }
+
+    /// Sentence-ending punctuation, used to tell a soft wrap from a deliberate
+    /// line break. Includes closing quotes and brackets so `... end."` counts.
+    private static let sentenceEnders: Set<Character> = [".", "!", "?", ":", ";", "\"", "'", ")", "]", "\u{201D}", "\u{2019}"]
+
+    /// Joins a block's lines, preserving *deliberate* line breaks.
+    ///
+    /// This used to join every line with a space unconditionally, which fixed
+    /// mid-sentence breaks from a source document's hard wrapping but also
+    /// flattened structure the cleanup pass had put there on purpose — a
+    /// five-item list and every row of a table collapsed into one dense blob,
+    /// which is the opposite of following along.
+    ///
+    /// The two cases are told apart the same way the backend's reflow does it:
+    /// a line broken mid-sentence ends on a word or a comma, a complete one
+    /// ends on terminal punctuation. So lines are joined with a space only when
+    /// the previous one did not finish a sentence, and kept on separate lines
+    /// otherwise. Applies to transcripts written before this change too, whose
+    /// soft wraps still join correctly.
+    static func joinLines(_ lines: [String]) -> String {
+        var result = ""
+        for line in lines {
+            guard let last = result.last else {
+                result = line
+                continue
+            }
+            result += sentenceEnders.contains(last) ? "\n" : " "
+            result += line
+        }
+        return result
+    }
+
     static func splitIntoParagraphs(_ text: String) -> [String] {
         guard !text.isEmpty else { return [] }
         var paragraphs: [String] = []
@@ -973,7 +1171,7 @@ extension AudiobookPlayerView {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.isEmpty {
                 if !current.isEmpty {
-                    paragraphs.append(current.joined(separator: " "))
+                    paragraphs.append(Self.joinLines(current))
                     current = []
                 }
             } else {
@@ -981,7 +1179,7 @@ extension AudiobookPlayerView {
             }
         }
         if !current.isEmpty {
-            paragraphs.append(current.joined(separator: " "))
+            paragraphs.append(Self.joinLines(current))
         }
         if paragraphs.isEmpty {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1057,7 +1255,16 @@ extension AudiobookPlayerView {
     /// T-13: how long auto-scroll stays suppressed after a detected manual
     /// scroll. Matches the toast auto-dismiss duration used elsewhere in
     /// this feature, for consistency.
-    static let userScrollPauseDuration: TimeInterval = 4
+    /// How long a manual scroll suppresses auto-scroll.
+    ///
+    /// Was 4s, which was harmless when auto-scroll only fired at page
+    /// boundaries minutes apart — the window had almost no chance to matter.
+    /// Now that scrolling tracks the narrated paragraph and fires every few
+    /// seconds, 4s means a reader who scrolls back to re-read something gets
+    /// yanked forward again almost immediately. Long enough to read a
+    /// paragraph or two undisturbed, short enough that tracking resumes on its
+    /// own without the reader having to do anything.
+    static let userScrollPauseDuration: TimeInterval = 12
 
     /// Whether the transcript should auto-scroll to the current page right
     /// now, given when the user last manually scrolled (if ever).

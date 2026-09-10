@@ -182,7 +182,11 @@ class AudioService: NSObject, ObservableObject {
 
     func setEstimatedDuration(textLength: Int, speed: Double) {
         let rawSeconds = Double(textLength) / 12.0
-        estimatedDuration = max(1.0, rawSeconds / speed)
+        // Clamped like setPlaybackRate. Swift's Double division doesn't trap on
+        // zero — it yields +inf — so a speed of 0 silently made `duration`
+        // infinite for the whole streaming phase, which the scrub bar then
+        // rendered against.
+        estimatedDuration = max(1.0, rawSeconds / max(0.1, speed))
         duration = estimatedDuration
     }
 
