@@ -113,6 +113,12 @@ class AudioService: NSObject, ObservableObject {
     private var hasStartedPlayback = false
     private var scheduledBufferCount = 0
 
+    /// Only streamed selected-text speech retains PCM for the generic clip
+    /// export. Audiobooks are intentionally file-backed to avoid holding an
+    /// entire book in memory, so presenting the same Save action for them
+    /// would promise an export that must fail.
+    var canExportLastClip: Bool { !lastAudioData.isEmpty }
+
     // Timer for progress
     private var timer: AnyCancellable?
     private var pausedTime: TimeInterval = 0

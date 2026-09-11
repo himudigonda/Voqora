@@ -692,20 +692,30 @@ def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemi
             bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
         ),
     )
-    enqueued: list[tuple[str, str]] = []
+    starts: list[tuple[str, str, bool]] = []
 
-    async def fake_enqueue(book_id: str, api_key: str) -> None:
-        enqueued.append((book_id, api_key))
+    async def fake_start(
+        book_id: str, api_key: str, *, uses_gemini_cleanup: bool
+    ) -> bool:
+        starts.append((book_id, api_key, uses_gemini_cleanup))
+        await AudiobookStore.update_meta(
+            book_id, uses_gemini_cleanup=uses_gemini_cleanup, status="queued"
+        )
+        return True
 
     monkeypatch.setattr(
         AudiobookService,
-        "enqueue",
-        classmethod(lambda cls, book_id, api_key: fake_enqueue(book_id, api_key)),
+        "start",
+        classmethod(
+            lambda cls, book_id, api_key, *, uses_gemini_cleanup: fake_start(
+                book_id, api_key, uses_gemini_cleanup=uses_gemini_cleanup
+            )
+        ),
     )
 
     response = client.post(f"/audiobook/{bid}/start")
     assert response.status_code == 200
-    assert enqueued == [(bid, "")]
+    assert starts == [(bid, "", False)]
     assert AudiobookStore.read_meta(bid)["uses_gemini_cleanup"] is False
 
     response = client.post(
@@ -714,6 +724,29 @@ def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemi
     )
     assert response.status_code == 400
     assert "X-Gemini-Api-Key" in response.json()["detail"]
+
+
+def test_start_rejects_a_book_already_claimed_for_processing(monkeypatch):
+    """The route must surface the service's atomic in-memory claim as 409."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    bid = AudiobookStore.create_book("Test.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+
+    async def rejected_start(*args, **kwargs) -> bool:
+        return False
+
+    monkeypatch.setattr(AudiobookService, "start", classmethod(rejected_start))
+    response = TestClient(app).post(f"/audiobook/{bid}/start")
+    assert response.status_code == 409
+    assert "already processing" in response.json()["detail"]
 
 
 # ---------- resume ----------
@@ -1796,6 +1829,32 @@ def test_upload_rejects_unsupported_extension():
     files = {"file": ("test.exe", b"binary data", "application/octet-stream")}
     response = client.post("/audiobook", files=files)
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_detail"),
+    [
+        ("voice", "not-a-voice", "Unknown narration voice."),
+        ("speed", "0", "Narration speed must be between 0.5 and 2.0."),
+        ("speed", "nan", "Narration speed must be between 0.5 and 2.0."),
+        ("engine", "other-engine", "Unknown narration engine."),
+    ],
+)
+def test_upload_rejects_invalid_persisted_synthesis_settings(
+    field, value, expected_detail
+):
+    """Bad multipart settings must not create a book that later becomes silence."""
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    response = TestClient(app).post(
+        "/audiobook",
+        files={"file": ("notes.txt", b"A short document", "text/plain")},
+        data={field: value},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"] == expected_detail
 
 
 @pytest.mark.parametrize(

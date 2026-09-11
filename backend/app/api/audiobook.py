@@ -6,6 +6,7 @@ Split out of the former `endpoints.py` monolith in HARD-031.
 import asyncio
 import hashlib
 import json
+import math
 import os
 import re
 from typing import Any
@@ -78,10 +79,45 @@ _OCR_CHARS_PER_PAGE = 1500  # ~250 words × 6 chars/word
 # would naively pass it to os.path.join, allowing path traversal in theory.
 _BOOK_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
+# Audiobook synthesis ultimately reaches the same Kokoro engine as /speak.
+# Keep its persisted snapshot within that public API's contract. A typo in
+# voice or an invalid speed must fail at upload time, rather than producing a
+# book full of fallback silence much later in the background pipeline.
+_MIN_TTS_SPEED = 0.5
+_MAX_TTS_SPEED = 2.0
+
 
 def _validate_book_id(book_id: str) -> None:
     if not _BOOK_ID_RE.fullmatch(book_id):
         raise HTTPException(status_code=400, detail="Invalid book_id.")
+
+
+def _validated_synthesis_settings(
+    voice: str | None, speed: float | None, engine: str | None
+) -> tuple[str, float, str]:
+    state = EngineManager.state()
+    available_voices = set(state.get("voices") or [])
+    book_voice = voice or EngineManager.default_voice()
+    if book_voice not in available_voices:
+        raise HTTPException(status_code=422, detail="Unknown narration voice.")
+
+    book_speed = 1.0 if speed is None else float(speed)
+    if (
+        not math.isfinite(book_speed)
+        or not _MIN_TTS_SPEED <= book_speed <= _MAX_TTS_SPEED
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Narration speed must be between {_MIN_TTS_SPEED} and "
+                f"{_MAX_TTS_SPEED}."
+            ),
+        )
+
+    book_engine = engine or state.get("engine", "kokoro")
+    if book_engine != "kokoro":
+        raise HTTPException(status_code=422, detail="Unknown narration engine.")
+    return book_voice, book_speed, book_engine
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +181,12 @@ async def upload_audiobook(
             status_code=400,
             detail="Only PDF, TXT, DOCX, and MD files are supported.",
         )
+
+    # Validate before allocating a book directory or buffering a potentially
+    # large upload. These fields are persisted settings, not client hints.
+    book_voice, book_speed, book_engine = _validated_synthesis_settings(
+        voice, speed, engine
+    )
 
     # Stream-read with a hard size cap. `await file.read()` is unbounded and
     # would OOM the backend on a 1 GB upload. See HARD-017.
@@ -245,7 +287,6 @@ async def upload_audiobook(
                 None, TextExtractor.sample_char_count, source_path
             )
 
-        book_speed = float(speed) if speed is not None else 1.0
         estimate = AudiobookService.estimate(
             page_count=page_count,
             sample_words=sample_words,
@@ -260,13 +301,6 @@ async def upload_audiobook(
         # enforced only if the user explicitly enables cleanup at /start;
         # local narration must never reject a document for a cloud cost it
         # will not incur.
-
-        state = EngineManager.state()
-        book_engine = engine or state.get("engine", "kokoro")
-        default_voice = (
-            state.get("voices", ["af_bella"])[0] if state.get("voices") else "af_bella"
-        )
-        book_voice = voice or default_voice
 
         meta = AudiobookStore.initial_meta(
             book_id=book_id,
@@ -339,8 +373,15 @@ async def start_audiobook(
                 f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
             ),
         )
-    await AudiobookStore.update_meta(book_id, uses_gemini_cleanup=uses_gemini_cleanup)
-    await AudiobookService.enqueue(book_id, x_gemini_api_key or "")
+    accepted = await AudiobookService.start(
+        book_id,
+        x_gemini_api_key or "",
+        uses_gemini_cleanup=uses_gemini_cleanup,
+    )
+    if not accepted:
+        raise HTTPException(
+            status_code=409, detail="This audiobook is already processing."
+        )
     return {"status": "queued", "book_id": book_id}
 
 

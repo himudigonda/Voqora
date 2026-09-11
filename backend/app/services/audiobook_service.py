@@ -78,6 +78,10 @@ class AudiobookService:
     _queue: asyncio.Queue | None = None
     _worker_task: asyncio.Task | None = None
     _current_book_id: str | None = None
+    # A status write reaches SQLite asynchronously. Keep an in-memory claim
+    # from the instant a job is accepted until its worker turn finishes so two
+    # nearly simultaneous starts cannot enqueue the same book twice.
+    _scheduled_book_ids: set[str] = set()
     # SSE subscribers: book_id → list[asyncio.Queue]
     _subscribers: dict[str, list[asyncio.Queue]] = {}
     # In-memory API keys per active job (never persisted).
@@ -143,6 +147,7 @@ class AudiobookService:
             finally:
                 cls._current_book_id = None
                 cls._job_keys.pop(book_id, None)
+                cls._scheduled_book_ids.discard(book_id)
                 cls._queue.task_done()
 
     # ---------- queue / SSE ----------
@@ -151,10 +156,59 @@ class AudiobookService:
     async def enqueue(cls, book_id: str, api_key: str) -> None:
         cls.initialize()
         assert cls._queue is not None
+        if book_id in cls._scheduled_book_ids:
+            return
+        cls._scheduled_book_ids.add(book_id)
         cls._job_keys[book_id] = api_key
         cls._cancel_flags.pop(book_id, None)
-        await AudiobookStore.update_meta(book_id, status="queued", error=None)
-        await cls._queue.put(book_id)
+        try:
+            updated = await AudiobookStore.update_meta(
+                book_id, status="queued", error=None
+            )
+            if not updated:
+                cls._scheduled_book_ids.discard(book_id)
+                cls._job_keys.pop(book_id, None)
+                return
+            await cls._queue.put(book_id)
+        except Exception:
+            cls._scheduled_book_ids.discard(book_id)
+            cls._job_keys.pop(book_id, None)
+            raise
+
+    @classmethod
+    async def start(
+        cls, book_id: str, api_key: str, *, uses_gemini_cleanup: bool
+    ) -> bool:
+        """Atomically claim a ready book and queue its first processing run.
+
+        The claim is made before the first await. This prevents a double-click
+        or retrying client from changing cleanup settings or the in-memory API
+        key for a job that another request has just started.
+        """
+        cls.initialize()
+        assert cls._queue is not None
+        if book_id in cls._scheduled_book_ids:
+            return False
+        cls._scheduled_book_ids.add(book_id)
+        cls._job_keys[book_id] = api_key
+        cls._cancel_flags.pop(book_id, None)
+        try:
+            updated = await AudiobookStore.update_meta(
+                book_id,
+                uses_gemini_cleanup=uses_gemini_cleanup,
+                status="queued",
+                error=None,
+            )
+            if not updated:
+                cls._scheduled_book_ids.discard(book_id)
+                cls._job_keys.pop(book_id, None)
+                return False
+            await cls._queue.put(book_id)
+            return True
+        except Exception:
+            cls._scheduled_book_ids.discard(book_id)
+            cls._job_keys.pop(book_id, None)
+            raise
 
     @classmethod
     def cancel(cls, book_id: str) -> bool:
@@ -165,7 +219,7 @@ class AudiobookService:
     @classmethod
     def is_processing(cls, book_id: str) -> bool:
         """Return True if this book is the currently-running job (or queued)."""
-        if cls._current_book_id == book_id:
+        if book_id in cls._scheduled_book_ids or cls._current_book_id == book_id:
             return True
         # Also check in-flight via meta status — covers the queued window.
         meta = AudiobookStore.read_meta(book_id)

@@ -156,7 +156,7 @@ struct MainDashboardView: View {
                     )
                     .background(Capsule().stroke(Palette.separator, lineWidth: 1))
 
-                if audio.duration > 0 {
+                if audio.canExportLastClip {
                     Button {
                         vm.exportLastClip()
                     } label: {

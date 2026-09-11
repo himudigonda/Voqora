@@ -67,6 +67,20 @@
 - The transcript panel updates as pages are generated instead of freezing at
   whatever had loaded when it opened.
 
+- Starting the same audiobook twice in quick succession no longer queues it
+  twice.
+
+- An invalid narration voice, speed, or engine is now rejected when the book
+  is added, instead of producing a book full of silence later.
+
+- The Save Clip button no longer appears for audiobooks, where it could only
+  fail.
+
+### Privacy
+
+- Diagnostic logs no longer include fragments of the text you asked Voqora to
+  speak.
+
 ## [1.2.1] - 2026-09-10
 
 ### Fixed

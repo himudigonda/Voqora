@@ -146,10 +146,12 @@ class TTSEngine:
         if key in cls._lookahead_cache:
             # Move to end to mark as recently used (LRU)
             cls._lookahead_cache.move_to_end(key)
-            log.debug("tts.lookahead_cached", extra={"seg_preview": first_seg[:30]})
+            log.debug("tts.lookahead_cached", extra={"segment_chars": len(first_seg)})
             return
 
-        log.info("tts.lookahead_precompute", extra={"seg_preview": first_seg[:30]})
+        # Never log caller text. Prewarm receives clipboard/selection content
+        # and these logs are retained and can be exported for support.
+        log.info("tts.lookahead_precompute", extra={"segment_chars": len(first_seg)})
         loop = asyncio.get_running_loop()
         try:
             audio, _ = await loop.run_in_executor(
@@ -173,7 +175,7 @@ class TTSEngine:
 
         cls._lookahead_cache[key] = audio
         cls._lookahead_cache.move_to_end(key)  # Mark as most recently used
-        log.info("tts.lookahead_stored", extra={"seg_preview": first_seg[:30]})
+        log.info("tts.lookahead_stored", extra={"segment_chars": len(first_seg)})
 
     @classmethod
     def initialize(cls):
@@ -304,7 +306,7 @@ class TTSEngine:
                 cached = cls._lookahead_cache.pop(key, None)
                 if cached is not None:
                     log.debug(
-                        "tts.lookahead_hit", extra={"seg_preview": seg_stripped[:30]}
+                        "tts.lookahead_hit", extra={"segment_chars": len(seg_stripped)}
                     )
                     audio = cached
 
@@ -321,7 +323,10 @@ class TTSEngine:
                 except Exception as e:
                     log.warning(
                         "tts.segment_error",
-                        extra={"seg_preview": seg_text[:30], "error": str(e)},
+                        extra={
+                            "segment_chars": len(seg_text),
+                            "error_type": type(e).__name__,
+                        },
                         exc_info=True,
                     )
                     continue
