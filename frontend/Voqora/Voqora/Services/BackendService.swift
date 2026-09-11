@@ -35,6 +35,7 @@ final class BackendService: NSObject, @unchecked Sendable {
     private static let failedLaunchBackoff: TimeInterval = 2
     private let executableOverride: URL?
     private let applicationSupportOverride: URL?
+    private let connection: BackendConnection
     var isLaunching: Bool {
         stateQueue.sync { _isLaunching }
     }
@@ -53,7 +54,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         stateQueue.sync { process != nil }
     }
 
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
     private var continuations: [Int: AsyncThrowingStream<Data, Error>.Continuation] = [:]
 
     enum StreamError: Error, Equatable {
@@ -72,10 +72,12 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     init(
         executableOverride: URL? = nil,
-        applicationSupportOverride: URL? = nil
+        applicationSupportOverride: URL? = nil,
+        connection: BackendConnection = .shared
     ) {
         self.executableOverride = executableOverride
         self.applicationSupportOverride = applicationSupportOverride
+        self.connection = connection
         super.init()
     }
 
@@ -117,11 +119,26 @@ final class BackendService: NSObject, @unchecked Sendable {
             return
         }
 
+        let launchConfiguration: BackendConnection.LaunchConfiguration
+        do {
+            launchConfiguration = try connection.prepareForLaunch()
+        } catch {
+            stateQueue.sync {
+                _isLaunching = false
+                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
+                _lastLaunchFailure = "The local speech engine could not secure its connection."
+            }
+            VoqoraLog.error("BackendService", "Backend connection setup failed")
+            return
+        }
+
         let p = Process()
         p.executableURL = executableURL
 
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        env["VOQORA_IPC_TOKEN"] = launchConfiguration.token
+        env["VOQORA_IPC_LISTENER_FD"] = String(launchConfiguration.listenerFD)
         p.environment = env
 
         let pipe = Pipe()
@@ -189,6 +206,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self.logFileHandle = nil
                 }
             }
+            self.connection.invalidate(generation: launchConfiguration.generation)
             VoqoraLog.warn("BackendService", "Backend process exited", ["pid": "\(terminated.processIdentifier)", "exitStatus": "\(terminated.terminationStatus)"])
         }
 
@@ -202,6 +220,13 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
 
         do {
+            // LaunchManager verifies the installed runtime during extraction;
+            // repeat the inexpensive manifest check immediately before every
+            // production execution so post-install tampering fails closed.
+            // Test fixtures intentionally bypass this sealed-bundle contract.
+            if executableOverride == nil {
+                try LaunchManager.validateRuntimeForExecution(at: executableURL)
+            }
             try p.run()
             stateQueue.sync {
                 if self.process === p {
@@ -210,7 +235,8 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             VoqoraLog.info("BackendService", "Backend launched", ["pid": "\(p.processIdentifier)"])
         } catch {
-            VoqoraLog.error("BackendService", "Backend launch failed", ["error": String(describing: error), "path": executableURL.path])
+            VoqoraLog.error("BackendService", "Backend launch failed")
+            connection.invalidate(generation: launchConfiguration.generation)
             stateQueue.sync {
                 if self.process === p {
                     self.process = nil
@@ -247,6 +273,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             process = nil
             processPipe = nil
         }
+        connection.invalidate()
 
         // `process?.terminate()` above is intentionally scoped to the child
         // Voqora started. Never kill every process named VoqoraServer: an
@@ -305,10 +332,9 @@ final class BackendService: NSObject, @unchecked Sendable {
     }
 
     func checkHealth() async -> HealthStatus {
-        var request = URLRequest(url: baseURL.appendingPathComponent("health"))
-        // 1-second timeout: we poll at 500 ms when offline, so 3 s was wasting
-        // multiple entire poll cycles on each failed request.
-        request.timeoutInterval = 1
+        guard let request = try? connection.request(path: "health", timeout: 1) else {
+            return .offline
+        }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -326,9 +352,9 @@ final class BackendService: NSObject, @unchecked Sendable {
     /// the first audio segment for the given text (lookahead cache).
     /// Returns immediately. Safe to call when model is already loaded.
     func prewarm(text: String? = nil, voice: String? = nil, speed: Double? = nil) async {
-        var request = URLRequest(url: baseURL.appendingPathComponent("prewarm"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 2
+        guard var request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
+            return
+        }
         if let text, let voice, let speed {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed]
@@ -339,11 +365,13 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
-            let url = baseURL.appendingPathComponent("speak")
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
+            guard var request = try? self.connection.request(
+                path: "speak", method: "POST", timeout: 120
+            ) else {
+                continuation.finish(throwing: StreamError.requestEncodingFailed)
+                return
+            }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 120
 
             let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed, "volume": volume]
 

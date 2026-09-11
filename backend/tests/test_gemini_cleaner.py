@@ -84,29 +84,24 @@ def test_reraise_typed_classifies_capacity_by_error_code() -> None:
         GeminiCleaner._reraise_typed(FakeApiError("server error"))
 
 
-# ---------- Flex -> Standard fallback ----------
+# ---------- Flex retry / explicit Standard approval ----------
 
 
-def test_with_retry_falls_back_to_standard_after_repeated_flex_capacity_errors(
+def test_with_retry_never_silently_falls_back_to_standard_after_capacity_errors(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
     seen_tiers: list = []
 
-    async def flaky_then_ok(tier):
+    async def always_capacity_limited(tier):
         seen_tiers.append(tier)
-        if tier == gemini_types.ServiceTier.FLEX:
-            raise GeminiCapacityError("503 UNAVAILABLE")
-        return "cleaned on standard"
+        raise GeminiCapacityError("503 UNAVAILABLE")
 
-    result = asyncio.run(GeminiCleaner._with_retry("test", flaky_then_ok))
-    assert result == "cleaned on standard"
-    # Two Flex attempts (hits _FLEX_FALLBACK_AFTER), then Standard succeeds.
-    assert seen_tiers == [
-        gemini_types.ServiceTier.FLEX,
-        gemini_types.ServiceTier.FLEX,
-        gemini_types.ServiceTier.STANDARD,
-    ]
+    with pytest.raises(GeminiCapacityError):
+        asyncio.run(GeminiCleaner._with_retry("test", always_capacity_limited))
+    # Standard pricing needs a user-approved, separately budgeted request;
+    # retries for a Flex request must remain in the original tier.
+    assert seen_tiers == [gemini_types.ServiceTier.FLEX] * GeminiCleaner._MAX_RETRIES
 
 
 def test_with_retry_never_falls_back_below_flex_fallback_threshold(monkeypatch) -> None:

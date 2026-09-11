@@ -10,6 +10,7 @@ import os
 import pdfplumber
 from PIL import Image
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore
 
@@ -24,6 +25,14 @@ class PDFExtractor:
     @classmethod
     def page_count(cls, pdf_path: str) -> int:
         with pdfplumber.open(pdf_path) as pdf:
+            # OCR uses 200 DPI below. Reject oversized page geometry before a
+            # background cover/OCR render can allocate an unbounded bitmap.
+            for page in pdf.pages:
+                pixels = int(page.width * 200 / 72) * int(page.height * 200 / 72)
+                if pixels > settings.MAX_PDF_RASTER_PIXELS:
+                    raise ValueError(
+                        "This PDF has a page that is too large to render safely."
+                    )
             return len(pdf.pages)
 
     @classmethod
@@ -164,6 +173,11 @@ class PDFExtractor:
         """Render a single page (1-indexed) to JPEG bytes for Gemini OCR."""
         with pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_num - 1]
+            pixels = int(page.width * resolution / 72) * int(
+                page.height * resolution / 72
+            )
+            if pixels > settings.MAX_PDF_RASTER_PIXELS:
+                raise ValueError("This PDF page is too large to render safely.")
             pil_img = page.to_image(resolution=resolution).original
         if pil_img.mode != "RGB":
             pil_img = pil_img.convert("RGB")

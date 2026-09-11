@@ -196,7 +196,12 @@ async def speak(req: SpeakRequest):
             },
             exc_info=True,
         )
-        return Response(status_code=500, content=str(e))
+        # Provider/model exception text can include local paths or request
+        # content. The client needs a stable recovery message, not internals.
+        return Response(
+            status_code=500,
+            content="Speech generation failed. Check that the voice model is available and try again.",
+        )
 
 
 @router.get("/debug/state")

@@ -1,3 +1,4 @@
+import AppKit
 import NaturalLanguage
 import SwiftUI
 
@@ -42,8 +43,7 @@ struct AudiobookPlayerView: View {
     @State private var transcriptCache = TranscriptPageCache()
     @State private var sectionsCache = SectionsCache()
     @State private var highlightCache = HighlightCache()
-
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
+    @State private var isExporting = false
 
     /// The app's accent, resolved once per body pass — every hardcoded
     /// `.cyan` in this view reads through this instead.
@@ -78,7 +78,10 @@ struct AudiobookPlayerView: View {
                 .frame(maxWidth: .infinity)
                 .padding(28)
 
-                sleepTimerMenu
+                HStack(spacing: 8) {
+                    exportButton
+                    sleepTimerMenu
+                }
                     .padding(.top, 16)
                     .padding(.trailing, 20)
             }
@@ -123,9 +126,10 @@ struct AudiobookPlayerView: View {
                 bookVM.play(book)
             }
             // Sample dominant cover color for the ambient gradient.
-            let coverURL = baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")
             Task {
-                let color = await CoverColorExtractor.shared.dominantColor(for: coverURL)
+                let color = await CoverColorExtractor.shared.dominantColor(
+                    forBackendPath: "audiobook/\(book.bookID)/cover"
+                )
                 dominantColor = color
             }
         }
@@ -155,7 +159,7 @@ struct AudiobookPlayerView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Palette.surfaceRaised)
                     .frame(width: 240, height: 336)
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")
@@ -232,7 +236,7 @@ struct AudiobookPlayerView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Palette.surfaceRaised)
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")
@@ -461,6 +465,49 @@ struct AudiobookPlayerView: View {
         .menuStyle(.borderlessButton)
         .help("Sleep timer")
         .accessibilityLabel("Sleep timer")
+    }
+
+    private var exportButton: some View {
+        Button(action: exportAudiobook) {
+            Image(systemName: isExporting ? "hourglass" : "square.and.arrow.down")
+                .font(.system(size: 16))
+                .foregroundStyle(book.status == "done" ? Palette.textSecondary : Palette.textTertiary)
+                .frame(width: 32, height: 32)
+                .voqoraSurface(.floating, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isExporting || book.status != "done")
+        .help(book.status == "done" ? "Export audiobook…" : "Finish generating this audiobook before exporting")
+        .accessibilityLabel("Export audiobook")
+    }
+
+    /// Copy a verified, on-disk audiobook through a normal macOS save panel.
+    /// This has no relationship to Dashboard's clip export: a book is never
+    /// represented by transient clip PCM, and the source is first validated
+    /// by AudiobookService's authenticated WAV cache path.
+    private func exportAudiobook() {
+        guard !isExporting else { return }
+        isExporting = true
+        Task { @MainActor in
+            defer { isExporting = false }
+            do {
+                let source = try await bookVM.validatedAudioURL(for: book)
+                let panel = NSSavePanel()
+                panel.title = "Export Audiobook"
+                panel.message = "Save a copy of the completed audiobook audio."
+                panel.nameFieldStringValue = "\(prettyTitle).wav"
+                panel.canCreateDirectories = true
+                guard panel.runModal() == .OK, let destination = panel.url else { return }
+                let destinationAccess = destination.startAccessingSecurityScopedResource()
+                defer {
+                    if destinationAccess { destination.stopAccessingSecurityScopedResource() }
+                }
+                try FileManager.default.copyItem(at: source, to: destination)
+                bookVM.showToast("Exported \(destination.lastPathComponent).", kind: .success)
+            } catch {
+                bookVM.showToast("Could not export this audiobook.", kind: .error)
+            }
+        }
     }
 
     // MARK: - Content panel (Transcript / Sections)

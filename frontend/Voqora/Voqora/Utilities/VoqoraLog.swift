@@ -50,13 +50,39 @@ enum VoqoraLog {
         return encoder
     }()
 
+    /// Exported diagnostics are not a content store. Keep the allowlisted
+    /// operational fields, but never serialize error bodies, paths, selected
+    /// prose, credentials, or the per-launch IPC capability by accident.
+    /// This is deliberately centralized because logging calls are distributed
+    /// across UI, audio, and transport code.
+    static func redactedContext(_ context: [String: String]) -> [String: String] {
+        var safe: [String: String] = [:]
+        for (key, value) in context {
+            let normalized = key.lowercased()
+            let sensitiveKey = [
+                "error", "exception", "text", "content", "prompt", "path",
+                "key", "token", "authorization", "credential", "payload"
+            ].contains { normalized.contains($0) }
+            let sensitiveValue = value.localizedCaseInsensitiveContains("AIza")
+                || value.localizedCaseInsensitiveContains("bearer ")
+                || value.localizedCaseInsensitiveContains("x-voqora-ipc-token")
+            if sensitiveKey || sensitiveValue {
+                safe["\(key)_redacted"] = "true"
+            } else {
+                safe[key] = String(value.prefix(256))
+            }
+        }
+        return safe
+    }
+
     private static func emit(_ level: Level, _ logger: String, _ msg: String, _ context: [String: String]) {
+        let safeContext = redactedContext(context)
         let event = LogEvent(
             ts: isoFormatter.string(from: Date()),
             level: level.rawValue,
             logger: logger,
             msg: msg,
-            context: context.isEmpty ? nil : context
+            context: safeContext.isEmpty ? nil : safeContext
         )
         if let data = try? encoder.encode(event), let line = String(data: data, encoding: .utf8) {
             print(line)

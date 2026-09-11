@@ -128,7 +128,7 @@ struct UploadEstimateModal: View {
             if useGeminiCleanup, est.costWarning {
                 HStack(spacing: 8) {
                     Image(systemName: "dollarsign.circle.fill").foregroundStyle(Palette.warning)
-                    Text("This book's estimated Gemini cost is \(formatCost(est.estimatedCostUsd)). Proceed anyway?")
+                    Text("Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). The shown estimate may be lower; Voqora will not silently switch to a more expensive tier.")
                         .font(vm.appFont(size: 11))
                         .foregroundStyle(Palette.textSecondary)
                         .lineLimit(2)

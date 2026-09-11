@@ -1,19 +1,13 @@
-"""RejectBrowserOriginMiddleware contract.
-
-This backend binds to 127.0.0.1, but that only stops other machines — any
-webpage the user has open in a browser can still reach a localhost port
-from JavaScript. The bundled Swift client talks to this process over
-URLSession, which never sets an `Origin` header; only a browser does, on
-every fetch/XHR/form POST it issues, same-origin or not. So any request
-carrying `Origin` must be rejected before it reaches a real route.
-"""
+"""Authenticated local transport contract."""
 
 from __future__ import annotations
 
 from unittest.mock import patch
 
+from conftest import TEST_IPC_TOKEN
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.main import app
 from app.services.engine_manager import EngineManager
 
@@ -26,6 +20,42 @@ def _client() -> TestClient:
 def test_request_with_origin_header_is_rejected(mock_ensure) -> None:
     response = _client().get("/health", headers={"Origin": "https://evil.example.com"})
     assert response.status_code == 403
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_request_without_ipc_token_is_rejected_before_route_work(mock_ensure) -> None:
+    response = TestClient(app, headers={"X-Voqora-IPC-Token": ""}).get("/health")
+    assert response.status_code == 401
+    mock_ensure.assert_not_called()
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_request_with_wrong_ipc_token_is_rejected_before_route_work(
+    mock_ensure,
+) -> None:
+    response = TestClient(app, headers={"X-Voqora-IPC-Token": "wrong-token"}).get(
+        "/health"
+    )
+    assert response.status_code == 401
+    mock_ensure.assert_not_called()
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_request_with_valid_ipc_token_is_allowed(mock_ensure) -> None:
+    response = TestClient(app, headers={"X-Voqora-IPC-Token": TEST_IPC_TOKEN}).get(
+        "/health"
+    )
+    assert response.status_code == 200
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_backend_fails_closed_when_launch_token_is_missing(
+    mock_ensure, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "IPC_TOKEN", "")
+    response = _client().get("/health")
+    assert response.status_code == 503
+    mock_ensure.assert_not_called()
 
 
 @patch.object(EngineManager, "ensure_loaded")

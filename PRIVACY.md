@@ -3,12 +3,27 @@
 Voqora synthesizes speech through a service bundled with the macOS app. Text
 sent to that local service stays on your Mac.
 
+## Local audiobook data
+
+When you import a document, Voqora keeps the original source document, extracted
+and cleaned page text, generated WAV audio, cover image, transcript, and local
+book metadata on this Mac so narration can resume after the app closes. It keeps
+those files **until you delete the book**. Deleting a book removes its source and
+all of those derived files. The library's Delete All Books control removes every
+book and its local book data. Device backups may retain an older copy until the
+backup provider's normal retention period expires.
+
+Debug logs are operational metadata, not a document archive: Voqora redacts
+selected text, source paths, API-key-like values, IPC credentials, and raw
+provider/parser errors before a user exports diagnostics. Review exported logs
+before sharing them with support.
+
 Some features can make external requests:
 
 | Feature | When it communicates externally |
 | --- | --- |
 | Optional product telemetry | When the telemetry toggle is enabled in Preferences. It sends product-use metadata, not the text selected for speech. |
-| Optional document cleanup | Only when you provide a Gemini API key and choose that flow. The selected document material is sent to Gemini for that operation. |
+| Optional document cleanup or OCR | Only when you provide a Gemini API key and choose that flow. The relevant document text or scanned-page image is sent to Gemini for that operation. |
 | Release checks | When automatic update checks are enabled or you choose **Check for Updates**. The app checks Voqora's public update feed for a newer release; it does not upload your text, files, or account data. |
 
 Telemetry reports anonymous installations, not a deduplicated count of people.

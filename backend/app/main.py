@@ -7,7 +7,11 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.audiobook import router as audiobook_router
-from app.api.middleware import CorrelationMiddleware, RejectBrowserOriginMiddleware
+from app.api.middleware import (
+    CorrelationMiddleware,
+    IPCAuthenticationMiddleware,
+    RejectBrowserOriginMiddleware,
+)
 from app.api.tts import router as tts_router
 from app.core.config import settings
 from app.core.logging import configure as configure_logging
@@ -104,24 +108,37 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.PROJECT_NAME, version=settings.VERSION, lifespan=lifespan)
 app.add_middleware(CorrelationMiddleware)
-# Added last so it wraps outermost and rejects browser-originated cross-origin
-# requests before correlation/logging overhead runs. See HARD-004 in
-# core/config.py for why 127.0.0.1 alone isn't sufficient access control.
+# Middleware is LIFO in Starlette. Add browser-origin rejection first and IPC
+# authentication last so an unauthenticated request is rejected before body
+# parsing, correlation assignment, or route work.
 app.add_middleware(RejectBrowserOriginMiddleware)
+app.add_middleware(IPCAuthenticationMiddleware)
 
 
 app.include_router(tts_router)
 app.include_router(audiobook_router)
 
 if __name__ == "__main__":
-    # This entry point is used by PyInstaller and Dev
-    # log_config=None prevents uvicorn from overriding logging, access_log=False hides the health spam
-    uvicorn.run(
-        app,
-        host=settings.HOST,
-        port=settings.PORT,
-        workers=1,
-        loop="asyncio",
-        log_config=None,
-        access_log=False,
-    )
+    if not settings.IPC_TOKEN:
+        raise SystemExit("VOQORA_IPC_TOKEN is required for the local backend.")
+
+    # The parent app binds and retains an ephemeral loopback socket before it
+    # launches us, so a competing same-user process cannot win the port race.
+    # `fd` is inherited rather than reconstructed from a port number.
+    server_options = {
+        "workers": 1,
+        "loop": "asyncio",
+        "log_config": None,
+        "access_log": False,
+    }
+    if settings.IPC_LISTENER_FD is not None:
+        uvicorn.run(app, fd=settings.IPC_LISTENER_FD, **server_options)
+    else:
+        # Keep a useful, authenticated development invocation. Release launch
+        # always takes the inherited descriptor path above.
+        uvicorn.run(
+            app,
+            host=settings.HOST,
+            port=settings.PORT,
+            **server_options,
+        )

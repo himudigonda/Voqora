@@ -10,8 +10,6 @@ struct NowPlayingBar: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     var onTap: () -> Void
 
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
-
     /// The app's accent, resolved once per body pass — matches
     /// `VoqoraWindow`'s own `accentColor` pattern.
     private var accentColor: Color {
@@ -40,7 +38,7 @@ struct NowPlayingBar: View {
             .frame(height: 2)
 
             HStack(spacing: 14) {
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
                     image.resizable().aspectRatio(contentMode: .fill)
                 } placeholder: {
                     Image(systemName: "book.fill")

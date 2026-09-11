@@ -7,7 +7,7 @@ set -euo pipefail
 #   • Custom Voqora dark background with visible install instructions
 #   • App icon (left) + Applications alias (right)
 #   • Volume icon (Voqora.icns)
-#   • A focused 660×415 Finder window with only the two install targets
+#   • A reliable drag-and-drop volume containing only the app and Applications link
 # ============================================================
 
 APP_NAME="Voqora"
@@ -126,10 +126,15 @@ FONT_COUNT=$(ls -1 "$FONTS_DST"/*.ttf 2>/dev/null | wc -l | tr -d ' ')
 echo "   ✓ Bundled $FONT_COUNT font(s)."
 
 ZIP_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.zip"
+MANIFEST_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json"
 if [ ! -f "$ZIP_SRC" ]; then
     echo "❌ Backend zip missing at $ZIP_SRC — run 'make backend' first." >&2; exit 1
 fi
+if [ ! -f "$MANIFEST_SRC" ]; then
+    echo "❌ Backend manifest missing at $MANIFEST_SRC — run 'make backend' first." >&2; exit 1
+fi
 cp "$ZIP_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
+cp "$MANIFEST_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
 echo "   ✓ Backend zip bundled ($(du -sh "$ZIP_SRC" | cut -f1))."
 
 for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
@@ -152,6 +157,10 @@ echo "   ✓ Final staged app signature seals bundled resources."
 echo "💿 Building installer DMG..."
 rm -f "${BUILD_DIR}/${DMG_NAME}.dmg"
 
+# Finder's layout AppleScript can hang indefinitely even on an otherwise
+# healthy release Mac (and blocks headless CI entirely). The installer remains
+# a standard drag-and-drop DMG with a visible Applications link; cosmetic
+# Finder positioning must never be an unattended release dependency.
 create-dmg \
     --volname "${APP_NAME} ${VERSION}" \
     --volicon "${ICNS}" \
@@ -163,6 +172,7 @@ create-dmg \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 205 \
     --no-internet-enable \
+    --skip-jenkins \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"
 

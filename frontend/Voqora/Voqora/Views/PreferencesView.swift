@@ -351,7 +351,7 @@ struct PreferencesView: View {
                             VStack(alignment: .leading) {
                                 Text("Music Ducking")
                                     .font(vm.font(.paneTitle))
-                                Text("Attenuates background music while Voqora is speaking.")
+                                Text("Optionally lowers Music and Spotify while Voqora speaks, then restores each app's previous volume. macOS may ask for Automation permission.")
                                     .font(vm.font(.rowSubtitle))
                                     .foregroundStyle(Palette.textSecondary)
                             }
@@ -543,7 +543,10 @@ struct PreferencesView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(accentColor)
-                        .help("Manually export the most recently generated audio clip.")
+                        .disabled(!audio.canExportLastClip)
+                        .help(audio.canExportLastClip
+                              ? "Manually export the most recently generated audio clip."
+                              : "Speak a text selection before exporting a clip.")
 
                         Button {
                             vm.exportLogs()

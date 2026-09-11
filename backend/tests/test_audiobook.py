@@ -5,10 +5,12 @@ EngineManager.generate (yields short np arrays).
 """
 
 import asyncio
+import io
 import json
 import os
 import shutil
 import tempfile
+import zipfile
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
@@ -122,6 +124,23 @@ def test_delete_book_removes_dir():
     assert AudiobookStore.delete_book(bid) is True
     assert not os.path.isdir(AudiobookStore.book_dir(bid))
     assert AudiobookStore.delete_book(bid) is False  # second delete
+
+
+def test_delete_all_books_removes_every_source_and_is_idempotent():
+    first = AudiobookStore.create_book("first.txt")
+    second = AudiobookStore.create_book("second.txt")
+    for book_id in (first, second):
+        meta = AudiobookStore.initial_meta(
+            book_id, "Test.txt", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        )
+        AudiobookStore.write_meta(book_id, meta)
+        AudiobookStore.save_source(book_id, b"private source", "txt")
+
+    assert AudiobookStore.delete_all_books() == 2
+    assert AudiobookStore.list_books() == []
+    assert not os.path.exists(AudiobookStore.book_dir(first))
+    assert not os.path.exists(AudiobookStore.book_dir(second))
+    assert AudiobookStore.delete_all_books() == 0
 
 
 @pytest.mark.asyncio
@@ -1491,7 +1510,10 @@ async def test_run_pipeline_marks_failed_on_transcript_write_error(monkeypatch):
 
     final_meta = AudiobookStore.read_meta(bid)
     assert final_meta["status"] == "failed"
-    assert "transcript" in (final_meta.get("error") or "").lower()
+    # User-visible metadata must never persist raw exception text; the
+    # structured code gives the UI a stable recovery state instead.
+    assert final_meta["error_code"] == "processing_failed"
+    assert "simulated disk failure" not in (final_meta.get("error") or "").lower()
 
 
 # ---------- local (no-LLM) chapter detection for Markdown (T-3 gap) ----------
@@ -1891,8 +1913,16 @@ def test_upload_accepts_every_supported_text_document_kind(
         _te.TextExtractor, "render_cover", classmethod(lambda cls, _: None)
     )
 
+    if filename.endswith(".docx"):
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as docx:
+            docx.writestr("[Content_Types].xml", b"<Types/>")
+            docx.writestr("word/document.xml", b"<w:document/>")
+        content = payload.getvalue()
+    else:
+        content = b"document content"
     response = TestClient(app).post(
-        "/audiobook", files={"file": (filename, b"document content", content_type)}
+        "/audiobook", files={"file": (filename, content, content_type)}
     )
     assert response.status_code == 200, response.text
     meta = AudiobookStore.read_meta(response.json()["book_id"])

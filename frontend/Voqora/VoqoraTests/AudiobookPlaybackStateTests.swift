@@ -9,6 +9,15 @@ private enum LibraryLoadFailure: Error {
     case backendUnreachable
 }
 
+/// Crosses the `@Sendable` async list seam without capturing mutable local
+/// state. This keeps the regression test honest under Swift 6 concurrency.
+private actor LibraryLoadFailureSwitch {
+    private var shouldFail = true
+
+    func value() -> Bool { shouldFail }
+    func clear() { shouldFail = false }
+}
+
 private actor DelayedAudioLoader {
     private var requested = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
@@ -400,13 +409,13 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_refresh_clearsLoadFailedFlag_onNextSuccess() async {
-        var shouldFail = true
+        let failureSwitch = LibraryLoadFailureSwitch()
         let book = makeBook(bookID: "b1", status: "done")
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
             subscribeToEvents: { _ in AsyncStream { _ in } },
             listBooks: {
-                if shouldFail { throw LibraryLoadFailure.backendUnreachable }
+                if await failureSwitch.value() { throw LibraryLoadFailure.backendUnreachable }
                 return [book]
             }
         )
@@ -414,7 +423,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         await viewModel.refresh()
         XCTAssertTrue(viewModel.loadFailed)
 
-        shouldFail = false
+        await failureSwitch.clear()
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.loadFailed, "a subsequent successful refresh() must clear the flag")

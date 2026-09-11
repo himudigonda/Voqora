@@ -8,6 +8,8 @@ INFO_PLIST="frontend/Voqora/Voqora/Info.plist"
 PROJECT="frontend/Voqora/Voqora.xcodeproj"
 BACKEND_PROJECT="backend/pyproject.toml"
 BACKEND_CONFIG="backend/app/core/config.py"
+BACKEND_ARCHIVE="frontend/Voqora/Voqora/Resources/VoqoraServer.zip"
+BACKEND_MANIFEST="frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json"
 MOUNTED_APP_SIGNING_DETAILS=""
 
 fail() { echo "❌ $1" >&2; exit 1; }
@@ -43,6 +45,21 @@ BACKEND_RUNTIME_VERSION="$(awk -F '"' '/^[[:space:]]*VERSION:[[:space:]]*str[[:s
     || fail "Backend package version is ${BACKEND_PACKAGE_VERSION:-missing}, expected $VERSION."
 [ "$BACKEND_RUNTIME_VERSION" = "$VERSION" ] \
     || fail "Backend runtime version is ${BACKEND_RUNTIME_VERSION:-missing}, expected $VERSION."
+(
+    cd backend
+    uv lock --check
+) || fail "backend/uv.lock is stale; regenerate and review it before releasing."
+if [ -f "$BACKEND_ARCHIVE" ] || [ -f "$BACKEND_MANIFEST" ]; then
+    [ -f "$BACKEND_ARCHIVE" ] || fail "Backend archive is missing. Run make backend."
+    [ -f "$BACKEND_MANIFEST" ] || fail "Backend manifest is missing. Run make backend."
+    python3 scripts/generate_backend_manifest.py \
+        --archive "$BACKEND_ARCHIVE" \
+        --version "$VERSION" \
+        --verify "$BACKEND_MANIFEST" \
+        || fail "Backend manifest does not seal the exact bundled archive."
+elif [ "${ALLOW_MISSING_BACKEND_ARTIFACT:-0}" != "1" ]; then
+    fail "Backend archive is missing. Run make backend."
+fi
 
 if [ "${REQUIRE_DISTRIBUTION_SIGNING:-0}" = "1" ]; then
     [ -n "${DEVELOPER_ID_APPLICATION:-}" ] || fail "Set DEVELOPER_ID_APPLICATION for a public distribution build."
@@ -60,6 +77,15 @@ if [ -n "$DMG_PATH" ]; then
     APP_PATH="$MOUNT_POINT/${APP_NAME}.app"
     [ -d "$APP_PATH" ] || fail "DMG does not contain ${APP_NAME}.app."
     [ -L "$MOUNT_POINT/Applications" ] || fail "DMG does not contain an Applications alias."
+    BUNDLED_ARCHIVE="$APP_PATH/Contents/Resources/VoqoraServer.zip"
+    BUNDLED_MANIFEST="$APP_PATH/Contents/Resources/VoqoraServer.manifest.json"
+    [ -f "$BUNDLED_ARCHIVE" ] || fail "Mounted app is missing the backend archive."
+    [ -f "$BUNDLED_MANIFEST" ] || fail "Mounted app is missing the backend integrity manifest."
+    python3 scripts/generate_backend_manifest.py \
+        --archive "$BUNDLED_ARCHIVE" \
+        --version "$VERSION" \
+        --verify "$BUNDLED_MANIFEST" \
+        || fail "Mounted app backend manifest does not match its archive."
     codesign --verify --deep --strict "$APP_PATH" || fail "Mounted app has an invalid code signature."
     MOUNTED_APP_SIGNING_DETAILS="$(codesign -dvv "$APP_PATH" 2>&1)"
     hdiutil detach "$MOUNT_POINT" >/dev/null

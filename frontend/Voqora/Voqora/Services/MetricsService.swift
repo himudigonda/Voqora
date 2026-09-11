@@ -143,7 +143,9 @@ actor MetricsService {
     ) async {
         guard enabled else { return }
         guard Event.allowedNames.contains(event) else {
-            VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
+            await MainActor.run {
+                VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
+            }
             return
         }
         let cleanedProps = Props.whitelist(rawProps)
@@ -178,7 +180,9 @@ actor MetricsService {
             "events": batch.map { $0.serialized() },
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            VoqoraLog.error("MetricsService", "Batch serialization failed, retaining batch", ["batchSize": "\(batch.count)"])
+            await MainActor.run {
+                VoqoraLog.error("MetricsService", "Batch serialization failed, retaining batch", ["batchSize": "\(batch.count)"])
+            }
             return
         }
 
@@ -194,14 +198,20 @@ actor MetricsService {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
             guard (200..<300).contains(http.statusCode) else {
-                VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+                await MainActor.run {
+                    VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+                }
                 return
             }
             outbox.removeFirst(min(batch.count, outbox.count))
             persistOutbox()
-            VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
+            await MainActor.run {
+                VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
+            }
         } catch {
-            VoqoraLog.error("MetricsService", "Flush failed", ["error": String(describing: error)])
+            await MainActor.run {
+                VoqoraLog.error("MetricsService", "Flush failed", ["error": String(describing: error)])
+            }
         }
     }
 

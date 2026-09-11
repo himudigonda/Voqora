@@ -10,8 +10,6 @@ struct AudiobookCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
-
     /// The app's accent, resolved once per body pass — matches
     /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
     private var accentColor: Color {
@@ -119,15 +117,10 @@ struct AudiobookCardView: View {
                 .fill(Palette.surfaceRaised)
                 .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
                 .overlay {
-                    AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { phase in
-                        switch phase {
-                        case .success(let image):
+                    AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
                             image.resizable().aspectRatio(contentMode: .fill)
-                        case .failure, .empty:
+                    } placeholder: {
                             placeholderCover
-                        @unknown default:
-                            placeholderCover
-                        }
                     }
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
                 }
