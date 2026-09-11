@@ -4,7 +4,7 @@ import SwiftUI
 
 @main
 struct VoqoraApp: App {
-    // 0. App Lifecycle Management
+    /// 0. App Lifecycle Management
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     // 1. Single Sources of Truth (Services)
@@ -221,7 +221,9 @@ struct VoqoraApp: App {
     static func focusedTextInputOwnsShortcut(responder: NSResponder?) -> Bool {
         var current = responder
         while let responder = current {
-            if responder is NSTextView { return true }
+            if responder is NSTextView {
+                return true
+            }
             current = responder.nextResponder
         }
         return false

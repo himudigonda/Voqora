@@ -44,7 +44,9 @@ struct ColorRGBA: Hashable {
     /// exactly 6 hex digits). `nil` for anything else.
     init?(hex: String) {
         var digits = hex
-        if digits.hasPrefix("#") { digits.removeFirst() }
+        if digits.hasPrefix("#") {
+            digits.removeFirst()
+        }
         guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
         self.init(
             r: Double((value >> 16) & 0xFF) / 255.0,
@@ -88,6 +90,12 @@ extension Color {
 /// than an HSL blue at 50%) — that uniformity is what lets every accent option
 /// share one lightness ramp and still read as the same weight.
 private struct OKLCH {
+    private struct LinearChannels {
+        let red: Double
+        let green: Double
+        let blue: Double
+    }
+
     var lightness: Double
     var chroma: Double
     var hue: Double
@@ -129,7 +137,7 @@ private struct OKLCH {
 
     /// The raw, unclamped linear-sRGB channels for an OKLCH triple. Channels
     /// outside `0...1` mean the color is outside the sRGB gamut.
-    private static func channels(lightness: Double, chroma: Double, hue: Double) -> (red: Double, green: Double, blue: Double) {
+    private static func channels(lightness: Double, chroma: Double, hue: Double) -> LinearChannels {
         let radians = hue * .pi / 180
         let a = chroma * cos(radians)
         let b = chroma * sin(radians)
@@ -138,7 +146,7 @@ private struct OKLCH {
         let m = pow(lightness - 0.1055613458 * a - 0.0638541728 * b, 3)
         let s = pow(lightness - 0.0894841775 * a - 1.2914855480 * b, 3)
 
-        return (
+        return LinearChannels(
             red: 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
             green: -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
             blue: -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
@@ -180,7 +188,9 @@ enum ColorAppearance: Hashable {
     case highContrastLight
     case highContrastDark
 
-    var isDark: Bool { self == .dark || self == .highContrastDark }
+    var isDark: Bool {
+        self == .dark || self == .highContrastDark
+    }
 
     init(isDark: Bool, increaseContrast: Bool) {
         switch (isDark, increaseContrast) {
@@ -269,7 +279,9 @@ enum ColorRamp {
     @MainActor
     static func ramp(for seed: AccentSeed, appearance: ColorAppearance) -> AccentRamp {
         let key = RampKey(seed: seed, appearance: appearance)
-        if let cached = cache[key] { return cached }
+        if let cached = cache[key] {
+            return cached
+        }
         let derived = uncachedRamp(for: seed, appearance: appearance)
         cache[key] = derived
         return derived

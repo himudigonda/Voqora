@@ -1,3 +1,4 @@
+import AppKit
 import KeyboardShortcuts
 import SwiftUI
 
@@ -6,6 +7,7 @@ struct PreferencesView: View {
     @EnvironmentObject var audio: AudioService
     @EnvironmentObject var launchManager: LaunchManager
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var installer: GuidedInstallerService
@@ -21,6 +23,9 @@ struct PreferencesView: View {
     @State private var emailSaved = false
     @State private var emailRemoving = false
     @State private var emailRemovalQueued = false
+    @State private var showEraseConfirmation = false
+    @State private var erasingLocalData = false
+    @State private var eraseError: String?
 
     /// The app's accent, resolved once per body pass — every row, button,
     /// and link in this screen reads through this rather than a hardcoded
@@ -47,10 +52,14 @@ struct PreferencesView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Text("Optional email")
                             .font(vm.font(.sectionTitle))
-                        Text("Voqora works without an account. Add an email only if you want voluntary returning installs to be recognised in aggregate adoption metrics. We never collect your text or files, and you can remove your email at any time.")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        Text(
+                            "Voqora works without an account. Add an email only if you want voluntary returning installs " +
+                                "to be recognised in aggregate adoption metrics. We never collect your text or files, " +
+                                "and you can remove your email at any time."
+                        )
+                        .font(vm.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
 
                         Text("Email address")
                             .font(vm.font(.sectionHeader))
@@ -98,10 +107,10 @@ struct PreferencesView: View {
                                 Button(emailRemoving ? "Removing…" : "Remove") {
                                     removeEmail()
                                 }
-                                    .buttonStyle(.plain)
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.danger)
-                                    .disabled(emailRemoving)
+                                .buttonStyle(.plain)
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.danger)
+                                .disabled(emailRemoving)
                             }
                             .accessibilityLabel("Saved email: \(current)")
                         } else {
@@ -114,7 +123,9 @@ struct PreferencesView: View {
                     }
                 }
                 .onAppear {
-                    if emailDraft.isEmpty { emailDraft = identity.email ?? "" }
+                    if emailDraft.isEmpty {
+                        emailDraft = identity.email ?? ""
+                    }
                 }
 
                 // Section: Notifications
@@ -335,12 +346,15 @@ struct PreferencesView: View {
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(accentColor)
                             }
-                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75...2.0).tint(accentColor)
+                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75 ... 2.0).tint(accentColor)
                         }
 
-                        Text("Text-based documents are narrated locally by default. You can opt into Gemini cleanup for a difficult document, and scanned PDFs need Gemini OCR before they can be narrated.")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
+                        Text(
+                            "Text-based documents are narrated locally by default. You can opt into Gemini cleanup for " +
+                                "a difficult document, and scanned PDFs need Gemini OCR before they can be narrated."
+                        )
+                        .font(vm.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textSecondary)
                     }
                 }
 
@@ -488,6 +502,35 @@ struct PreferencesView: View {
 
                         Divider()
 
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Erase all local Voqora data")
+                                .font(vm.font(.sectionTitle))
+                            Text(
+                                "Permanently removes every audiobook and source document, generated audio, history, caches, " +
+                                    "settings, optional email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
+                                    "from this Mac. Voqora will quit when complete. This does not delete optional contact data " +
+                                    "already sent to the website; remove that first from Identity if needed."
+                            )
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Button(role: .destructive) {
+                                showEraseConfirmation = true
+                            } label: {
+                                Label(erasingLocalData ? "Erasing local data…" : "Erase all local data", systemImage: "trash.fill")
+                                    .font(vm.font(.button))
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(erasingLocalData || bookVM.deletingAllBooks)
+                            if let eraseError {
+                                Text(eraseError)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.danger)
+                            }
+                        }
+
+                        Divider()
+
                         VStack(alignment: .leading, spacing: 9) {
                             if let latest = updater.latestGitHubVersion {
                                 HStack(spacing: 6) {
@@ -520,10 +563,14 @@ struct PreferencesView: View {
                                     .foregroundStyle(Palette.textTertiary)
                             }
 
-                            Text(installer.state.message ?? "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to Applications. It never replaces the app automatically.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(installer.state.isFailure ? Palette.danger : Palette.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Text(
+                                installer.state.message ??
+                                    "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to " +
+                                    "Applications. It never replaces the app automatically."
+                            )
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(installer.state.isFailure ? Palette.danger : Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
                             if case .failed = installer.state {
                                 Button("Try again") { installer.reset(); installer.downloadAndOpenLatest() }
@@ -545,8 +592,8 @@ struct PreferencesView: View {
                         .tint(accentColor)
                         .disabled(!audio.canExportLastClip)
                         .help(audio.canExportLastClip
-                              ? "Manually export the most recently generated audio clip."
-                              : "Speak a text selection before exporting a clip.")
+                            ? "Manually export the most recently generated audio clip."
+                            : "Speak a text selection before exporting a clip.")
 
                         Button {
                             vm.exportLogs()
@@ -563,6 +610,16 @@ struct PreferencesView: View {
             }
             .padding(40)
             .frame(maxWidth: 800)
+        }
+        .alert("Erase all local Voqora data?", isPresented: $showEraseConfirmation) {
+            Button("Erase and Quit", role: .destructive) { eraseAllLocalData() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "This cannot be undone. All local books, sources, audio, history, settings, caches, telemetry outbox, " +
+                    "optional email, anonymous identifier, and Gemini credential will be permanently removed. Voqora " +
+                    "will quit after the erase finishes."
+            )
         }
     }
 
@@ -627,6 +684,61 @@ struct PreferencesView: View {
             let result = await identity.removeEmail()
             emailDraft = ""
             emailRemovalQueued = result == .queuedForRetry
+        }
+    }
+
+    private func eraseAllLocalData() {
+        guard !erasingLocalData else { return }
+        eraseError = nil
+        erasingLocalData = true
+        Task {
+            guard await bookVM.deleteAllBooksForErasure() else {
+                erasingLocalData = false
+                eraseError = "Your audiobook library could not be fully removed. Nothing else was erased. Try again when the local engine is available."
+                return
+            }
+
+            // Stop user-visible playback before removing its cache. The backend
+            // has already cancelled/deleted active book work above.
+            audio.stop()
+            var failures: [String] = []
+            do {
+                try history.eraseAll()
+            } catch {
+                failures.append("history")
+            }
+            for key in KeychainKey.allCases where !KeychainService.delete(key) {
+                failures.append("saved credential")
+            }
+            identity.eraseLocalIdentity()
+            await MetricsService.shared.eraseLocalData()
+
+            let fileManager = FileManager.default
+            let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
+            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(bundleID, isDirectory: true)
+            let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(bundleID, isDirectory: true)
+            // These are application-owned directories. The operation is
+            // intentionally idempotent and is followed by termination so no
+            // live component can recreate data under the erased root.
+            for (name, directory) in [("application support files", appSupport), ("cache files", caches)] {
+                guard fileManager.fileExists(atPath: directory.path) else { continue }
+                do {
+                    try fileManager.removeItem(at: directory)
+                } catch {
+                    failures.append(name)
+                }
+            }
+
+            guard failures.isEmpty else {
+                erasingLocalData = false
+                eraseError = "Some local data could not be removed (\(failures.joined(separator: ", "))). Voqora is still open; retrying this action is safe."
+                return
+            }
+            UserDefaults.standard.removePersistentDomain(forName: bundleID)
+
+            NSApplication.shared.terminate(nil)
         }
     }
 }

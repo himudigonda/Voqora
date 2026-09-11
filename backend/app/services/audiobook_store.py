@@ -121,10 +121,10 @@ class AudiobookStore:
                     cls._upsert_row(conn, meta)
                     os.remove(legacy)
                     log.info("store.legacy_meta_migrated", extra={"book_id": entry})
-                except (OSError, json.JSONDecodeError) as e:
+                except (OSError, json.JSONDecodeError):
                     log.warning(
                         "store.bad_legacy_meta",
-                        extra={"book_id": entry, "error": str(e)},
+                        extra={"book_id": entry, "failure_code": "legacy_meta_invalid"},
                         exc_info=True,
                     )
         except FileNotFoundError:
@@ -294,6 +294,24 @@ class AudiobookStore:
             meta.update(patch)
             cls.write_meta(book_id, meta)
             return meta
+
+    @classmethod
+    async def mutate_meta(cls, book_id: str, mutator) -> tuple[dict[str, Any], Any]:
+        """Atomically transform one book's metadata and return its result.
+
+        This is deliberately narrower than exposing the SQLite connection to
+        pipeline code. A budget reservation must read the current ledger,
+        verify available capacity, and write its receipt as one critical
+        section; separate read/update calls make that invariant racy whenever
+        page cleaning runs concurrently.
+        """
+        async with cls._lock(book_id):
+            meta = cls.read_meta(book_id)
+            if meta is None:
+                return {}, None
+            result = mutator(meta)
+            cls.write_meta(book_id, meta)
+            return meta, result
 
     @classmethod
     def initial_meta(

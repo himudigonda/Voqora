@@ -33,4 +33,23 @@ final class HistoryManagerTests: XCTestCase {
 
         XCTAssertNotNil(history.persistenceError)
     }
+
+    func test_eraseAllRemovesPersistedHistoryAndIsIdempotent() throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraHistoryTests-\(UUID().uuidString)", isDirectory: true)
+        let storageURL = folder.appendingPathComponent("history.json")
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let history = HistoryManager(storageURL: storageURL)
+        history.log(text: "A private clip", voice: "af_bella")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: storageURL.path))
+
+        try history.eraseAll()
+        XCTAssertTrue(history.history.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: storageURL.path))
+
+        // A repeat erase is a normal recovery action after an interrupted
+        // privacy erase, not an error state.
+        XCTAssertNoThrow(try history.eraseAll())
+    }
 }

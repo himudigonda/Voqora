@@ -22,7 +22,6 @@ struct NowPlayingBar: View {
         }
     }
 
-    @ViewBuilder
     private func content(for book: Audiobook) -> some View {
         VStack(spacing: 0) {
             // Accent progress underline at the very top
@@ -39,7 +38,7 @@ struct NowPlayingBar: View {
 
             HStack(spacing: 14) {
                 AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                    image.resizable().scaledToFill()
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .foregroundStyle(accentColor.opacity(0.6))
@@ -111,8 +110,8 @@ struct NowPlayingBar: View {
 
     private func prettyTitle(_ book: Audiobook) -> String {
         let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
+        for ext in [".pdf", ".docx", ".txt", ".md"] where t.lowercased().hasSuffix(ext) {
+            return String(t.dropLast(ext.count))
         }
         return t
     }

@@ -179,16 +179,25 @@ create-dmg \
 # ── 7. Cleanup ───────────────────────────────────────────────
 rm -rf "$STAGING_DIR"
 
-DMG_SIZE=$(du -sh "${BUILD_DIR}/${DMG_NAME}.dmg" | cut -f1)
+DMG_PATH="${BUILD_DIR}/${DMG_NAME}.dmg"
+CHECKSUM_PATH="${DMG_PATH}.sha256"
+DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
 
 if [ -n "${NOTARYTOOL_PROFILE:-}" ]; then
     echo "🍎 Submitting DMG for Apple notarization..."
-    xcrun notarytool submit "${BUILD_DIR}/${DMG_NAME}.dmg" \
+    xcrun notarytool submit "$DMG_PATH" \
         --keychain-profile "$NOTARYTOOL_PROFILE" --wait
-    xcrun stapler staple "${BUILD_DIR}/${DMG_NAME}.dmg"
-    xcrun stapler validate "${BUILD_DIR}/${DMG_NAME}.dmg"
+    xcrun stapler staple "$DMG_PATH"
+    xcrun stapler validate "$DMG_PATH"
     echo "   ✓ Notarization ticket stapled."
 fi
 
+# The DMG changes when a notarization ticket is stapled, so write the release
+# receipt only after every byte of the artifact is final. The manual
+# early-access channel uploads this alongside the DMG; the guided installer
+# independently checks GitHub's API digest before opening a download.
+shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+echo "   ✓ SHA-256 receipt: $CHECKSUM_PATH"
+
 echo ""
-echo "✅ DMG Created: ${BUILD_DIR}/${DMG_NAME}.dmg  (${DMG_SIZE})"
+echo "✅ DMG Created: $DMG_PATH  (${DMG_SIZE})"

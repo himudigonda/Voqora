@@ -7,6 +7,8 @@ Never persisted on disk.
 import asyncio
 import json
 import re
+from dataclasses import dataclass
+from typing import Any
 
 from google import genai
 from google.genai import types
@@ -26,6 +28,51 @@ OUTPUT_USD_PER_M_TOKENS = 1.875  # $3.75/M standard, Flex = 50%
 STANDARD_INPUT_USD_PER_M_TOKENS = 0.75
 STANDARD_OUTPUT_USD_PER_M_TOKENS = 3.75
 PRICING_VERSION = "gemini-3.8-flash-2026-09"
+
+# Cost reservations deliberately use bounded response sizes. Besides keeping a
+# malformed page from consuming an unbounded amount of a user's API budget,
+# this makes the reservation a real upper bound rather than a hopeful
+# character-count estimate. 8k tokens is ample for one extracted page; the
+# section operation only returns compact JSON and needs considerably less.
+_CLEAN_MAX_OUTPUT_TOKENS = 8_192
+_SECTION_MAX_OUTPUT_TOKENS = 4_096
+
+
+@dataclass(frozen=True)
+class GeminiUsage:
+    """Provider usage returned with a successful generation.
+
+    The SDK has changed the concrete response model across releases, so this
+    deliberately stores only the stable numeric fields Voqora needs for its
+    local cost receipt. ``None`` means the provider did not return usage; the
+    caller must retain its conservative reservation in that case.
+    """
+
+    input_tokens: int | None
+    output_tokens: int | None
+    tier: str
+
+
+class GeneratedText(str):
+    """A string-compatible Gemini response with optional usage attached."""
+
+    usage: GeminiUsage | None
+
+    def __new__(cls, value: str, usage: GeminiUsage | None = None):
+        obj = super().__new__(cls, value)
+        obj.usage = usage
+        return obj
+
+
+class GeneratedSections(list[dict]):
+    """List-compatible section result carrying successful call receipts."""
+
+    usage: tuple[GeminiUsage, ...]
+
+    def __init__(self, values: list[dict], usage: list[GeminiUsage]):
+        super().__init__(values)
+        self.usage = tuple(usage)
+
 
 # gemini-2.5-flash was sunset for new users (404: "no longer available to new
 # users") as of Sept 2026 — migrated to gemini-3.8-flash.
@@ -160,9 +207,6 @@ class GeminiCleaner:
     PRICING_VERSION = PRICING_VERSION
     _MAX_RETRIES = 4
     _BACKOFF_BASE = 2.0  # 2s, 4s, 8s, 16s
-    # Consecutive Flex 503s before the remaining attempts switch to Standard tier.
-    _FLEX_FALLBACK_AFTER = 2
-
     # ---------- retry helper (DRY for clean_page + ocr_page) ----------
 
     @classmethod
@@ -174,10 +218,9 @@ class GeminiCleaner:
     ):
         """Run `coro_factory(tier)` up to _MAX_RETRIES times with exponential backoff.
 
-        Starts on `start_tier` (Flex by default). After `_FLEX_FALLBACK_AFTER`
-        consecutive GeminiCapacityError responses on Flex, the remaining
-        attempts switch to the Standard tier (full price, but reliable) so a
-        Flex capacity crunch can't stall audiobook generation indefinitely.
+        Starts on `start_tier` (Flex by default) and never changes tier. A
+        Standard request has a different cost envelope and is only created by
+        an explicit, separately-approved job transition.
 
         - GeminiAuthError → re-raised immediately (won't recover on retry).
         - GeminiCapacityError / GeminiRateLimitError / GeminiBadResponseError /
@@ -212,12 +255,14 @@ class GeminiCleaner:
         code = getattr(e, "code", None)
         # Flex capacity/sheddable failures (503/UNAVAILABLE) — checked first
         # since they're an unambiguous, specific signal (unlike the broad
-        # "model" keyword below) and are recoverable by falling back to the
-        # Standard tier (see _with_retry).
+        # "model" keyword below). The job owner can safely present an
+        # explicit Standard-tier approval after retries are exhausted.
         if code == 503 or any(
             k in msg for k in ("503", "unavailable", "overloaded", "capacity")
         ):
-            raise GeminiCapacityError(str(e)) from e
+            raise GeminiCapacityError(
+                "Gemini capacity is temporarily unavailable."
+            ) from e
         # Ordered most-specific-first. "model" (checked last, below) is far too
         # broad to lead with: Gemini's quota and permission-denied bodies
         # routinely name the model -- quota dimensions embed
@@ -242,23 +287,32 @@ class GeminiCleaner:
                 "api key not valid",
             )
         ):
-            raise GeminiAuthError(str(e)) from e
+            raise GeminiAuthError("Gemini rejected the configured credential.") from e
         if any(k in msg for k in ("429", "rate limit", "quota", "resource_exhausted")):
-            raise GeminiRateLimitError(str(e)) from e
+            raise GeminiRateLimitError("Gemini rate limit reached.") from e
         # Model-not-found / 404 → transient bad-response, NOT an auth error.
         if any(k in msg for k in ("not found", "404", "model", "does not exist")):
-            raise GeminiBadResponseError(str(e)) from e
-        raise GeminiBadResponseError(str(e)) from e
+            raise GeminiBadResponseError(
+                "Gemini returned an unsupported response."
+            ) from e
+        raise GeminiBadResponseError("Gemini request failed.") from e
 
     # ---------- text cleaning ----------
 
     @classmethod
-    async def clean_page(cls, api_key: str, raw_text: str) -> str:
+    async def clean_page(
+        cls,
+        api_key: str,
+        raw_text: str,
+        start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
+    ) -> str:
         """Strict-clean a single page. Retries on transient errors."""
         if not raw_text.strip():
             return "-"
         return await cls._with_retry(
-            "clean_page", lambda tier: cls._async_clean(api_key, raw_text, tier)
+            "clean_page",
+            lambda tier: cls._async_clean(api_key, raw_text, tier),
+            start_tier=start_tier,
         )
 
     @classmethod
@@ -273,6 +327,7 @@ class GeminiCleaner:
         config = types.GenerateContentConfig(
             system_instruction=GEMINI_CLEAN_SYSTEM_PROMPT,
             temperature=0.1,
+            max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
             service_tier=tier,
         )
         try:
@@ -284,15 +339,24 @@ class GeminiCleaner:
         except Exception as e:
             cls._reraise_typed(e)
         text = (resp.text or "").strip()
-        return text if text else "-"
+        return GeneratedText(
+            text if text else "-", cls._usage_from_response(resp, tier)
+        )
 
     # ---------- OCR (image pages) ----------
 
     @classmethod
-    async def ocr_page(cls, api_key: str, image_bytes: bytes) -> str:
+    async def ocr_page(
+        cls,
+        api_key: str,
+        image_bytes: bytes,
+        start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
+    ) -> str:
         """OCR + clean a scanned page image via Gemini vision. Retries on transient errors."""
         return await cls._with_retry(
-            "ocr_page", lambda tier: cls._async_ocr(api_key, image_bytes, tier)
+            "ocr_page",
+            lambda tier: cls._async_ocr(api_key, image_bytes, tier),
+            start_tier=start_tier,
         )
 
     @classmethod
@@ -310,6 +374,7 @@ class GeminiCleaner:
         config = types.GenerateContentConfig(
             system_instruction=OCR_AND_CLEAN_PROMPT,
             temperature=0.1,
+            max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
             service_tier=tier,
         )
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
@@ -322,7 +387,9 @@ class GeminiCleaner:
         except Exception as e:
             cls._reraise_typed(e)
         text = (resp.text or "").strip()
-        return text if text else "-"
+        return GeneratedText(
+            text if text else "-", cls._usage_from_response(resp, tier)
+        )
 
     # ---------- cost / token estimation ----------
 
@@ -348,6 +415,97 @@ class GeminiCleaner:
             output_tokens / 1_000_000
         ) * STANDARD_OUTPUT_USD_PER_M_TOKENS
 
+    @staticmethod
+    def _tier_name(tier: "types.ServiceTier") -> str:
+        return "standard" if tier == types.ServiceTier.STANDARD else "flex"
+
+    @classmethod
+    def cost_for_tokens(
+        cls, input_tokens: int, output_tokens: int, *, tier: str
+    ) -> float:
+        """Calculate a price using the versioned rate receipt above."""
+        if tier == "standard":
+            input_rate = STANDARD_INPUT_USD_PER_M_TOKENS
+            output_rate = STANDARD_OUTPUT_USD_PER_M_TOKENS
+        else:
+            input_rate = INPUT_USD_PER_M_TOKENS
+            output_rate = OUTPUT_USD_PER_M_TOKENS
+        return (max(0, input_tokens) / 1_000_000) * input_rate + (
+            max(0, output_tokens) / 1_000_000
+        ) * output_rate
+
+    @classmethod
+    def reserve_cost_usd(
+        cls,
+        input_chars: int,
+        *,
+        tier: str,
+        max_output_tokens: int,
+        prompt_tokens: int = 0,
+        extra_input_tokens: int = 0,
+    ) -> float:
+        """Conservative, bounded envelope used *before* dispatching a call."""
+        return cls.cost_for_tokens(
+            cls.estimate_tokens(input_chars) + prompt_tokens + extra_input_tokens,
+            max_output_tokens,
+            tier=tier,
+        )
+
+    @classmethod
+    def clean_reservation_cost_usd(
+        cls, input_chars: int, *, tier: str, image_input: bool = False
+    ) -> float:
+        # The largest accepted raster is 16 MP. Reserve 16k input tokens for
+        # vision pages; it is intentionally above normal image-token use so a
+        # page can never be dispatched on an optimistic OCR estimate.
+        return cls.reserve_cost_usd(
+            input_chars,
+            tier=tier,
+            max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
+            prompt_tokens=2_000,
+            extra_input_tokens=16_384 if image_input else 0,
+        )
+
+    @classmethod
+    def section_reservation_cost_usd(
+        cls, input_chars: int, chunk_count: int, *, tier: str
+    ) -> float:
+        # Every chunk includes the instruction and has its own bounded JSON
+        # response. Overlap is already present in input_chars supplied by the
+        # caller, which builds the same chunks as detect_sections.
+        return cls.reserve_cost_usd(
+            input_chars,
+            tier=tier,
+            max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS * max(1, chunk_count),
+            prompt_tokens=700 * max(1, chunk_count),
+        )
+
+    @classmethod
+    def _usage_from_response(
+        cls, response: Any, tier: "types.ServiceTier"
+    ) -> GeminiUsage | None:
+        """Extract a small, SDK-version-tolerant provider usage receipt."""
+        usage = getattr(response, "usage_metadata", None)
+        if usage is None:
+            return None
+
+        def integer(name: str) -> int | None:
+            value = getattr(usage, name, None)
+            return value if isinstance(value, int) and value >= 0 else None
+
+        input_tokens = integer("prompt_token_count")
+        candidate_tokens = integer("candidates_token_count")
+        thought_tokens = integer("thoughts_token_count")
+        total_tokens = integer("total_token_count")
+        output_tokens = None
+        if candidate_tokens is not None or thought_tokens is not None:
+            output_tokens = (candidate_tokens or 0) + (thought_tokens or 0)
+        elif total_tokens is not None and input_tokens is not None:
+            output_tokens = max(0, total_tokens - input_tokens)
+        if input_tokens is None or output_tokens is None:
+            return None
+        return GeminiUsage(input_tokens, output_tokens, cls._tier_name(tier))
+
     # ---------- section detection (Phase 2) ----------
 
     SECTION_PROMPT = (
@@ -366,16 +524,8 @@ class GeminiCleaner:
     _SECTION_CHUNK_PAGE_OVERLAP = 5
 
     @classmethod
-    async def detect_sections(cls, api_key: str, pages: list[str]) -> list[dict]:
-        """Identify sections from a list of cleaned pages.
-
-        `pages` is 1-indexed (pages[0] is page 1). Returns a list of
-        {"title": str, "start_page": int, "end_page": int} sorted by start_page,
-        contiguous and non-overlapping. Returns [] on total failure.
-        """
-        if not pages:
-            return []
-
+    def _section_chunks(cls, pages: list[str]) -> list[tuple[int, str]]:
+        """Build the exact bounded requests used by section detection."""
         chunks: list[tuple[int, str]] = []
         cur_pages: list[str] = []
         cur_chars = 0
@@ -392,8 +542,34 @@ class GeminiCleaner:
             cur_chars += len(block)
         if cur_pages:
             chunks.append((cur_start, "".join(cur_pages)))
+        return chunks
+
+    @classmethod
+    def section_reservation_envelope(cls, pages: list[str]) -> tuple[int, int]:
+        """Return actual chunked input size/count before any request is sent."""
+        chunks = cls._section_chunks(pages)
+        return sum(len(text) for _, text in chunks), len(chunks)
+
+    @classmethod
+    async def detect_sections(
+        cls,
+        api_key: str,
+        pages: list[str],
+        start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
+    ) -> list[dict]:
+        """Identify sections from a list of cleaned pages.
+
+        `pages` is 1-indexed (pages[0] is page 1). Returns a list of
+        {"title": str, "start_page": int, "end_page": int} sorted by start_page,
+        contiguous and non-overlapping. Returns [] on total failure.
+        """
+        if not pages:
+            return []
+
+        chunks = cls._section_chunks(pages)
 
         all_sections: list[dict] = []
+        receipts: list[GeminiUsage] = []
         for first_page, text in chunks:
             try:
                 resp_text = await cls._with_retry(
@@ -401,19 +577,32 @@ class GeminiCleaner:
                     lambda tier, text=text: cls._async_section_call(
                         api_key, text, tier
                     ),
+                    start_tier=start_tier,
                 )
+                receipt = getattr(resp_text, "usage", None)
+                if receipt is not None:
+                    receipts.append(receipt)
                 parsed = cls._parse_sections_json(resp_text, max_page=len(pages))
                 parsed = [s for s in parsed if s["start_page"] >= first_page]
                 all_sections.extend(parsed)
-            except Exception as e:
+            except GeminiCapacityError:
+                # A capacity transition is a product decision with a different
+                # price tier; never convert it into an invisible fallback.
+                raise
+            except Exception:
                 log.warning(
                     "gemini.section_chunk_failed",
-                    extra={"first_page": first_page, "error": str(e)},
+                    extra={
+                        "first_page": first_page,
+                        "failure_code": "section_chunk_failed",
+                    },
                     exc_info=True,
                 )
                 continue
 
-        return cls._stitch_sections(all_sections, page_count=len(pages))
+        return GeneratedSections(
+            cls._stitch_sections(all_sections, page_count=len(pages)), receipts
+        )
 
     @classmethod
     async def _async_section_call(
@@ -428,6 +617,7 @@ class GeminiCleaner:
             system_instruction=cls.SECTION_PROMPT,
             temperature=0.1,
             response_mime_type="application/json",
+            max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS,
             service_tier=tier,
         )
         try:
@@ -438,7 +628,7 @@ class GeminiCleaner:
             )
         except Exception as e:
             cls._reraise_typed(e)
-        return resp.text or ""
+        return GeneratedText(resp.text or "", cls._usage_from_response(resp, tier))
 
     @staticmethod
     def _parse_sections_json(raw: str, max_page: int) -> list[dict]:

@@ -222,9 +222,15 @@ struct MainDashboardView: View {
                 Slider(value: $localProgress, in: 0 ... 1, onEditingChanged: { editing in
                     isEditingSlider = editing
                     audio.isDragging = editing
-                    if !editing { audio.seek(to: localProgress) }
+                    if !editing {
+                        audio.seek(to: localProgress)
+                    }
                 })
-                .onReceive(audio.$progress) { p in if !isEditingSlider { localProgress = p } }
+                .onReceive(audio.$progress) { p in
+                    if !isEditingSlider {
+                        localProgress = p
+                    }
+                }
                 .padding(.horizontal, 100)
             }
 
@@ -265,7 +271,7 @@ struct TransportButton: View {
     @EnvironmentObject var vm: DashboardViewModel
     let icon: String
     let size: CGFloat
-    var accessibilityLabel: String? = nil
+    var accessibilityLabel: String?
     let action: () -> Void
 
     var body: some View {

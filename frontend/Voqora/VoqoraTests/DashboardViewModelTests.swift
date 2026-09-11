@@ -1,6 +1,6 @@
-@testable import Voqora
 import AppKit
 import CryptoKit
+@testable import Voqora
 import XCTest
 
 /// Pure-logic state-machine tests for DashboardViewModel.
@@ -37,9 +37,9 @@ final class DashboardViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() {
+    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() throws {
         let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
@@ -66,7 +66,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "bf_emma")
     }
-
 
     private func makeVM() -> DashboardViewModel {
         DashboardViewModel(
@@ -114,19 +113,19 @@ final class DashboardViewModelTests: XCTestCase {
         vm.stopHeartbeat()
     }
 
-    func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() {
-        let ok = HTTPURLResponse(
-            url: URL(string: "http://localhost/speak")!,
+    func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() throws {
+        let ok = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "http://localhost/speak")),
             statusCode: 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "audio/wav"]
-        )!
-        let serverError = HTTPURLResponse(
-            url: URL(string: "http://localhost/speak")!,
+        ))
+        let serverError = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "http://localhost/speak")),
             statusCode: 500,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        ))
 
         XCTAssertTrue(BackendService.isExpectedAudioResponse(ok))
         XCTAssertFalse(BackendService.isExpectedAudioResponse(serverError))
@@ -178,7 +177,7 @@ final class DashboardViewModelTests: XCTestCase {
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         try FileManager.default.setAttributes(
-            [.modificationDate: now.addingTimeInterval(-3_600)],
+            [.modificationDate: now.addingTimeInterval(-3600)],
             ofItemAtPath: oldStaging.path
         )
         try FileManager.default.setAttributes(
@@ -265,7 +264,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - togglePlayback error path
 
-    func test_togglePlayback_with_zero_duration_sets_error() async {
+    func test_togglePlayback_with_zero_duration_sets_error() {
         let vm = makeVM()
         // Fresh AudioService starts with duration == 0 (no buffer scheduled).
         XCTAssertEqual(vm.audio.duration, 0)
@@ -288,22 +287,22 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.status, .ready)
     }
 
-    func test_togglePlayback_error_current_reset_returns_to_ready() async {
+    func test_togglePlayback_error_current_reset_returns_to_ready() {
         let vm = makeVM()
-        vm.togglePlayback()  // sets .error
+        vm.togglePlayback() // sets .error
 
         vm.resetPlaybackError(for: vm.errorResetGeneration)
 
         XCTAssertEqual(vm.status, .ready)
     }
 
-    func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() async {
+    func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() {
         let vm = makeVM()
-        vm.togglePlayback()  // .error #1
+        vm.togglePlayback() // .error #1
         let firstGeneration = vm.errorResetGeneration
         // The HARD-021 fix cancels the prior errorResetTask; re-triggering
         // shouldn't leak a second timer.
-        vm.togglePlayback()  // .error #2
+        vm.togglePlayback() // .error #2
         let secondGeneration = vm.errorResetGeneration
 
         if case .error = vm.status {} else {
@@ -323,7 +322,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - currentVoiceDisplay
 
-    func test_currentVoiceDisplay_humanizes_voice_id() async {
+    func test_currentVoiceDisplay_humanizes_voice_id() {
         let vm = makeVM()
         vm.selectedVoice = "af_bella"
         XCTAssertEqual(vm.currentVoiceDisplay, "Af Bella")
@@ -344,7 +343,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - isOnline
 
-    func test_isOnline_reflects_isBackendOnline() async {
+    func test_isOnline_reflects_isBackendOnline() {
         let vm = makeVM()
         XCTAssertFalse(vm.isOnline)
         vm.isBackendOnline = true

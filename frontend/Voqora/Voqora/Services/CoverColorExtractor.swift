@@ -12,8 +12,12 @@ final class CoverColorExtractor {
     private var inFlight: [String: Task<Color, Never>] = [:]
 
     func dominantColor(forBackendPath path: String) async -> Color {
-        if let cached = cache[path] { return cached }
-        if let task = inFlight[path] { return await task.value }
+        if let cached = cache[path] {
+            return cached
+        }
+        if let task = inFlight[path] {
+            return await task.value
+        }
 
         let task = Task<Color, Never> { [weak self] in
             guard let self else { return Palette.textTertiary }
@@ -21,11 +25,11 @@ final class CoverColorExtractor {
                 let request = try BackendConnection.shared.request(path: path, timeout: 10)
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode)
+                      (200 ..< 300).contains(http.statusCode)
                 else { return Palette.textTertiary }
                 guard let image = NSImage(data: data) else { return Palette.textTertiary }
                 let color = Self.computeDominantColor(image)
-                self.cache[path] = color
+                cache[path] = color
                 return color
             } catch {
                 return Palette.textTertiary
@@ -65,7 +69,9 @@ final class CoverColorExtractor {
             let mx = max(r, g, b)
             let saturation = mx > 0 ? (mx - mn) / mx : 0
             // Skip near-white and near-black so the gradient doesn't get washed out.
-            if mx < 0.15 || (mn > 0.85 && saturation < 0.05) { continue }
+            if mx < 0.15 || (mn > 0.85 && saturation < 0.05) {
+                continue
+            }
             let weight = 0.3 + saturation
             rSum += r * weight
             gSum += g * weight

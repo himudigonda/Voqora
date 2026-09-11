@@ -68,6 +68,14 @@ fi
 
 if [ -n "$DMG_PATH" ]; then
     [ -f "$DMG_PATH" ] || fail "DMG not found: $DMG_PATH"
+    CHECKSUM_PATH="${DMG_PATH}.sha256"
+    [ -f "$CHECKSUM_PATH" ] || fail "DMG checksum receipt is missing: $CHECKSUM_PATH"
+    # `create_dmg.sh` writes the exact path passed to `shasum`; compare it as
+    # data rather than interpolating a versioned filename into an awk regex.
+    EXPECTED_SHA256="$(awk -v filename="$DMG_PATH" '$2 == filename && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }' "$CHECKSUM_PATH")"
+    ACTUAL_SHA256="$(shasum -a 256 "$DMG_PATH" | awk '{print $1}')"
+    [ -n "$EXPECTED_SHA256" ] || fail "DMG checksum receipt has no SHA-256 entry for $DMG_PATH."
+    [ "$EXPECTED_SHA256" = "$ACTUAL_SHA256" ] || fail "DMG checksum receipt does not match the exact DMG. Rebuild the receipt."
     hdiutil imageinfo "$DMG_PATH" >/dev/null || fail "DMG is not a readable disk image."
 
     ATTACH_OUTPUT="$(hdiutil attach -nobrowse -readonly "$DMG_PATH")"
@@ -86,6 +94,8 @@ if [ -n "$DMG_PATH" ]; then
         --version "$VERSION" \
         --verify "$BUNDLED_MANIFEST" \
         || fail "Mounted app backend manifest does not match its archive."
+    python3 scripts/test_frozen_backend.py --archive "$BUNDLED_ARCHIVE" \
+        || fail "Mounted app backend archive failed the authenticated runtime check."
     codesign --verify --deep --strict "$APP_PATH" || fail "Mounted app has an invalid code signature."
     MOUNTED_APP_SIGNING_DETAILS="$(codesign -dvv "$APP_PATH" 2>&1)"
     hdiutil detach "$MOUNT_POINT" >/dev/null

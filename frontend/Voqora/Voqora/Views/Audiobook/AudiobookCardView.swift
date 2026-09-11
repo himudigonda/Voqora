@@ -7,6 +7,7 @@ struct AudiobookCardView: View {
     let book: Audiobook
     @State private var hovering = false
     @State private var showDeleteConfirmation = false
+    @State private var showCostApproval = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
@@ -39,8 +40,8 @@ struct AudiobookCardView: View {
     /// Live progress fraction derived from SSE state, falling back to book model.
     private var progressFraction: Double {
         switch status {
-        case .extracting(let p, let t), .cleaning(let p, let t), .generating(let p, let t),
-             .sectioning(let p, let t):
+        case let .extracting(p, t), let .cleaning(p, t), let .generating(p, t),
+             let .sectioning(p, t):
             guard t > 0 else { return 0 }
             return Double(p) / Double(t)
         default:
@@ -51,7 +52,9 @@ struct AudiobookCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             cover
-            if status.isProcessing { processingWaveform }
+            if status.isProcessing {
+                processingWaveform
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(prettyTitle)
                     .font(vm.appFont(size: 13, weight: .bold))
@@ -91,6 +94,12 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
+            if case .needsCostApproval = status {
+                Button { showCostApproval = true } label: {
+                    Label("Review cost choice", systemImage: "dollarsign.circle")
+                }
+                Divider()
+            }
             Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -106,11 +115,29 @@ struct AudiobookCardView: View {
         } message: {
             Text("This permanently deletes the audiobook and its narration. This can't be undone.")
         }
+        .confirmationDialog(
+            "Choose how to finish \(prettyTitle)",
+            isPresented: $showCostApproval,
+            titleVisibility: .visible
+        ) {
+            if let required = book.budget?.costApproval?.requiredCapUsd {
+                Button("Approve Standard tier (cap $\(String(format: "%.2f", required)))") {
+                    bookVM.resolveCostApproval(book, approveStandard: true)
+                }
+            }
+            Button("Finish remaining work locally") {
+                bookVM.resolveCostApproval(book, approveStandard: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Flex capacity was unavailable. Standard work is sent only if you approve the displayed absolute per-book cap. Finishing locally sends no more document content to Gemini.")
+        }
     }
 
-    private var prettyTitle: String { book.displayTitle }
+    private var prettyTitle: String {
+        book.displayTitle
+    }
 
-    @ViewBuilder
     private var cover: some View {
         ZStack(alignment: .bottomTrailing) {
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
@@ -118,9 +145,9 @@ struct AudiobookCardView: View {
                 .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
                 .overlay {
                     AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
-                            image.resizable().aspectRatio(contentMode: .fill)
+                        image.resizable().scaledToFill()
                     } placeholder: {
-                            placeholderCover
+                        placeholderCover
                     }
                     .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
                 }
@@ -131,7 +158,7 @@ struct AudiobookCardView: View {
                 .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
                 .overlay(stateOverlay)
 
-            if hovering && status.isReady {
+            if hovering, status.isReady {
                 Circle()
                     .fill(accentColor)
                     .frame(width: 44, height: 44)
@@ -147,7 +174,6 @@ struct AudiobookCardView: View {
         }
     }
 
-    @ViewBuilder
     private var placeholderCover: some View {
         ZStack {
             // Opaque ramp shades rather than a translucent cyan wash — a
@@ -192,6 +218,8 @@ struct AudiobookCardView: View {
             }
         case .needsKey:
             cornerBadge(systemName: "key.fill", color: Palette.warning)
+        case .needsCostApproval:
+            cornerBadge(systemName: "dollarsign.circle.fill", color: Palette.warning)
         case .failed:
             cornerBadge(systemName: "exclamationmark.triangle.fill", color: Palette.danger)
         case .cancelled:
@@ -237,7 +265,7 @@ struct AudiobookCardView: View {
         TimelineView(.animation) { ctx in
             let phase = ctx.date.timeIntervalSinceReferenceDate * 2.9
             HStack(spacing: 3) {
-                ForEach(0..<16, id: \.self) { i in
+                ForEach(0 ..< 16, id: \.self) { i in
                     let height = 4 + 14 * abs(sin(phase + Double(i) * 0.4))
                     RoundedRectangle(cornerRadius: 1.5, style: .continuous)
                         .fill(accentColor.opacity(0.85))
@@ -285,6 +313,17 @@ struct AudiobookCardView: View {
                 .kerning(0.6)
                 .foregroundStyle(Palette.warning)
                 .lineLimit(1)
+        case let .needsCostApproval(requiredCap):
+            Button {
+                showCostApproval = true
+            } label: {
+                Text(requiredCap.map { "APPROVE $\(String(format: "%.2f", $0)) OR FINISH LOCALLY" } ?? status.caption)
+                    .font(vm.font(.chip))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.warning)
+                    .lineLimit(1)
+            }
+            .buttonStyle(.plain)
         default:
             Text(status.caption)
                 .font(vm.font(.chip).monospaced())

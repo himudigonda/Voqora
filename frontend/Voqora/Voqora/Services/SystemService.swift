@@ -51,19 +51,23 @@ final class SystemService {
                 .split(separator: ",")
                 .compactMap { Int($0) } ?? []
             var snapshot: [String: Int] = [:]
-            if volumes.indices.contains(0), volumes[0] >= 0 { snapshot["Music"] = volumes[0] }
-            if volumes.indices.contains(1), volumes[1] >= 0 { snapshot["Spotify"] = volumes[1] }
-            self.savedVolumes = snapshot
-            self.isDucked = !snapshot.isEmpty
+            if volumes.indices.contains(0), volumes[0] >= 0 {
+                snapshot["Music"] = volumes[0]
+            }
+            if volumes.indices.contains(1), volumes[1] >= 0 {
+                snapshot["Spotify"] = volumes[1]
+            }
+            savedVolumes = snapshot
+            isDucked = !snapshot.isEmpty
         }
     }
 
     func endDucking() {
         queue.async { [weak self] in
-            guard let self, self.isDucked else { return }
-            let volumes = self.savedVolumes
-            self.savedVolumes = [:]
-            self.isDucked = false
+            guard let self, isDucked else { return }
+            let volumes = savedVolumes
+            savedVolumes = [:]
+            isDucked = false
             for (application, volume) in volumes {
                 let script = """
                 try

@@ -3,7 +3,7 @@ import Security
 
 /// Minimal Keychain wrapper for sensitive strings.
 /// Uses kSecAttrAccessibleAfterFirstUnlock so background relaunch can read.
-enum KeychainKey: String {
+enum KeychainKey: String, CaseIterable {
     case geminiAPIKey = "com.himudigonda.Voqora.gemini_api_key"
     case sessionToken = "com.himudigonda.Voqora.session_token"
     case refreshToken = "com.himudigonda.Voqora.refresh_token"

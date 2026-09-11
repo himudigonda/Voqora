@@ -11,9 +11,9 @@ final class BackendService: NSObject, @unchecked Sendable {
         var errorDescription: String? {
             switch self {
             case .noLogsAvailable:
-                return "There are no Voqora logs available to export yet."
+                "There are no Voqora logs available to export yet."
             case .couldNotSave:
-                return "Voqora could not save the debug logs to your Desktop."
+                "Voqora could not save the debug logs to your Desktop."
             }
         }
     }
@@ -102,7 +102,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = applicationSupportOverride
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(bundleID)
+            .appendingPathComponent(bundleID)
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
         let executableURL = executableOverride
@@ -163,7 +163,9 @@ final class BackendService: NSObject, @unchecked Sendable {
         var loggedWriteFailure = false
         pipe.fileHandleForReading.readabilityHandler = { [weak self] readHandle in
             let data = readHandle.availableData
-            if data.isEmpty { return }
+            if data.isEmpty {
+                return
+            }
             // Write via the persistent handle (serialized on stateQueue so
             // concurrent log lines don't interleave inside a single write).
             self?.stateQueue.async {
@@ -178,7 +180,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                         // is at least visible in the app's own diagnostic log.
                         if !loggedWriteFailure {
                             loggedWriteFailure = true
-                            VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["error": String(describing: error)])
+                            VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["failureCode": "backend_log_write_failed"])
                         }
                     }
                 }
@@ -192,7 +194,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         // the next heartbeat cycle can call start() again and restart it.
         p.terminationHandler = { [weak self] terminated in
             guard let self else { return }
-            self.stateQueue.sync {
+            stateQueue.sync {
                 if self.process === terminated {
                     self.process = nil
                     self._isLaunching = false
@@ -206,7 +208,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self.logFileHandle = nil
                 }
             }
-            self.connection.invalidate(generation: launchConfiguration.generation)
+            connection.invalidate(generation: launchConfiguration.generation)
             VoqoraLog.warn("BackendService", "Backend process exited", ["pid": "\(terminated.processIdentifier)", "exitStatus": "\(terminated.terminationStatus)"])
         }
 
@@ -305,8 +307,10 @@ final class BackendService: NSObject, @unchecked Sendable {
                 exportedURLs.append(destinationURL)
             }
         } catch {
-            VoqoraLog.error("BackendService", "exportLogs failed", ["error": String(describing: error)])
-            for url in exportedURLs { try? fileManager.removeItem(at: url) }
+            VoqoraLog.error("BackendService", "exportLogs failed", ["failureCode": "log_export_failed"])
+            for url in exportedURLs {
+                try? fileManager.removeItem(at: url)
+            }
             throw LogExportError.couldNotSave
         }
 
@@ -393,7 +397,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     }
                 }
             } catch {
-                VoqoraLog.error("BackendService", "streamAudio request encoding failed", ["error": String(describing: error)])
+                VoqoraLog.error("BackendService", "streamAudio request encoding failed", ["failureCode": "stream_request_encoding_failed"])
                 continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
@@ -404,7 +408,7 @@ final class BackendService: NSObject, @unchecked Sendable {
     /// audio decoder and then be reported as a successful generation.
     static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {
         guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
+              (200 ..< 300).contains(http.statusCode),
               let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
         else {
             return false

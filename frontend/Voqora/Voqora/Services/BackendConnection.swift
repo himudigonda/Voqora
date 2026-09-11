@@ -26,9 +26,9 @@ final class BackendConnection: @unchecked Sendable {
 
         var errorDescription: String? {
             switch self {
-            case .unavailable: return "The local speech engine is not ready."
-            case .listenerCreationFailed: return "Voqora could not reserve its local speech connection."
-            case .randomGenerationFailed: return "Voqora could not secure its local speech connection."
+            case .unavailable: "The local speech engine is not ready."
+            case .listenerCreationFailed: "Voqora could not reserve its local speech connection."
+            case .randomGenerationFailed: "Voqora could not secure its local speech connection."
             }
         }
     }
@@ -165,7 +165,9 @@ final class BackendConnection: @unchecked Sendable {
             var request = URLRequest(url: baseURL.appendingPathComponent(normalized))
             request.httpMethod = method
             request.setValue(token, forHTTPHeaderField: "X-Voqora-IPC-Token")
-            if let timeout { request.timeoutInterval = timeout }
+            if let timeout {
+                request.timeoutInterval = timeout
+            }
             return request
         }
     }
@@ -192,15 +194,18 @@ struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
 
     var body: some View {
         Group {
-            if let image { content(Image(nsImage: image)) }
-            else { placeholder() }
+            if let image {
+                content(Image(nsImage: image))
+            } else {
+                placeholder()
+            }
         }
         .task(id: path) {
             image = nil
             guard let request = try? BackendConnection.shared.request(path: path),
                   let (data, response) = try? await URLSession.shared.data(for: request),
                   let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
+                  (200 ..< 300).contains(http.statusCode),
                   let decoded = NSImage(data: data)
             else { return }
             image = decoded

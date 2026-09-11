@@ -28,7 +28,14 @@
   processing jobs or duplicate provider work.
 - Gemini cleanup no longer silently escalates from Flex to a higher-priced
   tier. The app discloses a conservative per-book cost envelope and reserves
-  cleanup capacity before concurrent work begins.
+  cleanup capacity before concurrent work begins. If Flex capacity would
+  require Standard-tier work beyond the selected cap, the book pauses for an
+  explicit new-cap approval or a finish-locally choice; it never spends first
+  and asks later.
+- Preferences now offers an intentional **Erase all local Voqora data** flow.
+  It stops active work, deletes every local book and source artifact, history,
+  settings, caches, local telemetry/email outbox, identifiers, and Gemini
+  credentials, then quits. It does not make an unrequested remote deletion.
 - Completed audiobooks can be exported through a normal Save panel from the
   validated on-disk WAV; this is separate from the short-clip export action.
 - Music ducking is opt-in for new installs, restores each affected player's

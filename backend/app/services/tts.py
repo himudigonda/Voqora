@@ -162,8 +162,12 @@ class TTSEngine:
                 speed,
                 lang,
             )
-        except Exception as e:
-            log.warning("tts.lookahead_error", extra={"error": str(e)}, exc_info=True)
+        except Exception:
+            log.warning(
+                "tts.lookahead_error",
+                extra={"failure_code": "lookahead_generation_failed"},
+                exc_info=True,
+            )
             return
 
         if audio is None:
@@ -190,7 +194,9 @@ class TTSEngine:
         # 2. Initialize the Model with optimized ONNX session
         if cls._model is None:
             active_model_path = settings.ACTIVE_MODEL_PATH
-            log.info("tts.model_load_start", extra={"path": active_model_path})
+            # Do not retain an app-private filesystem path in diagnostics.
+            # The bundled model identity is already fixed by the sealed runtime.
+            log.info("tts.model_load_start", extra={"model_source": "bundled"})
             try:
                 sess_options = ort.SessionOptions()
                 sess_options.enable_mem_pattern = True
@@ -226,9 +232,13 @@ class TTSEngine:
                 # and espeak-ng phonemizer initialization
                 cls._model.create("Hello.", "af_bella", 1.0, "en-us")
                 log.info("tts.ready")
-            except Exception as e:
-                log.error("tts.fatal_error", extra={"error": str(e)}, exc_info=True)
-                raise e
+            except Exception:
+                log.error(
+                    "tts.fatal_error",
+                    extra={"failure_code": "model_initialization_failed"},
+                    exc_info=True,
+                )
+                raise
 
         # Mark load time so idle_watcher doesn't immediately unload on reload.
         cls.touch()

@@ -18,14 +18,19 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let voice: String
     let speed: Double
     let usesGeminiCleanup: Bool?
+    let budget: GeminiBudget?
     let error: String?
 
     /// Books created before this field existed always used Gemini cleanup.
     /// Treat an absent value as that legacy behavior so an interrupted old
     /// book cannot silently change its document-processing boundary on resume.
-    var requiresGeminiCleanup: Bool { usesGeminiCleanup ?? true }
+    var requiresGeminiCleanup: Bool {
+        usesGeminiCleanup ?? true
+    }
 
-    var id: String { bookID }
+    var id: String {
+        bookID
+    }
 
     /// `title` with any supported source-file extension stripped. Single
     /// source of truth for this — it was previously copy-pasted across 5
@@ -46,27 +51,29 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var displayStatus: ProcessingStatus {
         switch status {
-        case "ready", "queued": return .queued
+        case "ready", "queued": .queued
         case "extracting":
-            return .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "cleaning":
-            return .cleaning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .cleaning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "sectioning":
-            return .sectioning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .sectioning(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "tts":
-            return .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
+            .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "concatenating":
-            return .generating(page: phaseProgress.pageTotal, total: phaseProgress.pageTotal)
+            .generating(page: phaseProgress.pageTotal, total: phaseProgress.pageTotal)
         case "done":
-            return .ready
+            .ready
         case "needs_key":
-            return .needsKey
+            .needsKey
+        case "needs_cost_approval":
+            .needsCostApproval(requiredCap: budget?.costApproval?.requiredCapUsd)
         case "failed":
-            return .failed(reason: error ?? "Unknown error")
+            .failed(reason: error ?? "Unknown error")
         case "cancelled":
-            return .cancelled
+            .cancelled
         default:
-            return .queued
+            .queued
         }
     }
 
@@ -81,9 +88,38 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case pageToTime = "page_to_time"
         case totalAudioSeconds = "total_audio_seconds"
         case failedPages = "failed_pages"
-        case estimated, actual, engine, voice, speed
+        case estimated, actual, engine, voice, speed, budget
         case usesGeminiCleanup = "uses_gemini_cleanup"
         case error
+    }
+}
+
+/// Additive local receipt for a Gemini-assisted book. Only the approval
+/// envelope is shown in the UI; operation identifiers and token counts remain
+/// internal diagnostics rather than product copy.
+struct GeminiBudget: Codable, Hashable {
+    let capUsd: Double?
+    let actualUsd: Double?
+    let reservedUsd: Double?
+    let costApproval: CostApproval?
+
+    struct CostApproval: Codable, Hashable {
+        let requiredCapUsd: Double
+        let currentCapUsd: Double?
+        let tier: String
+
+        enum CodingKeys: String, CodingKey {
+            case requiredCapUsd = "required_cap_usd"
+            case currentCapUsd = "current_cap_usd"
+            case tier
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case capUsd = "cap_usd"
+        case actualUsd = "actual_usd"
+        case reservedUsd = "reserved_usd"
+        case costApproval = "cost_approval"
     }
 }
 
@@ -98,7 +134,10 @@ struct PhaseProgress: Codable, Hashable {
 }
 
 struct AudiobookSection: Identifiable, Codable, Hashable {
-    var id: String { "\(startPage)-\(endPage)" }
+    var id: String {
+        "\(startPage)-\(endPage)"
+    }
+
     let title: String
     let startPage: Int
     let endPage: Int
@@ -196,32 +235,36 @@ enum ProcessingStatus: Hashable {
     case generating(page: Int, total: Int)
     case ready
     case needsKey
+    case needsCostApproval(requiredCap: Double?)
     case failed(reason: String)
     case cancelled
 
     var isProcessing: Bool {
         switch self {
-        case .extracting, .cleaning, .sectioning, .generating, .queued: return true
-        default: return false
+        case .extracting, .cleaning, .sectioning, .generating, .queued: true
+        default: false
         }
     }
 
     var isReady: Bool {
-        if case .ready = self { return true }
+        if case .ready = self {
+            return true
+        }
         return false
     }
 
     var caption: String {
         switch self {
-        case .queued: return "QUEUED"
-        case .extracting(let p, let t): return "EXTRACTING \(p)/\(t)"
-        case .cleaning(let p, let t): return "CLEANING \(p)/\(t)"
-        case .sectioning(let p, let t): return "SECTIONING \(p)/\(t)"
-        case .generating(let p, let t): return "GENERATING \(p)/\(t)"
-        case .ready: return "READY"
-        case .needsKey: return "NEEDS KEY — RESUME"
-        case .failed: return "FAILED — TAP TO RETRY"
-        case .cancelled: return "CANCELLED — CLICK TO RESTART"
+        case .queued: "QUEUED"
+        case let .extracting(p, t): "EXTRACTING \(p)/\(t)"
+        case let .cleaning(p, t): "CLEANING \(p)/\(t)"
+        case let .sectioning(p, t): "SECTIONING \(p)/\(t)"
+        case let .generating(p, t): "GENERATING \(p)/\(t)"
+        case .ready: "READY"
+        case .needsKey: "NEEDS KEY — RESUME"
+        case .needsCostApproval: "COST APPROVAL REQUIRED"
+        case .failed: "FAILED — TAP TO RETRY"
+        case .cancelled: "CANCELLED — CLICK TO RESTART"
         }
     }
 }
@@ -233,8 +276,12 @@ enum DurationFormatter {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 { return "\(h)h \(m)m" }
-        if m > 0 { return "\(m)m \(s)s" }
+        if h > 0 {
+            return "\(h)h \(m)m"
+        }
+        if m > 0 {
+            return "\(m)m \(s)s"
+        }
         return "\(s)s"
     }
 
@@ -243,7 +290,9 @@ enum DurationFormatter {
         let h = total / 3600
         let m = (total % 3600) / 60
         let s = total % 60
-        if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
         return String(format: "%d:%02d", m, s)
     }
 }

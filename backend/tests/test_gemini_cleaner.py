@@ -138,6 +138,30 @@ def test_estimate_cost_is_nonzero_for_one_token() -> None:
     assert GeminiCleaner.estimate_cost_usd(1) > 0
 
 
+def test_usage_receipt_includes_thinking_tokens_in_billable_output() -> None:
+    class FakeUsage:
+        prompt_token_count = 101
+        candidates_token_count = 17
+        thoughts_token_count = 23
+
+    class FakeResponse:
+        usage_metadata = FakeUsage()
+
+    receipt = GeminiCleaner._usage_from_response(
+        FakeResponse(), gemini_types.ServiceTier.FLEX
+    )
+    assert receipt is not None
+    assert receipt.input_tokens == 101
+    assert receipt.output_tokens == 40
+    assert receipt.tier == "flex"
+
+
+def test_reservation_envelope_is_conservative_for_image_input() -> None:
+    text_only = GeminiCleaner.clean_reservation_cost_usd(500, tier="flex")
+    image = GeminiCleaner.clean_reservation_cost_usd(500, tier="flex", image_input=True)
+    assert image > text_only > 0
+
+
 # ---------- section JSON parsing ----------
 
 

@@ -24,6 +24,7 @@ from app.services.audiobook_service import (
     _wav_header,
 )
 from app.services.audiobook_store import AudiobookStore
+from app.services.gemini_cleaner import GeminiCleaner, GeminiUsage
 from app.services.text_normalizer import has_residual_markup
 
 
@@ -102,6 +103,109 @@ def test_meta_atomic_write_and_read():
     assert read["book_id"] == bid
     assert read["page_count"] == 5
     assert read["status"] == "ready"
+
+
+@pytest.mark.asyncio
+async def test_gemini_budget_ledger_reserves_atomically_and_reconciles_actual_usage():
+    """Concurrent page workers cannot spend the same per-book capacity."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(0.09)
+    AudiobookStore.write_meta(bid, meta)
+
+    receipts = await asyncio.gather(
+        *(
+            AudiobookService._reserve_gemini_operation(
+                bid, operation=f"clean_page:{n}", reserved_usd=0.03
+            )
+            for n in range(4)
+        )
+    )
+    accepted = [receipt for receipt in receipts if receipt is not None]
+    assert len(accepted) == 3
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["reserved_usd"] == pytest.approx(0.09)
+    assert budget["available_usd"] == pytest.approx(0.0)
+
+    await AudiobookService._reconcile_gemini_operation(
+        bid, accepted[0], GeminiUsage(100, 100, "flex")
+    )
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["actual_usd"] == pytest.approx(
+        GeminiCleaner.cost_for_tokens(100, 100, tier="flex")
+    )
+    assert budget["reserved_usd"] == pytest.approx(0.06)
+    assert budget["actual_usd"] + budget["reserved_usd"] <= budget["cap_usd"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_budget_keeps_ambiguous_reservation_after_restart():
+    """No response receipt is not proof that Gemini did not bill the call."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    AudiobookStore.write_meta(bid, meta)
+    receipt = await AudiobookService._reserve_gemini_operation(
+        bid, operation="ocr_page:1", reserved_usd=0.06
+    )
+    assert receipt is not None
+    await AudiobookService._reconcile_gemini_operation(bid, receipt, None)
+
+    # Simulate process restart: only durable SQLite metadata remains.
+    AudiobookStore._reset_for_tests()
+    assert (
+        await AudiobookService._reserve_gemini_operation(
+            bid, operation="ocr_page:2", reserved_usd=0.05
+        )
+        is None
+    )
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["reserved_usd"] == pytest.approx(0.06)
+
+
+@pytest.mark.asyncio
+async def test_cost_approval_requires_shown_cap_or_finishes_locally(monkeypatch):
+    """A capacity fallback cannot silently dispatch Standard-tier work."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "needs_cost_approval"
+    meta["uses_gemini_cleanup"] = True
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    meta["budget"]["cost_approval"] = {
+        "required_cap_usd": 0.25,
+        "tier": "standard",
+    }
+    AudiobookStore.write_meta(bid, meta)
+    enqueued: list[tuple[str, str]] = []
+
+    async def fake_enqueue(book_id: str, api_key: str) -> None:
+        enqueued.append((book_id, api_key))
+
+    monkeypatch.setattr(
+        AudiobookService,
+        "enqueue",
+        classmethod(lambda cls, b, key: fake_enqueue(b, key)),
+    )
+    with pytest.raises(ValueError, match="approved cap"):
+        await AudiobookService.resolve_cost_approval(
+            bid, "fake-key", approve=True, new_cap_usd=0.24
+        )
+    assert enqueued == []
+
+    assert await AudiobookService.resolve_cost_approval(
+        bid, "", approve=False, new_cap_usd=None
+    )
+    after = AudiobookStore.read_meta(bid)
+    assert after["status"] == "queued"
+    assert after["uses_gemini_cleanup"] is False
+    assert "cost_approval" not in after["budget"]
+    assert enqueued == [(bid, "")]
 
 
 def test_list_books_sorted_desc():

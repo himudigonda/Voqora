@@ -14,10 +14,10 @@ final class AudiobookService: NSObject, @unchecked Sendable {
     /// analytics boundary, and backend deliberately support.
     static func mimeType(forFileExtension fileExtension: String) -> String {
         switch fileExtension.lowercased() {
-        case "pdf": return "application/pdf"
-        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        case "txt", "md": return "text/plain; charset=utf-8"
-        default: return "application/octet-stream"
+        case "pdf": "application/pdf"
+        case "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "txt", "md": "text/plain; charset=utf-8"
+        default: "application/octet-stream"
         }
     }
 
@@ -44,7 +44,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let decoder = JSONDecoder()
         return items.compactMap { dict in
             guard let itemData = try? JSONSerialization.data(withJSONObject: dict) else { return nil }
-            if let book = try? decoder.decode(Audiobook.self, from: itemData) { return book }
+            if let book = try? decoder.decode(Audiobook.self, from: itemData) {
+                return book
+            }
             if let id = dict["book_id"] as? String {
                 VoqoraLog.warn("AudiobookService", "Skipping corrupt library entry", ["bookID": id])
             }
@@ -71,7 +73,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
     func deleteAll() async throws {
         let request = try connection.request(path: "audiobook", method: "DELETE", timeout: 30)
         let (_, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw AudiobookServiceError.libraryDeletionFailed
         }
         try? FileManager.default.removeItem(at: cacheDir)
@@ -136,7 +138,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         // not also become a 100 MiB app-memory spike while the backend/model
         // is running.
         let (data, response) = try await URLSession.shared.upload(for: req, fromFile: bodyURL)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Upload failed"
             throw AudiobookServiceError.uploadFailed(detail)
         }
@@ -177,9 +179,15 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
 
         do {
-            if let voice { try appendField("voice", voice) }
-            if let speed { try appendField("speed", String(speed)) }
-            if let engine { try appendField("engine", engine) }
+            if let voice {
+                try appendField("voice", voice)
+            }
+            if let speed {
+                try appendField("speed", String(speed))
+            }
+            if let engine {
+                try appendField("engine", engine)
+            }
 
             // A local filename cannot normally contain CR/LF, but removing
             // them prevents it ever becoming a multipart-header injection
@@ -220,11 +228,34 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
         }
         let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw AudiobookServiceError.uploadFailed("Retry failed")
         }
         let obj = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         return (obj["retried_pages"] as? Int) ?? 0
+    }
+
+    func resolveCostApproval(
+        _ id: String,
+        approve: Bool,
+        newCapUSD: Double? = nil,
+        apiKey: String? = nil
+    ) async throws {
+        var request = try connection.request(path: "audiobook/\(id)/cost-approval", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let apiKey, !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
+        }
+        var payload: [String: Any] = ["approve": approve]
+        if let newCapUSD {
+            payload["new_cap_usd"] = newCapUSD
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Could not apply the cost choice."
+            throw AudiobookServiceError.uploadFailed(detail)
+        }
     }
 
     // MARK: - Start
@@ -238,7 +269,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             }
         }
         let (data, response) = try await URLSession.shared.data(for: req)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Failed to start processing"
             throw AudiobookServiceError.uploadFailed(detail)
         }
@@ -268,11 +299,14 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                         // C6: backend returns 404 for deleted books — bail out
                         // of the reconnect loop instead of spinning forever.
                         if let http = response as? HTTPURLResponse,
-                           http.statusCode == 404 || http.statusCode == 410 {
+                           http.statusCode == 404 || http.statusCode == 410
+                        {
                             bookGone = true
                         } else {
                             for try await line in bytes.lines {
-                                if Task.isCancelled { break }
+                                if Task.isCancelled {
+                                    break
+                                }
                                 guard line.hasPrefix("data: ") else { continue }
                                 let json = String(line.dropFirst(6))
                                 guard let data = json.data(using: .utf8),
@@ -280,16 +314,19 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                                 else { continue }
                                 continuation.yield(obj)
                                 if let type = obj["type"] as? String,
-                                   type == "done" || type == "failed" || type == "cancelled" {
+                                   type == "done" || type == "failed" || type == "cancelled"
+                                {
                                     sawTerminal = true
                                     break
                                 }
                             }
                         }
                     } catch {
-                        VoqoraLog.warn("AudiobookService", "SSE connection dropped", ["bookID": id, "error": String(describing: error), "attempt": "\(attempt)"])
+                        VoqoraLog.warn("AudiobookService", "SSE connection dropped", ["bookID": id, "failureCode": "event_stream_disconnected", "attempt": "\(attempt)"])
                     }
-                    if sawTerminal || bookGone || Task.isCancelled { break }
+                    if sawTerminal || bookGone || Task.isCancelled {
+                        break
+                    }
                     attempt = min(attempt + 1, 4)
                     let delay = UInt64(pow(2.0, Double(attempt - 1)) * 1_000_000_000)
                     try? await Task.sleep(nanoseconds: delay)
@@ -309,7 +346,8 @@ final class AudiobookService: NSObject, @unchecked Sendable {
     func ensureLocalAudio(for id: String) async throws -> URL {
         let local = cacheDir.appendingPathComponent("\(id).wav")
         if FileManager.default.fileExists(atPath: local.path),
-           Self.isValidWAVHeader(at: local) {
+           Self.isValidWAVHeader(at: local)
+        {
             return local
         }
         // Drop a corrupt cache file before re-fetching.
@@ -327,13 +365,15 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
         // Content-type sanity (be permissive — server says audio/wav today).
         if let ct = http.value(forHTTPHeaderField: "Content-Type"),
-           !ct.lowercased().contains("audio") && !ct.lowercased().contains("wav") {
+           !ct.lowercased().contains("audio"), !ct.lowercased().contains("wav")
+        {
             throw AudiobookServiceError.audioNotReady
         }
         // Expected size (Content-Length). FileResponse sets this; range
         // responses set it for the slice. We only follow non-range here.
         if let lenStr = http.value(forHTTPHeaderField: "Content-Length"),
-           let expected = Int(lenStr) {
+           let expected = Int(lenStr)
+        {
             let actual = (try? FileManager.default.attributesOfItem(atPath: downloadedURL.path)[.size] as? Int) ?? 0
             if abs(actual - expected) > 64 {
                 throw AudiobookServiceError.audioNotReady
@@ -352,8 +392,8 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
         guard let header = try? handle.read(upToCount: 12), header.count >= 12 else { return false }
-        let riff = header.subdata(in: 0..<4)
-        let wave = header.subdata(in: 8..<12)
+        let riff = header.subdata(in: 0 ..< 4)
+        let wave = header.subdata(in: 8 ..< 12)
         return riff == "RIFF".data(using: .ascii) && wave == "WAVE".data(using: .ascii)
     }
 
@@ -384,10 +424,10 @@ enum AudiobookServiceError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .uploadFailed(let msg): return msg
-        case .audioNotReady: return "Audio is not ready yet."
-        case .decodeFailed: return "Could not decode response."
-        case .libraryDeletionFailed: return "Voqora could not delete the local audiobook library."
+        case let .uploadFailed(msg): msg
+        case .audioNotReady: "Audio is not ready yet."
+        case .decodeFailed: "Could not decode response."
+        case .libraryDeletionFailed: "Voqora could not delete the local audiobook library."
         }
     }
 }

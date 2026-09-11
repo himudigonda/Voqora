@@ -1,6 +1,6 @@
 import Foundation
-import XCTest
 @testable import Voqora
+import XCTest
 
 final class BackendConnectionTests: XCTestCase {
     override func tearDown() {
