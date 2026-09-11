@@ -22,11 +22,24 @@ cd backend
 uv run pytest -q
 ```
 
-To run the service directly during backend work:
+To run the service directly during backend work, use a throwaway token and an
+explicit development listener. The production app does **not** use this fixed
+development port: it supplies an inherited ephemeral loopback listener and a
+new token on every launch.
 
 ```bash
 cd backend
-uv run uvicorn app.main:app --host 127.0.0.1 --port 10101
+VOQORA_IPC_TOKEN="$(openssl rand -base64 32)" \
+  uv run uvicorn app.main:app --host 127.0.0.1 --port 10101
+```
+
+For a benchmark against that explicit development process, provide both values
+instead of relying on a fixed endpoint:
+
+```bash
+VOQORA_BACKEND_URL=http://127.0.0.1:10101 \
+VOQORA_IPC_TOKEN="...same throwaway token..." \
+  python3 ../scripts/benchmark_stream.py
 ```
 
 The bundled app starts this service itself. Do not expose it on a public

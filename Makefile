@@ -16,7 +16,7 @@ BUNDLE_ID = com.himudigonda.Voqora
 # `make app XCODE_JOBS=6`.
 XCODE_JOBS ?= 4
 
-.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release appcast ship help
+.PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-frozen-backend test-release-scripts test-ci test-coverage test-mutation verify check-version release appcast ship help
 
 # Default: Run the full pipeline
 all: run
@@ -107,14 +107,18 @@ lint:
 	cd backend && uv run ruff check .
 	cd backend && uv run black --check .
 	@echo "🧹 Linting Swift..."
-	if which swiftlint >/dev/null; then swiftlint; else echo "⚠️ SwiftLint not installed"; fi
+	@command -v swiftlint >/dev/null || { echo "SwiftLint is required; install the documented release-quality tools."; exit 2; }
+	swiftlint lint --strict --config .swiftlint.yml
+	@command -v swiftformat >/dev/null || { echo "SwiftFormat is required; install the documented release-quality tools."; exit 2; }
+	swiftformat --lint frontend/Voqora/Voqora frontend/Voqora/VoqoraTests --swift-version 6
 
 format:
 	@echo "✨ Formatting Python..."
 	cd backend && uv run ruff check --fix .
 	cd backend && uv run black .
 	@echo "✨ Formatting Swift..."
-	if which swiftformat >/dev/null; then swiftformat . --swiftversion 6; else echo "⚠️ swiftformat not installed"; fi
+	@command -v swiftformat >/dev/null || { echo "SwiftFormat is required; install the documented release-quality tools."; exit 2; }
+	swiftformat frontend/Voqora/Voqora frontend/Voqora/VoqoraTests --swift-version 6
 
 # --- 📊 BENCHMARKS ---
 benchmark:
@@ -161,9 +165,17 @@ test-swift:
 			-parallel-testing-enabled NO \
 			CODE_SIGNING_ALLOWED=NO
 
+test-frozen-backend:
+	@echo "🧪 Exercising the sealed frozen backend through its inherited FD..."
+	python3 scripts/test_frozen_backend.py
+
+test-release-scripts:
+	@echo "🧪 Exercising release-channel safety guards..."
+	bash scripts/test_ship_modes.sh
+
 # CI or a deliberate full local proof. This is the only aggregate target that
 # invokes the macOS test host.
-test-ci: test-backend test-swift
+test-ci: test-backend test-release-scripts test-swift
 
 # Good default before a commit: lint plus the fast, non-graphical suite.
 verify: lint test-backend
@@ -195,17 +207,18 @@ release: check-version
 	ALLOW_MISSING_BACKEND_ARTIFACT=1 ./scripts/validate_release.sh $(VERSION)
 	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
 	$(MAKE) backend
+	$(MAKE) test-frozen-backend
 	chmod +x scripts/create_dmg.sh
 	./scripts/create_dmg.sh $(VERSION)
 	./scripts/validate_release.sh $(VERSION) build/Voqora-$(VERSION).dmg
-	@echo "✅ Release Ready: build/Voqora-$(VERSION).dmg"
+	@echo "✅ Release Ready: build/Voqora-$(VERSION).dmg and build/Voqora-$(VERSION).dmg.sha256"
 
 appcast: check-version
 	chmod +x scripts/create_appcast.sh
 	./scripts/create_appcast.sh $(VERSION)
 
-## `ship` never rebuilds. The appcast is signed for a particular byte stream,
-## so rebuilds after `make appcast` would invalidate the update in transit.
+## `ship` never rebuilds. The notarized appcast is signed for a particular
+## byte stream, so rebuilds after `make appcast` would invalidate the update.
 ship: check-version
 	@echo "🚢 Shipping v$(VERSION)..."
 	chmod +x scripts/ship.sh
@@ -216,9 +229,9 @@ help:
 	@echo "  make clean     Wipe build artifacts"
 	@echo "  make nuke      Complete factory reset (removes permissions/app data)"
 	@echo "  make run       Build and launch fresh"
-	@echo "  make release   Rebuild and create a distribution DMG"
+	@echo "  make release   Rebuild a DMG and matching SHA-256 receipt"
 	@echo "  make appcast   Create a signed Sparkle update feed from a built DMG"
-	@echo "  make ship      Upload the already-verified, appcast-signed DMG from main"
+	@echo "  make ship      Upload from main (notarized by default; manual needs explicit channel opt-in)"
 	@echo "  make test      Run fast backend tests only (no macOS app host)"
 	@echo "  make test-swift Run one serial macOS test host"
 	@echo "  make test-ci   Run backend + serial macOS tests"

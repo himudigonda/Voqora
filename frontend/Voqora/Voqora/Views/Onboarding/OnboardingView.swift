@@ -137,7 +137,7 @@ struct OnboardingView: View {
                 Spacer().frame(width: 80)
             }
             Spacer()
-            if step == 2 && !permissions.accessibilityGranted {
+            if step == 2, !permissions.accessibilityGranted {
                 // Do not turn a denied or unavailable macOS permission into a
                 // dead-end product. Selected-text reading stays unavailable
                 // until it is granted, but local audiobooks and the in-app
@@ -170,13 +170,13 @@ struct OnboardingView: View {
     /// unusable when the user declines it.
     private var canAdvance: Bool {
         switch step {
-        case 2: return permissions.accessibilityGranted
-        default: return true
+        case 2: permissions.accessibilityGranted
+        default: true
         }
     }
 
     private var advanceBlockedReason: String? {
-        if step == 2 && !permissions.accessibilityGranted {
+        if step == 2, !permissions.accessibilityGranted {
             return "Grant Accessibility access to continue"
         }
         return nil
@@ -425,9 +425,9 @@ struct OnboardingView: View {
     }
 }
 
-// Split out of the struct body to keep it under SwiftLint's
-// `type_body_length` — plain private members, not a separate API surface.
-// Same pattern already used for this reason in `VoqoraWindow.swift`.
+/// Split out of the struct body to keep it under SwiftLint's
+/// `type_body_length` — plain private members, not a separate API surface.
+/// Same pattern already used for this reason in `VoqoraWindow.swift`.
 private extension OnboardingView {
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
         switch selectedFontName {

@@ -34,6 +34,27 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "anonymousUserID"), id)
     }
 
+    func test_freshOptOutInstallationDoesNotCreateAnIdentity() {
+        XCTAssertNil(defaults.string(forKey: "anonymousUserID"))
+        XCTAssertNil(service.email)
+        XCTAssertFalse(service.hasPendingRemoval)
+    }
+
+    func test_eraseLocalIdentityRemovesEmailAnonIDAndPendingDeletion() {
+        defaults.set("anon-id", forKey: "anonymousUserID")
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        defaults.set(true, forKey: "userIdentityRemovalPending")
+        service = IdentityService(defaults: defaults)
+
+        service.eraseLocalIdentity()
+
+        XCTAssertNil(defaults.string(forKey: "anonymousUserID"))
+        XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+        XCTAssertNil(defaults.object(forKey: "userIdentityRemovalPending"))
+        XCTAssertNil(service.email)
+        XCTAssertFalse(service.hasPendingRemoval)
+    }
+
     // MARK: - Email validation (pure)
 
     func test_emailValidator_acceptsCommonShapes() {
@@ -52,7 +73,7 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertFalse(IdentityService.looksLikeEmail("nope@"))
     }
 
-    func test_clearEmail_resetsState() async {
+    func test_clearEmail_resetsState() {
         // Direct write to UserDefaults to seed state without hitting the network.
         defaults.set("seed@example.com", forKey: "userIdentityEmail")
         // Re-read via a fresh observer of shared singleton's state is awkward;
@@ -62,14 +83,14 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertNil(service.email)
     }
 
-    func test_removeEmailClearsThisMacAfterRemoteSuccess() async {
+    func test_removeEmailClearsThisMacAfterRemoteSuccess() async throws {
         defaults.set("seed@example.com", forKey: "userIdentityEmail")
-        let response = HTTPURLResponse(
-            url: URL(string: "https://example.com")!,
+        let response = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "https://example.com")),
             statusCode: 204,
             httpVersion: nil,
             headerFields: nil
-        )!
+        ))
         service = IdentityService(defaults: defaults, sendRequest: { _ in (Data(), response) })
 
         let result = await service.removeEmail()

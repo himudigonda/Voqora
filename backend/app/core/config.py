@@ -96,7 +96,9 @@ class Settings(BaseSettings):
         """Returns INT8 quantized model if present, else falls back to FP32."""
         int8_path = self.MODEL_PATH.replace(".onnx", "-int8.onnx")
         if os.path.exists(int8_path):
-            _log.info("config.using_int8_model", extra={"path": int8_path})
+            # The concrete filesystem path is unnecessary operational data and
+            # can expose a user's local layout in exported diagnostics.
+            _log.info("config.using_int8_model", extra={"model_variant": "int8"})
             return int8_path
         return self.MODEL_PATH
 

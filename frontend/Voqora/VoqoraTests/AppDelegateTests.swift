@@ -1,5 +1,5 @@
-@testable import Voqora
 import AppKit
+@testable import Voqora
 import XCTest
 
 @MainActor

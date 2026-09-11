@@ -11,9 +11,9 @@ class AudioService: NSObject, ObservableObject {
         var errorDescription: String? {
             switch self {
             case .noAudioAvailable:
-                return "There is no generated audio to save yet."
+                "There is no generated audio to save yet."
             case .couldNotSave:
-                return "Voqora could not save the audio clip to your Desktop."
+                "Voqora could not save the audio clip to your Desktop."
             }
         }
     }
@@ -59,7 +59,7 @@ class AudioService: NSObject, ObservableObject {
                     timer.invalidate()
                     self.volumeRampTimer = nil
                     self.stop()
-                    self.volume = originalVolume  // restore for next play
+                    self.volume = originalVolume // restore for next play
                     self.playerNode.volume = originalVolume
                 }
             }
@@ -100,6 +100,7 @@ class AudioService: NSObject, ObservableObject {
         playbackRate = clamped
         timePitch.rate = clamped
     }
+
     /// Test-only instances deliberately skip Core Audio setup. Keep every
     /// playback entry point aware of that rather than letting one helper try
     /// to start an unconfigured graph.
@@ -117,7 +118,9 @@ class AudioService: NSObject, ObservableObject {
     /// export. Audiobooks are intentionally file-backed to avoid holding an
     /// entire book in memory, so presenting the same Save action for them
     /// would promise an export that must fail.
-    var canExportLastClip: Bool { !lastAudioData.isEmpty }
+    var canExportLastClip: Bool {
+        !lastAudioData.isEmpty
+    }
 
     // Timer for progress
     private var timer: AnyCancellable?
@@ -169,18 +172,18 @@ class AudioService: NSObject, ObservableObject {
         do {
             try engine.start()
         } catch {
-            VoqoraLog.error("AudioService", "Engine start error", ["error": String(describing: error)])
+            VoqoraLog.error("AudioService", "Engine start error", ["failureCode": "engine_start_failed"])
         }
     }
 
-    @objc private func handleEngineConfigChange(_ notification: Notification) {
+    @objc private func handleEngineConfigChange(_: Notification) {
         Task { @MainActor [weak self] in
             guard let self, isPlaying else { return }
             do {
                 try engine.start()
                 playerNode.play()
             } catch {
-                VoqoraLog.error("AudioService", "Engine restart after device change failed", ["error": String(describing: error)])
+                VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
                 stop()
             }
         }
@@ -212,7 +215,9 @@ class AudioService: NSObject, ObservableObject {
             }
         }
 
-        if dataToProcess.isEmpty { return }
+        if dataToProcess.isEmpty {
+            return
+        }
 
         // 2. PCM Accumulation with Alignment Fix
         pcmAccumulator.append(dataToProcess)
@@ -259,7 +264,7 @@ class AudioService: NSObject, ObservableObject {
             let gen = audiobookGeneration
             playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
                 Task { @MainActor [weak self] in
-                    guard let self, gen == self.audiobookGeneration else { return }
+                    guard let self, gen == audiobookGeneration else { return }
                     scheduledBufferCount -= 1
                     if !isStreamActive, scheduledBufferCount == 0, isPlaying {
                         playbackCompleted = true
@@ -279,13 +284,15 @@ class AudioService: NSObject, ObservableObject {
         guard !hasStartedPlayback else { return }
         guard engineConfigured else { return }
         do {
-            if !engine.isRunning { try engine.start() }
+            if !engine.isRunning {
+                try engine.start()
+            }
             playerNode.play()
             isPlaying = true
             hasStartedPlayback = true
             startTimer()
         } catch {
-            VoqoraLog.error("AudioService", "Start error", ["error": String(describing: error)])
+            VoqoraLog.error("AudioService", "Start error", ["failureCode": "playback_start_failed"])
         }
     }
 
@@ -363,7 +370,9 @@ class AudioService: NSObject, ObservableObject {
                 progress = 0
             }
             playbackCompleted = false
-            if engineConfigured { try? engine.start() }
+            if engineConfigured {
+                try? engine.start()
+            }
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -372,7 +381,7 @@ class AudioService: NSObject, ObservableObject {
 
     func seek(to percentage: Double) {
         guard !lastAudioData.isEmpty else { return }
-        audiobookGeneration += 1  // invalidate stale handlers before stop fires them — see playChunk's own comment
+        audiobookGeneration += 1 // invalidate stale handlers before stop fires them — see playChunk's own comment
         playerNode.stop()
         scheduledBufferCount = 0
 
@@ -380,9 +389,15 @@ class AudioService: NSObject, ObservableObject {
         let targetSample = Int(targetTime * 24000)
         var targetByte = targetSample * 2
 
-        if targetByte >= lastAudioData.count { targetByte = lastAudioData.count - 2 }
-        if targetByte < 0 { targetByte = 0 }
-        if targetByte % 2 != 0 { targetByte -= 1 }
+        if targetByte >= lastAudioData.count {
+            targetByte = lastAudioData.count - 2
+        }
+        if targetByte < 0 {
+            targetByte = 0
+        }
+        if targetByte % 2 != 0 {
+            targetByte -= 1
+        }
 
         let remainingData = lastAudioData.advanced(by: targetByte)
         if let buffer = dataToBuffer(remainingData) {
@@ -390,15 +405,17 @@ class AudioService: NSObject, ObservableObject {
             let gen = audiobookGeneration
             playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
                 Task { @MainActor [weak self] in
-                    guard let self, gen == self.audiobookGeneration else { return }
-                    self.scheduledBufferCount -= 1
+                    guard let self, gen == audiobookGeneration else { return }
+                    scheduledBufferCount -= 1
                 }
             })
 
             pausedTime = targetTime
             currentTime = targetTime
 
-            if !engine.isRunning { try? engine.start() }
+            if !engine.isRunning {
+                try? engine.start()
+            }
             playerNode.play()
             isPlaying = true
             startTimer()
@@ -424,7 +441,9 @@ class AudioService: NSObject, ObservableObject {
         // Pre-warm the engine, but do not claim playback has started until a
         // real buffer has been scheduled. Otherwise a slow or failed request
         // makes the product show “Speaking 0:00” while nothing is audible.
-        if engineConfigured, !engine.isRunning { try? engine.start() }
+        if engineConfigured, !engine.isRunning {
+            try? engine.start()
+        }
         hasStartedPlayback = false
         isPlaying = false
     }
@@ -441,13 +460,15 @@ class AudioService: NSObject, ObservableObject {
         if !lastAudioData.isEmpty {
             duration = Double(lastAudioData.count / 2) / format.sampleRate
         }
-        if scheduledBufferCount == 0, isPlaying { stop() }
+        if scheduledBufferCount == 0, isPlaying {
+            stop()
+        }
     }
 
     func stop() {
         volumeRampTimer?.invalidate()
         volumeRampTimer = nil
-        audiobookGeneration += 1  // invalidate any in-flight completion handlers
+        audiobookGeneration += 1 // invalidate any in-flight completion handlers
         setPlaybackRate(1.0)
         playerNode.stop()
         timer?.cancel()
@@ -482,7 +503,7 @@ class AudioService: NSObject, ObservableObject {
         buffer.frameLength = frameCount
         guard let channel = buffer.floatChannelData?[0] else { return nil }
         data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            for i in 0..<Int(frameCount) {
+            for i in 0 ..< Int(frameCount) {
                 let lo = UInt16(raw[i * 2])
                 let hi = UInt16(raw[i * 2 + 1])
                 let sample = Int16(bitPattern: lo | (hi << 8))
@@ -503,7 +524,7 @@ class AudioService: NSObject, ObservableObject {
         }
 
         let steps = 5
-        let stepDuration = 0.01  // 10ms per step
+        let stepDuration = 0.01 // 10ms per step
         let delta = (targetVolume - initialVolume) / Float(steps)
         var step = 0
 
@@ -535,6 +556,7 @@ class AudioService: NSObject, ObservableObject {
     }
 
     // MARK: - Audiobook playback (chunked, file-backed)
+
     //
     // Audiobooks can be hours long (≥300 MB on disk). The original
     // implementation read the entire WAV into one PCM buffer — for a 2 h book
@@ -588,12 +610,14 @@ class AudioService: NSObject, ObservableObject {
         // compat, otherwise leave it empty to avoid the RAM blowup.
         lastAudioData = Data()
 
-        if !engine.isRunning { try engine.start() }
+        if !engine.isRunning {
+            try engine.start()
+        }
         playerNode.volume = volume
 
         // Schedule the first N chunks ahead. As each completes we schedule
         // the next one to keep the lookahead full.
-        for _ in 0..<Self.audiobookChunkLookahead {
+        for _ in 0 ..< Self.audiobookChunkLookahead {
             scheduleNextAudiobookChunk()
         }
         playerNode.play()
@@ -608,7 +632,9 @@ class AudioService: NSObject, ObservableObject {
     /// stop on the last buffer drain.
     private func scheduleNextAudiobookChunk() {
         guard let file = currentAudioFile else { return }
-        if audiobookFrameOffset >= audiobookTotalFrames { return }
+        if audiobookFrameOffset >= audiobookTotalFrames {
+            return
+        }
         let chunkFrames = AVAudioFrameCount(
             min(
                 AVAudioFramePosition(Self.audiobookChunkSeconds * audiobookSampleRate),
@@ -617,28 +643,28 @@ class AudioService: NSObject, ObservableObject {
         )
         guard chunkFrames > 0,
               let buffer = AVAudioPCMBuffer(
-                pcmFormat: file.processingFormat,
-                frameCapacity: chunkFrames
+                  pcmFormat: file.processingFormat,
+                  frameCapacity: chunkFrames
               )
         else { return }
         do {
             file.framePosition = audiobookFrameOffset
             try file.read(into: buffer, frameCount: chunkFrames)
         } catch {
-            VoqoraLog.error("AudioService", "Audiobook chunk read error", ["error": String(describing: error)])
+            VoqoraLog.error("AudioService", "Audiobook chunk read error", ["failureCode": "audiobook_chunk_read_failed"])
             return
         }
         audiobookFrameOffset += AVAudioFramePosition(buffer.frameLength)
 
         scheduledBufferCount += 1
-        let gen = audiobookGeneration  // capture before the async hop
+        let gen = audiobookGeneration // capture before the async hop
         // T-10: capture the session identity *now*, at schedule time, not
         // later when a completion observer reacts to `playbackCompleted` —
         // by then the caller's own "now playing" state may have moved on.
         let sessionID = activeSessionID
         playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, gen == self.audiobookGeneration else { return }
+                guard let self, gen == audiobookGeneration else { return }
                 scheduledBufferCount -= 1
                 // Refill: keep the lookahead window full as long as we have file left.
                 if currentAudioFile != nil, audiobookFrameOffset < audiobookTotalFrames {
@@ -646,7 +672,8 @@ class AudioService: NSObject, ObservableObject {
                 }
                 // End-of-file: when the last buffer drains, mark complete.
                 if scheduledBufferCount == 0, isPlaying,
-                   audiobookFrameOffset >= audiobookTotalFrames {
+                   audiobookFrameOffset >= audiobookTotalFrames
+                {
                     completedSessionID = sessionID
                     playbackCompleted = true
                     stop()
@@ -658,22 +685,24 @@ class AudioService: NSObject, ObservableObject {
     /// Seek for chunked audiobook playback. Resets the file head and schedules
     /// fresh chunks at the target frame.
     func seekAudiobook(toSeconds seconds: TimeInterval) {
-        guard let _ = currentAudioFile else {
+        guard currentAudioFile != nil else {
             seek(to: max(0, min(1, seconds / max(0.01, duration))))
             return
         }
         let wasPlaying = isPlaying
-        audiobookGeneration += 1  // invalidate stale handlers before stop fires them
+        audiobookGeneration += 1 // invalidate stale handlers before stop fires them
         playerNode.stop()
         scheduledBufferCount = 0
         let target = max(0, min(audiobookTotalFrames, AVAudioFramePosition(seconds * audiobookSampleRate)))
         audiobookFrameOffset = target
         currentTime = Double(target) / audiobookSampleRate
         pausedTime = currentTime
-        for _ in 0..<Self.audiobookChunkLookahead {
+        for _ in 0 ..< Self.audiobookChunkLookahead {
             scheduleNextAudiobookChunk()
         }
-        if !engine.isRunning { try? engine.start() }
+        if !engine.isRunning {
+            try? engine.start()
+        }
         if wasPlaying {
             playerNode.play()
             isPlaying = true

@@ -35,15 +35,15 @@ class LaunchManager: ObservableObject {
         var errorDescription: String? {
             switch self {
             case .manifestMissing:
-                return "The packaged backend integrity manifest is missing."
+                "The packaged backend integrity manifest is missing."
             case .invalidManifest:
-                return "The packaged backend integrity manifest is invalid."
+                "The packaged backend integrity manifest is invalid."
             case .archiveMismatch:
-                return "The packaged backend archive did not pass integrity verification."
+                "The packaged backend archive did not pass integrity verification."
             case .unsafeArchive:
-                return "The packaged backend archive contains unsafe paths."
+                "The packaged backend archive contains unsafe paths."
             case .extractedRuntimeMismatch:
-                return "The local backend did not pass integrity verification."
+                "The local backend did not pass integrity verification."
             }
         }
     }
@@ -83,7 +83,8 @@ class LaunchManager: ObservableObject {
               manifest.root == "VoqoraServer",
               !manifest.version.isEmpty,
               manifest.archiveSHA256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-              !manifest.files.isEmpty else {
+              !manifest.files.isEmpty
+        else {
             throw RuntimeIntegrityError.invalidManifest
         }
 
@@ -91,8 +92,9 @@ class LaunchManager: ObservableObject {
         for entry in manifest.files {
             guard isSafeRelativeRuntimePath(entry.path),
                   entry.sha256.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil,
-                  (0...0o777).contains(entry.mode),
-                  paths.insert(entry.path).inserted else {
+                  (0 ... 0o777).contains(entry.mode),
+                  paths.insert(entry.path).inserted
+            else {
                 throw RuntimeIntegrityError.invalidManifest
             }
         }
@@ -130,7 +132,9 @@ class LaunchManager: ObservableObject {
         let details = try runTool("/usr/bin/zipinfo", arguments: ["-l", archiveURL.path])
         for line in details.split(separator: "\n", omittingEmptySubsequences: true) {
             guard let first = line.first else { continue }
-            if first == "l" { throw RuntimeIntegrityError.unsafeArchive }
+            if first == "l" {
+                throw RuntimeIntegrityError.unsafeArchive
+            }
         }
     }
 
@@ -157,7 +161,9 @@ class LaunchManager: ObservableObject {
             // some macOS filesystem providers. It is the trusted root passed
             // to this validator, not an archive member.
             let resolvedFileURL = fileURL.resolvingSymlinksInPath().standardizedFileURL
-            if resolvedFileURL == resolvedRoot { continue }
+            if resolvedFileURL == resolvedRoot {
+                continue
+            }
             let relative = resolvedFileURL.path.replacingOccurrences(of: resolvedRoot.path + "/", with: "")
             guard isSafeRelativeRuntimePath(relative) else {
                 throw RuntimeIntegrityError.extractedRuntimeMismatch
@@ -192,7 +198,8 @@ class LaunchManager: ObservableObject {
                   attributes[.type] as? FileAttributeType == .typeRegular,
                   let mode = attributes[.posixPermissions] as? NSNumber,
                   Int(mode.intValue) & 0o777 == entry.mode,
-                  sha256(of: fileURL) == entry.sha256 else {
+                  sha256(of: fileURL) == entry.sha256
+            else {
                 throw RuntimeIntegrityError.extractedRuntimeMismatch
             }
         }
@@ -257,7 +264,10 @@ class LaunchManager: ObservableObject {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw RuntimeIntegrityError.unsafeArchive }
-        return String(decoding: data, as: UTF8.self)
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw RuntimeIntegrityError.unsafeArchive
+        }
+        return text
     }
 
     /// An interrupted first launch can leave an extraction staging directory
@@ -331,7 +341,7 @@ class LaunchManager: ObservableObject {
         let appSupport = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(bundleID)
 
-        let serverURL    = appSupport.appendingPathComponent("VoqoraServer")
+        let serverURL = appSupport.appendingPathComponent("VoqoraServer")
         let executableURL = serverURL.appendingPathComponent("VoqoraServer")
         // Marker file: stores the exact bundled backend archive identity that
         // was last extracted. This prevents a local rebuild from quietly
@@ -363,7 +373,8 @@ class LaunchManager: ObservableObject {
            let manifest = try? Self.runtimeManifest(at: manifestURL),
            manifest.version == currentVersion,
            (try? Self.validateBundledArchive(at: zipURL, manifest: manifest)) != nil,
-           (try? Self.validateInstalledRuntime(at: serverURL, manifest: manifest, fileManager: fm)) != nil {
+           (try? Self.validateInstalledRuntime(at: serverURL, manifest: manifest, fileManager: fm)) != nil
+        {
             VoqoraLog.info("LaunchManager", "Verified backend already extracted")
             isReady = true
             return
@@ -432,7 +443,7 @@ class LaunchManager: ObservableObject {
             VoqoraLog.info("LaunchManager", "Backend extracted successfully", ["version": currentVersion])
             isReady = true
         } catch {
-            VoqoraLog.error("LaunchManager", "Backend extraction failed", ["error": String(describing: error), "version": currentVersion])
+            VoqoraLog.error("LaunchManager", "Backend extraction failed", ["failureCode": "runtime_extraction_failed", "version": currentVersion])
             self.error = "Launch Error: \(error.localizedDescription)"
         }
     }

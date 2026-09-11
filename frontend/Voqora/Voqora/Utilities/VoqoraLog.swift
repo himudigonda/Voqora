@@ -61,7 +61,7 @@ enum VoqoraLog {
             let normalized = key.lowercased()
             let sensitiveKey = [
                 "error", "exception", "text", "content", "prompt", "path",
-                "key", "token", "authorization", "credential", "payload"
+                "key", "token", "authorization", "credential", "payload",
             ].contains { normalized.contains($0) }
             let sensitiveValue = value.localizedCaseInsensitiveContains("AIza")
                 || value.localizedCaseInsensitiveContains("bearer ")

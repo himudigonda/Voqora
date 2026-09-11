@@ -1,5 +1,5 @@
-@testable import Voqora
 import Sparkle
+@testable import Voqora
 import XCTest
 
 @MainActor

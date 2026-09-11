@@ -27,7 +27,9 @@ final class GuidedInstallerService: ObservableObject {
         }
 
         var isFailure: Bool {
-            if case .failed = self { return true }
+            if case .failed = self {
+                return true
+            }
             return false
         }
 
@@ -37,8 +39,8 @@ final class GuidedInstallerService: ObservableObject {
             case .resolving: "Finding the latest verified Voqora installer…"
             case .downloading: "Downloading the Voqora installer…"
             case .verifying: "Verifying the downloaded installer…"
-            case .opened(let version): "Voqora \(version) is open in Finder. Drag it to Applications, then open it there."
-            case .failed(let message): message
+            case let .opened(version): "Voqora \(version) is open in Finder. Drag it to Applications, then open it there."
+            case let .failed(message): message
             }
         }
     }
@@ -108,10 +110,10 @@ final class GuidedInstallerService: ObservableObject {
             guard let self else { return }
             do {
                 let artifact = try await Self.fetchLatestArtifact()
-                self.state = .downloading
+                state = .downloading
                 MetricsService.shared.trackInstallerDownloadStarted()
                 let downloaded = try await Self.download(artifact: artifact)
-                self.state = .verifying
+                state = .verifying
                 try Self.verify(downloaded, matches: artifact)
                 MetricsService.shared.trackInstallerDownloadVerified()
                 let destination = try Self.persist(downloaded, named: artifact.name)
@@ -119,15 +121,15 @@ final class GuidedInstallerService: ObservableObject {
                     throw InstallerError.cannotOpenInstaller
                 }
                 MetricsService.shared.trackInstallerOpened()
-                self.state = .opened(version: artifact.version)
+                state = .opened(version: artifact.version)
             } catch is CancellationError {
-                self.state = .idle
+                state = .idle
             } catch let error as InstallerError {
                 MetricsService.shared.trackInstallerFailed()
                 self.state = .failed(message: error.localizedDescription)
             } catch {
                 MetricsService.shared.trackInstallerFailed()
-                self.state = .failed(message: InstallerError.unexpectedResponse.localizedDescription)
+                state = .failed(message: InstallerError.unexpectedResponse.localizedDescription)
             }
         }
     }
@@ -146,7 +148,8 @@ final class GuidedInstallerService: ObservableObject {
               url.scheme == "https",
               url.host?.lowercased() == "github.com",
               asset.size > 0,
-              let digest = normalizedSHA256(asset.digest) else {
+              let digest = normalizedSHA256(asset.digest)
+        else {
             throw InstallerError.invalidRelease
         }
         return ReleaseArtifact(
@@ -164,7 +167,7 @@ final class GuidedInstallerService: ObservableObject {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Voqora", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw InstallerError.unexpectedResponse
         }
         return try artifact(from: data)
@@ -174,7 +177,7 @@ final class GuidedInstallerService: ObservableObject {
         var request = URLRequest(url: artifact.downloadURL)
         request.timeoutInterval = 120
         let (temporaryURL, response) = try await URLSession.shared.download(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw InstallerError.unexpectedResponse
         }
         return temporaryURL

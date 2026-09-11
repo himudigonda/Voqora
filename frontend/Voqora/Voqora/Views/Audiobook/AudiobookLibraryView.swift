@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 /// Routes pushed by the library: only the player today, but easy to extend.
 enum AudiobookRoute: Hashable {
-    case player(String)  // book_id
+    case player(String) // book_id
 }
 
 /// Single source-of-truth for which (mutually exclusive) sheet the library is
@@ -15,8 +15,8 @@ enum LibrarySheet: Identifiable {
 
     var id: String {
         switch self {
-        case .upload(let url): return "upload-\(url.absoluteString)"
-        case .completion(let book): return "completion-\(book.bookID)"
+        case let .upload(url): "upload-\(url.absoluteString)"
+        case let .completion(book): "completion-\(book.bookID)"
         }
     }
 }
@@ -42,19 +42,23 @@ struct AudiobookLibraryView: View {
 
     enum SortMode: String, CaseIterable, Identifiable {
         case recent, alpha, duration
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
+
         var label: String {
             switch self {
-            case .recent: return "Recent"
-            case .alpha: return "A→Z"
-            case .duration: return "Duration"
+            case .recent: "Recent"
+            case .alpha: "A→Z"
+            case .duration: "Duration"
             }
         }
+
         var icon: String {
             switch self {
-            case .recent: return "clock"
-            case .alpha: return "textformat"
-            case .duration: return "timer"
+            case .recent: "clock"
+            case .alpha: "textformat"
+            case .duration: "timer"
             }
         }
     }
@@ -67,7 +71,9 @@ struct AudiobookLibraryView: View {
             .plainText,
             .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
         ]
-        if let markdown = UTType(filenameExtension: "md") { types.append(markdown) }
+        if let markdown = UTType(filenameExtension: "md") {
+            types.append(markdown)
+        }
         return types
     }
 
@@ -75,7 +81,9 @@ struct AudiobookLibraryView: View {
         NavigationStack(path: $path) {
             ZStack {
                 content
-                if hoveringDrop { dropOverlay.transition(.opacity) }
+                if hoveringDrop {
+                    dropOverlay.transition(.opacity)
+                }
             }
             .navigationTitle("Audiobooks")
             // T-14: search field was fully wired (`filteredSorted`, `searchText`)
@@ -88,9 +96,9 @@ struct AudiobookLibraryView: View {
                 allowedContentTypes: supportedDocumentTypes
             ) { result in
                 switch result {
-                case .success(let url):
+                case let .success(url):
                     stageAndPresentDocument(url)
-                case .failure(let error):
+                case let .failure(error):
                     bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
                 }
             }
@@ -100,11 +108,11 @@ struct AudiobookLibraryView: View {
             // VM cleanup so we never orphan a staged book on disk.
             .sheet(item: librarySheetBinding) { sheet in
                 switch sheet {
-                case .upload(let url):
+                case let .upload(url):
                     UploadEstimateModal(documentURL: url)
                         .environmentObject(vm)
                         .environmentObject(bookVM)
-                case .completion(let book):
+                case let .completion(book):
                     CompletionSummaryModal(book: book, onListenNow: { openPlayer($0) })
                         .environmentObject(vm)
                         .environmentObject(bookVM)
@@ -112,7 +120,7 @@ struct AudiobookLibraryView: View {
             }
             .navigationDestination(for: AudiobookRoute.self) { route in
                 switch route {
-                case .player(let bookID):
+                case let .player(bookID):
                     if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
                         AudiobookPlayerView(book: book)
                             .environmentObject(vm)
@@ -152,14 +160,23 @@ struct AudiobookLibraryView: View {
     private var librarySheetBinding: Binding<LibrarySheet?> {
         Binding(
             get: {
-                if let book = bookVM.completionSummary { return .completion(book) }
-                if let url = bookVM.pendingDocument { return .upload(url) }
+                if let book = bookVM.completionSummary {
+                    return .completion(book)
+                }
+                if let url = bookVM.pendingDocument {
+                    return .upload(url)
+                }
                 return nil
             },
             set: { newValue in
-                if newValue != nil { return }
-                if bookVM.completionSummary != nil { bookVM.completionSummary = nil }
-                else if bookVM.pendingDocument != nil { bookVM.cancelUpload() }
+                if newValue != nil {
+                    return
+                }
+                if bookVM.completionSummary != nil {
+                    bookVM.completionSummary = nil
+                } else if bookVM.pendingDocument != nil {
+                    bookVM.cancelUpload()
+                }
             }
         )
     }
@@ -172,7 +189,7 @@ struct AudiobookLibraryView: View {
     private var content: some View {
         if !bookVM.hasLoadedOnce {
             skeletonGrid
-        } else if bookVM.loadFailed && bookVM.books.isEmpty {
+        } else if bookVM.loadFailed, bookVM.books.isEmpty {
             // T-17: a first-load failure (e.g. backend unreachable) must read
             // as distinctly different from a genuinely empty library.
             loadFailedState
@@ -212,7 +229,7 @@ struct AudiobookLibraryView: View {
     private var skeletonGrid: some View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 32) {
-                ForEach(0..<6, id: \.self) { _ in SkeletonCard() }
+                ForEach(0 ..< 6, id: \.self) { _ in SkeletonCard() }
             }
             .padding(36)
         }
@@ -275,6 +292,10 @@ struct AudiobookLibraryView: View {
         case .failed: bookVM.retry(book)
         case .cancelled: bookVM.retry(book)
         case .needsKey: bookVM.resumeNeedsKey(book)
+        case .needsCostApproval:
+            // The card presents an explicit Standard/local choice; tapping the
+            // grid background must never spend or silently select a path.
+            break
         default:
             // Processing — clicking through is a no-op for now (future: progress drawer).
             break
@@ -425,9 +446,11 @@ struct AudiobookLibraryView: View {
     }
 }
 
-// Allow URL? to drive .sheet(item:)
+/// Allow URL? to drive .sheet(item:)
 extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
+    public var id: String {
+        absoluteString
+    }
 }
 
 private struct SkeletonCard: View {

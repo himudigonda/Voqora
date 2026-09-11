@@ -2,7 +2,7 @@
 """
 Voqora Comprehensive TTS Benchmark
 =====================================
-Benchmarks all engines (Kokoro, Kitten nano/micro/mini) across:
+Benchmarks the shipped Kokoro engine across:
   - Multiple voices
   - Multiple speeds (0.5x–2.5x)
   - Multiple text lengths (short / medium / long / paragraph)
@@ -21,6 +21,7 @@ Usage:
 """
 
 import json
+import os
 import struct
 import sys
 import time
@@ -30,8 +31,12 @@ from typing import Optional
 
 import requests
 
-BASE_URL = "http://localhost:10101"
-SAMPLE_RATE = 24000  # Kokoro & KittenTTS both output 24kHz mono
+BASE_URL = os.environ.get("VOQORA_BACKEND_URL", "").rstrip("/")
+IPC_TOKEN = os.environ.get("VOQORA_IPC_TOKEN", "")
+SESSION = requests.Session()
+if IPC_TOKEN:
+    SESSION.headers.update({"X-Voqora-IPC-Token": IPC_TOKEN})
+SAMPLE_RATE = 24000  # Kokoro emits 24kHz mono
 BYTES_PER_SAMPLE = 2  # int16
 WAV_HEADER_BYTES = 44
 
@@ -50,29 +55,25 @@ TEXTS = {
         "power to communicate across time and space. Today, neural text-to-speech "
         "systems synthesize natural-sounding speech with remarkable fidelity. "
         "The journey from rule-based concatenative synthesis to end-to-end neural "
-        "models has been remarkable. Modern systems like Kokoro and KittenTTS "
-        "demonstrate that high-quality speech synthesis is achievable at low latency "
+        "models has been remarkable. Modern systems like Kokoro demonstrate that "
+        "high-quality speech synthesis is achievable at low latency "
         "on commodity hardware. This benchmark measures exactly that capability."
     ),
 }
 
 # ─── Engine Configs ─────────────────────────────────────────────────────────────
-ENGINES = [
-    {"engine": "kokoro", "model": None,    "voices": ["af_bella", "af_sarah", "am_adam", "am_michael", "bf_emma", "bf_isabella", "bm_george", "bm_lewis"]},
-    {"engine": "kitten", "model": "nano",  "voices": ["Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo"]},
-    {"engine": "kitten", "model": "micro", "voices": ["Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo"]},
-    {"engine": "kitten", "model": "mini",  "voices": ["Bella", "Jasper", "Luna", "Bruno", "Rosie", "Hugo", "Kiki", "Leo"]},
-]
+ENGINES = [{
+    "engine": "kokoro",
+    "model": None,
+    "voices": ["af_bella", "af_sarah", "am_adam", "am_michael", "bf_emma", "bf_isabella", "bm_george", "bm_lewis"],
+}]
 
 SPEEDS = [0.5, 1.0, 1.5, 2.0, 2.5]
 
-# For full matrix we use a representative voice per engine + all speeds + all texts
+# For the full matrix we use a representative voice plus all speeds and texts.
 # For voice comparison we use 1 text + 1 speed and sweep all voices
 BENCHMARK_VOICE_PER_ENGINE = {
     "kokoro/": "af_bella",
-    "kitten/nano": "Bella",
-    "kitten/micro": "Bella",
-    "kitten/mini": "Bella",
 }
 
 N_WARMUP = 1   # runs that are discarded
@@ -83,8 +84,6 @@ ENGINE_LOAD_TIMEOUT = 120  # seconds to wait for model load (Kokoro ~60s cold)
 # ─── Helpers ────────────────────────────────────────────────────────────────────
 
 def engine_label(cfg: dict) -> str:
-    if cfg["model"]:
-        return f"kitten/{cfg['model']}"
     return "kokoro/"
 
 
@@ -93,7 +92,7 @@ def switch_engine(engine: str, model: Optional[str] = None) -> bool:
     if model:
         payload["model"] = model
     try:
-        r = requests.post(f"{BASE_URL}/engine", json=payload, timeout=30)
+        r = SESSION.post(f"{BASE_URL}/engine", json=payload, timeout=30)
         if r.status_code == 200:
             return True
         print(f"  ⚠ switch_engine failed: {r.status_code} {r.text[:80]}")
@@ -107,7 +106,7 @@ def wait_ready(timeout: float = 60.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            r = requests.get(f"{BASE_URL}/health", timeout=5)
+            r = SESSION.get(f"{BASE_URL}/health", timeout=5)
             if r.status_code == 200 and r.json().get("loaded"):
                 return True
         except Exception:
@@ -172,7 +171,7 @@ def prewarm_request(text: str, voice: str, speed: float) -> bool:
     """POST /prewarm and wait for it to complete (it's fire-and-forget, so we sleep)."""
     payload = {"text": text, "voice": voice, "speed": speed}
     try:
-        requests.post(f"{BASE_URL}/prewarm", json=payload, timeout=10)
+        SESSION.post(f"{BASE_URL}/prewarm", json=payload, timeout=10)
         time.sleep(2.5)  # give background task time to generate and cache
         return True
     except Exception:
@@ -184,7 +183,7 @@ def run_single(text: str, voice: str, speed: float) -> Optional[RunResult]:
     payload = {"text": text, "voice": voice, "speed": speed, "volume": 1.0}
     try:
         t0 = time.perf_counter()
-        with requests.post(f"{BASE_URL}/speak", json=payload, stream=True, timeout=120) as r:
+        with SESSION.post(f"{BASE_URL}/speak", json=payload, stream=True, timeout=120) as r:
             if r.status_code != 200:
                 print(f"    ⚠ /speak returned {r.status_code}")
                 return None
@@ -434,10 +433,10 @@ def generate_markdown(results: list[BenchmarkResult], system_info: dict) -> str:
             )
         lines.append("")
 
-    # ── Section 4: Engine comparison summary ─────────────────────────────────────
+    # ── Section 4: Shipped-engine summary ─────────────────────────────────────────
     lines.append("---")
     lines.append("")
-    lines.append("## 4. Engine Comparison Summary (medium text, speed=1.0x)")
+    lines.append("## 4. Shipped Engine Summary (medium text, speed=1.0x)")
     lines.append("")
 
     # Find 1.0x medium results for each engine
@@ -447,9 +446,6 @@ def generate_markdown(results: list[BenchmarkResult], system_info: dict) -> str:
 
     MODEL_SIZES = {
         "kokoro/": "326 MB (FP32)",
-        "kitten/nano": "57 MB",
-        "kitten/micro": "41 MB",
-        "kitten/mini": "78 MB",
     }
 
     for r in sorted(summary_results, key=lambda x: x.engine):
@@ -544,20 +540,23 @@ def get_system_info() -> dict:
 
 def check_server() -> bool:
     try:
-        r = requests.get(f"{BASE_URL}/health", timeout=5)
+        r = SESSION.get(f"{BASE_URL}/health", timeout=5)
         return r.status_code == 200
     except Exception:
         return False
 
 
 def main():
+    if not BASE_URL or not IPC_TOKEN:
+        print("❌ Set VOQORA_BACKEND_URL and VOQORA_IPC_TOKEN for an authenticated development backend.")
+        sys.exit(2)
     print("=" * 60)
     print("  Voqora TTS Comprehensive Benchmark")
     print("=" * 60)
     print()
 
     if not check_server():
-        print("❌ Server not reachable at localhost:10101")
+        print(f"❌ Server not reachable at {BASE_URL}")
         print("   Start it with: cd backend && uv run python app/main.py")
         sys.exit(1)
 

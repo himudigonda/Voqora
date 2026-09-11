@@ -53,7 +53,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Voqora", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
               let release = try? JSONDecoder().decode(GitHubReleaseTag.self, from: data)
         else { return }
 
@@ -72,10 +72,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     static func isVersion(_ a: String, newerThan b: String) -> Bool {
         let partsA = a.split(separator: ".").compactMap { Int($0) }
         let partsB = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(partsA.count, partsB.count) {
+        for i in 0 ..< max(partsA.count, partsB.count) {
             let x = i < partsA.count ? partsA[i] : 0
             let y = i < partsB.count ? partsB[i] : 0
-            if x != y { return x > y }
+            if x != y {
+                return x > y
+            }
         }
         return false
     }
@@ -123,13 +125,14 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     static func statusMessage(forUpdateCheckError error: NSError) -> String {
         guard error.domain == SUSparkleErrorDomain,
-              error.code == noUpdateErrorCode else {
+              error.code == noUpdateErrorCode
+        else {
             return "Couldn't check for updates. Your current Voqora still works. Try again later."
         }
         return "Voqora is up to date."
     }
 
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         isCheckingForUpdates = false
         updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
         PermissionsService.shared.scheduleNotification(
@@ -138,17 +141,17 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         )
     }
 
-    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+    func updaterDidNotFindUpdate(_: SPUUpdater, error: Error) {
         isCheckingForUpdates = false
         updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
-    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+    func updater(_: SPUUpdater, didAbortWithError error: Error) {
         isCheckingForUpdates = false
         updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
-    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+    func updater(_: SPUUpdater, didFinishUpdateCycleFor _: SPUUpdateCheck, error: Error?) {
         isCheckingForUpdates = false
         if let error {
             updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)

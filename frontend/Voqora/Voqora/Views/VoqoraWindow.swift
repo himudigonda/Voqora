@@ -15,9 +15,9 @@ struct VoqoraWindow: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
-    // Tracked so the startup prepare() work can be cancelled if the window
-    // disappears before it finishes — previously an unstructured `Task` with
-    // no cancellation, harmless only because of downstream idempotency guards.
+    /// Tracked so the startup prepare() work can be cancelled if the window
+    /// disappears before it finishes — previously an unstructured `Task` with
+    /// no cancellation, harmless only because of downstream idempotency guards.
     @State private var launchTask: Task<Void, Never>?
 
     /// The app's accent, resolved once per body pass — GRiT's own rows,
@@ -142,9 +142,9 @@ struct VoqoraWindow: View {
                         vm.selectedTab = "books"
                         bookVM.openPlayer(for: playing.bookID)
                     })
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .environmentObject(vm)
-                        .environmentObject(bookVM)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .environmentObject(vm)
+                    .environmentObject(bookVM)
                 }
 
                 // Toast / banner — top of detail pane.
@@ -288,8 +288,8 @@ struct VoqoraWindow: View {
     }
 }
 
-// Split out of the struct body to keep it under SwiftLint's
-// `type_body_length` — plain private members, not a separate API surface.
+/// Split out of the struct body to keep it under SwiftLint's
+/// `type_body_length` — plain private members, not a separate API surface.
 private extension VoqoraWindow {
     @ViewBuilder
     var detailContent: some View {
@@ -413,8 +413,11 @@ private extension VoqoraWindow {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
-            if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-            else if let u = item as? URL { url = u }
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let u = item as? URL {
+                url = u
+            }
             guard let url else {
                 Task { @MainActor in
                     bookVM.showToast("Voqora could not read that dropped file.", kind: .error)

@@ -86,7 +86,8 @@ struct UploadEstimateModal: View {
                 .frame(width: 140, height: 196)
                 .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             if let pdf = PDFDocument(url: documentURL),
-               let page = pdf.page(at: 0) {
+               let page = pdf.page(at: 0)
+            {
                 // S7: PDFPage.thumbnail renders the page properly at the
                 // requested point size, unlike NSImage(data:) on a raw PDF
                 // page-representation blob (which sometimes shows the whole
@@ -94,7 +95,7 @@ struct UploadEstimateModal: View {
                 let nsImage = page.thumbnail(of: NSSize(width: 280, height: 392), for: .cropBox)
                 Image(nsImage: nsImage)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .scaledToFill()
                     .frame(width: 140, height: 196)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
@@ -117,8 +118,20 @@ struct UploadEstimateModal: View {
                 StatTile(label: "AUDIO", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
-                StatTile(label: "GEMINI TOKENS", value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF", icon: "number", appFont: vm.appFont, accentColor: accentColor)
-                StatTile(label: "GEMINI COST", value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF", icon: "dollarsign.circle", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(
+                    label: "GEMINI TOKENS",
+                    value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF",
+                    icon: "number",
+                    appFont: vm.appFont,
+                    accentColor: accentColor
+                )
+                StatTile(
+                    label: "GEMINI COST",
+                    value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF",
+                    icon: "dollarsign.circle",
+                    appFont: vm.appFont,
+                    accentColor: accentColor
+                )
             }
         }
     }
@@ -128,10 +141,13 @@ struct UploadEstimateModal: View {
             if useGeminiCleanup, est.costWarning {
                 HStack(spacing: 8) {
                     Image(systemName: "dollarsign.circle.fill").foregroundStyle(Palette.warning)
-                    Text("Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). The shown estimate may be lower; Voqora will not silently switch to a more expensive tier.")
-                        .font(vm.appFont(size: 11))
-                        .foregroundStyle(Palette.textSecondary)
-                        .lineLimit(2)
+                    Text(
+                        "Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). " +
+                            "The shown estimate may be lower; Voqora will not silently switch to a more expensive tier."
+                    )
+                    .font(vm.appFont(size: 11))
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(2)
                 }
                 .padding(10)
                 .background(Palette.warning.opacity(0.1))
@@ -161,7 +177,7 @@ struct UploadEstimateModal: View {
                 }
                 .padding(.bottom, 4)
             }
-            if useGeminiCleanup && !bookVM.hasStoredKey {
+            if useGeminiCleanup, !bookVM.hasStoredKey {
                 // Consistent with the cost/OCR warnings above (both warning-toned)
                 // — this used to be .yellow for no evident semantic reason,
                 // despite all three being the same "Start is blocked" class
@@ -197,7 +213,7 @@ struct UploadEstimateModal: View {
             .buttonStyle(.voqoraSecondary)
 
             Button {
-                if useGeminiCleanup && !bookVM.keyVerified {
+                if useGeminiCleanup, !bookVM.keyVerified {
                     bookVM.showToast(
                         "Set a Gemini API key in Preferences first.",
                         kind: .error
@@ -256,9 +272,15 @@ struct UploadEstimateModal: View {
         useGeminiCleanup: Bool,
         hasStoredKey: Bool
     ) -> Bool {
-        if startingProcessing { return true }
-        if isImageOnly && !useGeminiCleanup { return true }
-        if useGeminiCleanup && !hasStoredKey { return true }
+        if startingProcessing {
+            return true
+        }
+        if isImageOnly, !useGeminiCleanup {
+            return true
+        }
+        if useGeminiCleanup, !hasStoredKey {
+            return true
+        }
         return false
     }
 
@@ -297,7 +319,9 @@ struct UploadEstimateModal: View {
     }
 
     private func formatCost(_ usd: Double) -> String {
-        if usd < 0.01 { return "< $0.01" }
+        if usd < 0.01 {
+            return "< $0.01"
+        }
         return String(format: "$%.2f", usd)
     }
 

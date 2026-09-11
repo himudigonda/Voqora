@@ -74,6 +74,7 @@ final class AudiobookPlayerViewTests: XCTestCase {
     }
 
     // MARK: - currentPageID / currentSection match the old unmemoized
+
     // (compactMap + sort + `last(where:)`) implementation across a range of
     // `currentTime` values, including exact boundaries.
 
@@ -83,7 +84,7 @@ final class AudiobookPlayerViewTests: XCTestCase {
 
         // -1 (before start), each exact boundary, values strictly between
         // boundaries, and past the last page's start time.
-        let sampleTimes: [Double] = [-1, 0, 5, 10, 24.999, 25, 25.001, 59, 60, 1_000]
+        let sampleTimes: [Double] = [-1, 0, 5, 10, 24.999, 25, 25.001, 59, 60, 1000]
         for time in sampleTimes {
             let expected = referenceCurrentPageID(pageToTime: pageToTime, at: time)
             let actual = AudiobookPlayerView.currentPageID(in: sortedTimes, at: time)
@@ -103,7 +104,7 @@ final class AudiobookPlayerViewTests: XCTestCase {
         ]
         let sortedSections = AudiobookPlayerView.sortSections(sections)
 
-        let sampleTimes: [Double] = [-1, 0, 60, 119.999, 120, 120.001, 299, 300, 300.001, 10_000]
+        let sampleTimes: [Double] = [-1, 0, 60, 119.999, 120, 120.001, 299, 300, 300.001, 10000]
         for time in sampleTimes {
             let expected = referenceCurrentSection(sections: sections, at: time)
             let actual = AudiobookPlayerView.currentSection(in: sortedSections, at: time)
@@ -149,7 +150,7 @@ final class AudiobookPlayerViewTests: XCTestCase {
     /// The pre-T-12 implementation, kept only here as a reference oracle.
     private func referenceCurrentPageID(pageToTime: [String: Double], at now: Double) -> Int? {
         pageToTime
-            .compactMap { (key, time) -> (Int, Double)? in Int(key).map { ($0, time) } }
+            .compactMap { key, time -> (Int, Double)? in Int(key).map { ($0, time) } }
             .sorted { $0.1 < $1.1 }
             .last(where: { $0.1 <= now })?.0
     }
@@ -167,6 +168,7 @@ final class AudiobookPlayerViewTests: XCTestCase {
     }
 
     // MARK: - splitIntoParagraphs / reflowedText (T-21: preserve paragraph
+
     // structure in the transcript instead of collapsing it away)
 
     func test_splitIntoParagraphs_blankLineSeparatesParagraphs() {
@@ -264,12 +266,12 @@ final class AudiobookPlayerViewTests: XCTestCase {
 
     // MARK: - Sentence-anchored auto-scroll (paragraphIndex)
 
-    /// Auto-scroll used to anchor to whole pages (~400 words, 2-3 minutes of
-    /// audio) while the highlight advanced sentence by sentence, so on any
-    /// page taller than the viewport the highlighted sentence scrolled out of
-    /// view and nothing brought it back until the next page boundary. The
-    /// scroll target is now the paragraph containing the current sentence,
-    /// which this maps from the flattened sentence index.
+    // Auto-scroll used to anchor to whole pages (~400 words, 2-3 minutes of
+    // audio) while the highlight advanced sentence by sentence, so on any
+    // page taller than the viewport the highlighted sentence scrolled out of
+    // view and nothing brought it back until the next page boundary. The
+    // scroll target is now the paragraph containing the current sentence,
+    // which this maps from the flattened sentence index.
 
     func testParagraphIndexMapsFirstSentenceToFirstParagraph() {
         let paragraphs = [["a.", "b."], ["c."], ["d.", "e.", "f."]]

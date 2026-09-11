@@ -18,7 +18,9 @@ enum AppIconOption: String, CaseIterable, Identifiable {
     case waveLight
     case waveClay
 
-    var id: String { rawValue }
+    var id: String {
+        rawValue
+    }
 
     var displayName: String {
         switch self {

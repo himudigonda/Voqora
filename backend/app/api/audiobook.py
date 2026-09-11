@@ -73,6 +73,11 @@ class VerifyKeyRequest(BaseModel):
     api_key: str
 
 
+class CostApprovalRequest(BaseModel):
+    approve: bool
+    new_cap_usd: float | None = None
+
+
 # Configurable cost-cap threshold; warn (don't block) above this estimated USD.
 COST_WARNING_THRESHOLD_USD = 1.00
 
@@ -156,10 +161,10 @@ async def _render_cover_task(book_id: str, is_pdf: bool) -> None:
         else:
             await loop.run_in_executor(None, TextExtractor.render_cover, book_id)
         await AudiobookStore.update_meta(book_id, cover_status="ready")
-    except Exception as e:
+    except Exception:
         log.warning(
             "audiobook.cover_render_failed",
-            extra={"book_id": book_id, "error": str(e)},
+            extra={"book_id": book_id, "failure_code": "cover_render_failed"},
             exc_info=True,
         )
         await AudiobookStore.update_meta(book_id, cover_status="failed")
@@ -268,19 +273,19 @@ async def upload_audiobook(
                     None, TextExtractor.page_count, source_path
                 )
                 is_image_only = False
-        except Exception as e:
+        except Exception as exc:
             # Not curated: the raw exception can be a library-internal
             # message (parser jargon, occasionally an internal path
             # fragment) with no useful action for the user. Log it for
             # diagnostics; the client only ever needs to know what to do.
             log.warning(
                 "audiobook.upload_could_not_read_file",
-                extra={"book_id": book_id, "error": str(e)},
+                extra={"book_id": book_id, "failure_code": "source_read_failed"},
             )
             raise HTTPException(
                 status_code=400,
                 detail="Could not read this file. It may be corrupted or in an unsupported format.",
-            ) from e
+            ) from exc
 
         # P9: reject zero-page / zero-content files early.
         if page_count == 0:
@@ -389,17 +394,18 @@ async def upload_audiobook(
         if book_id is not None:
             AudiobookStore.delete_book(book_id)
         raise
-    except Exception as e:
+    except Exception as exc:
         if book_id is not None:
             AudiobookStore.delete_book(book_id)
         # Not curated: a bare exception string reaching the user verbatim —
         # log it server-side, tell the user only what they can act on.
         log.warning(
-            "audiobook.upload_failed", extra={"book_id": book_id, "error": str(e)}
+            "audiobook.upload_failed",
+            extra={"book_id": book_id, "failure_code": "upload_failed"},
         )
         raise HTTPException(
             status_code=500, detail="Upload failed. Please try again."
-        ) from e
+        ) from exc
     finally:
         if staged_path:
             try:
@@ -603,6 +609,41 @@ async def retry_audiobook(
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
     count = await AudiobookService.retry_failed(book_id, x_gemini_api_key or "")
     return {"status": "queued", "retried_pages": count, "book_id": book_id}
+
+
+@router.post("/audiobook/{book_id}/cost-approval")
+async def resolve_cost_approval(
+    book_id: str,
+    body: CostApprovalRequest,
+    x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+):
+    """Explicitly approve a higher Standard-tier ceiling or finish locally."""
+    _validate_book_id(book_id)
+    meta = AudiobookStore.read_meta(book_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    if meta.get("status") != "needs_cost_approval":
+        raise HTTPException(
+            status_code=409, detail="This book is not awaiting cost approval."
+        )
+    if body.approve and not x_gemini_api_key:
+        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    try:
+        accepted = await AudiobookService.resolve_cost_approval(
+            book_id,
+            x_gemini_api_key or "",
+            approve=body.approve,
+            new_cap_usd=body.new_cap_usd,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    if not accepted:
+        raise HTTPException(status_code=404, detail="Book not found.")
+    return {
+        "status": "queued",
+        "book_id": book_id,
+        "tier": "standard" if body.approve else "local",
+    }
 
 
 @router.get("/audiobook/{book_id}/cover")

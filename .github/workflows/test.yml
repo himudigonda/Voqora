@@ -35,6 +35,14 @@ jobs:
       - name: Tests
         working-directory: backend
         run: uv run pytest -q
+      - name: Locked dependency vulnerability audit
+        # Inspect the exact environment created by `uv sync --frozen`; auditing
+        # an exported requirements file under the runner's Python can attempt
+        # an incompatible resolver install instead of auditing this lockfile.
+        working-directory: backend
+        run: uvx --from 'pip-audit==2.10.1' pip-audit --path .venv
+      - name: Release channel wiring
+        run: bash scripts/test_ship_modes.sh
       - name: Coverage
         working-directory: backend
         # 74% is the current verified coverage floor. Coverage below that
@@ -53,6 +61,17 @@ jobs:
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
+      - name: Install Swift quality tools
+        # Clean CI installs the review tools. Lint mode fails closed if a
+        # future tool release needs an intentional configuration review.
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install swiftlint swiftformat
+          swiftlint version
+          swiftformat --version
+      - name: Swift lint and format gate
+        run: |
+          swiftlint lint --strict --config .swiftlint.yml
+          swiftformat --lint frontend/Voqora/Voqora frontend/Voqora/VoqoraTests --swift-version 6
       - name: Cache DerivedData
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
@@ -113,3 +132,5 @@ jobs:
           test -s frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
           unzip -Z -1 frontend/Voqora/Voqora/Resources/VoqoraServer.zip | \
             rg '^VoqoraServer/VoqoraServer$'
+      - name: Launch frozen backend through inherited authenticated listener
+        run: python3 scripts/test_frozen_backend.py

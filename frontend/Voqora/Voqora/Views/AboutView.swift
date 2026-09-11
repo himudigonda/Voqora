@@ -77,7 +77,6 @@ struct AboutView: View {
         }
     }
 
-    @ViewBuilder
     private var updateSection: some View {
         VStack(spacing: 12) {
             if let latest = updater.latestGitHubVersion {
@@ -155,7 +154,7 @@ struct AboutView: View {
                 Link(destination: URL(string: "https://github.com/himudigonda")!) {
                     Image("github")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 30, height: 30)
                 }
                 .help("GitHub")
@@ -163,7 +162,7 @@ struct AboutView: View {
                 Link(destination: URL(string: "https://www.linkedin.com/in/himudigonda")!) {
                     Image("linkedin")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 30, height: 30)
                 }
                 .help("LinkedIn")
@@ -171,7 +170,7 @@ struct AboutView: View {
                 Link(destination: URL(string: "https://himudigonda.me")!) {
                     Image(systemName: "globe")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 24, height: 24)
                         .padding(4)
                 }

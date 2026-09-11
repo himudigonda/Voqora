@@ -92,13 +92,21 @@ struct PaneRow<Leading: View, Label: View>: View {
         .animation(DesignTokens.Animation.quick, value: isHovering)
         .onHover { hovering in
             isHovering = hovering
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
         }
     }
 
     private var background: Color {
-        if isSelected { return Color(ramp.muted) }
-        if isHovering { return Color(ramp.subtle) }
+        if isSelected {
+            return Color(ramp.muted)
+        }
+        if isHovering {
+            return Color(ramp.subtle)
+        }
         return .clear
     }
 }

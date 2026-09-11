@@ -74,8 +74,12 @@ async def _load_engine_background() -> None:
         # transparently inside ensure_loaded(). See HARD-032.
         await EngineManager.ensure_loaded()
         log.info("startup.engine_load.ready")
-    except Exception as exc:
-        log.error("startup.engine_load.failed", extra={"err": str(exc)}, exc_info=True)
+    except Exception:
+        log.error(
+            "startup.engine_load.failed",
+            extra={"failure_code": "engine_load_failed"},
+            exc_info=True,
+        )
         return
 
     # Wire idle-unload watcher only after the model is in RAM.

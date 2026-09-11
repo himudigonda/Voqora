@@ -25,7 +25,7 @@ final class AudioExportTests: XCTestCase {
         XCTAssertEqual(first.lastPathComponent, "Voqora_1700000000.wav")
         XCTAssertEqual(second.lastPathComponent, "Voqora_1700000000_2.wav")
         XCTAssertEqual(try Data(contentsOf: first).prefix(4), Data("RIFF".utf8))
-        XCTAssertEqual(try Data(contentsOf: first).subdata(in: 8..<12), Data("WAVE".utf8))
+        XCTAssertEqual(try Data(contentsOf: first).subdata(in: 8 ..< 12), Data("WAVE".utf8))
         XCTAssertEqual(try Data(contentsOf: first).suffix(4), pcm)
     }
 

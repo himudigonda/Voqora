@@ -21,10 +21,12 @@ import json
 import os
 import struct
 import time
+import uuid
 import wave
 from typing import Any
 
 import numpy as np
+from google.genai import types
 
 from app.core.config import settings as _settings
 from app.core.logging import get_logger
@@ -75,6 +77,14 @@ class AudiobookCancelled(Exception):
     """Raised inside a phase when the user has cancelled the job."""
 
 
+class GeminiCostApprovalRequired(Exception):
+    """Flex exhausted; a separately priced Standard request needs consent."""
+
+    def __init__(self, required_cap_usd: float):
+        self.required_cap_usd = required_cap_usd
+        super().__init__("Gemini Standard-tier approval is required.")
+
+
 def _safe_failure(error: Exception) -> tuple[str, str]:
     """Map internal failures to stable, non-content-bearing UI state."""
     if isinstance(error, GeminiAuthError):
@@ -112,6 +122,211 @@ class AudiobookService:
     _cancel_flags: dict[str, bool] = {}
     # Concurrency for Gemini cleaning (page-level parallelism).
     _CLEAN_PARALLELISM = 4
+
+    # A versioned, append-only receipt is kept in each book's metadata. Do not
+    # discard an outstanding reservation after a crash: the provider may have
+    # received the request even if our process never received a response.
+    _BUDGET_LEDGER_VERSION = 1
+
+    @classmethod
+    def _new_budget(cls, cap_usd: float) -> dict[str, Any]:
+        return {
+            "ledger_version": cls._BUDGET_LEDGER_VERSION,
+            "cap_usd": cap_usd,
+            "pricing_version": GeminiCleaner.PRICING_VERSION,
+            "ledger": [],
+            "actual_usd": 0.0,
+            "reserved_usd": 0.0,
+            "available_usd": cap_usd,
+        }
+
+    @classmethod
+    def _budget_summary(cls, budget: dict[str, Any]) -> dict[str, Any]:
+        ledger = list(budget.get("ledger") or [])
+        actual = sum(
+            float(entry.get("actual_usd") or 0.0)
+            for entry in ledger
+            if entry.get("state") == "reconciled"
+        )
+        outstanding = sum(
+            float(entry.get("reserved_usd") or 0.0)
+            for entry in ledger
+            if entry.get("state") == "reserved"
+        )
+        cap = max(0.0, float(budget.get("cap_usd") or 0.0))
+        budget.update(
+            ledger_version=cls._BUDGET_LEDGER_VERSION,
+            pricing_version=GeminiCleaner.PRICING_VERSION,
+            actual_usd=round(actual, 8),
+            reserved_usd=round(outstanding, 8),
+            available_usd=round(max(0.0, cap - actual - outstanding), 8),
+        )
+        return budget
+
+    @classmethod
+    async def _reserve_gemini_operation(
+        cls,
+        book_id: str,
+        *,
+        operation: str,
+        reserved_usd: float,
+        tier: str = "flex",
+    ) -> str | None:
+        """Persist a conservative spend reservation before provider dispatch."""
+        if reserved_usd < 0:
+            raise ValueError("A Gemini reservation cannot be negative.")
+
+        def reserve(meta: dict[str, Any]) -> str | None:
+            budget = dict(
+                meta.get("budget")
+                or cls._new_budget(_settings.MAX_GEMINI_COST_USD_PER_BOOK)
+            )
+            cls._budget_summary(budget)
+            committed = float(budget["actual_usd"]) + float(budget["reserved_usd"])
+            if committed + reserved_usd > float(budget["cap_usd"]) + 1e-9:
+                meta["budget"] = budget
+                return None
+            receipt_id = uuid.uuid4().hex
+            ledger = list(budget.get("ledger") or [])
+            ledger.append(
+                {
+                    "id": receipt_id,
+                    "operation": operation,
+                    "tier": tier,
+                    "pricing_version": GeminiCleaner.PRICING_VERSION,
+                    "state": "reserved",
+                    "reserved_usd": round(reserved_usd, 8),
+                    "created_at": _now_iso(),
+                }
+            )
+            budget["ledger"] = ledger
+            meta["budget"] = cls._budget_summary(budget)
+            return receipt_id
+
+        _, receipt_id = await AudiobookStore.mutate_meta(book_id, reserve)
+        return receipt_id
+
+    @classmethod
+    async def _reconcile_gemini_operation(
+        cls, book_id: str, receipt_id: str, usage: Any | None
+    ) -> None:
+        """Record actual provider usage, retaining reservation if usage is absent."""
+        if usage is None:
+            return
+
+        # Section detection can issue several bounded requests under one
+        # pre-reserved operation. Aggregate its individual provider receipts
+        # before replacing that operation's reservation with actual cost.
+        if isinstance(usage, (tuple, list)):
+            usable = [
+                item
+                for item in usage
+                if getattr(item, "input_tokens", None) is not None
+                and getattr(item, "output_tokens", None) is not None
+            ]
+            if not usable:
+                return
+            tier = usable[0].tier
+            usage = type(
+                "AggregateGeminiUsage",
+                (),
+                {
+                    "input_tokens": sum(int(item.input_tokens) for item in usable),
+                    "output_tokens": sum(int(item.output_tokens) for item in usable),
+                    "tier": tier,
+                },
+            )()
+
+        def reconcile(meta: dict[str, Any]) -> None:
+            budget = dict(meta.get("budget") or {})
+            ledger = list(budget.get("ledger") or [])
+            for entry in ledger:
+                if entry.get("id") != receipt_id or entry.get("state") != "reserved":
+                    continue
+                actual_usd = GeminiCleaner.cost_for_tokens(
+                    int(usage.input_tokens), int(usage.output_tokens), tier=usage.tier
+                )
+                entry.update(
+                    state="reconciled",
+                    actual_usd=round(actual_usd, 8),
+                    input_tokens=int(usage.input_tokens),
+                    output_tokens=int(usage.output_tokens),
+                    reconciled_at=_now_iso(),
+                )
+                break
+            budget["ledger"] = ledger
+            meta["budget"] = cls._budget_summary(budget)
+
+        await AudiobookStore.mutate_meta(book_id, reconcile)
+
+    @classmethod
+    async def _request_standard_approval(
+        cls, book_id: str, *, operation: str, standard_reservation_usd: float
+    ) -> float:
+        """Persist the exact minimum cap before exposing an approval choice."""
+
+        def request(meta: dict[str, Any]) -> float:
+            budget = dict(
+                meta.get("budget")
+                or cls._new_budget(_settings.MAX_GEMINI_COST_USD_PER_BOOK)
+            )
+            cls._budget_summary(budget)
+            committed = float(budget["actual_usd"]) + float(budget["reserved_usd"])
+            required = round(committed + standard_reservation_usd, 8)
+            budget["cost_approval"] = {
+                "operation": operation,
+                "required_cap_usd": required,
+                "current_cap_usd": float(budget["cap_usd"]),
+                "tier": "standard",
+                "pricing_version": GeminiCleaner.PRICING_VERSION,
+            }
+            meta["budget"] = budget
+            return required
+
+        _, required = await AudiobookStore.mutate_meta(book_id, request)
+        return float(required or 0.0)
+
+    @classmethod
+    async def resolve_cost_approval(
+        cls, book_id: str, api_key: str, *, approve: bool, new_cap_usd: float | None
+    ) -> bool:
+        """Apply an explicit Standard approval or finish the remaining work locally."""
+        meta = AudiobookStore.read_meta(book_id)
+        if meta is None:
+            return False
+        approval = dict((meta.get("budget") or {}).get("cost_approval") or {})
+        required = float(approval.get("required_cap_usd") or 0.0)
+        if approve:
+            if new_cap_usd is None or new_cap_usd + 1e-9 < required:
+                raise ValueError(
+                    "The approved cap must cover the displayed Standard request."
+                )
+
+            def approve_mutation(current: dict[str, Any]) -> None:
+                budget = dict(current.get("budget") or {})
+                budget["cap_usd"] = round(float(new_cap_usd), 8)
+                budget.pop("cost_approval", None)
+                current["budget"] = cls._budget_summary(budget)
+                # This is only set after the user approved the higher tier.
+                current["gemini_tier"] = "standard"
+                current["status"] = "queued"
+                current["error"] = None
+
+            await AudiobookStore.mutate_meta(book_id, approve_mutation)
+        else:
+
+            def local_mutation(current: dict[str, Any]) -> None:
+                budget = dict(current.get("budget") or {})
+                budget.pop("cost_approval", None)
+                current["budget"] = cls._budget_summary(budget)
+                current["uses_gemini_cleanup"] = False
+                current["gemini_tier"] = "flex"
+                current["status"] = "queued"
+                current["error"] = None
+
+            await AudiobookStore.mutate_meta(book_id, local_mutation)
+        await cls.enqueue(book_id, api_key if approve else "")
+        return True
 
     # ---------- lifecycle ----------
 
@@ -159,7 +374,7 @@ class AudiobookService:
                 error_code, error_message = _safe_failure(e)
                 log.error(
                     "audiobook.pipeline_fatal",
-                    extra={"book_id": book_id, "error": str(e)},
+                    extra={"book_id": book_id, "failure_code": error_code},
                     exc_info=True,
                 )
                 if AudiobookStore.read_meta(book_id) is not None:
@@ -226,12 +441,7 @@ class AudiobookService:
                 uses_gemini_cleanup=uses_gemini_cleanup,
                 status="queued",
                 error=None,
-                budget={
-                    "cap_usd": _settings.MAX_GEMINI_COST_USD_PER_BOOK,
-                    "reserved_usd": 0.0,
-                    "pricing_version": GeminiCleaner.PRICING_VERSION,
-                    "tier": "flex",
-                },
+                budget=cls._new_budget(_settings.MAX_GEMINI_COST_USD_PER_BOOK),
             )
             if not updated:
                 cls._scheduled_book_ids.discard(book_id)
@@ -508,6 +718,24 @@ class AudiobookService:
                 error_code="gemini_auth_failed",
             )
             log.warning("audiobook.failed_bad_api_key", extra={"book_id": book_id})
+        except GeminiCostApprovalRequired as approval:
+            message = (
+                "Gemini Flex capacity is unavailable. Approve Standard-tier work "
+                f"with a per-book cap of at least ${approval.required_cap_usd:.2f}, "
+                "or finish locally."
+            )
+            await AudiobookStore.update_meta(
+                book_id,
+                status="needs_cost_approval",
+                error=message,
+                error_code="needs_cost_approval",
+            )
+            cls._emit(
+                book_id,
+                "needs_cost_approval",
+                error=message,
+                required_cap_usd=approval.required_cap_usd,
+            )
         except Exception as e:
             # This was previously silent: it fully handles the exception (no
             # re-raise), so the outer `_worker_loop`'s pipeline_fatal handler
@@ -517,7 +745,7 @@ class AudiobookService:
             # pipeline's actual top-level failure path; it must log.
             log.error(
                 "audiobook.run_pipeline_failed",
-                extra={"book_id": book_id, "error": str(e)},
+                extra={"book_id": book_id, "failure_code": _safe_failure(e)[0]},
                 exc_info=True,
             )
             error_code, error_message = _safe_failure(e)
@@ -703,11 +931,41 @@ class AudiobookService:
                     continue
                 with open(p, encoding="utf-8") as f:
                     cleaned_pages.append(f.read())
+            input_chars, chunk_count = GeminiCleaner.section_reservation_envelope(
+                cleaned_pages
+            )
+            gemini_tier = str(meta.get("gemini_tier") or "flex")
+            receipt_id = await cls._reserve_gemini_operation(
+                book_id,
+                operation="section_detection",
+                reserved_usd=GeminiCleaner.section_reservation_cost_usd(
+                    input_chars, chunk_count, tier=gemini_tier
+                ),
+                tier=gemini_tier,
+            )
             try:
-                sections = await asyncio.wait_for(
-                    GeminiCleaner.detect_sections(api_key, cleaned_pages),
-                    timeout=120.0,
-                )
+                if receipt_id is None:
+                    log.warning(
+                        "audiobook.sections_cost_capped", extra={"book_id": book_id}
+                    )
+                    sections = []
+                else:
+                    section_call = (
+                        GeminiCleaner.detect_sections(
+                            api_key,
+                            cleaned_pages,
+                            start_tier=types.ServiceTier.STANDARD,
+                        )
+                        if gemini_tier == "standard"
+                        else GeminiCleaner.detect_sections(api_key, cleaned_pages)
+                    )
+                    sections = await asyncio.wait_for(
+                        section_call,
+                        timeout=120.0,
+                    )
+                    await cls._reconcile_gemini_operation(
+                        book_id, receipt_id, getattr(sections, "usage", None)
+                    )
             except TimeoutError:
                 log.warning(
                     "audiobook.sections_timeout",
@@ -717,10 +975,24 @@ class AudiobookService:
                 sections = []
             except GeminiAuthError:
                 raise
-            except Exception as e:
+            except GeminiCapacityError:
+                if gemini_tier == "standard":
+                    raise
+                required_cap = await cls._request_standard_approval(
+                    book_id,
+                    operation="section_detection",
+                    standard_reservation_usd=GeminiCleaner.section_reservation_cost_usd(
+                        input_chars, chunk_count, tier="standard"
+                    ),
+                )
+                raise GeminiCostApprovalRequired(required_cap)
+            except Exception:
                 log.warning(
                     "audiobook.sections_failed",
-                    extra={"book_id": book_id, "error": str(e)},
+                    extra={
+                        "book_id": book_id,
+                        "failure_code": "section_detection_failed",
+                    },
                     exc_info=True,
                 )
                 sections = []
@@ -772,6 +1044,7 @@ class AudiobookService:
         file_ext = meta.get("file_ext", "pdf")
         is_pdf = file_ext == "pdf"
         uses_gemini_cleanup = bool(meta.get("uses_gemini_cleanup", True))
+        gemini_tier = str(meta.get("gemini_tier") or "flex")
         page_count = int(meta.get("page_count") or 0)
         failed: list[int] = list(meta.get("failed_pages") or [])
 
@@ -789,32 +1062,11 @@ class AudiobookService:
         state_lock = asyncio.Lock()
         progress = {"done": done_count}
 
-        # Runtime cost governor: the upfront estimate (api/audiobook.py's
-        # /start cap check) samples only 3 pages' char counts and, for a
-        # mixed text/scanned PDF, doesn't model per-page OCR cost at all —
-        # a document with more scanned pages than the sample suggested can
-        # blow well past MAX_GEMINI_COST_USD_PER_BOOK with no runtime check
-        # once processing starts. Track actual incurred chars and, once the
-        # running estimate crosses the cap, route every subsequent page to
-        # local cleanup instead of Gemini — the same graceful-degradation
-        # pattern already used a few lines down for a timed-out Gemini call
-        # (raw_text/local fallback + page marked, book still completes),
-        # not a hard abort of the whole book. Seed from already-cleaned
-        # pages (on resume) so a book doesn't get a fresh budget every time
-        # it's interrupted and resumed.
-        gemini_chars = {"value": 0}
-        if uses_gemini_cleanup:
-            for n in range(1, page_count + 1):
-                cp = AudiobookStore.page_clean_path(book_id, n)
-                if os.path.exists(cp):
-                    try:
-                        with open(cp, encoding="utf-8") as f:
-                            # Existing clean pages represent both an input and
-                            # an output reservation on resume, never a free
-                            # reset of the per-book allowance.
-                            gemini_chars["value"] += len(f.read()) * 2
-                    except OSError:
-                        pass
+        # Every provider request gets its own durable reservation. Existing
+        # reservations (including ones left by a crash while the request was
+        # in flight) are intentionally retained in the ledger, never recreated
+        # from cleaned-page character counts. That makes resume conservative
+        # and prevents concurrent page workers from spending the same capacity.
 
         async def mark_page_failed(n: int, status: str, error: str = "") -> None:
             """Record a page as needing regeneration and tell the UI.
@@ -854,37 +1106,18 @@ class AudiobookService:
                 with open(raw_path, encoding="utf-8") as f:
                     raw_text = f.read()
 
-                async with state_lock:
-                    reserved_chars = len(raw_text) * 2
-                    cost_capped = uses_gemini_cleanup and (
-                        GeminiCleaner.estimate_cost_usd(
-                            gemini_chars["value"] + reserved_chars
-                        )
-                        > _settings.MAX_GEMINI_COST_USD_PER_BOOK
+                is_ocr = is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD
+                receipt_id: str | None = None
+                if uses_gemini_cleanup:
+                    receipt_id = await cls._reserve_gemini_operation(
+                        book_id,
+                        operation="ocr_page" if is_ocr else "clean_page",
+                        reserved_usd=GeminiCleaner.clean_reservation_cost_usd(
+                            len(raw_text), tier=gemini_tier, image_input=is_ocr
+                        ),
+                        tier=gemini_tier,
                     )
-                    if uses_gemini_cleanup and not cost_capped:
-                        # Reserve this page's cost against the shared counter
-                        # *before* releasing the lock, rather than only adding
-                        # it after the call returns. With _CLEAN_PARALLELISM
-                        # pages in flight, all of them used to read the same
-                        # pre-call snapshot and pass the check together, so the
-                        # cap could be overshot by up to that many full page
-                        # calls -- expensive when they are OCR image pages. The
-                        # reservation is the input estimate (output is added on
-                        # completion below); over-reserving is the safe
-                        # direction for a spend cap.
-                        gemini_chars["value"] += reserved_chars
-                        await AudiobookStore.update_meta(
-                            book_id,
-                            budget={
-                                "cap_usd": _settings.MAX_GEMINI_COST_USD_PER_BOOK,
-                                "reserved_usd": GeminiCleaner.estimate_cost_usd(
-                                    gemini_chars["value"]
-                                ),
-                                "pricing_version": GeminiCleaner.PRICING_VERSION,
-                                "tier": "flex",
-                            },
-                        )
+                cost_capped = uses_gemini_cleanup and receipt_id is None
 
                 try:
                     if not uses_gemini_cleanup:
@@ -912,7 +1145,7 @@ class AudiobookService:
                             "Per-book Gemini cost cap reached; "
                             "narrated with local cleanup instead.",
                         )
-                    elif is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD:
+                    elif is_ocr:
                         # Image page (PDF only) — render and OCR+clean via Gemini vision.
                         source_path = AudiobookStore.source_file_path(book_id, file_ext)
                         image_bytes = await asyncio.get_running_loop().run_in_executor(
@@ -922,9 +1155,21 @@ class AudiobookService:
                             n,
                         )
                         try:
+                            ocr_call = (
+                                GeminiCleaner.ocr_page(
+                                    api_key,
+                                    image_bytes,
+                                    start_tier=types.ServiceTier.STANDARD,
+                                )
+                                if gemini_tier == "standard"
+                                else GeminiCleaner.ocr_page(api_key, image_bytes)
+                            )
                             cleaned = await asyncio.wait_for(
-                                GeminiCleaner.ocr_page(api_key, image_bytes),
+                                ocr_call,
                                 timeout=_GEMINI_PAGE_TIMEOUT_S,
+                            )
+                            await cls._reconcile_gemini_operation(
+                                book_id, receipt_id, getattr(cleaned, "usage", None)
                             )
                         except TimeoutError:
                             log.warning(
@@ -936,9 +1181,21 @@ class AudiobookService:
                             await mark_page_failed(n, "cleaning_failed")
                     else:
                         try:
+                            clean_call = (
+                                GeminiCleaner.clean_page(
+                                    api_key,
+                                    raw_text,
+                                    start_tier=types.ServiceTier.STANDARD,
+                                )
+                                if gemini_tier == "standard"
+                                else GeminiCleaner.clean_page(api_key, raw_text)
+                            )
                             cleaned = await asyncio.wait_for(
-                                GeminiCleaner.clean_page(api_key, raw_text),
+                                clean_call,
                                 timeout=_GEMINI_PAGE_TIMEOUT_S,
+                            )
+                            await cls._reconcile_gemini_operation(
+                                book_id, receipt_id, getattr(cleaned, "usage", None)
                             )
                         except TimeoutError:
                             log.warning(
@@ -950,10 +1207,25 @@ class AudiobookService:
                             await mark_page_failed(n, "cleaning_failed")
                 except GeminiAuthError:
                     raise
-                except Exception as e:
+                except GeminiCapacityError:
+                    if gemini_tier == "standard":
+                        raise
+                    required_cap = await cls._request_standard_approval(
+                        book_id,
+                        operation="ocr_page" if is_ocr else "clean_page",
+                        standard_reservation_usd=GeminiCleaner.clean_reservation_cost_usd(
+                            len(raw_text), tier="standard", image_input=is_ocr
+                        ),
+                    )
+                    raise GeminiCostApprovalRequired(required_cap)
+                except Exception:
                     log.warning(
                         "audiobook.clean_failed",
-                        extra={"book_id": book_id, "page": n, "error": str(e)},
+                        extra={
+                            "book_id": book_id,
+                            "page": n,
+                            "failure_code": "page_cleaning_failed",
+                        },
                         exc_info=True,
                     )
                     cleaned = raw_text
@@ -963,10 +1235,10 @@ class AudiobookService:
                         "Gemini cleaning could not process this page.",
                     )
 
-                # The pre-call reservation includes a deliberately generous
-                # input/output envelope. Do not add returned text after the
-                # request: that old post-call mutation allowed concurrent
-                # workers to send more calls than the advertised cap.
+                # The pre-call reservation bounds the request before it leaves
+                # this process. A successful provider receipt is reconciled
+                # above; a timeout/cancel/no-usage response stays reserved so
+                # a resume can never pretend an ambiguous call was free.
 
                 # THE INVARIANT: nothing reaches the transcript or the TTS
                 # phonemizer without a deterministic Markdown-stripping pass.
@@ -1049,7 +1321,15 @@ class AudiobookService:
                     and isinstance(t.exception(), GeminiAuthError)
                     for t in done
                 )
-                if remaining and (cls._cancel_flags.get(book_id) or auth_failed):
+                approval_required = any(
+                    t.done()
+                    and not t.cancelled()
+                    and isinstance(t.exception(), GeminiCostApprovalRequired)
+                    for t in done
+                )
+                if remaining and (
+                    cls._cancel_flags.get(book_id) or auth_failed or approval_required
+                ):
                     for t in remaining:
                         t.cancel()
         finally:
@@ -1060,6 +1340,7 @@ class AudiobookService:
                 await asyncio.gather(*tasks, return_exceptions=True)
 
         gemini_auth_exc: GeminiAuthError | None = None
+        cost_approval_exc: GeminiCostApprovalRequired | None = None
         was_cancelled = False
         other_exc: Exception | None = None
         for t in tasks:
@@ -1071,6 +1352,8 @@ class AudiobookService:
                 continue
             if isinstance(exc, GeminiAuthError):
                 gemini_auth_exc = gemini_auth_exc or exc
+            elif isinstance(exc, GeminiCostApprovalRequired):
+                cost_approval_exc = cost_approval_exc or exc
             elif isinstance(exc, AudiobookCancelled):
                 was_cancelled = True
             else:
@@ -1078,6 +1361,8 @@ class AudiobookService:
 
         if gemini_auth_exc is not None:
             raise gemini_auth_exc
+        if cost_approval_exc is not None:
+            raise cost_approval_exc
         if was_cancelled:
             raise AudiobookCancelled(book_id)
         if other_exc is not None:
@@ -1138,10 +1423,14 @@ class AudiobookService:
                         # segment loop) must propagate as a real cancellation,
                         # not get swallowed as a per-page TTS failure below.
                         raise
-                    except Exception as e:
+                    except Exception:
                         log.warning(
                             "audiobook.tts_failed",
-                            extra={"book_id": book_id, "page": n, "error": str(e)},
+                            extra={
+                                "book_id": book_id,
+                                "page": n,
+                                "failure_code": "page_tts_failed",
+                            },
                             exc_info=True,
                         )
                         failed.append(n)
@@ -1306,7 +1595,7 @@ class AudiobookService:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(transcript, f, ensure_ascii=False)
             os.replace(tmp, tpath)
-        except Exception as e:
+        except Exception as exc:
             # Previously swallowed: the book still reached "done" with no
             # transcript.json, so GET .../transcript 404s forever and
             # retry_failed's resumable_states never fires (status="done",
@@ -1317,10 +1606,10 @@ class AudiobookService:
             # idempotent, so a retry just cheaply redoes this write.
             log.warning(
                 "audiobook.transcript_write_failed",
-                extra={"book_id": book_id, "error": str(e)},
+                extra={"book_id": book_id, "failure_code": "transcript_write_failed"},
                 exc_info=True,
             )
-            raise RuntimeError(f"Failed to write transcript: {e}") from e
+            raise RuntimeError("Failed to write transcript") from exc
 
         # Build actual stats.
         words_actual = 0
