@@ -123,8 +123,8 @@ that first launch, open **System Settings -> Privacy & Security**, choose **Open
 Anyway** for Voqora, then open it again.
 
 If that button is missing or macOS keeps showing the same warning, and you
-downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run the included
-the scoped recovery command after moving the app to Applications. You can
+downloaded the DMG from [the official release page](https://github.com/himudigonda/Voqora/releases/latest), run the
+scoped recovery command after moving the app to Applications. You can
 also run this once in Terminal:
 
 ```bash

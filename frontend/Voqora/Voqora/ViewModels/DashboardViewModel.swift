@@ -88,7 +88,9 @@ class DashboardViewModel: ObservableObject {
     }
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
-    @AppStorage("enableDucking") var enableDucking = true
+    /// New installs must opt into cross-app Automation. Existing explicit
+    /// UserDefaults values are preserved by @AppStorage.
+    @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
     @AppStorage("telemetryEnabled") var telemetryEnabled = true
@@ -237,7 +239,11 @@ class DashboardViewModel: ObservableObject {
                 guard let self else { return }
                 if isPlaying {
                     status = .speaking
-                    if enableDucking { system.setMusicVolume(ducked: true) }
+                    if enableDucking {
+                        system.beginDucking { [weak self] message in
+                            self?.showTransientError(message)
+                        }
+                    }
                     // Cancel any pending unduck — we're playing again.
                     unduckTask?.cancel()
                     unduckTask = nil
@@ -256,7 +262,7 @@ class DashboardViewModel: ObservableObject {
                             try? await Task.sleep(nanoseconds: 1_000_000_000)
                             guard !Task.isCancelled, let self else { return }
                             if !self.audio.isPlaying {
-                                self.system.setMusicVolume(ducked: false)
+                                self.system.endDucking()
                             }
                         }
                     }
@@ -492,6 +498,11 @@ class DashboardViewModel: ObservableObject {
     }
 
     func exportLastClip() {
+        // The generic export is intentionally only for retained selected-text
+        // PCM. Audiobooks are file-backed and expose their own Save-panel
+        // export, so a global/menu invocation must be a no-op rather than
+        // surfacing a misleading "no audio" failure while a book is playing.
+        guard audio.canExportLastClip else { return }
         do {
             let url = try audio.exportToDesktop()
             showActionFeedback("Saved \(url.lastPathComponent) to Desktop")

@@ -74,6 +74,7 @@ clean:
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.zip
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
 	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
+	rm -rf frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json
 	find . -name "__pycache__" -type d -exec rm -rf {} +
 	@echo "✨ Local build folders cleared."
 
@@ -191,7 +192,7 @@ endif
 # See HARD-050.
 release: check-version
 	@echo "🚀 Validating release source for v$(VERSION) before any heavy build..."
-	./scripts/validate_release.sh $(VERSION)
+	ALLOW_MISSING_BACKEND_ARTIFACT=1 ./scripts/validate_release.sh $(VERSION)
 	@echo "🚀 Starting release build for v$(VERSION) (no nuke)..."
 	$(MAKE) backend
 	chmod +x scripts/create_dmg.sh

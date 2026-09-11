@@ -155,6 +155,9 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     let estimatedProcessingSeconds: Double
     let estimatedAudioSeconds: Double
     let estimatedCostUsd: Double
+    /// Conservative envelope used for the per-book admission cap. Optional
+    /// so an already-uploaded legacy estimate remains decodable.
+    let maximumCostUsd: Double?
     let estimatedTokenCount: Int
     let isImageOnly: Bool
     let costWarning: Bool
@@ -172,6 +175,7 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case estimatedProcessingSeconds = "estimated_processing_seconds"
         case estimatedAudioSeconds = "estimated_audio_seconds"
         case estimatedCostUsd = "estimated_cost_usd"
+        case maximumCostUsd = "maximum_cost_usd"
         case estimatedTokenCount = "estimated_token_count"
         case isImageOnly = "is_image_only"
         case costWarning = "cost_warning"

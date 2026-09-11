@@ -237,6 +237,13 @@ class AudiobookStore:
         """Save any source file type under source.{ext}."""
         Path(cls.source_file_path(book_id, ext)).write_bytes(content)
 
+    @classmethod
+    def adopt_staged_source(cls, book_id: str, staged_path: str, ext: str) -> str:
+        """Atomically adopt a validated upload staged inside our root dir."""
+        destination = cls.source_file_path(book_id, ext)
+        os.replace(staged_path, destination)
+        return destination
+
     # ---------- meta (SQLite-backed) ----------
 
     @classmethod
@@ -345,6 +352,21 @@ class AudiobookStore:
             db_existed = cur.rowcount > 0
         cls._meta_locks.pop(book_id, None)
         return existed or db_existed
+
+    @classmethod
+    def delete_all_books(cls) -> int:
+        """Delete every book and its source/derived artifacts.
+
+        This intentionally leaves application settings, credentials and logs
+        alone; the desktop's explicit *erase all Voqora data* action owns that
+        larger destructive scope. Repeated calls are safe and report zero.
+        """
+        book_ids = [book.get("book_id") for book in cls.list_books()]
+        deleted = 0
+        for book_id in book_ids:
+            if isinstance(book_id, str) and cls.delete_book(book_id):
+                deleted += 1
+        return deleted
 
     # ---------- test helpers ----------
 

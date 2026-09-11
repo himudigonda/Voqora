@@ -8,28 +8,32 @@ import SwiftUI
 final class CoverColorExtractor {
     static let shared = CoverColorExtractor()
 
-    private var cache: [URL: Color] = [:]
-    private var inFlight: [URL: Task<Color, Never>] = [:]
+    private var cache: [String: Color] = [:]
+    private var inFlight: [String: Task<Color, Never>] = [:]
 
-    func dominantColor(for url: URL) async -> Color {
-        if let cached = cache[url] { return cached }
-        if let task = inFlight[url] { return await task.value }
+    func dominantColor(forBackendPath path: String) async -> Color {
+        if let cached = cache[path] { return cached }
+        if let task = inFlight[path] { return await task.value }
 
         let task = Task<Color, Never> { [weak self] in
             guard let self else { return Palette.textTertiary }
             do {
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let request = try BackendConnection.shared.request(path: path, timeout: 10)
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode)
+                else { return Palette.textTertiary }
                 guard let image = NSImage(data: data) else { return Palette.textTertiary }
                 let color = Self.computeDominantColor(image)
-                self.cache[url] = color
+                self.cache[path] = color
                 return color
             } catch {
                 return Palette.textTertiary
             }
         }
-        inFlight[url] = task
+        inFlight[path] = task
         let value = await task.value
-        inFlight[url] = nil
+        inFlight[path] = nil
         return value
     }
 

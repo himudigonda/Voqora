@@ -1,5 +1,41 @@
 # Changelog
 
+## [1.2.3] - 2026-09-10
+
+### Security and release hardening
+
+- The desktop app and bundled local backend now use a fresh, authenticated
+  private connection for every launch. A process that merely occupies a known
+  localhost port can no longer impersonate Voqora's speech service.
+- The packaged local inference runtime is now sealed by a deterministic
+  manifest. Voqora validates the bundled archive before extraction and checks
+  every extracted runtime file, hash, mode, and path before it can run.
+- Release builds keep hardened-runtime library validation enabled. The release
+  preflight now rejects missing or mismatched backend integrity manifests in
+  both the source tree and the mounted DMG.
+- Document imports now stream to a staged file and enforce content-based file
+  checks plus page, archive, expansion, raster, duration, library-size, and
+  free-disk limits. Unsafe or incomplete imports are removed rather than
+  becoming partial library entries.
+- Exportable diagnostics redact document content, file paths, provider errors,
+  credentials, and local transport secrets. Source documents remain on this
+  Mac until their audiobook is deleted; the library also has an explicit
+  delete-all control with a clear scope.
+
+### Audiobooks and interaction
+
+- Repeated starts for the same book are rejected instead of creating duplicate
+  processing jobs or duplicate provider work.
+- Gemini cleanup no longer silently escalates from Flex to a higher-priced
+  tier. The app discloses a conservative per-book cost envelope and reserves
+  cleanup capacity before concurrent work begins.
+- Completed audiobooks can be exported through a normal Save panel from the
+  validated on-disk WAV; this is separate from the short-clip export action.
+- Music ducking is opt-in for new installs, restores each affected player's
+  exact prior volume, and reports automation permission failures.
+- A focused text editor keeps normal editing-shortcut precedence over Voqora's
+  global actions.
+
 ## [1.2.2] - 2026-09-10
 
 ### Fixed — narration no longer reads formatting aloud

@@ -1,4 +1,6 @@
 @testable import Voqora
+import AppKit
+import CryptoKit
 import XCTest
 
 /// Pure-logic state-machine tests for DashboardViewModel.
@@ -114,13 +116,13 @@ final class DashboardViewModelTests: XCTestCase {
 
     func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() {
         let ok = HTTPURLResponse(
-            url: URL(string: "http://127.0.0.1:10101/speak")!,
+            url: URL(string: "http://localhost/speak")!,
             statusCode: 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "audio/wav"]
         )!
         let serverError = HTTPURLResponse(
-            url: URL(string: "http://127.0.0.1:10101/speak")!,
+            url: URL(string: "http://localhost/speak")!,
             statusCode: 500,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
@@ -228,6 +230,37 @@ final class DashboardViewModelTests: XCTestCase {
             "new"
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
+    }
+
+    func test_runtimeValidationRejectsTamperedAndUnexpectedFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraRuntimeValidationTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = root.appendingPathComponent("VoqoraServer", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+
+        let original = Data("verified executable".utf8)
+        let executable = runtime.appendingPathComponent("VoqoraServer")
+        try original.write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let hash = SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
+        let manifest = LaunchManager.RuntimeManifest(
+            format: 1,
+            version: "1.2.3",
+            archiveSHA256: String(repeating: "a", count: 64),
+            root: "VoqoraServer",
+            files: [.init(path: "VoqoraServer", sha256: hash, mode: 0o755)]
+        )
+
+        XCTAssertNoThrow(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
+
+        try Data("tampered".utf8).write(to: executable)
+        XCTAssertThrowsError(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
+
+        try original.write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        try Data("unexpected".utf8).write(to: runtime.appendingPathComponent("extra"))
+        XCTAssertThrowsError(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
     }
 
     // MARK: - togglePlayback error path
@@ -429,5 +462,31 @@ final class DashboardViewModelTests: XCTestCase {
             currentChangeCount: 2, lastChangeCount: 1,
             isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: false
         ))
+    }
+
+    func test_diagnosticContextRedactsSecretsAndSourceContent() {
+        let canary = "CANARY_SOURCE_PROSE_do_not_export"
+        let key = "AIzaSyDUMMY-should-never-reach-a-log"
+        let token = String(repeating: "a", count: 64)
+
+        let safe = VoqoraLog.redactedContext([
+            "error": canary,
+            "apiKey": key,
+            "ipcToken": token,
+            "page": "4",
+        ])
+
+        XCTAssertEqual(safe["error_redacted"], "true")
+        XCTAssertEqual(safe["apiKey_redacted"], "true")
+        XCTAssertEqual(safe["ipcToken_redacted"], "true")
+        XCTAssertEqual(safe["page"], "4")
+        XCTAssertFalse(safe.values.contains(canary))
+        XCTAssertFalse(safe.values.contains(key))
+        XCTAssertFalse(safe.values.contains(token))
+    }
+
+    func test_focusedTextInputKeepsEditingShortcutPrecedence() {
+        XCTAssertTrue(VoqoraApp.focusedTextInputOwnsShortcut(responder: NSTextView()))
+        XCTAssertFalse(VoqoraApp.focusedTextInputOwnsShortcut(responder: NSView()))
     }
 }

@@ -38,6 +38,7 @@ final class AudiobookViewModel: ObservableObject {
     @Published var pendingDocument: URL? = nil
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
+    @Published private(set) var deletingAllBooks = false
     @Published var completionSummary: Audiobook? = nil
 
     /// One document dropped while another upload was already pending.
@@ -646,6 +647,18 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
+    /// Resolves the already-completed book through the same authenticated,
+    /// WAV-validating cache path used by playback. The UI chooses the save
+    /// destination; there is intentionally no generic clip export fallback
+    /// here because a book export must always originate from validated book
+    /// audio, not transient in-memory PCM.
+    func validatedAudioURL(for book: Audiobook) async throws -> URL {
+        guard book.status == "done" else {
+            throw AudiobookServiceError.audioNotReady
+        }
+        return try await localAudioURL(book.bookID)
+    }
+
     /// Returns the most recently played book that's still ready, if any.
     var continueListeningBook: Audiobook? {
         guard !lastPlayedBookID.isEmpty else { return nil }
@@ -865,6 +878,34 @@ final class AudiobookViewModel: ObservableObject {
             // P5: drop processing-state entry so it doesn't leak.
             processingState.removeValue(forKey: book.bookID)
             await refresh()
+        }
+    }
+
+    /// Remove every local source, transcript and derived-audio artifact after
+    /// the view has presented an explicit destructive confirmation. Stop and
+    /// invalidate all local playback/SSE work before the backend starts its
+    /// coordinated delete so a stale task cannot repopulate the shelf.
+    func deleteAllBooks() {
+        guard !deletingAllBooks else { return }
+        deletingAllBooks = true
+        stopPlayback()
+        sseTasks.values.forEach { $0.cancel() }
+        sseTasks.removeAll()
+        sseGeneration.removeAll()
+        processingState.removeAll()
+        Task {
+            defer { deletingAllBooks = false }
+            do {
+                try await service.deleteAll()
+                books = []
+                completionSummary = nil
+                pendingDeepLink = nil
+                lastPlayedBookID = ""
+                showToast("Deleted all local audiobooks and their source files.", kind: .success)
+            } catch {
+                showToast("Could not delete every audiobook. Try again before removing Voqora data.", kind: .error)
+                await refresh()
+            }
         }
     }
 

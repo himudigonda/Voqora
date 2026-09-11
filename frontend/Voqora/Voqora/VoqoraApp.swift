@@ -175,34 +175,56 @@ struct VoqoraApp: App {
         VoqoraLog.info("KeyboardShortcuts", "Initializing registration")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
-            VoqoraLog.info("KeyboardShortcuts", "playText triggered")
             Task { @MainActor in
+                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                VoqoraLog.info("KeyboardShortcuts", "playText triggered")
                 await vm.speakSelection()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .togglePause) {
-            VoqoraLog.info("KeyboardShortcuts", "togglePause triggered")
             Task { @MainActor in
+                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                VoqoraLog.info("KeyboardShortcuts", "togglePause triggered")
                 vm.togglePlayback()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .stopText) {
-            VoqoraLog.info("KeyboardShortcuts", "stopText triggered")
             Task { @MainActor in
+                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                VoqoraLog.info("KeyboardShortcuts", "stopText triggered")
                 vm.stopPlayback()
             }
         }
 
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
-            VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
             Task { @MainActor in
+                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
                 vm.exportLastClip()
             }
         }
 
         VoqoraLog.info("KeyboardShortcuts", "All shortcuts registered")
+    }
+
+    /// Global app actions must never steal normal editing shortcuts. AppKit
+    /// exposes a field's active editor as an NSTextView, so walk the responder
+    /// chain rather than trying to infer focus from a particular SwiftUI view.
+    @MainActor
+    static func focusedTextInputOwnsShortcut() -> Bool {
+        focusedTextInputOwnsShortcut(responder: NSApp.keyWindow?.firstResponder)
+    }
+
+    @MainActor
+    static func focusedTextInputOwnsShortcut(responder: NSResponder?) -> Bool {
+        var current = responder
+        while let responder = current {
+            if responder is NSTextView { return true }
+            current = responder.nextResponder
+        }
+        return false
     }
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true

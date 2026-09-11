@@ -23,16 +23,18 @@ log = get_logger(__name__)
 # https://ai.google.dev/gemini-api/docs/flex-inference
 INPUT_USD_PER_M_TOKENS = 0.375  # $0.75/M standard, Flex = 50%
 OUTPUT_USD_PER_M_TOKENS = 1.875  # $3.75/M standard, Flex = 50%
+STANDARD_INPUT_USD_PER_M_TOKENS = 0.75
+STANDARD_OUTPUT_USD_PER_M_TOKENS = 3.75
+PRICING_VERSION = "gemini-3.8-flash-2026-09"
 
 # gemini-2.5-flash was sunset for new users (404: "no longer available to new
 # users") as of Sept 2026 — migrated to gemini-3.8-flash.
 MODEL_NAME = "gemini-3.8-flash"
 
 # Flex service tier: 50% cheaper than standard, best-effort/sheddable capacity
-# (minutes-scale latency, can 503 under load). We retry with backoff and, after
-# repeated capacity errors, fall back to the Standard tier (see _with_retry) so
-# a Flex crunch can't stall audiobook generation indefinitely. The long client
-# timeout is only used for Flex calls, to tolerate its queuing.
+# (minutes-scale latency, can 503 under load). We retry only within Flex; a
+# Standard-tier request needs explicit per-book user approval before dispatch.
+# The long client timeout is only used for Flex calls, to tolerate queuing.
 # https://ai.google.dev/gemini-api/docs/flex-inference
 FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)  # 15 min, per Google's guidance
 
@@ -153,6 +155,9 @@ class GeminiCapacityError(Exception):
 
 
 class GeminiCleaner:
+    # Expose the recorded pricing receipt through the service API so job
+    # metadata remains self-describing without duplicating a magic string.
+    PRICING_VERSION = PRICING_VERSION
     _MAX_RETRIES = 4
     _BACKOFF_BASE = 2.0  # 2s, 4s, 8s, 16s
     # Consecutive Flex 503s before the remaining attempts switch to Standard tier.
@@ -184,7 +189,6 @@ class GeminiCleaner:
         """
         last_exc: Exception | None = None
         tier = start_tier
-        flex_capacity_failures = 0
         for attempt in range(cls._MAX_RETRIES):
             try:
                 return await coro_factory(tier)
@@ -192,14 +196,6 @@ class GeminiCleaner:
                 raise
             except GeminiCapacityError as e:
                 last_exc = e
-                if tier == types.ServiceTier.FLEX:
-                    flex_capacity_failures += 1
-                    if flex_capacity_failures >= cls._FLEX_FALLBACK_AFTER:
-                        log.warning(
-                            "gemini.flex_capacity_fallback",
-                            extra={"label": label, "attempt": attempt},
-                        )
-                        tier = types.ServiceTier.STANDARD
             except (GeminiRateLimitError, GeminiBadResponseError) as e:
                 last_exc = e
             except Exception as e:
@@ -342,6 +338,15 @@ class GeminiCleaner:
         input_usd = (tok / 1_000_000) * INPUT_USD_PER_M_TOKENS
         output_usd = (tok / 1_000_000) * OUTPUT_USD_PER_M_TOKENS
         return input_usd + output_usd
+
+    @classmethod
+    def estimate_max_cost_usd(cls, total_chars: int) -> float:
+        """Conservative Standard-tier envelope for preflight disclosure."""
+        input_tokens = cls.estimate_tokens(total_chars)
+        output_tokens = max(input_tokens * 2, 1)
+        return (input_tokens / 1_000_000) * STANDARD_INPUT_USD_PER_M_TOKENS + (
+            output_tokens / 1_000_000
+        ) * STANDARD_OUTPUT_USD_PER_M_TOKENS
 
     # ---------- section detection (Phase 2) ----------
 

@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import tempfile
 from typing import Any
 
 from fastapi import (
@@ -29,6 +30,12 @@ from app.services.audiobook_service import AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.engine_manager import EngineManager
 from app.services.gemini_cleaner import GeminiCleaner
+from app.services.import_limits import (
+    ImportLimitError,
+    ensure_storage_capacity,
+    validate_docx_archive,
+    validate_magic,
+)
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
 
@@ -49,6 +56,7 @@ class AudiobookEstimate(BaseModel):
     estimated_processing_seconds: float
     estimated_audio_seconds: float
     estimated_cost_usd: float
+    maximum_cost_usd: float
     estimated_token_count: int
     is_image_only: bool
     cost_warning: bool
@@ -188,48 +196,61 @@ async def upload_audiobook(
         voice, speed, engine
     )
 
-    # Stream-read with a hard size cap. `await file.read()` is unbounded and
-    # would OOM the backend on a 1 GB upload. See HARD-017.
+    # Stream straight to a private staging file. Keeping chunks in a list and
+    # joining them later made a nominal 100 MB document occupy multiple large
+    # process allocations while the speech model was also resident.
     max_bytes = settings.MAX_AUDIOBOOK_UPLOAD_MB * 1024 * 1024
-    parts: list[bytes] = []
     total = 0
-    while True:
-        chunk = await file.read(1 << 20)  # 1 MiB
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit.",
-            )
-        parts.append(chunk)
-    content = b"".join(parts)
-    if not content:
-        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
-    if file_ext == "pdf" and len(content) < 100:
-        raise HTTPException(
-            status_code=400, detail="The uploaded file is too small to be a valid PDF."
-        )
-    title = filename
-
-    content_hash = hashlib.sha256(content).hexdigest()
-    duplicate = next(
-        (
-            b
-            for b in AudiobookStore.list_books()
-            if b.get("source_sha256") == content_hash
-        ),
-        None,
-    )
-
-    book_id = AudiobookStore.create_book(title)
-    # Wrap everything after book creation so any unexpected failure cleans up
-    # the directory and never leaves an orphan row in the DB.
+    digest = hashlib.sha256()
+    staged_path: str | None = None
+    book_id: str | None = None
     try:
-        AudiobookStore.save_source(book_id, content, file_ext)
+        descriptor, staged_path = tempfile.mkstemp(
+            prefix=".upload-", suffix=f".{file_ext}", dir=AudiobookStore.root_dir()
+        )
+        with os.fdopen(descriptor, "wb") as staged:
+            while True:
+                chunk = await file.read(1 << 20)  # 1 MiB
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit.",
+                    )
+                digest.update(chunk)
+                staged.write(chunk)
+            staged.flush()
+            os.fsync(staged.fileno())
 
-        source_path = AudiobookStore.source_file_path(book_id, file_ext)
+        if total == 0:
+            raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+        if file_ext == "pdf" and total < 100:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded file is too small to be a valid PDF.",
+            )
+        validate_magic(staged_path, file_ext)
+        if file_ext == "docx":
+            validate_docx_archive(staged_path)
+
+        title = filename
+        content_hash = digest.hexdigest()
+        duplicate = next(
+            (
+                b
+                for b in AudiobookStore.list_books()
+                if b.get("source_sha256") == content_hash
+            ),
+            None,
+        )
+
+        book_id = AudiobookStore.create_book(title)
+        source_path = AudiobookStore.adopt_staged_source(book_id, staged_path, file_ext)
+        staged_path = None
+        # Wrap everything after book creation so any unexpected failure cleans up
+        # the directory and never leaves an orphan row in the DB.
         loop = asyncio.get_running_loop()
 
         is_pdf = file_ext == "pdf"
@@ -267,6 +288,14 @@ async def upload_audiobook(
                 status_code=400,
                 detail="This file has no extractable content. Try a different file.",
             )
+        if page_count > settings.MAX_AUDIOBOOK_PAGES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"This document has more than {settings.MAX_AUDIOBOOK_PAGES:,} pages. "
+                    "Split it into smaller books before importing."
+                ),
+            )
 
         # Image-only PDFs → substitute per-page estimate; text files always have text.
         if is_image_only:
@@ -296,6 +325,23 @@ async def upload_audiobook(
         estimate["token_count"] = GeminiCleaner.estimate_tokens(
             sample_chars * page_count
         )
+        estimate["max_cost_usd"] = GeminiCleaner.estimate_max_cost_usd(
+            sample_chars * page_count
+        )
+        estimate["pricing_version"] = GeminiCleaner.PRICING_VERSION
+        if estimate["audio_seconds"] > settings.MAX_AUDIOBOOK_DURATION_SECONDS:
+            raise HTTPException(
+                status_code=413,
+                detail="This book would exceed Voqora's 24-hour narration limit.",
+            )
+        try:
+            ensure_storage_capacity(
+                total,
+                estimate["audio_seconds"],
+                library_root=AudiobookStore.root_dir(),
+            )
+        except ImportLimitError as exc:
+            raise HTTPException(status_code=413, detail=str(exc)) from exc
 
         # This is a transparent *optional* Gemini estimate. The cap is
         # enforced only if the user explicitly enables cleanup at /start;
@@ -324,21 +370,28 @@ async def upload_audiobook(
             title=title,
             page_count=page_count,
             estimated_token_count=estimate["token_count"],
-            cost_warning=estimate["cost_usd"] >= COST_WARNING_THRESHOLD_USD,
+            cost_warning=estimate["max_cost_usd"] >= COST_WARNING_THRESHOLD_USD,
             word_count_estimate=estimate["words"],
             estimated_processing_seconds=estimate["processing_seconds"],
             estimated_audio_seconds=estimate["audio_seconds"],
             estimated_cost_usd=estimate["cost_usd"],
+            maximum_cost_usd=estimate["max_cost_usd"],
             is_image_only=is_image_only,
             duplicate_of_book_id=duplicate.get("book_id") if duplicate else None,
             duplicate_of_title=duplicate.get("title") if duplicate else None,
         )
 
+    except ImportLimitError as exc:
+        if book_id is not None:
+            AudiobookStore.delete_book(book_id)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except HTTPException:
-        AudiobookStore.delete_book(book_id)
+        if book_id is not None:
+            AudiobookStore.delete_book(book_id)
         raise
     except Exception as e:
-        AudiobookStore.delete_book(book_id)
+        if book_id is not None:
+            AudiobookStore.delete_book(book_id)
         # Not curated: a bare exception string reaching the user verbatim —
         # log it server-side, tell the user only what they can act on.
         log.warning(
@@ -347,6 +400,12 @@ async def upload_audiobook(
         raise HTTPException(
             status_code=500, detail="Upload failed. Please try again."
         ) from e
+    finally:
+        if staged_path:
+            try:
+                os.unlink(staged_path)
+            except FileNotFoundError:
+                pass
 
 
 @router.post("/audiobook/{book_id}/start")
@@ -364,12 +423,16 @@ async def start_audiobook(
     uses_gemini_cleanup = (x_voqora_gemini_cleanup or "").lower() == "true"
     if uses_gemini_cleanup and not x_gemini_api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
-    estimated_cost = float((meta.get("estimated") or {}).get("cost_usd") or 0)
+    estimated_cost = float(
+        (meta.get("estimated") or {}).get("max_cost_usd")
+        or (meta.get("estimated") or {}).get("cost_usd")
+        or 0
+    )
     if uses_gemini_cleanup and estimated_cost > settings.MAX_GEMINI_COST_USD_PER_BOOK:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"Estimated Gemini cost ${estimated_cost:.2f} exceeds "
+                f"The conservative Gemini cost envelope ${estimated_cost:.2f} exceeds "
                 f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
             ),
         )
@@ -419,6 +482,13 @@ async def audiobook_events(book_id: str):
 @router.get("/audiobook")
 def list_audiobooks() -> list[dict[str, Any]]:
     return AudiobookStore.list_books()
+
+
+@router.delete("/audiobook")
+async def delete_all_audiobooks():
+    """Remove every local book, source document, transcript, and audio file."""
+    deleted = await AudiobookService.request_delete_all()
+    return {"status": "deleted", "deleted_books": deleted}
 
 
 @router.get("/audiobook/{book_id}")

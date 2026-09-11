@@ -33,7 +33,9 @@ from app.services.engine_manager import EngineManager
 from app.services.gemini_cleaner import (
     FLEX_HTTP_OPTIONS,
     GeminiAuthError,
+    GeminiCapacityError,
     GeminiCleaner,
+    GeminiRateLimitError,
 )
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
@@ -71,6 +73,26 @@ WAV_HEADER_SIZE = 44
 
 class AudiobookCancelled(Exception):
     """Raised inside a phase when the user has cancelled the job."""
+
+
+def _safe_failure(error: Exception) -> tuple[str, str]:
+    """Map internal failures to stable, non-content-bearing UI state."""
+    if isinstance(error, GeminiAuthError):
+        return (
+            "gemini_auth_failed",
+            "Gemini authentication failed. Update the API key in Settings.",
+        )
+    if isinstance(error, (GeminiCapacityError, GeminiRateLimitError)):
+        return (
+            "gemini_unavailable",
+            "Gemini is temporarily unavailable. Try again later.",
+        )
+    if isinstance(error, (OSError, IOError)):
+        return "storage_unavailable", "Voqora could not read or write local book data."
+    return (
+        "processing_failed",
+        "This audiobook could not be processed. Try again or re-import it.",
+    )
 
 
 class AudiobookService:
@@ -134,6 +156,7 @@ class AudiobookService:
                 cls._current_book_id = book_id
                 await cls._run_pipeline(book_id)
             except Exception as e:
+                error_code, error_message = _safe_failure(e)
                 log.error(
                     "audiobook.pipeline_fatal",
                     extra={"book_id": book_id, "error": str(e)},
@@ -141,9 +164,14 @@ class AudiobookService:
                 )
                 if AudiobookStore.read_meta(book_id) is not None:
                     await AudiobookStore.update_meta(
-                        book_id, status="failed", error=str(e)
+                        book_id,
+                        status="failed",
+                        error=error_message,
+                        error_code=error_code,
                     )
-                    cls._emit(book_id, "failed", error=str(e))
+                    cls._emit(
+                        book_id, "failed", error=error_message, error_code=error_code
+                    )
             finally:
                 cls._current_book_id = None
                 cls._job_keys.pop(book_id, None)
@@ -198,6 +226,12 @@ class AudiobookService:
                 uses_gemini_cleanup=uses_gemini_cleanup,
                 status="queued",
                 error=None,
+                budget={
+                    "cap_usd": _settings.MAX_GEMINI_COST_USD_PER_BOOK,
+                    "reserved_usd": 0.0,
+                    "pricing_version": GeminiCleaner.PRICING_VERSION,
+                    "tier": "flex",
+                },
             )
             if not updated:
                 cls._scheduled_book_ids.discard(book_id)
@@ -255,6 +289,21 @@ class AudiobookService:
         cls._cancel_flags.pop(book_id, None)
         cls._job_keys.pop(book_id, None)
         return True
+
+    @classmethod
+    async def request_delete_all(cls) -> int:
+        """Coordinate cancellation before removing every local book.
+
+        Snapshot IDs first so an in-flight worker cannot resurrect a row after
+        the delete. `request_delete` already waits for the current pipeline at
+        safe phase boundaries and is idempotent for books deleted in between.
+        """
+        book_ids = [book.get("book_id") for book in AudiobookStore.list_books()]
+        deleted = 0
+        for book_id in book_ids:
+            if isinstance(book_id, str) and await cls.request_delete(book_id):
+                deleted += 1
+        return deleted
 
     @classmethod
     async def retry_failed(cls, book_id: str, api_key: str) -> int:
@@ -446,13 +495,18 @@ class AudiobookService:
             )
             cls._emit(book_id, "cancelled", error="Cancelled by user.")
             log.info("audiobook.cancelled", extra={"book_id": book_id})
-        except GeminiAuthError as e:
+        except GeminiAuthError:
             await AudiobookStore.update_meta(
                 book_id,
                 status="failed",
                 error="Invalid Gemini API key. Update in Settings.",
             )
-            cls._emit(book_id, "failed", error=str(e))
+            cls._emit(
+                book_id,
+                "failed",
+                error="Gemini authentication failed. Update the API key in Settings.",
+                error_code="gemini_auth_failed",
+            )
             log.warning("audiobook.failed_bad_api_key", extra={"book_id": book_id})
         except Exception as e:
             # This was previously silent: it fully handles the exception (no
@@ -466,8 +520,14 @@ class AudiobookService:
                 extra={"book_id": book_id, "error": str(e)},
                 exc_info=True,
             )
-            await AudiobookStore.update_meta(book_id, status="failed", error=str(e))
-            cls._emit(book_id, "failed", error=str(e))
+            error_code, error_message = _safe_failure(e)
+            await AudiobookStore.update_meta(
+                book_id,
+                status="failed",
+                error=error_message,
+                error_code=error_code,
+            )
+            cls._emit(book_id, "failed", error=error_message, error_code=error_code)
         finally:
             cls._cancel_flags.pop(book_id, None)
 
@@ -749,7 +809,10 @@ class AudiobookService:
                 if os.path.exists(cp):
                     try:
                         with open(cp, encoding="utf-8") as f:
-                            gemini_chars["value"] += len(f.read())
+                            # Existing clean pages represent both an input and
+                            # an output reservation on resume, never a free
+                            # reset of the per-book allowance.
+                            gemini_chars["value"] += len(f.read()) * 2
                     except OSError:
                         pass
 
@@ -792,9 +855,12 @@ class AudiobookService:
                     raw_text = f.read()
 
                 async with state_lock:
+                    reserved_chars = len(raw_text) * 2
                     cost_capped = uses_gemini_cleanup and (
-                        GeminiCleaner.estimate_cost_usd(gemini_chars["value"])
-                        >= _settings.MAX_GEMINI_COST_USD_PER_BOOK
+                        GeminiCleaner.estimate_cost_usd(
+                            gemini_chars["value"] + reserved_chars
+                        )
+                        > _settings.MAX_GEMINI_COST_USD_PER_BOOK
                     )
                     if uses_gemini_cleanup and not cost_capped:
                         # Reserve this page's cost against the shared counter
@@ -807,7 +873,18 @@ class AudiobookService:
                         # reservation is the input estimate (output is added on
                         # completion below); over-reserving is the safe
                         # direction for a spend cap.
-                        gemini_chars["value"] += len(raw_text)
+                        gemini_chars["value"] += reserved_chars
+                        await AudiobookStore.update_meta(
+                            book_id,
+                            budget={
+                                "cap_usd": _settings.MAX_GEMINI_COST_USD_PER_BOOK,
+                                "reserved_usd": GeminiCleaner.estimate_cost_usd(
+                                    gemini_chars["value"]
+                                ),
+                                "pricing_version": GeminiCleaner.PRICING_VERSION,
+                                "tier": "flex",
+                            },
+                        )
 
                 try:
                     if not uses_gemini_cleanup:
@@ -880,19 +957,16 @@ class AudiobookService:
                         exc_info=True,
                     )
                     cleaned = raw_text
-                    await mark_page_failed(n, "cleaning_failed", str(e))
+                    await mark_page_failed(
+                        n,
+                        "cleaning_failed",
+                        "Gemini cleaning could not process this page.",
+                    )
 
-                if uses_gemini_cleanup and not cost_capped:
-                    async with state_lock:
-                        # Input was already reserved before the call; add only
-                        # the output now so the total isn't double-counted.
-                        gemini_chars["value"] += len(cleaned)
-                        # Crossing the cap here just updates the shared
-                        # counter — the next page(s) to reach the pre-check
-                        # above see it and route to local cleanup instead of
-                        # Gemini. Not raised/aborted: this page's own call
-                        # already happened and produced good text, so there
-                        # is no reason to discard it or fail the whole book.
+                # The pre-call reservation includes a deliberately generous
+                # input/output envelope. Do not add returned text after the
+                # request: that old post-call mutation allowed concurrent
+                # workers to send more calls than the advertised cap.
 
                 # THE INVARIANT: nothing reaches the transcript or the TTS
                 # phonemizer without a deterministic Markdown-stripping pass.
@@ -1082,7 +1156,12 @@ class AudiobookService:
                             book_id, failed_pages=failed, page_status=page_status
                         )
                         cls._emit(
-                            book_id, "page_failed", phase="tts", page=n, error=str(e)
+                            book_id,
+                            "page_failed",
+                            phase="tts",
+                            page=n,
+                            error="Narration could not generate this page.",
+                            error_code="tts_failed",
                         )
                         cls._write_silence_wav(out_path, 0.5)
 

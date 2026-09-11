@@ -2,10 +2,18 @@
 set -euo pipefail
 echo "🚀 STARTING BACKEND BUILD..."
 
+# Resolve once so every later path (including the temporary `dist` directory)
+# is rooted at this checkout. Invoking a venv through `../.venv` from dist
+# makes Python report a mismatched sys.prefix, which is a release-build warning
+# even though the interpreter happens to run.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT"
+
 RESOURCE_DIR="frontend/Voqora/Voqora/Resources"
 ARCHIVE_PATH="$RESOURCE_DIR/VoqoraServer.zip"
 ARCHIVE_BUILD_ID_PATH="$RESOURCE_DIR/VoqoraServer.build-id"
 INPUT_BUILD_ID_PATH="$RESOURCE_DIR/VoqoraServer.inputs.sha256"
+MANIFEST_PATH="$RESOURCE_DIR/VoqoraServer.manifest.json"
 
 # Rebuilding the frozen service takes significant CPU and memory. Reuse a
 # package only when the exact runtime inputs, lockfile and archive digest all
@@ -33,12 +41,17 @@ INPUT_BUILD_ID="$(compute_input_build_id)"
 if [ "${FORCE_BACKEND_REBUILD:-0}" != "1" ] \
     && [ -f "$ARCHIVE_PATH" ] \
     && [ -f "$ARCHIVE_BUILD_ID_PATH" ] \
-    && [ -f "$INPUT_BUILD_ID_PATH" ]; then
+    && [ -f "$INPUT_BUILD_ID_PATH" ] \
+    && [ -f "$MANIFEST_PATH" ]; then
     STORED_INPUT_BUILD_ID="$(tr -d '[:space:]' < "$INPUT_BUILD_ID_PATH")"
     STORED_ARCHIVE_BUILD_ID="$(tr -d '[:space:]' < "$ARCHIVE_BUILD_ID_PATH")"
     CURRENT_ARCHIVE_BUILD_ID="$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')"
     if [ "$STORED_INPUT_BUILD_ID" = "$INPUT_BUILD_ID" ] \
-        && [ "$STORED_ARCHIVE_BUILD_ID" = "$CURRENT_ARCHIVE_BUILD_ID" ]; then
+        && [ "$STORED_ARCHIVE_BUILD_ID" = "$CURRENT_ARCHIVE_BUILD_ID" ] \
+        && python3 scripts/generate_backend_manifest.py \
+            --archive "$ARCHIVE_PATH" \
+            --version "$(awk -F '"' '/^[[:space:]]*VERSION:[[:space:]]*str[[:space:]]*=/ { print $2; exit }' backend/app/core/config.py)" \
+            --verify "$MANIFEST_PATH"; then
         echo "✅ Backend package inputs are unchanged — reusing verified bundle."
         exit 0
     fi
@@ -50,7 +63,9 @@ fi
 # its own extracted copy. Killing every process by name made an ordinary build
 # disrupt unrelated Voqora sessions.
 rm -rf backend/dist backend/build
-rm -f "$ARCHIVE_PATH" "$ARCHIVE_BUILD_ID_PATH" "$INPUT_BUILD_ID_PATH"
+# Preserve the last complete bundle until a replacement has been packaged and
+# sealed. A failed PyInstaller run must not turn an otherwise usable local
+# candidate into an app with no backend at all.
 # Remove any stale PyInstaller spec — it's gitignored, but a previous build's
 # .spec may still hold the previous machine's `espeakng_loader` absolute path.
 # We regenerate from CLI flags below so the dynamic ESPEAK_PATH is used. See HARD-051.
@@ -58,7 +73,7 @@ rm -f backend/VoqoraServer.spec
 
 cd backend
 # Ensure venv exists and is up to date
-uv sync
+uv sync --frozen
 
 # The speech model and voice pack are intentionally not committed to Git.
 # Fetch the exact Voqora v1 assets on a clean checkout and verify their
@@ -97,7 +112,7 @@ ensure_asset "kokoro-v1.0.onnx" "7d5df8ecf7d4b1878015a32686053fd0eebe2bc37723460
 ensure_asset "voices-v1.0.bin" "bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
 
 # 2. LOCATE CRITICAL ASSETS
-PYTHON_EXEC="./.venv/bin/python"
+PYTHON_EXEC="$(pwd)/.venv/bin/python"
 ESPEAK_PATH=$($PYTHON_EXEC -c "import os, espeakng_loader; print(os.path.dirname(espeakng_loader.__file__))")
 KOKORO_CONFIG=$($PYTHON_EXEC -c "import os, kokoro_onnx; print(os.path.join(os.path.dirname(kokoro_onnx.__file__), 'config.json'))")
 
@@ -178,22 +193,58 @@ else
     echo "✅ config.json collected automatically."
 fi
 
-# 5. ZIP AND MOVE
+# 5. PACKAGE, SEAL AND MOVE
 echo "📦 Zipping backend..."
 cd dist
-# `zip -r` is interrupt-prone for this large universal payload on macOS.
-# `ditto` ships with macOS, produces a standards-compatible zip archive, and
-# has been materially more reliable for the bundled server payload.
-ditto -c -k --sequesterRsrc --keepParent VoqoraServer VoqoraServer.zip
+# Use stable traversal, timestamps and modes. A deterministic archive makes
+# the detached integrity manifest reproducible and ensures changing one source
+# input cannot quietly reuse an unrelated extracted runtime.
+# Keep packaging on the locked backend interpreter instead of accidentally
+# falling back to a system Python. It is absolute because this phase runs
+# inside backend/dist.
+"$PYTHON_EXEC" - <<'PY'
+from pathlib import Path
+import stat
+import zipfile
+
+root = Path("VoqoraServer").resolve()
+with zipfile.ZipFile("VoqoraServer.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        if path.is_dir() and not path.is_symlink():
+            continue
+        source = path.resolve() if path.is_symlink() else path
+        if not source.is_relative_to(root) or not source.is_file():
+            raise SystemExit(f"refusing unsafe runtime entry: {path}")
+        info = zipfile.ZipInfo(path.relative_to(root.parent).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = (stat.S_IMODE(source.stat().st_mode) & 0o777) << 16
+        with source.open("rb") as input_stream, archive.open(info, "w", force_zip64=True) as destination:
+            while chunk := input_stream.read(1024 * 1024):
+                destination.write(chunk)
+PY
 cd ..
 
 echo "📦 Installing to Resources..."
 mkdir -p "../$RESOURCE_DIR"
-mv dist/VoqoraServer.zip "../$ARCHIVE_PATH"
+NEXT_ARCHIVE="../${ARCHIVE_PATH}.next"
+NEXT_BUILD_ID="../${ARCHIVE_BUILD_ID_PATH}.next"
+NEXT_INPUT_BUILD_ID="../${INPUT_BUILD_ID_PATH}.next"
+NEXT_MANIFEST="../${MANIFEST_PATH}.next"
+rm -f "$NEXT_ARCHIVE" "$NEXT_BUILD_ID" "$NEXT_INPUT_BUILD_ID" "$NEXT_MANIFEST"
+mv dist/VoqoraServer.zip "$NEXT_ARCHIVE"
 # The app uses this compact archive identity to decide whether its extracted
 # local server is current. A version number alone is insufficient while
 # developing or rebuilding a release candidate with the same app version.
-shasum -a 256 "../$ARCHIVE_PATH" | awk '{print $1}' > "../$ARCHIVE_BUILD_ID_PATH"
-printf '%s\n' "$INPUT_BUILD_ID" > "../$INPUT_BUILD_ID_PATH"
+shasum -a 256 "$NEXT_ARCHIVE" | awk '{print $1}' > "$NEXT_BUILD_ID"
+printf '%s\n' "$INPUT_BUILD_ID" > "$NEXT_INPUT_BUILD_ID"
+RUNTIME_VERSION="$($PYTHON_EXEC -c "from app.core.config import Settings; print(Settings().VERSION)")"
+"$PYTHON_EXEC" ../scripts/generate_backend_manifest.py \
+    --archive "$NEXT_ARCHIVE" \
+    --version "$RUNTIME_VERSION" \
+    --output "$NEXT_MANIFEST"
+mv "$NEXT_ARCHIVE" "../$ARCHIVE_PATH"
+mv "$NEXT_BUILD_ID" "../$ARCHIVE_BUILD_ID_PATH"
+mv "$NEXT_INPUT_BUILD_ID" "../$INPUT_BUILD_ID_PATH"
+mv "$NEXT_MANIFEST" "../$MANIFEST_PATH"
 
 echo "✅ Backend build complete."

@@ -32,6 +32,7 @@ struct AudiobookLibraryView: View {
     @State private var searchText = ""
     @State private var sort: SortMode = .recent
     @State private var path: [AudiobookRoute] = []
+    @State private var showDeleteAllConfirmation = false
 
     /// The app's accent, resolved once per body pass — matches
     /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
@@ -136,6 +137,12 @@ struct AudiobookLibraryView: View {
                     }
                 }
                 bookVM.pendingDeepLink = nil
+            }
+            .alert("Delete all audiobooks?", isPresented: $showDeleteAllConfirmation) {
+                Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes every local audiobook, original source document, transcript, and generated audio. It cannot be undone.")
             }
         }
     }
@@ -248,6 +255,14 @@ struct AudiobookLibraryView: View {
             }
             .pickerStyle(.menu)
 
+            if !bookVM.books.isEmpty {
+                Button(role: .destructive) { showDeleteAllConfirmation = true } label: {
+                    Label("Delete all audiobooks", systemImage: "trash")
+                }
+                .disabled(bookVM.deletingAllBooks)
+                .accessibilityHint("Permanently deletes every local audiobook and source document")
+            }
+
             Button { showImporter = true } label: {
                 Label("Add Book", systemImage: "plus.circle.fill")
             }
@@ -322,7 +337,7 @@ struct AudiobookLibraryView: View {
 
     private var dropOverlay: some View {
         DocumentDropOverlay(
-            subtitle: "PDF, TXT, DOCX, or Markdown — up to 400 pages",
+            subtitle: "PDF, TXT, DOCX, or Markdown — up to 1,000 pages",
             appFont: vm.appFont
         )
         .animation(.easeInOut(duration: 0.25), value: hoveringDrop)

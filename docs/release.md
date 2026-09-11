@@ -33,6 +33,9 @@ Before building:
   and backend runtime configuration.
 - Increment both the public version and `CURRENT_PROJECT_VERSION` for every
   distributable update.
+- Run `make backend` after any backend/version change. It creates
+  `VoqoraServer.zip` plus its deterministic detached manifest; the manifest
+  must verify the exact archive in both the source tree and mounted DMG.
 - Confirm `README.md`, `PRIVACY.md`, and the changelog agree about the release.
 - Ensure the working tree is clean and `gh auth status` succeeds.
 - Run `scripts/validate_release.sh X.Y.Z` before any archive. It verifies the
@@ -63,7 +66,8 @@ Inspect the actual mounted DMG:
 1. The window title, installer text, and app label say Voqora.
 2. Both the Voqora app and Applications destination are readable.
 3. The app bundle reports the intended bundle identifier and version.
-4. The local server starts and selected text can be spoken.
+4. The bundled backend archive and `VoqoraServer.manifest.json` are present.
+5. The local server starts and selected text can be spoken.
 
 ## 5. Create and publish the signed update feed only for the notarized channel
 
@@ -115,6 +119,22 @@ come from the matching changelog section.
   history.
 
 ## 8. Distribution signing and notarization
+
+### Reviewed third-party test-warning exceptions
+
+The backend test configuration treats warnings as errors. Version 1.2.3 has
+only these narrowly scoped dependency exceptions, both owned by the release
+maintainer and required to be removed when the named upstream dependency ships
+the compatible fix:
+
+- `starlette.exceptions.StarletteDeprecationWarning` during `TestClient`
+  import: remove when the locked FastAPI/Starlette/httpx stack supports the
+  upstream `httpx2` migration.
+- `google.genai.types`' Python-3.17 `_UnionGenericAlias` deprecation: remove
+  when the locked `google-genai` release eliminates the deprecated typing
+  reference.
+
+No source warning or any other dependency warning may be waived in this list.
 
 Sparkle verifies each update archive with the app's public EdDSA key. The
 matching private key remains in the release Mac's Keychain and must be backed
