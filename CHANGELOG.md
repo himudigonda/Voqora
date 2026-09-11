@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.3.0] - 2026-09-10
+## [1.2.2] - 2026-09-10
 
 ### Fixed — narration no longer reads formatting aloud
 
