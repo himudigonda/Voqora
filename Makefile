@@ -172,6 +172,8 @@ test-frozen-backend:
 test-release-scripts:
 	@echo "🧪 Exercising release-channel safety guards..."
 	bash scripts/test_ship_modes.sh
+	@echo "🧪 Exercising backend archive safety guards..."
+	python3 scripts/test_backend_archive_safety.py
 
 # CI or a deliberate full local proof. This is the only aggregate target that
 # invokes the macOS test host.

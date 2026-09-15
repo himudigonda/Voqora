@@ -68,10 +68,10 @@ printf '<rss><channel></channel></rss>\n' > "$MANUAL_APPCAST"
 run_ship env RELEASE_CHANNEL=manual ALLOW_UNNOTARIZED_PUBLIC_RELEASE=1 \
     APPCAST_PATH="$MANUAL_APPCAST" bash scripts/ship.sh 1.2.3
 
-rg -F "validate-release 1.2.3 $DMG_PATH" "$LOG_PATH" >/dev/null
-! rg -F 'validate-appcast' "$LOG_PATH" >/dev/null
-rg -F "gh release create v1.2.3 $DMG_PATH $CHECKSUM_PATH" "$LOG_PATH" >/dev/null
-rg -F "curl --fail --location --head --retry 5 --retry-delay 2 https://github.com/himudigonda/Voqora/releases/download/v1.2.3/Voqora-1.2.3.dmg.sha256" "$LOG_PATH" >/dev/null
+grep -F "validate-release 1.2.3 $DMG_PATH" "$LOG_PATH" >/dev/null
+! grep -F 'validate-appcast' "$LOG_PATH" >/dev/null
+grep -F "gh release create v1.2.3 $DMG_PATH $CHECKSUM_PATH" "$LOG_PATH" >/dev/null
+grep -F "curl --fail --location --head --retry 5 --retry-delay 2 https://github.com/himudigonda/Voqora/releases/download/v1.2.3/Voqora-1.2.3.dmg.sha256" "$LOG_PATH" >/dev/null
 
 # A manual release is forbidden from becoming an accidental Sparkle update,
 # even if a maintainer has already added the DMG to the appcast.
@@ -95,8 +95,8 @@ NOTARIZED_APPCAST="$TEST_DIR/notarized-appcast.xml"
 printf '%s\n' '<enclosure url="Voqora-1.2.3.dmg"/>' > "$NOTARIZED_APPCAST"
 run_ship env RELEASE_CHANNEL=notarized APPCAST_PATH="$NOTARIZED_APPCAST" \
     bash scripts/ship.sh 1.2.3
-rg -F "validate-appcast 1.2.3 $DMG_PATH $NOTARIZED_APPCAST" "$LOG_PATH" >/dev/null
-rg -F "gh release create v1.2.3 $DMG_PATH $CHECKSUM_PATH" "$LOG_PATH" >/dev/null
+grep -F "validate-appcast 1.2.3 $DMG_PATH $NOTARIZED_APPCAST" "$LOG_PATH" >/dev/null
+grep -F "gh release create v1.2.3 $DMG_PATH $CHECKSUM_PATH" "$LOG_PATH" >/dev/null
 
 # Unknown values must fail before any upload-capable command runs.
 if run_ship env RELEASE_CHANNEL=unsafe bash scripts/ship.sh 1.2.3 >/dev/null 2>&1; then
