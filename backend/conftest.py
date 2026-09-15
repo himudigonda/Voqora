@@ -1,5 +1,9 @@
 """Shared backend-test transport setup.
 
+Lives at the backend/ root (not backend/tests/) so it applies to every test
+root — backend/tests/ and backend/benchmarks/ alike, including a `pytest
+benchmarks/`-only invocation that never collects backend/tests/.
+
 The release backend correctly rejects clients that omit its per-launch IPC
 token. Existing route tests use Starlette's TestClient, so install the same
 test-only token on every client unless a test deliberately supplies a value.
