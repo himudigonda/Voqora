@@ -45,7 +45,7 @@ if [ "$RELEASE_CHANNEL" = "manual" ]; then
         echo "❌ Existing appcast is missing at $APPCAST_PATH. Preserve the prior signed update feed before publishing a manual release." >&2
         exit 1
     }
-    if rg -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" >/dev/null 2>&1; then
+    if grep -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" >/dev/null 2>&1; then
         echo "❌ $APPCAST_PATH already advertises ${APP_NAME}-${VERSION}.dmg. Manual releases must not enter the Sparkle appcast." >&2
         exit 1
     fi
@@ -79,7 +79,7 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
     exit 1
 fi
 
-if [ "$RELEASE_CHANNEL" = "notarized" ] && ! rg -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" >/dev/null 2>&1; then
+if [ "$RELEASE_CHANNEL" = "notarized" ] && ! grep -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" >/dev/null 2>&1; then
     echo "❌ $APPCAST_PATH does not contain ${APP_NAME}-${VERSION}.dmg. Run 'make appcast VERSION=${VERSION}', commit it, then retry." >&2
     exit 1
 fi

@@ -10,7 +10,7 @@ fail() { echo "❌ $1" >&2; exit 1; }
 [ -f "$DMG_PATH" ] || fail "DMG not found: $DMG_PATH"
 [ -f "$APPCAST_PATH" ] || fail "Appcast not found: $APPCAST_PATH"
 
-ENCLOSURE="$(rg -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" | head -n 1 || true)"
+ENCLOSURE="$(grep -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" | head -n 1 || true)"
 [ -n "$ENCLOSURE" ] || fail "Appcast has no enclosure for ${APP_NAME}-${VERSION}.dmg."
 
 SIGNATURE="$(printf '%s\n' "$ENCLOSURE" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"

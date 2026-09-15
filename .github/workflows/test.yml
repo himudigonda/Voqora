@@ -135,6 +135,6 @@ jobs:
           test -s frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
           test -s frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
           unzip -Z -1 frontend/Voqora/Voqora/Resources/VoqoraServer.zip | \
-            rg '^VoqoraServer/VoqoraServer$'
+            grep '^VoqoraServer/VoqoraServer$'
       - name: Launch frozen backend through inherited authenticated listener
         run: python3 scripts/test_frozen_backend.py
