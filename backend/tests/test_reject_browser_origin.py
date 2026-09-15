@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from conftest import TEST_IPC_TOKEN
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
 from app.main import app
 from app.services.engine_manager import EngineManager
+from conftest import TEST_IPC_TOKEN
 
 
 def _client() -> TestClient:
