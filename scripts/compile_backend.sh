@@ -194,34 +194,12 @@ fi
 
 # 5. PACKAGE, SEAL AND MOVE
 echo "📦 Zipping backend..."
-cd dist
 # Use stable traversal, timestamps and modes. A deterministic archive makes
 # the detached integrity manifest reproducible and ensures changing one source
 # input cannot quietly reuse an unrelated extracted runtime.
 # Keep packaging on the locked backend interpreter instead of accidentally
-# falling back to a system Python. It is absolute because this phase runs
-# inside backend/dist.
-"$PYTHON_EXEC" - <<'PY'
-from pathlib import Path
-import stat
-import zipfile
-
-root = Path("VoqoraServer").resolve()
-with zipfile.ZipFile("VoqoraServer.zip", "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
-        if path.is_dir() and not path.is_symlink():
-            continue
-        source = path.resolve() if path.is_symlink() else path
-        if not source.is_relative_to(root) or not source.is_file():
-            raise SystemExit(f"refusing unsafe runtime entry: {path}")
-        info = zipfile.ZipInfo(path.relative_to(root.parent).as_posix(), date_time=(1980, 1, 1, 0, 0, 0))
-        info.compress_type = zipfile.ZIP_DEFLATED
-        info.external_attr = (stat.S_IMODE(source.stat().st_mode) & 0o777) << 16
-        with source.open("rb") as input_stream, archive.open(info, "w", force_zip64=True) as destination:
-            while chunk := input_stream.read(1024 * 1024):
-                destination.write(chunk)
-PY
-cd ..
+# falling back to a system Python.
+"$PYTHON_EXEC" ../scripts/seal_backend_archive.py --root dist/VoqoraServer --output dist/VoqoraServer.zip
 
 echo "📦 Installing to Resources..."
 mkdir -p "../$RESOURCE_DIR"
