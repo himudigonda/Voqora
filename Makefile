@@ -16,6 +16,19 @@ BUNDLE_ID = com.himudigonda.Voqora
 # `make app XCODE_JOBS=6`.
 XCODE_JOBS ?= 4
 
+# Local builds are ad-hoc signed by default (CODE_SIGN_IDENTITY = "-"), which
+# gives the bundle a brand-new code-signing designated requirement on every
+# single build. macOS records Accessibility and Automation grants against that
+# requirement, not against the path — so an ad-hoc rebuild silently invalidates
+# the previous grant while System Settings still shows the toggle switched on,
+# and `AXIsProcessTrusted()` returns false for an app the UI claims is allowed.
+# Signing local builds with a STABLE identity keeps the requirement constant,
+# so the grant is given once and survives every rebuild afterwards.
+# Override on the command line if you sign with something else:
+#   make app LOCAL_SIGN_IDENTITY="Developer ID Application: ..."
+LOCAL_SIGN_IDENTITY ?= Apple Development: himudigonda@gmail.com (C97M74Y2YF)
+LOCAL_DEVELOPMENT_TEAM ?= WL37Y6X6V9
+
 .PHONY: all setup backend app run clean nuke lint format benchmark test test-backend test-swift test-ci test-coverage test-mutation verify check-version release appcast ship help
 
 # Default: Run the full pipeline
@@ -44,11 +57,26 @@ app:
 	@echo "------------------------------------------------"
 	@echo "🔨 [2/3] Building macOS Application..."
 	@echo "------------------------------------------------"
+	@# Fall back to ad-hoc rather than failing the build when this identity
+	@# is not in the keychain (another machine, or CI), but say so loudly —
+	@# on that path the permission grants go back to needing re-approval.
+	@SIGN_ID="$(LOCAL_SIGN_IDENTITY)"; SIGN_TEAM="$(LOCAL_DEVELOPMENT_TEAM)"; \
+	if ! security find-identity -v -p codesigning 2>/dev/null | grep -qF "$$SIGN_ID"; then \
+		echo "⚠️  Signing identity not found in keychain: $$SIGN_ID"; \
+		echo "   Falling back to ad-hoc signing. Accessibility/Automation will"; \
+		echo "   need re-approving after every rebuild until it is available."; \
+		SIGN_ID="-"; SIGN_TEAM=""; \
+	else \
+		echo "🔏 Signing with stable identity: $$SIGN_ID"; \
+	fi; \
 	xcodebuild -project $(PROJECT_PATH) \
 		-scheme $(SCHEME) \
 		-configuration $(CONFIG) \
 		-jobs $(XCODE_JOBS) \
 		-derivedDataPath $(BUILD_DIR)/DerivedData \
+		CODE_SIGN_STYLE=Manual \
+		CODE_SIGN_IDENTITY="$$SIGN_ID" \
+		DEVELOPMENT_TEAM="$$SIGN_TEAM" \
 		-quiet \
 		build
 	@echo "📦 Injecting Custom Fonts..."

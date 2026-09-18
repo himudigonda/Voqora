@@ -36,15 +36,30 @@ assert_runtime_is_exclusive() {
   fi
 }
 
-# Every local rebuild produces a new ad-hoc code signature, which silently
-# invalidates any previous Accessibility grant for this exact binary path —
-# System Settings can still show the toggle "on" while `AXIsProcessTrusted()`
-# returns false for the freshly built process, leaving the app stuck (its
-# sidebar/main UI depends on Accessibility having actually been granted to
-# THIS signature). Reset it after every build so the very next launch gets a
-# real, working grant prompt instead of a stale, misleading toggle.
+# An AD-HOC signed build gets a new code-signing designated requirement every
+# time it is built, and macOS records the Accessibility grant against that
+# requirement — so the old grant silently stops applying while System Settings
+# still shows the toggle "on" and `AXIsProcessTrusted()` returns false. The
+# only honest recovery in that case is to clear the stale grant so the next
+# launch produces a real prompt.
+#
+# That is no longer the default: `make app` signs with a stable identity
+# (LOCAL_SIGN_IDENTITY), which keeps the requirement constant across rebuilds,
+# so a grant given once keeps working and must NOT be reset — resetting it is
+# exactly the "delete the old one and re-add it every time" loop we are trying
+# to get rid of. So only reset when the build actually came out ad-hoc.
 reset_dev_accessibility() {
-  echo "Resetting Accessibility for $BUNDLE_ID (every local rebuild changes its code signature, which invalidates the previous grant)..."
+  local requirement
+  requirement="$(/usr/bin/codesign -d -r- "$APP_PATH" 2>/dev/null || true)"
+
+  if printf '%s' "$requirement" | /usr/bin/grep -q "certificate leaf\[subject.CN\]"; then
+    echo "Stable signing identity detected; keeping your existing Accessibility grant."
+    echo "(Grant it once if prompted — it will survive future rebuilds.)"
+    return 0
+  fi
+
+  echo "Ad-hoc signature detected: resetting Accessibility for $BUNDLE_ID so the next launch prompts properly."
+  echo "To stop this happening every build, see LOCAL_SIGN_IDENTITY in the Makefile."
   /usr/bin/tccutil reset Accessibility "$BUNDLE_ID" >/dev/null 2>&1 || true
 }
 
