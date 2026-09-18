@@ -670,6 +670,14 @@ class AudioService: NSObject, ObservableObject {
         audiobookFrameOffset = target
         currentTime = Double(target) / audiobookSampleRate
         pausedTime = currentTime
+        // `progress` (what the scrubber thumb/fill and the transcript's
+        // auto-scroll anchor actually read) is otherwise only refreshed by
+        // the periodic tick `startTimer()` schedules — which only runs while
+        // playing. Seeking while paused updated `currentTime` correctly (so
+        // resuming played from the right spot) but left `progress` stale, so
+        // the thumb visually snapped back to its pre-seek position the
+        // instant the drag ended and `dragging` flipped back to false.
+        progress = duration > 0 ? min(1.0, currentTime / duration) : 0
         for _ in 0..<Self.audiobookChunkLookahead {
             scheduleNextAudiobookChunk()
         }

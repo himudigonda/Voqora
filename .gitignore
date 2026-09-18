@@ -61,3 +61,4 @@ backend/benchmarks/cache_stats.json
 .env.*
 *.env
 *.save
+**/__pycache__/**

@@ -560,11 +560,31 @@ struct AudiobookPlayerView: View {
                     // stays on screen instead of drifting off it. Still
                     // suppressed for a window after a detected manual scroll so
                     // auto-scroll doesn't fight a reader who has moved away.
-                    .onChange(of: currentScrollAnchor(in: transcript)) { _, newAnchor in
+                    .onChange(of: currentScrollAnchor(in: transcript)) { oldAnchor, newAnchor in
                         guard let newAnchor else { return }
                         guard Self.shouldAutoScroll(userScrolledAt: userScrolledAt, now: Date()) else { return }
+                        // A seek (scrubber drag, skip-to-section, 15/30s skip) can
+                        // jump the anchor many pages away in one step. `scrollTo`
+                        // on a `LazyVStack` needs the target row to already be
+                        // measured to land correctly; rows far outside the current
+                        // viewport haven't been laid out yet, so a big jump
+                        // silently no-ops — the transcript is left frozen wherever
+                        // it already was even though playback has moved on. A
+                        // one-page step (ordinary narration advancing) is always
+                        // adjacent to what's already rendered, so only a jump gets
+                        // the extra nudge: scroll once now, then again next runloop
+                        // turn once the intervening rows have had a layout pass.
+                        let isBigJump = oldAnchor == nil
+                            || abs((oldAnchor?.page ?? newAnchor.page) - newAnchor.page) > 1
                         withAnimation(.easeOut(duration: 0.4)) {
                             proxy.scrollTo(newAnchor, anchor: .center)
+                        }
+                        if isBigJump {
+                            DispatchQueue.main.async {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo(newAnchor, anchor: .center)
+                                }
+                            }
                         }
                     }
                 }
