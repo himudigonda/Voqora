@@ -14,6 +14,11 @@ import SwiftUI
 /// Presented full-window via `.fullScreenCover`-style overlay (not `.sheet`)
 /// so the user can't dismiss it by clicking outside.
 struct OnboardingView: View {
+    /// Shared bounding box for every step's hero icon (app icon image or SF
+    /// Symbol glyph) so they read as the same size as the wizard pages by,
+    /// rather than each icon's own intrinsic/font-implied size.
+    static let heroIconSize: CGFloat = 64
+
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
@@ -190,7 +195,7 @@ struct OnboardingView: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(width: 76, height: 76)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.welcomeTitle)
                 .font(appFont(size: 32, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -224,6 +229,7 @@ struct OnboardingView: View {
             Image(systemName: "hand.tap.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.axTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -259,6 +265,7 @@ struct OnboardingView: View {
             Image(systemName: "bell.badge.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.notifTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -322,6 +329,7 @@ struct OnboardingView: View {
             Image(systemName: "envelope.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.identityTitle)
                 .font(appFont(size: 22, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -376,6 +384,7 @@ struct OnboardingView: View {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 64))
                 .foregroundStyle(Palette.success)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.privacyTitle)
                 .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)

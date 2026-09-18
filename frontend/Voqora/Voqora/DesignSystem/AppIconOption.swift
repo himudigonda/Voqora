@@ -36,26 +36,32 @@ enum AppIconOption: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Applies this icon to the running app's Dock/Cmd+Tab presence and to
-    /// the Finder icon of the app bundle on disk.
+    /// Applies this icon to the running app's Dock/Cmd+Tab presence for
+    /// *this process only* — an in-memory `NSApp.applicationIconImage`
+    /// assignment, which is instant and touches nothing on disk.
     ///
-    /// `NSWorkspace.setIcon(_:forFile:)` writes a Finder-metadata icon
-    /// overlay alongside the bundle rather than touching any code-signed
-    /// resource inside it, so switching icons can never invalidate the
-    /// signature — and passing `nil` removes the override, which is exactly
-    /// what selecting `waveLight` should do, since that design is already
-    /// the bundle's own baked-in `AppIcon`.
+    /// This deliberately does NOT call `NSWorkspace.setIcon(_:forFile:)` to
+    /// also stamp a Finder-visible icon overlay onto the app bundle itself.
+    /// Two independent problems were found with that, both traced to the
+    /// same call: (1) it writes Finder metadata directly into the already
+    /// code-signed bundle, which invalidates the signature — every user who
+    /// picked a non-default icon would fail Gatekeeper/`codesign --verify`
+    /// on their next launch, and break Sparkle auto-updates. (2) the API
+    /// itself is a synchronous, unbounded filesystem call — under the hood
+    /// the deprecated Carbon `FSSetCatalogInfo` path, ending in a raw
+    /// `setattrlist` syscall — observed to hang indefinitely on this
+    /// machine, freezing the entire app before its window ever appeared,
+    /// with no crash report, because it used to run unconditionally on the
+    /// main thread during `applicationDidFinishLaunching`. Backgrounding
+    /// that call fixed the hang but not the signature problem, and the two
+    /// together aren't worth the trade for a cosmetic Finder-icon overlay:
+    /// the Dock/Cmd+Tab icon while the app is actually running is the part
+    /// of this feature users see, and that never needed the disk write.
     @MainActor
     func apply() {
         let bundlePath = Bundle.main.bundlePath
         guard bundlePath != "/" else { return } // test hosts / no real bundle
-        if self == .waveLight {
-            NSWorkspace.shared.setIcon(nil, forFile: bundlePath, options: [])
-            NSApp.applicationIconImage = nil
-        } else if let image = NSImage(named: assetName) {
-            NSWorkspace.shared.setIcon(image, forFile: bundlePath, options: [])
-            NSApp.applicationIconImage = image
-        }
+        NSApp.applicationIconImage = self == .waveLight ? nil : NSImage(named: assetName)
     }
 
     /// Re-applies whatever icon was last chosen. Called on launch, before

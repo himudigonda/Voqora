@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Kept in lockstep with the public app version. The release preflight
     # verifies this runtime declaration and `pyproject.toml` against Xcode so
     # support logs and packaged components never report a stale product build.
-    VERSION: str = "1.2.3"
+    VERSION: str = "1.2.4"
     # The bundled app owns an ephemeral loopback listener and hands its
     # descriptor to this process. HOST/PORT remain development fallbacks only;
     # release launches must set both Voqora IPC settings below. See R123-IPC.

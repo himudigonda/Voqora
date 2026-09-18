@@ -258,9 +258,128 @@ struct VoqoraApp: App {
         .handlesExternalEvents(matching: ["dashboard"])
 
         MenuBarExtra(isInserted: $showMenuBarIcon) {
-            Button("Speak Selection") { Task { await dashboardVM.speakSelection() } }
-            Button("Stop") { dashboardVM.stopPlayback() }
-            Button("Quit") {
+            // MARK: Playback
+
+            Button {
+                Task { await dashboardVM.speakSelection() }
+            } label: {
+                Label("Speak Selection", systemImage: "text.bubble")
+            }
+
+            Button {
+                dashboardVM.togglePlayback()
+            } label: {
+                switch dashboardVM.status {
+                case .speaking:
+                    Label("Pause", systemImage: "pause.fill")
+                case .paused:
+                    Label("Resume", systemImage: "play.fill")
+                default:
+                    Label("Play", systemImage: "play.fill")
+                }
+            }
+            .disabled(dashboardVM.status != .speaking && dashboardVM.status != .paused)
+
+            Button {
+                dashboardVM.stopPlayback()
+            } label: {
+                Label("Stop", systemImage: "stop.fill")
+            }
+            .disabled(dashboardVM.status != .speaking && dashboardVM.status != .paused && dashboardVM.status != .thinking)
+
+            Divider()
+
+            // MARK: Quick actions
+
+            Button {
+                dashboardVM.exportLastClip()
+            } label: {
+                Label("Save Last Clip to Desktop", systemImage: "square.and.arrow.down")
+            }
+            .disabled(!dashboardVM.audio.canExportLastClip)
+
+            if let lastEntry = history.history.first {
+                Button {
+                    history.toggleFavorite(entry: lastEntry)
+                } label: {
+                    Label(
+                        lastEntry.isFavorite ? "Unlike Last Clip" : "Like Last Clip",
+                        systemImage: lastEntry.isFavorite ? "heart.fill" : "heart"
+                    )
+                }
+            }
+
+            Divider()
+
+            // MARK: Library
+
+            Menu("Recent") {
+                if history.history.isEmpty {
+                    Text("No history yet")
+                } else {
+                    ForEach(history.history.prefix(5)) { entry in
+                        let preview = entry.text.count > 60 ? String(entry.text.prefix(60)) + "…" : entry.text
+                        Button(preview) {
+                            Task { await dashboardVM.speak(text: entry.text) }
+                        }
+                    }
+                    Divider()
+                    Button("Clear History") { history.clearHistory() }
+                }
+            }
+
+            if let book = audiobookVM.continueListeningBook {
+                Button {
+                    audiobookVM.openPlayer(for: book.bookID)
+                    dashboardVM.selectedTab = "books"
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
+                    Label("Continue: \(book.displayTitle)", systemImage: "book.fill")
+                }
+            }
+
+            Button {
+                dashboardVM.selectedTab = "books"
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Open Audiobooks", systemImage: "books.vertical")
+            }
+
+            Divider()
+
+            // MARK: App
+
+            Button {
+                dashboardVM.selectedTab = "home"
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Open Voqora", systemImage: "macwindow")
+            }
+
+            Button {
+                dashboardVM.selectedTab = "preferences"
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Preferences…", systemImage: "gearshape")
+            }
+
+            Button {
+                updater.checkForUpdates()
+            } label: {
+                Label(
+                    updater.isCheckingForUpdates ? "Checking for Updates…" : "Check for Updates…",
+                    systemImage: "arrow.triangle.2.circlepath"
+                )
+            }
+            .disabled(!updater.canCheckForUpdates || updater.isCheckingForUpdates)
+
+            Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {
+                Label("Launch at Login", systemImage: "power")
+            }
+
+            Divider()
+
+            Button("Quit Voqora") {
                 dashboardVM.stopHeartbeat()
                 // Stop only the child process this app owns before macOS
                 // tears the process down. A detached Task can be pre-empted
@@ -275,7 +394,10 @@ struct VoqoraApp: App {
             case .speaking:
                 Label("Speaking", systemImage: "waveform.circle.fill")
             default:
+                // The `.thinking`/`.speaking` cases above are `Label`s and so
+                // carry a name; the idle case is a bare image and did not.
                 Image("MenuBarIcon")
+                    .accessibilityLabel("Voqora")
             }
         }
     }

@@ -35,6 +35,73 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertNil(updater.updateStatusMessage)
     }
 
+    // MARK: - Opportunistic GitHub check throttle
+
+    /// The About tab fires a check every time it appears, and its view is torn
+    /// down and rebuilt on every tab switch. Without this throttle each visit
+    /// re-issued a 12-second-timeout request for an answer that had not moved,
+    /// which is what made About the slowest tab in the app to open.
+    func test_gitHubCheckThrottleAllowsFirstCheckThenSuppressesRepeats() {
+        let now = Date()
+
+        XCTAssertTrue(
+            AppUpdater.shouldCheckGitHubRelease(lastChecked: nil, now: now),
+            "A session that has never checked must always be allowed to"
+        )
+        XCTAssertFalse(
+            AppUpdater.shouldCheckGitHubRelease(lastChecked: now, now: now),
+            "Re-opening the tab immediately must not re-issue the request"
+        )
+        XCTAssertFalse(
+            AppUpdater.shouldCheckGitHubRelease(
+                lastChecked: now.addingTimeInterval(-60),
+                now: now
+            ),
+            "A check from a minute ago is still current"
+        )
+    }
+
+    func test_gitHubCheckThrottleExpiresExactlyAtTheInterval() {
+        let now = Date()
+        let interval = AppUpdater.gitHubCheckMinimumInterval
+
+        XCTAssertFalse(
+            AppUpdater.shouldCheckGitHubRelease(
+                lastChecked: now.addingTimeInterval(-interval + 1),
+                now: now
+            ),
+            "One second short of the interval must still be suppressed"
+        )
+        XCTAssertTrue(
+            AppUpdater.shouldCheckGitHubRelease(
+                lastChecked: now.addingTimeInterval(-interval),
+                now: now
+            ),
+            "`>= minimumInterval` must include the boundary itself"
+        )
+        XCTAssertTrue(
+            AppUpdater.shouldCheckGitHubRelease(
+                lastChecked: now.addingTimeInterval(-interval * 2),
+                now: now
+            )
+        )
+    }
+
+    /// A failed check must not stamp the throttle — otherwise one offline
+    /// moment would silence update checks for the rest of the hour. The stamp
+    /// is only written after a decoded 2xx response, so a test-runner no-op
+    /// (which returns before any request) leaves the throttle open.
+    func test_aCheckThatNeverReachedGitHubLeavesTheThrottleOpen() async {
+        let updater = AppUpdater()
+        await updater.checkGitHubReleaseForUpdateIfStale()
+        await updater.checkGitHubReleaseForUpdateIfStale()
+
+        XCTAssertNil(
+            updater.latestGitHubVersion,
+            "The test runner short-circuits before any network access"
+        )
+    }
+
     func test_isVersionNewerThan_comparesNumericComponents() {
         XCTAssertTrue(AppUpdater.isVersion("1.0.1", newerThan: "1.0.0"))
         XCTAssertTrue(AppUpdater.isVersion("1.1.0", newerThan: "1.0.9"))

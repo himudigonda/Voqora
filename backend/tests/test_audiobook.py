@@ -872,6 +872,44 @@ def test_start_rejects_a_book_already_claimed_for_processing(monkeypatch):
     assert "already processing" in response.json()["detail"]
 
 
+@pytest.mark.asyncio
+async def test_concurrent_start_calls_for_same_book_claim_exactly_once():
+    """Exercises the real (unmocked) AudiobookService.start() under several
+    'simultaneous' calls -- e.g. a double-clicked Start button, or a client
+    that retries a slow-to-respond request -- for the same book_id. Only one
+    caller may win the atomic in-memory claim and enqueue the pipeline; every
+    other caller must get False, never a second enqueue of the same book."""
+    bid = AudiobookStore.create_book("Concurrent.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Concurrent.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    ran_pipeline: list[str] = []
+
+    async def fake_pipeline(cls, book_id):
+        ran_pipeline.append(book_id)
+
+    with patch.object(AudiobookService, "_run_pipeline", classmethod(fake_pipeline)):
+        try:
+            results = await asyncio.gather(
+                *(
+                    AudiobookService.start(bid, "", uses_gemini_cleanup=False)
+                    for _ in range(8)
+                )
+            )
+            # Let the worker loop drain the single queued job.
+            await asyncio.sleep(0.05)
+        finally:
+            await AudiobookService.shutdown(grace_seconds=0.5)
+
+    assert results.count(True) == 1
+    assert results.count(False) == 7
+    # The pipeline itself must never run twice for the one accepted claim.
+    assert ran_pipeline.count(bid) <= 1
+
+
 # ---------- resume ----------
 
 
@@ -1929,6 +1967,49 @@ def test_upload_flags_byte_identical_reimport_as_duplicate(monkeypatch):
     assert second_body["duplicate_of_title"] == "book.pdf"
     # Not blocked — a second, independent book is still created.
     assert second_body["book_id"] != first.json()["book_id"]
+
+
+def test_upload_rejects_when_disk_nearly_full_and_cleans_up_the_book_row(monkeypatch):
+    """A near-full disk (a real user's messy environment, not a contrived
+    one) must produce a clean 413 -- never a 500 -- and must not leave an
+    orphaned book row/directory behind. Regression coverage for
+    ensure_storage_capacity's free-disk-space branch, which previously had
+    no test at any level (unit or integration)."""
+    import collections
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import import_limits as _import_limits
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 3))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_word_count", classmethod(lambda cls, p: 50)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_char_count", classmethod(lambda cls, p: 250)
+    )
+
+    disk_usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(
+        _import_limits.shutil,
+        "disk_usage",
+        lambda _path: disk_usage(10**9, 10**9 - 1024, 1024),
+    )
+
+    books_before = len(AudiobookStore.list_books())
+    client = TestClient(app)
+    files = {"file": ("test.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")}
+    response = client.post("/audiobook", files=files)
+
+    assert response.status_code == 413
+    assert "disk space" in response.json()["detail"].lower()
+    # No orphaned row left behind for the rejected upload.
+    assert len(AudiobookStore.list_books()) == books_before
 
 
 def test_upload_rejects_empty_pdf():

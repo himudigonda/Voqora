@@ -157,10 +157,17 @@ echo "   ✓ Final staged app signature seals bundled resources."
 echo "💿 Building installer DMG..."
 rm -f "${BUILD_DIR}/${DMG_NAME}.dmg"
 
-# Finder's layout AppleScript can hang indefinitely even on an otherwise
-# healthy release Mac (and blocks headless CI entirely). The installer remains
-# a standard drag-and-drop DMG with a visible Applications link; cosmetic
-# Finder positioning must never be an unattended release dependency.
+# Finder's layout AppleScript can hang indefinitely in a headless CI runner
+# with no interactive GUI session, so it must never be an unattended release
+# dependency there — but on an interactive Mac (a real local build, like a
+# release owner running `make release` at their own desk) it works fine and
+# is the only way `--background`/`--icon` positioning actually lands in the
+# DMG's .DS_Store instead of silently being ignored.
+DMG_EXTRA_ARGS=()
+if [ -n "${CI:-}" ]; then
+    DMG_EXTRA_ARGS+=(--skip-jenkins)
+fi
+
 create-dmg \
     --volname "${APP_NAME} ${VERSION}" \
     --volicon "${ICNS}" \
@@ -172,7 +179,7 @@ create-dmg \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 205 \
     --no-internet-enable \
-    --skip-jenkins \
+    "${DMG_EXTRA_ARGS[@]+"${DMG_EXTRA_ARGS[@]}"}" \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"
 

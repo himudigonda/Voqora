@@ -332,3 +332,25 @@ def test_verify_key_uses_standard_tier_not_flex() -> None:
         assert asyncio.run(GeminiCleaner.verify_key("good")) is True
 
     assert seen_tiers == [gemini_types.ServiceTier.STANDARD]
+
+
+def test_verify_key_times_out_instead_of_hanging_forever(monkeypatch) -> None:
+    """Regression: Standard-tier calls get no HttpOptions, which the genai SDK
+    treats as an *unbounded* httpx timeout (see _async_clean). Before
+    _VERIFY_KEY_TIMEOUT_S existed, a dropped-packet/offline network made this
+    call — and the /audiobook/verify_key request it backs — hang forever
+    instead of failing fast. Use a near-zero timeout so the test itself
+    doesn't hang if the fix regresses.
+    """
+    monkeypatch.setattr(GeminiCleaner, "_VERIFY_KEY_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
+
+    async def hang_forever(*_args, **_kwargs):
+        await asyncio.sleep(10)
+        return "ok"
+
+    with patch.object(GeminiCleaner, "_async_clean", side_effect=hang_forever):
+        result = asyncio.run(
+            asyncio.wait_for(GeminiCleaner.verify_key("good"), timeout=2.0)
+        )
+    assert result is False

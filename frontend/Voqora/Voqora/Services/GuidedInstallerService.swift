@@ -102,17 +102,23 @@ final class GuidedInstallerService: ObservableObject {
     private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases/latest")!
 
     @Published private(set) var state: State = .idle
+    /// Fraction complete (0...1) for the active download, driving a real
+    /// progress bar rather than just the static "Downloading…" message.
+    /// Meaningless outside `.downloading`; reset to 0 at the start of every
+    /// attempt so a retry after a failure doesn't briefly show the old value.
+    @Published private(set) var downloadProgress: Double = 0
 
     func downloadAndOpenLatest() {
         guard !state.isBusy else { return }
         state = .resolving
+        downloadProgress = 0
         Task { [weak self] in
             guard let self else { return }
             do {
                 let artifact = try await Self.fetchLatestArtifact()
                 state = .downloading
                 MetricsService.shared.trackInstallerDownloadStarted()
-                let downloaded = try await Self.download(artifact: artifact)
+                let downloaded = try await download(artifact: artifact)
                 state = .verifying
                 try Self.verify(downloaded, matches: artifact)
                 MetricsService.shared.trackInstallerDownloadVerified()
@@ -173,14 +179,57 @@ final class GuidedInstallerService: ObservableObject {
         return try artifact(from: data)
     }
 
-    private static func download(artifact: ReleaseArtifact) async throws -> URL {
+    private func download(artifact: ReleaseArtifact) async throws -> URL {
         var request = URLRequest(url: artifact.downloadURL)
         request.timeoutInterval = 120
-        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        let (temporaryURL, response) = try await Self.progressTrackingDownload(request) { [weak self] fraction in
+            self?.downloadProgress = fraction
+        }
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw InstallerError.unexpectedResponse
         }
         return temporaryURL
+    }
+
+    /// `URLSession.download(for:)`'s async convenience API has no progress
+    /// callback, so this drives the classic completion-handler
+    /// `URLSessionDownloadTask` instead and bridges it back to async/await —
+    /// that's the only API surface that exposes a KVO-observable `Progress`
+    /// object during the transfer.
+    private static func progressTrackingDownload(
+        _ request: URLRequest,
+        onProgress: @escaping (Double) -> Void
+    ) async throws -> (URL, URLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            var observation: NSKeyValueObservation?
+            let task = URLSession.shared.downloadTask(with: request) { location, response, error in
+                observation?.invalidate()
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let location, let response else {
+                    continuation.resume(throwing: URLError(.badServerResponse))
+                    return
+                }
+                do {
+                    // The completion handler's temporary file is deleted as
+                    // soon as this closure returns, so it must be moved
+                    // somewhere stable before handing it back to the caller.
+                    let stable = FileManager.default.temporaryDirectory
+                        .appendingPathComponent(UUID().uuidString)
+                    try FileManager.default.moveItem(at: location, to: stable)
+                    continuation.resume(returning: (stable, response))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+            observation = task.progress.observe(\.fractionCompleted, options: [.new]) { _, change in
+                guard let value = change.newValue else { return }
+                Task { @MainActor in onProgress(value) }
+            }
+            task.resume()
+        }
     }
 
     static func verify(_ fileURL: URL, matches artifact: ReleaseArtifact) throws {
