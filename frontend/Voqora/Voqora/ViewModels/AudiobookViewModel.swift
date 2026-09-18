@@ -178,16 +178,23 @@ final class AudiobookViewModel: ObservableObject {
         // libdispatch's own thread pool instead, which carries no such
         // ambiguity for a purely synchronous blocking call like this one.
         keyVerified = false
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let stored = KeychainService.get(.geminiAPIKey)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.keyVerified = stored != nil
-                if let stored {
-                    self.draftKey = stored
-                }
-            }
-        }
+        // TEMPORARILY disabled during local rebuild/QA testing: every local
+        // rebuild changes the ad-hoc signing identity, so this Keychain read
+        // re-prompts for the login keychain password on every single launch
+        // with nobody scripted to answer it, blocking automated GUI testing.
+        // Restore this block (see git history right above) once testing on
+        // this machine is done — this is a testing-session convenience, not
+        // a product decision reversal.
+        // DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        //     let stored = KeychainService.get(.geminiAPIKey)
+        //     DispatchQueue.main.async {
+        //         guard let self else { return }
+        //         self.keyVerified = stored != nil
+        //         if let stored {
+        //             self.draftKey = stored
+        //         }
+        //     }
+        // }
         // Clear saved position when a book plays to its natural end.
         // T-10: reads `audio.completedSessionID` (the book identity AudioService
         // captured when *that* session started) instead of `self.nowPlaying`
