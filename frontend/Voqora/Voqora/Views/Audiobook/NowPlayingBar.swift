@@ -8,9 +8,8 @@ struct NowPlayingBar: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @State private var hovering = false
     var onTap: () -> Void
-
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
 
     /// The app's accent, resolved once per body pass — matches
     /// `VoqoraWindow`'s own `accentColor` pattern.
@@ -24,7 +23,6 @@ struct NowPlayingBar: View {
         }
     }
 
-    @ViewBuilder
     private func content(for book: Audiobook) -> some View {
         VStack(spacing: 0) {
             // Accent progress underline at the very top
@@ -40,14 +38,25 @@ struct NowPlayingBar: View {
             .frame(height: 2)
 
             HStack(spacing: 14) {
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
+                    image.resizable().scaledToFill()
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .foregroundStyle(accentColor.opacity(0.6))
                 }
                 .frame(width: 40, height: 56)
                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                // The only cover in the app drawn without a hairline. A
+                // scanned document's cover is a white page, and this bar is
+                // `surfaceRaised` — near-white in light mode — so the
+                // thumbnail had no edge at all there and read as a smear of
+                // grey text floating in the bar. Every other cover (the
+                // player's cover column and compact header, the library
+                // card) already strokes `Palette.separator`.
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(Palette.separator, lineWidth: 1)
+                )
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(prettyTitle(book))
@@ -85,11 +94,30 @@ struct NowPlayingBar: View {
                     .accessibilityLabel(bookVM.audio.isPlaying ? "Pause" : "Play")
                     .help(bookVM.audio.isPlaying ? "Pause" : "Play")
 
-                    Button { bookVM.stopPlayback() } label: {
+                    // Was a 28pt box next to the play button's 32pt one: two
+                    // adjacent controls on different grids, and the smaller
+                    // of the two was the one you least want to mis-click.
+                    //
+                    // Routed through `vm.stopPlayback()` (DashboardViewModel),
+                    // NOT `bookVM.stopPlayback()` directly. Both stop the same
+                    // shared AudioService the same way — `vm.stopPlayback()`
+                    // delegates to `audiobookVM.stopPlayback()` here too — but
+                    // only the dashboard's own `stopPlayback()` also resets
+                    // `status` back to `.ready` afterward. A manual mid-book
+                    // stop is not a natural completion, so `audio.playbackCompleted`
+                    // is false and the `audio.$isPlaying` sink in
+                    // DashboardViewModel leaves `status` at `.paused` — with
+                    // `bookVM.stopPlayback()` called directly, nothing ever
+                    // moved it off `.paused` again, so switching to a
+                    // non-home tab kept showing `miniPlayerHUD` ("PAUSED",
+                    // stale dashboard-TTS history text) indefinitely even
+                    // though nothing was playing or paused.
+                    Button { vm.stopPlayback() } label: {
                         Image(systemName: "xmark")
                             .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(Palette.textSecondary)
-                            .frame(width: 28, height: 28)
+                            .frame(width: 32, height: 32)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Stop")
@@ -106,15 +134,28 @@ struct NowPlayingBar: View {
         // `.clipShape` pairing this replaces).
         .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
         .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
+        // The whole bar opens the full player, but nothing said so: no
+        // hover feedback, no tooltip, no pointer change. It read as a
+        // static status strip with two buttons on it.
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous)
+                .stroke(accentColor.opacity(hovering ? 0.55 : 0), lineWidth: 1)
+        )
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
+        .contentShape(Rectangle())
         .onTapGesture { onTap() }
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.15), value: hovering)
+        .help("Open the full player")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityHint("Opens the full audiobook player")
     }
 
     private func prettyTitle(_ book: Audiobook) -> String {
         let t = book.title
-        for ext in [".pdf", ".docx", ".txt", ".md"] {
-            if t.lowercased().hasSuffix(ext) { return String(t.dropLast(ext.count)) }
+        for ext in [".pdf", ".docx", ".txt", ".md"] where t.lowercased().hasSuffix(ext) {
+            return String(t.dropLast(ext.count))
         }
         return t
     }

@@ -54,14 +54,21 @@ struct MainDashboardView: View {
 
     private var accessibilityBanner: some View {
         HStack(spacing: 14) {
+            // Not `Palette.warning` — this is an action-needed CTA, not a
+            // semantic failure/error state (nothing here is "wrong"; the
+            // permission is simply not granted yet), so it follows the
+            // user's chosen accent color. Matches `OnboardingView`'s own
+            // Accessibility step, which tints this exact same icon/heading/
+            // button combo with `accentColor` and reserves `Palette.warning`
+            // for its small granted/pending status pill only.
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(Palette.warning)
+                .foregroundStyle(accentColor)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Accessibility Access Required")
                     .font(vm.appFont(size: 12, weight: .bold))
-                    .foregroundStyle(Palette.warning)
+                    .foregroundStyle(Palette.textPrimary)
                 // NOT `.fixedSize(horizontal: false, vertical: true)`. That
                 // modifier here — a wrapping `Text` inside an `HStack` that
                 // also holds a `Spacer()`, itself nested inside
@@ -86,7 +93,7 @@ struct MainDashboardView: View {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             }
             .buttonStyle(.borderedProminent)
-            .tint(Palette.warning)
+            .tint(accentColor)
             .font(vm.appFont(size: 11, weight: .semibold))
         }
         .padding(.horizontal, 20)
@@ -222,9 +229,15 @@ struct MainDashboardView: View {
                 Slider(value: $localProgress, in: 0 ... 1, onEditingChanged: { editing in
                     isEditingSlider = editing
                     audio.isDragging = editing
-                    if !editing { audio.seek(to: localProgress) }
+                    if !editing {
+                        audio.seek(to: localProgress)
+                    }
                 })
-                .onReceive(audio.$progress) { p in if !isEditingSlider { localProgress = p } }
+                .onReceive(audio.$progress) { p in
+                    if !isEditingSlider {
+                        localProgress = p
+                    }
+                }
                 .padding(.horizontal, 100)
             }
 
@@ -265,7 +278,7 @@ struct TransportButton: View {
     @EnvironmentObject var vm: DashboardViewModel
     let icon: String
     let size: CGFloat
-    var accessibilityLabel: String? = nil
+    var accessibilityLabel: String?
     let action: () -> Void
 
     var body: some View {

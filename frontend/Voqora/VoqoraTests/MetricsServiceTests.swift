@@ -3,22 +3,21 @@ import XCTest
 
 /// Tests for the v1.1 telemetry pipeline (S1-G6).
 ///
-/// We test the static `Props.whitelist` boundary directly — that's where
+/// We test the static `Props.sanitizedPayload` boundary directly — that's where
 /// the privacy guarantee lives. Higher-level concerns (HTTP batching,
 /// outbox persistence) are covered by manual HAR captures listed in the
 /// sprint verification section.
 final class MetricsServiceTests: XCTestCase {
-
     // MARK: - Whitelist
 
-    func test_whitelist_dropsUnknownKeys() {
+    func test_sanitizedPayload_dropsUnknownKeys() {
         let raw: [String: Any] = [
             "chars": 42,
             "voice": "af_bella",
             "text": "leak me",
             "evil_payload": ["nested": "very bad"],
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned["chars"] as? Int, 42)
         XCTAssertEqual(cleaned["voice"] as? String, "af_bella")
         XCTAssertNil(cleaned["text"], "text MUST be dropped — this is the privacy guarantee")
@@ -26,23 +25,23 @@ final class MetricsServiceTests: XCTestCase {
         XCTAssertEqual(cleaned.count, 2)
     }
 
-    func test_whitelist_rejectsBadValues() {
+    func test_sanitizedPayload_rejectsBadValues() {
         // Client validator is intentionally permissive on `voice` so a
         // server-added voice doesn't get dropped client-side. The server
         // re-validates against the enum (lib/voqora-validate.js). The
         // rest of these should drop client-side.
         let raw: [String: Any] = [
-            "chars": -5,                 // negative — drop
-            "speed": 3.0,                // out of [0.5, 2.0] — drop
-            "audio_seconds": "twelve",   // wrong type — drop
-            "file_kind": "exe",          // not an accepted document kind — drop
-            "book_id_hash": "tooshort",  // not 64 hex — drop
+            "chars": -5, // negative — drop
+            "speed": 3.0, // out of [0.5, 2.0] — drop
+            "audio_seconds": "twelve", // wrong type — drop
+            "file_kind": "exe", // not an accepted document kind — drop
+            "book_id_hash": "tooshort", // not 64 hex — drop
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0, "All values fail client validation; output should be empty.")
     }
 
-    func test_whitelist_acceptsValidValues() {
+    func test_sanitizedPayload_acceptsValidValues() {
         let raw: [String: Any] = [
             "chars": 123,
             "voice": "am_adam",
@@ -52,14 +51,14 @@ final class MetricsServiceTests: XCTestCase {
             "file_kind": "pdf",
             "book_id_hash": String(repeating: "a", count: 64),
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, raw.count, "All valid values should survive.")
         XCTAssertEqual(cleaned["voice"] as? String, "am_adam")
     }
 
-    func test_whitelist_preservesEverySupportedAudiobookDocumentKind() {
+    func test_sanitizedPayload_preservesEverySupportedAudiobookDocumentKind() {
         for fileKind in ["pdf", "txt", "docx", "md"] {
-            let cleaned = MetricsService.Props.whitelist(["file_kind": fileKind])
+            let cleaned = MetricsService.Props.sanitizedPayload(["file_kind": fileKind])
             XCTAssertEqual(cleaned["file_kind"] as? String, fileKind)
         }
     }

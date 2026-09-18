@@ -1,3 +1,4 @@
+import AppKit
 import NaturalLanguage
 import SwiftUI
 
@@ -12,6 +13,7 @@ struct AudiobookPlayerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let book: Audiobook
     @State private var localScrub: Double = 0
@@ -26,9 +28,9 @@ struct AudiobookPlayerView: View {
     // present and always fills the remaining space — there is no longer a
     // state where the lower half of the player is empty.
     @State private var panelTab: ContentTab = .transcript
-    // Neutral placeholder until `CoverColorExtractor` samples the actual
-    // cover art in `.onAppear` below — the old neon `.cyan` default briefly
-    // flashed on every player open before the real sample arrived.
+    /// Neutral placeholder until `CoverColorExtractor` samples the actual
+    /// cover art in `.onAppear` below — the old neon `.cyan` default briefly
+    /// flashed on every player open before the real sample arrived.
     @State private var dominantColor: Color = .gray
     // T-13: last time the user manually scrolled the transcript; suppresses
     // the auto-scroll-on-page-change effect for a short window afterward.
@@ -42,8 +44,10 @@ struct AudiobookPlayerView: View {
     @State private var transcriptCache = TranscriptPageCache()
     @State private var sectionsCache = SectionsCache()
     @State private var highlightCache = HighlightCache()
-
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
+    @State private var isExporting = false
+    /// Which section row the pointer is over, so the list gets the hover
+    /// feedback every other clickable row in the app already has.
+    @State private var hoveredSectionID: AudiobookSection.ID? = nil
 
     /// The app's accent, resolved once per body pass — every hardcoded
     /// `.cyan` in this view reads through this instead.
@@ -61,7 +65,20 @@ struct AudiobookPlayerView: View {
     var body: some View {
         GeometryReader { geometry in
             let visibility = AudiobookPlayerLayout.columnVisibility(for: geometry.size.width)
-            ZStack(alignment: .topTrailing) {
+            // The export and sleep-timer buttons used to be a floating
+            // `.topTrailing` overlay on this ZStack. That put them in the
+            // exact rectangle `scrubberSection` occupies (the scrubber is the
+            // first row of `mainColumn`, which starts 28pt down; the overlay
+            // sat 16pt down), so at any width where the content column isn't
+            // narrower than the window — i.e. everything from the 800pt
+            // minimum up to ~1170pt — the two circular buttons were drawn
+            // directly ON TOP of the progress track, with the scrub thumb
+            // poking out from behind the moon icon like a stray badge and the
+            // "-0:00" remaining label reading as part of the same cluster.
+            // They now live in the secondary control row with the rest of the
+            // non-transport controls, so nothing floats over the scrubber at
+            // any width.
+            ZStack {
                 background
                 // T-22: capped and centered, not just `maxWidth: .infinity` —
                 // on an ultra-wide window an unbounded scrubber/content panel
@@ -77,15 +94,18 @@ struct AudiobookPlayerView: View {
                 .frame(maxWidth: AudiobookPlayerLayout.maxContentWidth + (visibility.showCover ? 268 : 0))
                 .frame(maxWidth: .infinity)
                 .padding(28)
-
-                sleepTimerMenu
-                    .padding(.top, 16)
-                    .padding(.trailing, 20)
             }
             .clipped()
         }
         .frame(minWidth: AudiobookPlayerLayout.minWidth, minHeight: 580)
         .focusable()
+        // `.focusable()` is only here to host the `.onKeyPress` shortcuts
+        // below, but AppKit drew its default focus ring for it: a bright
+        // system-blue 1pt rectangle around the ENTIRE player pane, off-ramp
+        // from the warm neutral palette and framing the whole screen the
+        // moment the view appeared. The individual controls keep their own
+        // focus rings; this suppresses the container's.
+        .focusEffectDisabled()
         // Real .onKeyPress modifiers live on the focused root — no hidden
         // buttons. Works because the NavigationStack pushes us into the
         // detail pane, which receives focus by default.
@@ -99,7 +119,9 @@ struct AudiobookPlayerView: View {
         .onKeyPress("[") { adjustSpeed(-0.25); return .handled }
         .onKeyPress("]") { adjustSpeed(0.25); return .handled }
         .onKeyPress(",") {
-            if let s = currentSection() { bookVM.seek(toSeconds: s.startTime) }
+            if let s = currentSection() {
+                bookVM.seek(toSeconds: s.startTime)
+            }
             return .handled
         }
         .onKeyPress(".") { bookVM.jumpToNextSection(in: book); return .handled }
@@ -108,7 +130,7 @@ struct AudiobookPlayerView: View {
         // completes) now runs off the real `audio.playbackCompleted`
         // publisher instead of a 0.25s poke.
         .onChange(of: audio.playbackCompleted) { _, completed in
-            if completed && bookVM.sleepUntilEndOfBook {
+            if completed, bookVM.sleepUntilEndOfBook {
                 bookVM.cancelSleepTimer()
             }
         }
@@ -123,9 +145,10 @@ struct AudiobookPlayerView: View {
                 bookVM.play(book)
             }
             // Sample dominant cover color for the ambient gradient.
-            let coverURL = baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")
             Task {
-                let color = await CoverColorExtractor.shared.dominantColor(for: coverURL)
+                let color = await CoverColorExtractor.shared.dominantColor(
+                    forBackendPath: "audiobook/\(book.bookID)/cover"
+                )
                 dominantColor = color
             }
         }
@@ -136,12 +159,12 @@ struct AudiobookPlayerView: View {
 
     // MARK: - Background
 
-    // NOT a `dominantColor`-tinted, blurred ambient-glow ZStack — that
-    // per-cover "mood lighting" predates the flat GRiT/Anthropic redesign
-    // and reads as a different, inconsistent design language next to every
-    // other screen's plain `Palette` surface. `dominantColor` is still used
-    // for the cover's own play-state shadow tint below, just not to light
-    // up the whole background.
+    /// NOT a `dominantColor`-tinted, blurred ambient-glow ZStack — that
+    /// per-cover "mood lighting" predates the flat GRiT/Anthropic redesign
+    /// and reads as a different, inconsistent design language next to every
+    /// other screen's plain `Palette` surface. `dominantColor` is still used
+    /// for the cover's own play-state shadow tint below, just not to light
+    /// up the whole background.
     private var background: some View {
         Palette.surfaceBase
             .ignoresSafeArea()
@@ -155,8 +178,8 @@ struct AudiobookPlayerView: View {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .fill(Palette.surfaceRaised)
                     .frame(width: 240, height: 336)
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
+                    image.resizable().scaledToFill()
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .font(.system(size: 48))
@@ -175,18 +198,32 @@ struct AudiobookPlayerView: View {
                 y: audio.isPlaying ? 20 : 16
             )
             .scaleEffect(audio.isPlaying ? 1.0 : 0.97)
-            .animation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true), value: audio.isPlaying)
+            // `.repeatForever` on a screen a user sits in front of for hours
+            // is exactly what Reduce Motion exists to switch off, and this
+            // was the one perpetual animation in the feature that ignored it.
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 1.2).repeatForever(autoreverses: true),
+                value: audio.isPlaying
+            )
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(currentSectionLabel)
                     .font(vm.font(.sectionHeader))
                     .kerning(0.6)
                     .foregroundStyle(accentColor)
+                // Was `lineLimit(2)` in a 240pt column, which truncated a
+                // very ordinary title ("Panic, Priced In — UnitedHealth &
+                // Pala…") on the one screen whose entire job is telling you
+                // what you're listening to. There is no layout pressure here
+                // — the cover column is top-aligned with hundreds of points
+                // of empty space below it.
                 Text(prettyTitle)
                     .font(vm.appFont(size: 22, weight: .bold))
                     .foregroundStyle(Palette.textPrimary)
-                    .lineLimit(2)
+                    .lineLimit(4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(width: 240, alignment: .leading)
+                    .help(prettyTitle)
             }
         }
     }
@@ -216,7 +253,7 @@ struct AudiobookPlayerView: View {
                 scrubberSection
                 transportSection
             }
-            speedAndSleep
+            secondaryControls
             contentPanel
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -232,8 +269,8 @@ struct AudiobookPlayerView: View {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(Palette.surfaceRaised)
-                AsyncImage(url: baseURL.appendingPathComponent("audiobook/\(book.bookID)/cover")) { image in
-                    image.resizable().aspectRatio(contentMode: .fill)
+                AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
+                    image.resizable().scaledToFill()
                 } placeholder: {
                     Image(systemName: "book.fill")
                         .font(.system(size: 16))
@@ -285,13 +322,17 @@ struct AudiobookPlayerView: View {
                             .frame(width: 2, height: 10)
                             .offset(x: w * (section.startTime / total) - 1, y: -3)
                     }
-                    // Thumb
+                    // Thumb. Clamped to the track's own bounds at BOTH ends:
+                    // the old `max(0, w * progress - 7)` only clamped the
+                    // left, so a finished book (progress == 1) hung the
+                    // thumb's right half 7pt past the end of the track and
+                    // into whatever sat beyond it.
                     Circle()
                         .fill(Palette.surfaceRaised)
                         .frame(width: 14, height: 14)
                         .shadow(color: .black.opacity(0.35), radius: 4, y: 2)
                         .overlay(Circle().stroke(Palette.separator, lineWidth: 0.5))
-                        .offset(x: max(0, w * progress - 7))
+                        .offset(x: min(max(0, w - 14), max(0, w * progress - 7)))
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
                 .contentShape(Rectangle())
@@ -310,28 +351,27 @@ struct AudiobookPlayerView: View {
             }
             .frame(height: 20)
 
-            HStack {
+            // Elapsed / remaining only. The armed-sleep-timer state used to be
+            // squeezed between two `Spacer()`s here as a third, centered
+            // label — a duplicate of both the tinted moon button and the
+            // "Cancel Sleep" pill below it, so the same fact was stated three
+            // times in one screen. It now lives on the sleep button alone,
+            // which is also the control that changes it.
+            HStack(spacing: 8) {
                 Text(DurationFormatter.clock(audio.currentTime))
-                Spacer()
-                if let remain = bookVM.sleepRemainingSeconds {
-                    Label("Sleep in \(DurationFormatter.clock(remain))", systemImage: "moon.zzz.fill")
-                        .font(vm.appFont(size: 10, weight: .bold).monospaced())
-                        .foregroundStyle(accentColor)
-                } else if bookVM.sleepUntilEndOfBook {
-                    Label("Until end of book", systemImage: "moon.zzz.fill")
-                        .font(vm.appFont(size: 10, weight: .bold))
-                        .foregroundStyle(accentColor)
-                }
-                Spacer()
+                Spacer(minLength: 8)
                 Text("-" + DurationFormatter.clock(max(0, audio.duration - audio.currentTime)))
             }
             .font(vm.appFont(size: 11, weight: .medium).monospaced())
             .foregroundStyle(Palette.textSecondary)
+            .monospacedDigit()
         }
     }
 
     private var displayProgress: Double {
-        if dragging { return localScrub }
+        if dragging {
+            return localScrub
+        }
         return audio.progress
     }
 
@@ -388,56 +428,81 @@ struct AudiobookPlayerView: View {
         .accessibilityLabel(help)
     }
 
-    private var speedAndSleep: some View {
-        HStack(spacing: 16) {
-            Menu {
-                ForEach([0.75, 1.0, 1.25, 1.5, 1.75, 2.0] as [Double], id: \.self) { s in
-                    Button(String(format: "%.2gx", s)) {
-                        playerSpeed = s
-                        bookVM.defaultBookSpeed = s
-                        audio.setPlaybackRate(Float(s))
-                    }
-                }
-            } label: {
-                Text(String(format: "%.2gx", playerSpeed))
-                    .font(vm.appFont(size: 12, weight: .bold).monospaced())
-                    .foregroundStyle(accentColor)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .background(Capsule().stroke(accentColor.opacity(0.45), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-
-            Spacer()
-
-            HStack(spacing: 8) {
-                Image(systemName: audio.volume < 0.05 ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                    .foregroundStyle(Palette.textSecondary)
-                    .font(.system(size: 12))
-                Slider(value: Binding(
-                    get: { Double(audio.volume) },
-                    set: { audio.setVolume(Float($0)) }
-                ), in: 0...1.5)
-                .tint(accentColor)
-                .frame(width: 110)
-            }
-
-            if bookVM.sleepRemainingSeconds != nil || bookVM.sleepUntilEndOfBook {
-                Button { bookVM.cancelSleepTimer() } label: {
-                    Label("Cancel Sleep", systemImage: "moon.zzz.fill")
-                        .font(vm.appFont(size: 11, weight: .bold))
-                        .foregroundStyle(accentColor)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Capsule().stroke(accentColor.opacity(0.45), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-            }
+    /// Every non-transport control in one row: speed, volume, sleep timer,
+    /// export. Previously speed and volume lived here while sleep and export
+    /// floated over the scrubber in the top-right corner, which both caused
+    /// the overlap described on `body` and split one category of control
+    /// across two places for no reason.
+    private var secondaryControls: some View {
+        HStack(spacing: 12) {
+            speedMenu
+            Spacer(minLength: 12)
+            volumeControl
+            Divider()
+                .frame(height: 20)
+            sleepTimerMenu
+            exportButton
         }
         .padding(.horizontal, 12)
     }
 
-    // MARK: - Sleep timer menu (toolbar-area, top-right)
+    private var speedMenu: some View {
+        Menu {
+            ForEach([0.75, 1.0, 1.25, 1.5, 1.75, 2.0] as [Double], id: \.self) { s in
+                Button(String(format: "%.2gx", s)) {
+                    playerSpeed = s
+                    bookVM.defaultBookSpeed = s
+                    audio.setPlaybackRate(Float(s))
+                }
+            }
+        } label: {
+            Text(String(format: "%.2gx", playerSpeed))
+                .font(vm.appFont(size: 12, weight: .bold).monospaced())
+                .foregroundStyle(accentColor)
+                .frame(minWidth: 30)
+                .padding(.horizontal, 12)
+                // Matches the 32pt height every other control in this row
+                // uses, so the row sits on one baseline instead of three.
+                .frame(height: 32)
+                .background(Capsule().stroke(accentColor.opacity(0.45), lineWidth: 1))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        // `.borderlessButton` + a custom label still draws a system
+        // disclosure chevron beside it, which pushed outside the label's own
+        // frame — that stray glyph next to the moon icon was what read as a
+        // misplaced badge in the top-right cluster.
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Playback speed ([ and ])")
+        .accessibilityLabel("Playback speed")
+    }
+
+    private var volumeControl: some View {
+        HStack(spacing: 8) {
+            Image(systemName: audio.volume < 0.05 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .foregroundStyle(Palette.textSecondary)
+                .font(.system(size: 12))
+                // Both glyphs are different widths; without a fixed box the
+                // slider jumped sideways every time the volume crossed mute.
+                .frame(width: 16, alignment: .center)
+            Slider(value: Binding(
+                get: { Double(audio.volume) },
+                set: { audio.setVolume(Float($0)) }
+            ), in: 0 ... 1.5)
+                .tint(accentColor)
+                .frame(width: 110)
+                .accessibilityLabel("Volume")
+        }
+    }
+
+    // MARK: - Sleep timer
+
+    /// Shows the armed timer's own remaining time on the control that sets
+    /// it, rather than as a separate label elsewhere on the screen.
+    private var sleepIsArmed: Bool {
+        bookVM.sleepRemainingSeconds != nil || bookVM.sleepUntilEndOfBook
+    }
 
     private var sleepTimerMenu: some View {
         Menu {
@@ -446,21 +511,91 @@ struct AudiobookPlayerView: View {
                     bookVM.startSleepTimer(option, currentBook: book)
                 }
             }
-            if bookVM.sleepRemainingSeconds != nil || bookVM.sleepUntilEndOfBook {
+            if sleepIsArmed {
                 Divider()
                 Button("Cancel sleep timer") { bookVM.cancelSleepTimer() }
             }
         } label: {
-            Image(systemName: "moon.zzz")
-                .font(.system(size: 16))
-                .foregroundStyle(bookVM.sleepRemainingSeconds == nil && !bookVM.sleepUntilEndOfBook ? Palette.textSecondary : accentColor)
-                .frame(width: 32, height: 32)
-                .voqoraSurface(.floating, in: Circle())
+            HStack(spacing: 6) {
+                Image(systemName: sleepIsArmed ? "moon.zzz.fill" : "moon.zzz")
+                    .font(.system(size: 14, weight: .medium))
+                if let remain = bookVM.sleepRemainingSeconds {
+                    Text(DurationFormatter.clock(remain))
+                        .font(vm.appFont(size: 11, weight: .bold).monospaced())
+                        .monospacedDigit()
+                } else if bookVM.sleepUntilEndOfBook {
+                    Text("End of book")
+                        .font(vm.appFont(size: 11, weight: .bold))
+                }
+            }
+            .foregroundStyle(sleepIsArmed ? accentColor : Palette.textSecondary)
+            .padding(.horizontal, sleepIsArmed ? 12 : 0)
+            .frame(minWidth: 32)
+            .frame(height: 32)
+            .voqoraSurface(.control, in: Capsule())
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .menuStyle(.borderlessButton)
-        .help("Sleep timer")
-        .accessibilityLabel("Sleep timer")
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(sleepTimerHelp)
+        .accessibilityLabel(sleepTimerHelp)
+    }
+
+    private var sleepTimerHelp: String {
+        if let remain = bookVM.sleepRemainingSeconds {
+            return "Sleep timer — stops in \(DurationFormatter.clock(remain))"
+        }
+        if bookVM.sleepUntilEndOfBook {
+            return "Sleep timer — stops at the end of the book"
+        }
+        return "Sleep timer"
+    }
+
+    private var exportButton: some View {
+        Button(action: exportAudiobook) {
+            Image(systemName: isExporting ? "hourglass" : "square.and.arrow.down")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(book.status == "done" ? Palette.textSecondary : Palette.textTertiary)
+                .frame(width: 32, height: 32)
+                .voqoraSurface(.control, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isExporting || book.status != "done")
+        .help(book.status == "done" ? "Export audiobook…" : "Finish generating this audiobook before exporting")
+        .accessibilityLabel("Export audiobook")
+    }
+
+    /// Copy a verified, on-disk audiobook through a normal macOS save panel.
+    /// This has no relationship to Dashboard's clip export: a book is never
+    /// represented by transient clip PCM, and the source is first validated
+    /// by AudiobookService's authenticated WAV cache path.
+    private func exportAudiobook() {
+        guard !isExporting else { return }
+        isExporting = true
+        Task { @MainActor in
+            defer { isExporting = false }
+            do {
+                let source = try await bookVM.validatedAudioURL(for: book)
+                let panel = NSSavePanel()
+                panel.title = "Export Audiobook"
+                panel.message = "Save a copy of the completed audiobook audio."
+                panel.nameFieldStringValue = "\(prettyTitle).wav"
+                panel.canCreateDirectories = true
+                guard panel.runModal() == .OK, let destination = panel.url else { return }
+                let destinationAccess = destination.startAccessingSecurityScopedResource()
+                defer {
+                    if destinationAccess {
+                        destination.stopAccessingSecurityScopedResource()
+                    }
+                }
+                try FileManager.default.copyItem(at: source, to: destination)
+                bookVM.showToast("Exported \(destination.lastPathComponent).", kind: .success)
+            } catch {
+                bookVM.showToast("Could not export this audiobook.", kind: .error)
+            }
+        }
     }
 
     // MARK: - Content panel (Transcript / Sections)
@@ -468,7 +603,9 @@ struct AudiobookPlayerView: View {
     private enum ContentTab: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
         case sections = "Sections"
-        var id: String { rawValue }
+        var id: String {
+            rawValue
+        }
     }
 
     /// T-22: the single always-present, always-space-filling panel that
@@ -494,84 +631,131 @@ struct AudiobookPlayerView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Content used to be able to paint over the panel's own rounded
+            // corners, since `voqoraSurface` paints a background but does not
+            // clip.
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
             .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
         }
         .frame(minHeight: 220, maxHeight: .infinity)
     }
 
+    /// Scrolled content in the panel ran flush into the panel's own hairline
+    /// border, so the first and last visible lines were always sliced through
+    /// the middle of their glyphs against a hard edge. The panel is opaque
+    /// `surfaceRaised`, so a short gradient in that exact color reads as the
+    /// text fading out under the frame rather than being chopped by it.
+    private func scrollEdgeFades() -> some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                colors: [Palette.surfaceRaised, Palette.surfaceRaised.opacity(0)],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 18)
+            Spacer(minLength: 0)
+            LinearGradient(
+                colors: [Palette.surfaceRaised.opacity(0), Palette.surfaceRaised],
+                startPoint: .top, endPoint: .bottom
+            )
+            .frame(height: 18)
+        }
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder
     private var transcriptPanel: some View {
-        Group {
-            if let transcript = bookVM.currentTranscript {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        // T-21: an unbounded reading width made the transcript
-                        // stretch edge-to-edge in a wide window — lines far
-                        // longer than comfortable reading measure, another
-                        // shape of "doesn't adapt well to window size." Capped
-                        // and centered instead, like any real reading surface.
-                        LazyVStack(alignment: .leading, spacing: 22) {
-                            ForEach(orderedPages(transcript), id: \.page) { entry in
-                                let isCurrent = isCurrentPage(entry.page, in: transcript)
-                                transcriptRow(entry, isCurrent: isCurrent, in: transcript)
-                                    .id(entry.page)
-                            }
+        if let transcript = bookVM.currentTranscript {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    // T-21: an unbounded reading width made the transcript
+                    // stretch edge-to-edge in a wide window — lines far
+                    // longer than comfortable reading measure, another
+                    // shape of "doesn't adapt well to window size." Capped
+                    // and centered instead, like any real reading surface.
+                    LazyVStack(alignment: .leading, spacing: 22) {
+                        ForEach(orderedPages(transcript), id: \.page) { entry in
+                            let isCurrent = isCurrentPage(entry.page, in: transcript)
+                            transcriptRow(entry, isCurrent: isCurrent, in: transcript)
+                                .id(entry.page)
                         }
-                        .frame(maxWidth: 720)
-                        .frame(maxWidth: .infinity)
-                        .padding(24)
-                        // T-13 fix: the real signal for "the user is manually
-                        // scrolling" is AppKit's willStartLiveScrollNotification
-                        // (trackpad/wheel/scrollbar), bridged via LiveScrollDetector
-                        // above. Placed on the scrollable content itself (not the
-                        // ScrollView container) so it becomes a descendant of the
-                        // real underlying NSScrollView and enclosingScrollView
-                        // resolves correctly.
-                        .background(
-                            LiveScrollDetector(onLiveScroll: { userScrolledAt = Date() })
-                        )
                     }
-                    // Kept as a supplementary fallback for a direct click-drag
-                    // on the content (not the common case on macOS, but harmless
-                    // to also catch).
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 2)
-                            .onChanged { _ in userScrolledAt = Date() }
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    // T-13 fix: the real signal for "the user is manually
+                    // scrolling" is AppKit's willStartLiveScrollNotification
+                    // (trackpad/wheel/scrollbar), bridged via LiveScrollDetector
+                    // above. Placed on the scrollable content itself (not the
+                    // ScrollView container) so it becomes a descendant of the
+                    // real underlying NSScrollView and enclosingScrollView
+                    // resolves correctly.
+                    .background(
+                        LiveScrollDetector(onLiveScroll: { userScrolledAt = Date() })
                     )
-                    // T-13: scroll to the current page immediately the first
-                    // time this branch mounts — i.e. the first time the panel
-                    // is shown with a transcript already loaded, or the first
-                    // time a transcript arrives while the panel is already
-                    // open. SwiftUI preserves this branch's identity (no
-                    // re-mount, no re-fire) while `bookVM.currentTranscript`
-                    // stays non-nil, so this does not re-trigger just because
-                    // the transcript's content changes mid-session.
-                    .onAppear {
-                        if let page = currentPageID(in: transcript) {
-                            proxy.scrollTo(page, anchor: .center)
-                        }
+                }
+                // Kept as a supplementary fallback for a direct click-drag
+                // on the content (not the common case on macOS, but harmless
+                // to also catch).
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 2)
+                        .onChanged { _ in userScrolledAt = Date() }
+                )
+                // T-13: scroll to the current page immediately the first
+                // time this branch mounts — i.e. the first time the panel
+                // is shown with a transcript already loaded, or the first
+                // time a transcript arrives while the panel is already
+                // open. SwiftUI preserves this branch's identity (no
+                // re-mount, no re-fire) while `bookVM.currentTranscript`
+                // stays non-nil, so this does not re-trigger just because
+                // the transcript's content changes mid-session.
+                .onAppear {
+                    if let page = currentPageID(in: transcript) {
+                        proxy.scrollTo(page, anchor: .center)
                     }
-                    // S8/T-12: only scroll when the *current page* changes,
-                    // not on every render. T-13: suppressed for a short
-                    // window after a detected manual scroll so auto-scroll
-                    // doesn't fight a user reading ahead/back.
-                    // Fires whenever the *paragraph* being narrated changes —
-                    // every few seconds — rather than only at page boundaries
-                    // two to three minutes apart, so the highlighted sentence
-                    // stays on screen instead of drifting off it. Still
-                    // suppressed for a window after a detected manual scroll so
-                    // auto-scroll doesn't fight a reader who has moved away.
-                    .onChange(of: currentScrollAnchor(in: transcript)) { _, newAnchor in
-                        guard let newAnchor else { return }
-                        guard Self.shouldAutoScroll(userScrolledAt: userScrolledAt, now: Date()) else { return }
-                        withAnimation(.easeOut(duration: 0.4)) {
-                            proxy.scrollTo(newAnchor, anchor: .center)
+                }
+                // S8/T-12: only scroll when the *current page* changes,
+                // not on every render. T-13: suppressed for a short
+                // window after a detected manual scroll so auto-scroll
+                // doesn't fight a user reading ahead/back.
+                // Fires whenever the *paragraph* being narrated changes —
+                // every few seconds — rather than only at page boundaries
+                // two to three minutes apart, so the highlighted sentence
+                // stays on screen instead of drifting off it. Still
+                // suppressed for a window after a detected manual scroll so
+                // auto-scroll doesn't fight a reader who has moved away.
+                .onChange(of: currentScrollAnchor(in: transcript)) { oldAnchor, newAnchor in
+                    guard let newAnchor else { return }
+                    guard Self.shouldAutoScroll(userScrolledAt: userScrolledAt, now: Date()) else { return }
+                    // A seek (scrubber drag, skip-to-section, 15/30s skip) can
+                    // jump the anchor many pages away in one step. `scrollTo`
+                    // on a `LazyVStack` needs the target row to already be
+                    // measured to land correctly; rows far outside the
+                    // current viewport haven't been laid out yet, so a big
+                    // jump silently no-ops — the transcript is left showing
+                    // wherever it already was, frozen, even though playback
+                    // has moved on. A one-page step (ordinary narration
+                    // advancing) is always adjacent to what's already
+                    // rendered, so only a jump gets the extra nudge: fire the
+                    // scroll once now, then again next runloop turn once the
+                    // intervening rows have had a layout pass to measure
+                    // against.
+                    let isBigJump = oldAnchor == nil || abs((oldAnchor?.page ?? newAnchor.page) - newAnchor.page) > 1
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        proxy.scrollTo(newAnchor, anchor: .center)
+                    }
+                    if isBigJump {
+                        DispatchQueue.main.async {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(newAnchor, anchor: .center)
+                            }
                         }
                     }
                 }
-            } else {
-                ProgressView().tint(accentColor).padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay { scrollEdgeFades() }
             }
+        } else {
+            ProgressView().tint(accentColor).padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -580,7 +764,6 @@ struct AudiobookPlayerView: View {
     /// it's a byte-identical duplicate that was never narrated) — mark it
     /// distinctly instead of rendering it identically to a normally-narrated
     /// page. See jira-audiobook-quality.md T-1.
-    @ViewBuilder
     private func transcriptRow(_ entry: PageEntry, isCurrent: Bool, in t: AudiobookService.Transcript) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             if let status = entry.status {
@@ -689,8 +872,8 @@ struct AudiobookPlayerView: View {
                 .filter { !$0.isEmpty }
                 .map { Self.splitIntoSentences($0) }
         }
-        highlightCache.sentencesByParagraph = highlightCache.linesByParagraph.map { $0.flatMap { $0 } }
-        highlightCache.allSentences = highlightCache.sentencesByParagraph.flatMap { $0 }
+        highlightCache.sentencesByParagraph = highlightCache.linesByParagraph.map { $0.flatMap(\.self) }
+        highlightCache.allSentences = highlightCache.sentencesByParagraph.flatMap(\.self)
         highlightCache.lastCurrentIndex = nil
         highlightCache.cachedParagraphs = nil
     }
@@ -729,7 +912,7 @@ struct AudiobookPlayerView: View {
             return [
                 Text(Self.reflowedText(entry.text))
                     .font(vm.appFont(size: 15, weight: .bold))
-                    .foregroundStyle(accentColor)
+                    .foregroundStyle(accentColor),
             ]
         }
         if let cached = highlightCache.cachedParagraphs, highlightCache.lastCurrentIndex == current {
@@ -744,7 +927,7 @@ struct AudiobookPlayerView: View {
                 // Rendered whole rather than per sentence: a heading is one
                 // short phrase, and an outer .font() cannot override the fonts
                 // already baked into concatenated Text pieces.
-                let isCurrentHeading = (globalIndex...globalIndex + sentences.count).contains(current)
+                let isCurrentHeading = (globalIndex ... globalIndex + sentences.count).contains(current)
                 built.append(
                     Text(joined)
                         .font(vm.appFont(size: 17, weight: .bold))
@@ -772,7 +955,9 @@ struct AudiobookPlayerView: View {
                     globalIndex += 1
                 }
             }
-            if let paragraph { built.append(paragraph) }
+            if let paragraph {
+                built.append(paragraph)
+            }
         }
         if built.isEmpty {
             built = [Text(Self.reflowedText(entry.text))]
@@ -804,7 +989,9 @@ struct AudiobookPlayerView: View {
     static func paragraphIndex(forSentence sentence: Int, in sentencesByParagraph: [[String]]) -> Int {
         var remaining = sentence
         for (index, sentences) in sentencesByParagraph.enumerated() {
-            if remaining < sentences.count { return index }
+            if remaining < sentences.count {
+                return index
+            }
             remaining -= sentences.count
         }
         return max(0, sentencesByParagraph.count - 1)
@@ -823,6 +1010,7 @@ struct AudiobookPlayerView: View {
     }
 
     // MARK: - Transcript memoization (T-12)
+
     //
     // `orderedPages`/`currentPageID`/`currentSection` used to re-sort the
     // whole transcript (or `book.sections`) from scratch on every render.
@@ -929,32 +1117,58 @@ struct AudiobookPlayerView: View {
                 .padding(.vertical, 10)
                 .padding(.horizontal, 8)
             }
+            .overlay { scrollEdgeFades() }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
+    /// Every row here jumps playback to that section, but the row was a bare
+    /// `.onTapGesture` on an `HStack`: no hover feedback, no keyboard focus,
+    /// no accessibility button trait, and a square full-bleed highlight that
+    /// ran into the panel's own rounded border. It's a `Button` now, with the
+    /// hover state the rest of the app's rows already have.
     private func sectionRow(_ section: AudiobookSection) -> some View {
         let isCurrent = currentSection()?.id == section.id
-        return HStack(spacing: 10) {
-            Rectangle()
-                .fill(isCurrent ? accentColor : Color.clear)
-                .frame(width: 3)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(section.title)
-                    .font(vm.appFont(size: 12, weight: isCurrent ? .bold : .medium))
-                    .foregroundStyle(isCurrent ? accentColor : Palette.textPrimary)
-                    .lineLimit(2)
-                Text("\(DurationFormatter.clock(section.startTime))  •  pp. \(section.startPage)–\(section.endPage)")
-                    .font(vm.appFont(size: 9, weight: .medium).monospaced())
-                    .foregroundStyle(Palette.textSecondary)
+        return Button {
+            bookVM.seek(toSeconds: section.startTime)
+        } label: {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+                    .fill(isCurrent ? accentColor : Color.clear)
+                    .frame(width: 3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(section.title)
+                        .font(vm.appFont(size: 12, weight: isCurrent ? .bold : .medium))
+                        .foregroundStyle(isCurrent ? accentColor : Palette.textPrimary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text("\(DurationFormatter.clock(section.startTime))  •  pp. \(section.startPage)–\(section.endPage)")
+                        .font(vm.appFont(size: 9, weight: .medium).monospaced())
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer()
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(sectionRowFill(isCurrent: isCurrent, hovering: hoveredSectionID == section.id))
+            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(isCurrent ? accentColor.opacity(0.12) : Color.clear)
-        .contentShape(Rectangle())
-        .onTapGesture { bookVM.seek(toSeconds: section.startTime) }
+        .buttonStyle(.plain)
+        .onHover { hoveredSectionID = $0 ? section.id : (hoveredSectionID == section.id ? nil : hoveredSectionID) }
+        .animation(.easeOut(duration: 0.12), value: hoveredSectionID)
+        .accessibilityLabel("\(section.title), starts at \(DurationFormatter.clock(section.startTime))")
+        .accessibilityAddTraits(isCurrent ? [.isButton, .isSelected] : .isButton)
+        .help("Jump to \(section.title)")
+    }
+
+    private func sectionRowFill(isCurrent: Bool, hovering: Bool) -> some View {
+        RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            .fill(
+                isCurrent
+                    ? accentColor.opacity(hovering ? 0.18 : 0.12)
+                    : (hovering ? Palette.controlFill : Color.clear)
+            )
     }
 
     private func adjustSpeed(_ delta: Double) {
@@ -965,15 +1179,18 @@ struct AudiobookPlayerView: View {
         audio.setPlaybackRate(Float(clamped))
     }
 
-    private var prettyTitle: String { book.displayTitle }
+    private var prettyTitle: String {
+        book.displayTitle
+    }
 }
 
 // MARK: - Pure, testable logic (T-12, T-13)
-//
-// Extracted as `internal` static members (rather than `private`) so
-// `VoqoraTests` can exercise them directly via `@testable import Voqora`,
-// matching the `AudiobookViewModel.libraryPollInterval`/
-// `DashboardViewModel.heartbeatDelay` extraction precedent.
+
+///
+/// Extracted as `internal` static members (rather than `private`) so
+/// `VoqoraTests` can exercise them directly via `@testable import Voqora`,
+/// matching the `AudiobookViewModel.libraryPollInterval`/
+/// `DashboardViewModel.heartbeatDelay` extraction precedent.
 extension AudiobookPlayerView {
     /// One transcript page's number and clean text, sorted ascending by
     /// page number. `status` mirrors the backend's `page_status` map
@@ -1040,7 +1257,7 @@ extension AudiobookPlayerView {
     /// is optional/additive (nil for transcripts from before T-1 shipped).
     static func sortPages(_ pages: [String: String], pageStatus: [String: String]? = nil) -> [PageEntry] {
         pages
-            .compactMap { (key, text) -> PageEntry? in
+            .compactMap { key, text -> PageEntry? in
                 Int(key).map { PageEntry(page: $0, text: text, status: pageStatus?[key]) }
             }
             .sorted { $0.page < $1.page }
@@ -1050,7 +1267,7 @@ extension AudiobookPlayerView {
     /// binary search.
     static func sortPageTimes(_ pageToTime: [String: Double]) -> [PageTimeEntry] {
         pageToTime
-            .compactMap { (key, time) -> PageTimeEntry? in Int(key).map { PageTimeEntry(page: $0, time: time) } }
+            .compactMap { key, time -> PageTimeEntry? in Int(key).map { PageTimeEntry(page: $0, time: time) } }
             .sorted { $0.time < $1.time }
     }
 
@@ -1063,17 +1280,17 @@ extension AudiobookPlayerView {
     /// doesn't recognize, rather than showing nothing.
     static func pageStatusCaption(for status: String) -> String {
         switch status {
-        case "tts_failed": return "Audio unavailable for this page"
-        case "cleaning_failed": return "This page could not be cleaned"
-        case "duplicate": return "Duplicate page (not narrated)"
-        default: return "This page was not narrated normally"
+        case "tts_failed": "Audio unavailable for this page"
+        case "cleaning_failed": "This page could not be cleaned"
+        case "duplicate": "Duplicate page (not narrated)"
+        default: "This page was not narrated normally"
         }
     }
 
     static func pageStatusIcon(for status: String) -> String {
         switch status {
-        case "duplicate": return "doc.on.doc"
-        default: return "exclamationmark.triangle.fill"
+        case "duplicate": "doc.on.doc"
+        default: "exclamationmark.triangle.fill"
         }
     }
 
@@ -1095,9 +1312,11 @@ extension AudiobookPlayerView {
         let tokenizer = NLTokenizer(unit: .sentence)
         tokenizer.string = text
         var sentences: [String] = []
-        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+        tokenizer.enumerateTokens(in: text.startIndex ..< text.endIndex) { range, _ in
             let sentence = text[range].trimmingCharacters(in: .whitespacesAndNewlines)
-            if !sentence.isEmpty { sentences.append(sentence) }
+            if !sentence.isEmpty {
+                sentences.append(sentence)
+            }
             return true
         }
         return sentences.isEmpty ? [text] : sentences
@@ -1219,7 +1438,9 @@ extension AudiobookPlayerView {
         var cumulative = 0.0
         for (idx, count) in charCounts.enumerated() {
             cumulative += Double(count)
-            if target < cumulative { return idx }
+            if target < cumulative {
+                return idx
+            }
         }
         return sentences.count - 1
     }

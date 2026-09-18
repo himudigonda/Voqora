@@ -1,3 +1,5 @@
+import AppKit
+import CryptoKit
 @testable import Voqora
 import XCTest
 
@@ -35,9 +37,9 @@ final class DashboardViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() {
+    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() throws {
         let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
@@ -64,7 +66,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "bf_emma")
     }
-
 
     private func makeVM() -> DashboardViewModel {
         DashboardViewModel(
@@ -112,19 +113,19 @@ final class DashboardViewModelTests: XCTestCase {
         vm.stopHeartbeat()
     }
 
-    func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() {
-        let ok = HTTPURLResponse(
-            url: URL(string: "http://127.0.0.1:10101/speak")!,
+    func test_backendResponseValidation_acceptsOnlySuccessfulWavStreams() throws {
+        let ok = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "http://localhost/speak")),
             statusCode: 200,
             httpVersion: nil,
             headerFields: ["Content-Type": "audio/wav"]
-        )!
-        let serverError = HTTPURLResponse(
-            url: URL(string: "http://127.0.0.1:10101/speak")!,
+        ))
+        let serverError = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "http://localhost/speak")),
             statusCode: 500,
             httpVersion: nil,
             headerFields: ["Content-Type": "application/json"]
-        )!
+        ))
 
         XCTAssertTrue(BackendService.isExpectedAudioResponse(ok))
         XCTAssertFalse(BackendService.isExpectedAudioResponse(serverError))
@@ -176,7 +177,7 @@ final class DashboardViewModelTests: XCTestCase {
 
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         try FileManager.default.setAttributes(
-            [.modificationDate: now.addingTimeInterval(-3_600)],
+            [.modificationDate: now.addingTimeInterval(-3600)],
             ofItemAtPath: oldStaging.path
         )
         try FileManager.default.setAttributes(
@@ -230,9 +231,40 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path))
     }
 
+    func test_runtimeValidationRejectsTamperedAndUnexpectedFiles() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraRuntimeValidationTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let runtime = root.appendingPathComponent("VoqoraServer", isDirectory: true)
+        try FileManager.default.createDirectory(at: runtime, withIntermediateDirectories: true)
+
+        let original = Data("verified executable".utf8)
+        let executable = runtime.appendingPathComponent("VoqoraServer")
+        try original.write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        let hash = SHA256.hash(data: original).map { String(format: "%02x", $0) }.joined()
+        let manifest = LaunchManager.RuntimeManifest(
+            format: 1,
+            version: "1.2.3",
+            archiveSHA256: String(repeating: "a", count: 64),
+            root: "VoqoraServer",
+            files: [.init(path: "VoqoraServer", sha256: hash, mode: 0o755)]
+        )
+
+        XCTAssertNoThrow(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
+
+        try Data("tampered".utf8).write(to: executable)
+        XCTAssertThrowsError(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
+
+        try original.write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
+        try Data("unexpected".utf8).write(to: runtime.appendingPathComponent("extra"))
+        XCTAssertThrowsError(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
+    }
+
     // MARK: - togglePlayback error path
 
-    func test_togglePlayback_with_zero_duration_sets_error() async {
+    func test_togglePlayback_with_zero_duration_sets_error() {
         let vm = makeVM()
         // Fresh AudioService starts with duration == 0 (no buffer scheduled).
         XCTAssertEqual(vm.audio.duration, 0)
@@ -255,22 +287,86 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.status, .ready)
     }
 
-    func test_togglePlayback_error_current_reset_returns_to_ready() async {
+    /// Regression: `NowPlayingBar`'s stop ("xmark") button used to call
+    /// `AudiobookViewModel.stopPlayback()` directly, bypassing this
+    /// ViewModel's own `stopPlayback()` entirely. A manual mid-book stop is
+    /// not a natural completion, so `audio.playbackCompleted` stays false and
+    /// the `audio.$isPlaying` sink (see `setupBindings()`) resolves `status`
+    /// to `.paused` rather than `.ready` -- and nothing ever moved it off
+    /// `.paused` again once `nowPlaying` went nil, leaving `VoqoraWindow`'s
+    /// `miniPlayerHUD` ("PAUSED", stale dashboard-TTS history text) stuck
+    /// showing on every non-home tab indefinitely. The fix routes that
+    /// button through `vm.stopPlayback()` (this method), which delegates to
+    /// `audiobookVM.stopPlayback()` for the actual teardown but also resets
+    /// `status` back to `.ready` afterward. This test exercises that full
+    /// integration path -- a shared `AudioService` between a `DashboardViewModel`
+    /// and its `audiobookVM`, exactly as `VoqoraApp` wires them.
+    func test_stopPlayback_whenAudiobookPlaying_resetsDashboardStatusToReady() {
+        let audio = AudioService(startingEngine: false)
+        let vm = DashboardViewModel(
+            backend: BackendService(),
+            system: SystemService(),
+            audio: audio,
+            history: HistoryManager(),
+            startsBackgroundWork: false,
+            defaults: testDefaults
+        )
+        let audiobookVM = AudiobookViewModel(audio: audio)
+        vm.audiobookVM = audiobookVM
+
+        audiobookVM.nowPlaying = Audiobook(
+            bookID: "b1",
+            title: "Regression Book",
+            createdAt: "2026-07-30T00:00:00Z",
+            pageCount: 1,
+            status: "done",
+            phaseProgress: PhaseProgress(pageDone: 1, pageTotal: 1),
+            sections: [],
+            pageToTime: [:],
+            totalAudioSeconds: 0,
+            failedPages: [],
+            estimated: nil,
+            actual: nil,
+            engine: "kokoro",
+            voice: "af_bella",
+            speed: 1,
+            usesGeminiCleanup: false,
+            budget: nil,
+            error: nil
+        )
+        // Simulate the audiobook actually playing -- the sink flips `status`
+        // to `.speaking` exactly as it would for a real playing audiobook
+        // (see the `miniPlayerHUD` gating comment: `status` is genuinely
+        // ambiguous between TTS and audiobook playback).
+        audio.isPlaying = true
+        XCTAssertEqual(vm.status, .speaking, "precondition: sink reports speaking while audio.isPlaying")
+
+        // A manual stop before the book naturally ends.
+        vm.stopPlayback()
+
+        XCTAssertNil(audiobookVM.nowPlaying, "the audiobook must actually stop")
+        XCTAssertEqual(
+            vm.status, .ready,
+            "status must not stay stuck at .paused after a manual audiobook stop routed through DashboardViewModel"
+        )
+    }
+
+    func test_togglePlayback_error_current_reset_returns_to_ready() {
         let vm = makeVM()
-        vm.togglePlayback()  // sets .error
+        vm.togglePlayback() // sets .error
 
         vm.resetPlaybackError(for: vm.errorResetGeneration)
 
         XCTAssertEqual(vm.status, .ready)
     }
 
-    func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() async {
+    func test_togglePlayback_twice_in_a_row_does_not_double_schedule_clear() {
         let vm = makeVM()
-        vm.togglePlayback()  // .error #1
+        vm.togglePlayback() // .error #1
         let firstGeneration = vm.errorResetGeneration
         // The HARD-021 fix cancels the prior errorResetTask; re-triggering
         // shouldn't leak a second timer.
-        vm.togglePlayback()  // .error #2
+        vm.togglePlayback() // .error #2
         let secondGeneration = vm.errorResetGeneration
 
         if case .error = vm.status {} else {
@@ -290,7 +386,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - currentVoiceDisplay
 
-    func test_currentVoiceDisplay_humanizes_voice_id() async {
+    func test_currentVoiceDisplay_humanizes_voice_id() {
         let vm = makeVM()
         vm.selectedVoice = "af_bella"
         XCTAssertEqual(vm.currentVoiceDisplay, "Af Bella")
@@ -311,7 +407,7 @@ final class DashboardViewModelTests: XCTestCase {
 
     // MARK: - isOnline
 
-    func test_isOnline_reflects_isBackendOnline() async {
+    func test_isOnline_reflects_isBackendOnline() {
         let vm = makeVM()
         XCTAssertFalse(vm.isOnline)
         vm.isBackendOnline = true
@@ -429,5 +525,31 @@ final class DashboardViewModelTests: XCTestCase {
             currentChangeCount: 2, lastChangeCount: 1,
             isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: false
         ))
+    }
+
+    func test_diagnosticContextRedactsSecretsAndSourceContent() {
+        let canary = "CANARY_SOURCE_PROSE_do_not_export"
+        let key = "AIzaSyDUMMY-should-never-reach-a-log"
+        let token = String(repeating: "a", count: 64)
+
+        let safe = VoqoraLog.redactedContext([
+            "error": canary,
+            "apiKey": key,
+            "ipcToken": token,
+            "page": "4",
+        ])
+
+        XCTAssertEqual(safe["error_redacted"], "true")
+        XCTAssertEqual(safe["apiKey_redacted"], "true")
+        XCTAssertEqual(safe["ipcToken_redacted"], "true")
+        XCTAssertEqual(safe["page"], "4")
+        XCTAssertFalse(safe.values.contains(canary))
+        XCTAssertFalse(safe.values.contains(key))
+        XCTAssertFalse(safe.values.contains(token))
+    }
+
+    func test_focusedTextInputKeepsEditingShortcutPrecedence() {
+        XCTAssertTrue(VoqoraApp.focusedTextInputOwnsShortcut(responder: NSTextView()))
+        XCTAssertFalse(VoqoraApp.focusedTextInputOwnsShortcut(responder: NSView()))
     }
 }

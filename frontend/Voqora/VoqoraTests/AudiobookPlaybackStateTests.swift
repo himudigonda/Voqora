@@ -9,6 +9,20 @@ private enum LibraryLoadFailure: Error {
     case backendUnreachable
 }
 
+/// Crosses the `@Sendable` async list seam without capturing mutable local
+/// state. This keeps the regression test honest under Swift 6 concurrency.
+private actor LibraryLoadFailureSwitch {
+    private var shouldFail = true
+
+    func value() -> Bool {
+        shouldFail
+    }
+
+    func clear() {
+        shouldFail = false
+    }
+}
+
 private actor DelayedAudioLoader {
     private var requested = false
     private var requestWaiter: CheckedContinuation<Void, Never>?
@@ -222,7 +236,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             "phase_progress": ["page_done": 5, "page_total": 10],
         ])
         try? await Task.sleep(nanoseconds: 15_000_000)
-        guard case .cleaning(let page, let total) = viewModel.processingState["book1"] else {
+        guard case let .cleaning(page, total) = viewModel.processingState["book1"] else {
             XCTFail("expected the current subscription's event to apply, got \(String(describing: viewModel.processingState["book1"]))")
             return
         }
@@ -244,7 +258,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let book = makeBook(bookID: "b1", status: "cleaning", pageDone: 1, pageTotal: 10)
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
-            subscribeToEvents: { _ in AsyncStream { _ in } },  // never yields; stays "active"
+            subscribeToEvents: { _ in AsyncStream { _ in } }, // never yields; stays "active"
             listBooks: { [book] }
         )
         viewModel.subscribe(to: "b1")
@@ -254,7 +268,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
 
         await viewModel.refresh()
 
-        guard case .generating(let page, let total) = viewModel.processingState["b1"] else {
+        guard case let .generating(page, total) = viewModel.processingState["b1"] else {
             XCTFail("SSE-owned state must survive a poll refresh, got \(String(describing: viewModel.processingState["b1"]))")
             return
         }
@@ -273,10 +287,10 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             listBooks: {
                 callCount += 1
                 if callCount == 1 {
-                    await gate.waitForRelease()  // first call: held open
+                    await gate.waitForRelease() // first call: held open
                     return [staleBook]
                 }
-                return [freshBook]  // second call: resolves immediately
+                return [freshBook] // second call: resolves immediately
             }
         )
 
@@ -287,7 +301,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         await gate.release()
         await firstRefresh.value
 
-        guard case .cleaning(let page, _) = viewModel.processingState["b1"] else {
+        guard case let .cleaning(page, _) = viewModel.processingState["b1"] else {
             XCTFail("expected .cleaning, got \(String(describing: viewModel.processingState["b1"]))")
             return
         }
@@ -304,8 +318,8 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let generationA = viewModel.beginCompletionFetch()
         let generationB = viewModel.beginCompletionFetch()
 
-        viewModel.applyCompletion(bookB, generation: generationB)  // resolves first
-        viewModel.applyCompletion(bookA, generation: generationA)  // resolves later, but stale
+        viewModel.applyCompletion(bookB, generation: generationB) // resolves first
+        viewModel.applyCompletion(bookA, generation: generationA) // resolves later, but stale
 
         XCTAssertEqual(
             viewModel.completionSummary?.bookID, "B",
@@ -400,13 +414,15 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_refresh_clearsLoadFailedFlag_onNextSuccess() async {
-        var shouldFail = true
+        let failureSwitch = LibraryLoadFailureSwitch()
         let book = makeBook(bookID: "b1", status: "done")
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
             subscribeToEvents: { _ in AsyncStream { _ in } },
             listBooks: {
-                if shouldFail { throw LibraryLoadFailure.backendUnreachable }
+                if await failureSwitch.value() {
+                    throw LibraryLoadFailure.backendUnreachable
+                }
                 return [book]
             }
         )
@@ -414,7 +430,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         await viewModel.refresh()
         XCTAssertTrue(viewModel.loadFailed)
 
-        shouldFail = false
+        await failureSwitch.clear()
         await viewModel.refresh()
 
         XCTAssertFalse(viewModel.loadFailed, "a subsequent successful refresh() must clear the flag")
@@ -424,7 +440,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
 
     func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {
         let book = makeBook(status: "sectioning", pageDone: 3, pageTotal: 10)
-        guard case .sectioning(let page, let total) = book.displayStatus else {
+        guard case let .sectioning(page, total) = book.displayStatus else {
             XCTFail("expected .sectioning, got \(book.displayStatus)")
             return
         }
@@ -436,7 +452,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     func test_applyStatus_sectioning_setsSectioningState() {
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         viewModel.applyStatus(bookID: "b1", status: "sectioning", pageDone: 2, pageTotal: 5, error: nil)
-        guard case .sectioning(let page, let total) = viewModel.processingState["b1"] else {
+        guard case let .sectioning(page, total) = viewModel.processingState["b1"] else {
             XCTFail("expected .sectioning, got \(String(describing: viewModel.processingState["b1"]))")
             return
         }
@@ -448,10 +464,10 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         viewModel.applyPhase(bookID: "b1", phase: "cleaning", page: 1, total: 5)
         viewModel.applyPhase(bookID: "b1", phase: "sectioning", page: 5, total: 5)
-        guard case .sectioning(let page, let total) = viewModel.processingState["b1"] else {
+        guard case let .sectioning(page, total) = viewModel.processingState["b1"] else {
             XCTFail(
                 "applyPhase(sectioning) must not silently no-op and leave the prior phase's " +
-                "state frozen, got \(String(describing: viewModel.processingState["b1"]))"
+                    "state frozen, got \(String(describing: viewModel.processingState["b1"]))"
             )
             return
         }
@@ -459,11 +475,31 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertEqual(total, 5)
     }
 
+    func test_displayStatus_costApprovalCarriesPersistedAbsoluteCap() {
+        let approval = GeminiBudget.CostApproval(
+            requiredCapUsd: 2.75,
+            currentCapUsd: 1.00,
+            tier: "standard"
+        )
+        let book = makeBook(
+            status: "needs_cost_approval",
+            budget: GeminiBudget(capUsd: 1, actualUsd: 0.4, reservedUsd: 0.6, costApproval: approval)
+        )
+
+        guard case let .needsCostApproval(requiredCap) = book.displayStatus else {
+            XCTFail("expected cost approval state, got \(book.displayStatus)")
+            return
+        }
+        XCTAssertEqual(requiredCap, 2.75)
+        XCTAssertFalse(book.displayStatus.isProcessing)
+    }
+
     private func makeBook(
         bookID: String = "in-flight-book",
         status: String = "done",
         pageDone: Int = 1,
-        pageTotal: Int = 1
+        pageTotal: Int = 1,
+        budget: GeminiBudget? = nil
     ) -> Audiobook {
         Audiobook(
             bookID: bookID,
@@ -482,6 +518,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             voice: "af_bella",
             speed: 1,
             usesGeminiCleanup: false,
+            budget: budget,
             error: nil
         )
     }

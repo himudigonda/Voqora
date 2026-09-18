@@ -7,7 +7,7 @@ set -euo pipefail
 #   • Custom Voqora dark background with visible install instructions
 #   • App icon (left) + Applications alias (right)
 #   • Volume icon (Voqora.icns)
-#   • A focused 660×415 Finder window with only the two install targets
+#   • A reliable drag-and-drop volume containing only the app and Applications link
 # ============================================================
 
 APP_NAME="Voqora"
@@ -126,10 +126,15 @@ FONT_COUNT=$(ls -1 "$FONTS_DST"/*.ttf 2>/dev/null | wc -l | tr -d ' ')
 echo "   ✓ Bundled $FONT_COUNT font(s)."
 
 ZIP_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.zip"
+MANIFEST_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json"
 if [ ! -f "$ZIP_SRC" ]; then
     echo "❌ Backend zip missing at $ZIP_SRC — run 'make backend' first." >&2; exit 1
 fi
+if [ ! -f "$MANIFEST_SRC" ]; then
+    echo "❌ Backend manifest missing at $MANIFEST_SRC — run 'make backend' first." >&2; exit 1
+fi
 cp "$ZIP_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
+cp "$MANIFEST_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
 echo "   ✓ Backend zip bundled ($(du -sh "$ZIP_SRC" | cut -f1))."
 
 for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
@@ -152,6 +157,17 @@ echo "   ✓ Final staged app signature seals bundled resources."
 echo "💿 Building installer DMG..."
 rm -f "${BUILD_DIR}/${DMG_NAME}.dmg"
 
+# Finder's layout AppleScript can hang indefinitely in a headless CI runner
+# with no interactive GUI session, so it must never be an unattended release
+# dependency there — but on an interactive Mac (a real local build, like a
+# release owner running `make release` at their own desk) it works fine and
+# is the only way `--background`/`--icon` positioning actually lands in the
+# DMG's .DS_Store instead of silently being ignored.
+DMG_EXTRA_ARGS=()
+if [ -n "${CI:-}" ]; then
+    DMG_EXTRA_ARGS+=(--skip-jenkins)
+fi
+
 create-dmg \
     --volname "${APP_NAME} ${VERSION}" \
     --volicon "${ICNS}" \
@@ -163,22 +179,32 @@ create-dmg \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 205 \
     --no-internet-enable \
+    "${DMG_EXTRA_ARGS[@]+"${DMG_EXTRA_ARGS[@]}"}" \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"
 
 # ── 7. Cleanup ───────────────────────────────────────────────
 rm -rf "$STAGING_DIR"
 
-DMG_SIZE=$(du -sh "${BUILD_DIR}/${DMG_NAME}.dmg" | cut -f1)
+DMG_PATH="${BUILD_DIR}/${DMG_NAME}.dmg"
+CHECKSUM_PATH="${DMG_PATH}.sha256"
+DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
 
 if [ -n "${NOTARYTOOL_PROFILE:-}" ]; then
     echo "🍎 Submitting DMG for Apple notarization..."
-    xcrun notarytool submit "${BUILD_DIR}/${DMG_NAME}.dmg" \
+    xcrun notarytool submit "$DMG_PATH" \
         --keychain-profile "$NOTARYTOOL_PROFILE" --wait
-    xcrun stapler staple "${BUILD_DIR}/${DMG_NAME}.dmg"
-    xcrun stapler validate "${BUILD_DIR}/${DMG_NAME}.dmg"
+    xcrun stapler staple "$DMG_PATH"
+    xcrun stapler validate "$DMG_PATH"
     echo "   ✓ Notarization ticket stapled."
 fi
 
+# The DMG changes when a notarization ticket is stapled, so write the release
+# receipt only after every byte of the artifact is final. The manual
+# early-access channel uploads this alongside the DMG; the guided installer
+# independently checks GitHub's API digest before opening a download.
+shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+echo "   ✓ SHA-256 receipt: $CHECKSUM_PATH"
+
 echo ""
-echo "✅ DMG Created: ${BUILD_DIR}/${DMG_NAME}.dmg  (${DMG_SIZE})"
+echo "✅ DMG Created: $DMG_PATH  (${DMG_SIZE})"

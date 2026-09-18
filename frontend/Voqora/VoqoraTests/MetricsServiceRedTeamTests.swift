@@ -24,7 +24,6 @@ import XCTest
 ///   - Byte-wise: serialized JSON of the cleaned event contains none of the
 ///     adversarial string values.
 final class MetricsServiceRedTeamTests: XCTestCase {
-
     // MARK: - The adversarial taxonomy
 
     /// Strings we must never see in outbound JSON.
@@ -42,19 +41,19 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 
     func test_redTeam_obviousLeakKeysAllDropped() {
         let raw: [String: Any] = [
-            "text":         secrets[0],
-            "email":        secrets[1],
-            "prompt":       secrets[0],
-            "content":      secrets[0],
-            "body":         secrets[0],
-            "message":      secrets[0],
-            "user_text":    secrets[0],
-            "input":        secrets[0],
-            "transcript":   secrets[0],
-            "selection":    secrets[0],
-            "highlighted":  secrets[0],
+            "text": secrets[0],
+            "email": secrets[1],
+            "prompt": secrets[0],
+            "content": secrets[0],
+            "body": secrets[0],
+            "message": secrets[0],
+            "user_text": secrets[0],
+            "input": secrets[0],
+            "transcript": secrets[0],
+            "selection": secrets[0],
+            "highlighted": secrets[0],
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0, "every adversarial key MUST be dropped")
     }
 
@@ -62,25 +61,25 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 
     func test_redTeam_unicodeLookalikeKeysDropped() {
         // 'tеxt' uses Cyrillic 'е' (U+0435), not Latin 'e' (U+0065). A naive
-        // string filter would let this through; the closed whitelist must not.
+        // string filter would let this through; the closed allowlist must not.
         let raw: [String: Any] = [
-            "tеxt":   secrets[0],       // Cyrillic
+            "tеxt": secrets[0], // Cyrillic
             "te\u{200B}xt": secrets[0], // zero-width space
-            "𝐭𝐞𝐱𝐭":  secrets[0],       // mathematical bold
+            "𝐭𝐞𝐱𝐭": secrets[0], // mathematical bold
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0)
     }
 
     func test_redTeam_casingVariantsOfTextKeyDropped() {
         let raw: [String: Any] = [
-            "Text":  secrets[0],
-            "TEXT":  secrets[0],
-            "tExt":  secrets[0],
-            "tEXT":  secrets[0],
+            "Text": secrets[0],
+            "TEXT": secrets[0],
+            "tExt": secrets[0],
+            "tEXT": secrets[0],
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
-        XCTAssertEqual(cleaned.count, 0, "the whitelist is case-sensitive — only 'voice' (lower) lets a string through")
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
+        XCTAssertEqual(cleaned.count, 0, "the allowlist is case-sensitive — only 'voice' (lower) lets a string through")
     }
 
     // MARK: - Nested structures hiding leaks
@@ -89,10 +88,10 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         let raw: [String: Any] = [
             "metadata": [
                 "user_text": secrets[0],
-                "email":     secrets[1],
+                "email": secrets[1],
             ],
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertNil(cleaned["metadata"])
     }
 
@@ -100,7 +99,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         let raw: [String: Any] = [
             "selection_history": secrets,
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0)
     }
 
@@ -112,7 +111,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             "diagnostic_blob": blob,
             "telemetry_payload": blob,
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0)
     }
 
@@ -120,15 +119,15 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 
     func test_redTeam_reservedTopLevelKeysIgnoredInProps() {
         // Even if an attacker tries to overwrite the outbox's top-level
-        // shape via props, those keys aren't in the whitelist, so they drop.
+        // shape via props, those keys aren't in the allowlist, so they drop.
         let raw: [String: Any] = [
-            "event":       "definitely_not_allowed",
-            "ts":          "1970-01-01T00:00:00Z",
-            "anon_id":     "ATTACKER_CONTROLLED",
+            "event": "definitely_not_allowed",
+            "ts": "1970-01-01T00:00:00Z",
+            "anon_id": "ATTACKER_CONTROLLED",
             "app_version": "9.9.9-evil",
-            "platform":    "ROOTKIT",
+            "platform": "ROOTKIT",
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0)
     }
 
@@ -136,15 +135,15 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 
     func test_redTeam_allowedKeysWithAdversarialValues() {
         let raw: [String: Any] = [
-            "chars": "drop table users",      // wrong type → drop
-            "speed": Double.infinity,         // out of [0.5,2.0] → drop
-            "audio_seconds": -1.0,            // negative → drop
-            "pages": "9999999999",            // wrong type → drop
-            "file_kind": "exe",               // not an accepted document kind → drop
-            "book_id_hash": "G".paddedToFiftyFour(),  // non-hex → drop
-            "seconds_played": Double.nan,     // NaN handling
+            "chars": "drop table users", // wrong type → drop
+            "speed": Double.infinity, // out of [0.5,2.0] → drop
+            "audio_seconds": -1.0, // negative → drop
+            "pages": "9999999999", // wrong type → drop
+            "file_kind": "exe", // not an accepted document kind → drop
+            "book_id_hash": "G".paddedToFiftyFour(), // non-hex → drop
+            "seconds_played": Double.nan, // NaN handling
         ]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertNil(cleaned["chars"])
         XCTAssertNil(cleaned["speed"])
         XCTAssertNil(cleaned["audio_seconds"])
@@ -162,17 +161,17 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             "chars": 10,
             "voice": "af_bella",
             // All of these MUST be filtered before serialization.
-            "text":             secrets[0],
-            "email":            secrets[1],
-            "prompt":           secrets[2],
-            "metadata":         ["nested_text": secrets[0]],
-            "user_selection":   secrets[3],
-            "Text":             secrets[0],
-            "tеxt":             secrets[0], // Cyrillic
+            "text": secrets[0],
+            "email": secrets[1],
+            "prompt": secrets[2],
+            "metadata": ["nested_text": secrets[0]],
+            "user_selection": secrets[3],
+            "Text": secrets[0],
+            "tеxt": secrets[0], // Cyrillic
         ]
         let evt = MetricsService.Event(
             name: "generation",
-            props: MetricsService.Props.whitelist(raw),
+            props: MetricsService.Props.sanitizedPayload(raw),
             timestamp: Date(timeIntervalSince1970: 0)
         )
         let serialized = evt.serialized()
@@ -217,10 +216,10 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         let allowedName = "generation"
         let payload: [String: Any] = [
             "event": allowedName,
-            "ts":    "2026-05-26T00:00:00.000Z",
+            "ts": "2026-05-26T00:00:00.000Z",
             "props": [
                 "chars": 5,
-                "text":  secrets[0],     // must be stripped on restore
+                "text": secrets[0], // must be stripped on restore
                 "email": secrets[1],
             ],
         ]
@@ -234,13 +233,13 @@ final class MetricsServiceRedTeamTests: XCTestCase {
     // MARK: - Empty + nil tolerance
 
     func test_redTeam_emptyPropsProducesEmptyDict() {
-        let cleaned = MetricsService.Props.whitelist([:])
+        let cleaned = MetricsService.Props.sanitizedPayload([:])
         XCTAssertEqual(cleaned.count, 0)
     }
 
     func test_redTeam_nilValueDropsKey() {
         let raw: [String: Any] = ["chars": NSNull()]
-        let cleaned = MetricsService.Props.whitelist(raw)
+        let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertNil(cleaned["chars"])
     }
 }
@@ -248,7 +247,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 private extension String {
     /// 64-char string starting with the receiver, padded with 'X' (non-hex).
     func paddedToFiftyFour() -> String {
-        let pad = String(repeating: "X", count: 64 - self.count)
+        let pad = String(repeating: "X", count: 64 - count)
         return self + pad
     }
 }

@@ -663,7 +663,9 @@ async def test_end_to_end_pipeline_produces_valid_wav(monkeypatch):
     assert fields["data_size"] == file_size - WAV_HEADER_SIZE
 
     # --- RIFF size consistent ---
-    (riff_size,) = struct.unpack_from("<I", open(final, "rb").read(8), 4)
+    with open(final, "rb") as wav_file:
+        header = wav_file.read(8)
+    (riff_size,) = struct.unpack_from("<I", header, 4)
     assert riff_size + 8 == file_size
 
     # --- PCM body is exact cat of per-page bodies ---

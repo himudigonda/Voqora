@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/// MetricsService v3 — counts-only analytics with a whitelisted outbox.
+/// MetricsService v3 — counts-only analytics with an allowlisted outbox.
 ///
 /// Design contract:
 /// - Sends ONLY the keys in `Props.allowedKeys`. Any unknown key is dropped
@@ -26,7 +26,7 @@ actor MetricsService {
     // State now lives inside the actor — no @AppStorage main-thread coupling.
     // UserDefaults itself is thread-safe per Apple docs; we read it at init
     // and on the toggle path, which is rare.
-    private var userID: String
+    private var userID: String?
     private var enabled: Bool
     private var outbox: [Event] = []
     private var isFlushing = false
@@ -41,29 +41,34 @@ actor MetricsService {
     }()
 
     private init() {
-        let stored = UserDefaults.standard.string(forKey: "anonymousUserID")
-        if let s = stored, !s.isEmpty {
-            self.userID = s
-        } else {
-            let fresh = UUID().uuidString
-            UserDefaults.standard.set(fresh, forKey: "anonymousUserID")
-            self.userID = fresh
-        }
+        userID = UserDefaults.standard.string(forKey: "anonymousUserID")
         let enabledRaw = UserDefaults.standard.object(forKey: "telemetryEnabled") as? Bool
-        self.enabled = enabledRaw ?? true
-        self.outbox = Self.loadOutbox()
+        enabled = enabledRaw ?? false
+        outbox = Self.loadOutbox()
     }
 
     // MARK: - Configuration
 
     /// Toggle telemetry. When disabled, outbox is cleared.
     func setEnabled(_ value: Bool) {
-        self.enabled = value
+        enabled = value
         UserDefaults.standard.set(value, forKey: "telemetryEnabled")
         if !value {
             outbox.removeAll()
             persistOutbox()
         }
+    }
+
+    /// Local, idempotent privacy erasure. The caller is responsible for any
+    /// separately-authorized remote contact removal; this method never sends
+    /// a final telemetry request while deleting the outbox.
+    func eraseLocalData() {
+        enabled = false
+        userID = nil
+        outbox.removeAll()
+        UserDefaults.standard.removeObject(forKey: outboxKey)
+        UserDefaults.standard.removeObject(forKey: "telemetryEnabled")
+        UserDefaults.standard.removeObject(forKey: "anonymousUserID")
     }
 
     // MARK: - Public surface (fire-and-forget, call-site compatible with v1)
@@ -143,10 +148,12 @@ actor MetricsService {
     ) async {
         guard enabled else { return }
         guard Event.allowedNames.contains(event) else {
-            VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
+            await MainActor.run {
+                VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
+            }
             return
         }
-        let cleanedProps = Props.whitelist(rawProps)
+        let cleanedProps = Props.sanitizedPayload(rawProps)
         // The identifier is generated before persistence, so a retry after a
         // lost HTTP response is the same event, not a second launch/action.
         let evt = Event(name: event, props: cleanedProps, timestamp: Date())
@@ -171,14 +178,16 @@ actor MetricsService {
         defer { isFlushing = false }
         let batch = Array(outbox.prefix(flushBatchSize))
         let payload: [String: Any] = [
-            "anon_id": userID,
+            "anon_id": anonymousID(),
             "product": "voqora",
             "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
             "platform": "macOS",
             "events": batch.map { $0.serialized() },
         ]
         guard let body = try? JSONSerialization.data(withJSONObject: payload) else {
-            VoqoraLog.error("MetricsService", "Batch serialization failed, retaining batch", ["batchSize": "\(batch.count)"])
+            await MainActor.run {
+                VoqoraLog.error("MetricsService", "Batch serialization failed, retaining batch", ["batchSize": "\(batch.count)"])
+            }
             return
         }
 
@@ -193,15 +202,21 @@ actor MetricsService {
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
-            guard (200..<300).contains(http.statusCode) else {
-                VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+            guard (200 ..< 300).contains(http.statusCode) else {
+                await MainActor.run {
+                    VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+                }
                 return
             }
             outbox.removeFirst(min(batch.count, outbox.count))
             persistOutbox()
-            VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
+            await MainActor.run {
+                VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
+            }
         } catch {
-            VoqoraLog.error("MetricsService", "Flush failed", ["error": String(describing: error)])
+            await MainActor.run {
+                VoqoraLog.error("MetricsService", "Flush failed", ["failureCode": "telemetry_flush_failed"])
+            }
         }
     }
 
@@ -213,9 +228,20 @@ actor MetricsService {
         UserDefaults.standard.set(data, forKey: outboxKey)
     }
 
+    private func anonymousID() -> String {
+        if let userID, !userID.isEmpty {
+            return userID
+        }
+        let fresh = UUID().uuidString
+        userID = fresh
+        UserDefaults.standard.set(fresh, forKey: "anonymousUserID")
+        return fresh
+    }
+
     private static func loadOutbox() -> [Event] {
         guard let data = UserDefaults.standard.data(forKey: "metrics_outbox_v2"),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else {
             return []
         }
         return arr.compactMap(Event.fromSerialized)
@@ -223,10 +249,11 @@ actor MetricsService {
 }
 
 // MARK: - Periodic flush driver
-//
-// Lives on @MainActor so the Timer schedules on the main runloop (safe and
-// matches the original behavior). Each tick spawns a Task that hops into the
-// MetricsService actor to flush.
+
+///
+/// Lives on @MainActor so the Timer schedules on the main runloop (safe and
+/// matches the original behavior). Each tick spawns a Task that hops into the
+/// MetricsService actor to flush.
 @MainActor
 final class MetricsFlushDriver {
     static let shared = MetricsFlushDriver()
@@ -280,7 +307,7 @@ extension MetricsService {
         ]
 
         func serialized() -> [String: Any] {
-            return [
+            [
                 "event_id": id,
                 "event": name,
                 "ts": MetricsService.isoFormatter.string(from: timestamp),
@@ -292,11 +319,10 @@ extension MetricsService {
             guard let name = raw["event"] as? String,
                   allowedNames.contains(name) else { return nil }
             let props = raw["props"] as? [String: Any] ?? [:]
-            let ts: Date
-            if let s = raw["ts"] as? String {
-                ts = MetricsService.isoFormatter.date(from: s) ?? Date()
+            let ts: Date = if let s = raw["ts"] as? String {
+                MetricsService.isoFormatter.date(from: s) ?? Date()
             } else {
-                ts = Date()
+                Date()
             }
             // Pre-idempotency outbox entries remain safe to deliver: assign a
             // fresh ID once and persist it with the next outbox write.
@@ -304,7 +330,7 @@ extension MetricsService {
             return Event(
                 id: Self.isValidID(id) ? id! : UUID().uuidString,
                 name: name,
-                props: Props.whitelist(props),
+                props: Props.sanitizedPayload(props),
                 timestamp: ts
             )
         }
@@ -316,33 +342,33 @@ extension MetricsService {
     }
 
     enum Props {
-        /// Closed whitelist — see `docs/specs/accounts-analytics.md` §5.2.
+        /// Closed allowlist — see `docs/specs/accounts-analytics.md` §5.2.
         /// Any key not in this map is dropped.
         nonisolated static let allowedKeys: [String: @Sendable (Any) -> Any?] = [
-            "chars":          { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
-            "voice":          { ($0 as? String) },
-            "speed":          { v in (v as? Double).flatMap { $0 >= 0.5 && $0 <= 2.0 ? $0 : nil } },
-            "audio_seconds":  { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
-            "pages":          { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
-            "file_kind":      { v in
+            "chars": { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
+            "voice": { ($0 as? String) },
+            "speed": { v in (v as? Double).flatMap { $0 >= 0.5 && $0 <= 2.0 ? $0 : nil } },
+            "audio_seconds": { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
+            "pages": { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
+            "file_kind": { v in
                 guard let s = v as? String,
                       AudiobookImportStaging.supportedExtensions.contains(s)
                 else { return nil }
                 return s
             },
-            "book_id_hash":   { v in
+            "book_id_hash": { v in
                 guard let s = v as? String,
                       s.count == 64,
                       s.allSatisfy({ "0123456789abcdef".contains($0) }) else { return nil }
                 return s
             },
-            "chars_out":      { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
+            "chars_out": { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "seconds_played": { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
         ]
 
         /// Strip everything not in `allowedKeys` and validate value shapes.
-        /// This is *defense in depth*; the server enforces the same whitelist.
-        nonisolated static func whitelist(_ raw: [String: Any]) -> [String: Any] {
+        /// This is *defense in depth*; the server enforces the same allowlist.
+        nonisolated static func sanitizedPayload(_ raw: [String: Any]) -> [String: Any] {
             var out: [String: Any] = [:]
             for (key, validator) in allowedKeys {
                 if let v = raw[key], let cleaned = validator(v) {

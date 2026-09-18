@@ -28,7 +28,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_: Notification) {
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
-        where key.hasPrefix("NSSplitView Subview Frames dashboard") {
+            where key.hasPrefix("NSSplitView Subview Frames dashboard")
+        {
             defaults.removeObject(forKey: key)
         }
     }
