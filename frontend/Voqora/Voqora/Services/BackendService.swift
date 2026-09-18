@@ -138,8 +138,18 @@ final class BackendService: NSObject, @unchecked Sendable {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
         env["VOQORA_IPC_TOKEN"] = launchConfiguration.token
-        env["VOQORA_IPC_LISTENER_FD"] = String(launchConfiguration.listenerFD)
+        // `Process` launches children via posix_spawn with every file
+        // descriptor closed except the three it explicitly wires up itself
+        // (stdin/stdout/stderr) — clearing FD_CLOEXEC on the listener socket
+        // in THIS process (done in BackendConnection) has no effect on what
+        // the child inherits; verified empirically (a plain `Process` launch
+        // does not carry a non-CLOEXEC FD across at all). `standardInput` is
+        // the one Foundation-supported way to hand a child an arbitrary FD,
+        // so the listener socket rides in on fd 0 instead of an arbitrary
+        // number, and the backend is told to read it from exactly there.
+        env["VOQORA_IPC_LISTENER_FD"] = "0"
         p.environment = env
+        p.standardInput = FileHandle(fileDescriptor: launchConfiguration.listenerFD, closeOnDealloc: false)
 
         let pipe = Pipe()
         p.standardOutput = pipe
@@ -223,11 +233,27 @@ final class BackendService: NSObject, @unchecked Sendable {
 
         do {
             // LaunchManager verifies the installed runtime during extraction;
-            // repeat the inexpensive manifest check immediately before every
-            // production execution so post-install tampering fails closed.
+            // repeat the check immediately before every production execution
+            // so post-install tampering fails closed.
+            //
+            // This call reaches the session-scoped validation cache, which is
+            // why it is safe to leave on this line at all. `start()` is driven
+            // by the heartbeat and runs again every 2 seconds for as long as
+            // the backend is offline; the uncached check SHA-256'd ~578 MB on
+            // the main thread on every one of those attempts, which is how a
+            // backend outage turned into sustained UI jank rather than a
+            // quietly retrying reconnect. A cache hit re-stats the tree (fast,
+            // and still fails closed on any change) instead of re-reading it.
             // Test fixtures intentionally bypass this sealed-bundle contract.
             if executableOverride == nil {
+                let started = Date()
                 try LaunchManager.validateRuntimeForExecution(at: executableURL)
+                let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+                // Logged because this is the exact cost that used to be paid
+                // on every heartbeat retry. A cache hit is single-digit to
+                // low-tens of ms; anything near a second means the session
+                // cache missed and the full hash ran.
+                VoqoraLog.info("BackendService", "Runtime integrity verified", ["verifyMs": "\(elapsedMs)"])
             }
             try p.run()
             stateQueue.sync {
@@ -237,7 +263,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             VoqoraLog.info("BackendService", "Backend launched", ["pid": "\(p.processIdentifier)"])
         } catch {
-            VoqoraLog.error("BackendService", "Backend launch failed")
+            VoqoraLog.error("BackendService", "Backend launch failed", ["error": "\(error)"])
             connection.invalidate(generation: launchConfiguration.generation)
             stateQueue.sync {
                 if self.process === p {

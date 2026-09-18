@@ -35,6 +35,40 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var latestGitHubVersion: String?
     private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases/latest")!
 
+    /// When the GitHub release check last completed a network round trip.
+    private var lastGitHubCheck: Date?
+
+    /// How long a completed check stays good enough. `VoqoraApp` already runs
+    /// one at launch, so under normal use every later opportunistic check —
+    /// notably the About tab's — is answered from this without touching the
+    /// network at all.
+    nonisolated static let gitHubCheckMinimumInterval: TimeInterval = 60 * 60
+
+    /// Whether an opportunistic check is worth making. Pure and static so the
+    /// throttle is testable without a network or a clock.
+    nonisolated static func shouldCheckGitHubRelease(
+        lastChecked: Date?,
+        now: Date = Date(),
+        minimumInterval: TimeInterval = gitHubCheckMinimumInterval
+    ) -> Bool {
+        guard let lastChecked else { return true }
+        return now.timeIntervalSince(lastChecked) >= minimumInterval
+    }
+
+    /// The opportunistic entry point for UI that merely *displays* update
+    /// state, as opposed to a button the user pressed meaning "check now".
+    ///
+    /// The About tab used to `await` the unthrottled check on every single
+    /// visit, so re-opening a tab whose content was already fully determined
+    /// re-issued a request with a 12-second timeout and made the screen feel
+    /// like it was still loading. Nothing on that screen depends on the
+    /// result arriving before it renders, and a release published seconds ago
+    /// is not worth a network round trip per tab switch.
+    func checkGitHubReleaseForUpdateIfStale() async {
+        guard Self.shouldCheckGitHubRelease(lastChecked: lastGitHubCheck) else { return }
+        await checkGitHubReleaseForUpdate()
+    }
+
     private struct GitHubReleaseTag: Decodable {
         let tagName: String
         enum CodingKeys: String, CodingKey { case tagName = "tag_name" }
@@ -56,6 +90,9 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
               let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
               let release = try? JSONDecoder().decode(GitHubReleaseTag.self, from: data)
         else { return }
+        // Stamped only on a real answer from GitHub: a failed or refused check
+        // must not silence the next hour's worth of opportunistic retries.
+        lastGitHubCheck = Date()
 
         let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
         guard Self.isVersion(latest, newerThan: current) else { return }

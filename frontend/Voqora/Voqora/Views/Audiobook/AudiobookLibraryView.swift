@@ -146,6 +146,22 @@ struct AudiobookLibraryView: View {
                 }
                 bookVM.pendingDeepLink = nil
             }
+            // Belt-and-suspenders alongside `VoqoraWindow`'s own
+            // `.id(vm.selectedTab)` on the detail column's outer view:
+            // measured empirically that the `.id()` fix ALONE was not
+            // reliably enough to keep this view's pushed player from
+            // resurfacing on the very next tab switch — removing this
+            // explicit reset (assuming it was made redundant by that
+            // `.id()`) reintroduced the stuck-player bug in testing.
+            // Keeping both until the actual interaction between
+            // `NavigationSplitView`'s detail-column identity and this
+            // `NavigationStack`'s own path is understood well enough to
+            // justify relying on just one.
+            .onChange(of: vm.selectedTab) { _, newValue in
+                if newValue != "books" {
+                    path = []
+                }
+            }
             .alert("Delete all audiobooks?", isPresented: $showDeleteAllConfirmation) {
                 Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
                 Button("Cancel", role: .cancel) {}
@@ -277,12 +293,18 @@ struct AudiobookLibraryView: View {
                     Label("Delete all audiobooks", systemImage: "trash")
                 }
                 .disabled(bookVM.deletingAllBooks)
+                // macOS collapses a toolbar `Label` to its icon, so name both
+                // of these explicitly instead of relying on the title
+                // surviving that collapse.
+                .accessibilityLabel("Delete all audiobooks")
                 .accessibilityHint("Permanently deletes every local audiobook and source document")
             }
 
             Button { showImporter = true } label: {
                 Label("Add Book", systemImage: "plus.circle.fill")
             }
+            .accessibilityLabel("Add Book")
+            .accessibilityHint("Choose a document to convert into an audiobook")
         }
     }
 

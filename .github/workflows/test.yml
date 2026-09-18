@@ -76,6 +76,8 @@ jobs:
         run: |
           swiftlint lint --strict --config .swiftlint.yml
           swiftformat --lint frontend/Voqora/Voqora frontend/Voqora/VoqoraTests --swift-version 6
+      - name: Launch contract guards
+        run: python3 scripts/test_launch_contracts.py
       - name: Cache DerivedData
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:

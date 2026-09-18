@@ -697,19 +697,34 @@ class GeminiCleaner:
             )
         return cleaned
 
+    # Standard-tier calls get no HttpOptions (see _async_clean: http_options
+    # is only set for Flex), which the genai SDK treats as an *unbounded*
+    # httpx timeout, not a sane default — a request can hang forever on a
+    # dropped-packet/offline network instead of failing fast. Every other
+    # Standard-tier caller (clean_page/ocr_page/detect_sections during a
+    # cost-approved run) is already bounded by an outer asyncio.wait_for in
+    # AudiobookService; this endpoint had no such wrapper, so a user checking
+    # their API key with no network could hang the request indefinitely.
+    _VERIFY_KEY_TIMEOUT_S = 20.0
+
     @classmethod
     async def verify_key(cls, api_key: str) -> bool:
         """Lightweight key check: tiny generation. Returns True if key works.
 
-        Forced onto the Standard tier (default timeout) rather than Flex —
-        key verification is a user-facing, latency-sensitive check and must
-        not be subject to Flex's minutes-scale best-effort queuing.
+        Forced onto the Standard tier rather than Flex — key verification is
+        a user-facing, latency-sensitive check and must not be subject to
+        Flex's minutes-scale best-effort queuing. Bounded by an explicit
+        overall timeout (see `_VERIFY_KEY_TIMEOUT_S`) so a network outage
+        fails fast instead of hanging the request forever.
         """
         try:
-            await cls._with_retry(
-                "verify_key",
-                lambda tier: cls._async_clean(api_key, "Say 'ok'.", tier),
-                start_tier=types.ServiceTier.STANDARD,
+            await asyncio.wait_for(
+                cls._with_retry(
+                    "verify_key",
+                    lambda tier: cls._async_clean(api_key, "Say 'ok'.", tier),
+                    start_tier=types.ServiceTier.STANDARD,
+                ),
+                timeout=cls._VERIFY_KEY_TIMEOUT_S,
             )
             return True
         except GeminiAuthError:

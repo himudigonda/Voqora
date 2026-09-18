@@ -93,8 +93,16 @@ final class BackendConnection: @unchecked Sendable {
                 throw ConnectionError.listenerCreationFailed
             }
 
-            // Process inherits only descriptors without close-on-exec. Keep our
-            // own duplicate open too, preventing a port takeover during launch.
+            // `Foundation.Process` actually ignores this bit entirely — it
+            // launches children with every descriptor closed except the
+            // three it explicitly wires itself, so clearing FD_CLOEXEC alone
+            // never got this socket into the child (see BackendService,
+            // which now hands it over explicitly via `standardInput`
+            // instead). Left cleared here anyway: harmless, and keeps this
+            // FD usable if a future launch path ever does go through a
+            // plain fork+exec. The parent keeps its own copy open the whole
+            // time regardless, which is what actually prevents a port
+            // takeover during launch.
             let descriptorFlags = fcntl(fd, F_GETFD)
             guard descriptorFlags >= 0,
                   fcntl(fd, F_SETFD, descriptorFlags & ~FD_CLOEXEC) == 0

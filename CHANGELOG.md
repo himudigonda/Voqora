@@ -1,5 +1,55 @@
 # Changelog
 
+## [1.2.4] - 2026-09-17
+
+### Fixed — launch reliability
+
+- Voqora could fail to launch entirely on some Macs, due to a code-signing
+  conflict between the Hardened Runtime and the bundled Sparkle updater
+  framework. Launching now succeeds consistently.
+- A bundled-runtime integrity check could falsely report a healthy install as
+  corrupted, causing a working copy of Voqora to refuse to start until it was
+  reinstalled. The check now correctly recognizes an intact install.
+- The local speech backend could fail to start on launch due to how its
+  listening socket was handed off internally, leaving Voqora's window open
+  with no working narration.
+- Voqora could freeze completely on launch, before its window ever appeared,
+  while silently reapplying a previously chosen app icon — with no error and
+  no way to recover except a force-quit. The app-icon preference is now
+  applied without touching the app's own signed files, so it can neither
+  hang nor conflict with the app's code signature.
+- A first launch on some machines could fail during voice setup because a
+  very long install path silently truncated internally, causing the speech
+  engine to look for its voice data in the wrong place. Voqora now detects
+  and works around this automatically.
+
+### Fixed — playback and navigation
+
+- Switching tabs while the full audiobook player was open could leave
+  navigation stuck showing the audiobook player no matter which tab was
+  selected afterward.
+- Opening the Now Playing view while an audiobook was playing could show two
+  overlapping playback surfaces at once.
+- Stopping an audiobook from its mini player could leave a stale, unrelated
+  "Paused" indicator showing on other tabs afterward.
+- A brief, incorrect mini-player flash could appear for a fraction of a
+  second when leaving the full audiobook player from certain tabs.
+- Fixed a layout bug in the audiobook player where the scrub bar, sleep-timer
+  button, and export button could visually overlap.
+
+### Improved
+
+- App launch is meaningfully faster: redundant verification of the bundled
+  runtime has been eliminated, and the remaining check now runs off the main
+  thread, so Voqora's window and controls stay responsive during startup.
+- The app no longer re-verifies its own bundled runtime every few seconds
+  while waiting for the local speech backend to come up, which could make
+  the whole app feel sluggish if the backend was slow to start.
+- The accent color chosen in Preferences now applies consistently everywhere
+  it should, including a permissions banner that previously always showed a
+  fixed color regardless of the chosen accent.
+- Several controls throughout the app now have proper VoiceOver labels.
+
 ## [1.2.3] - 2026-09-10
 
 ### Security and release hardening

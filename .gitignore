@@ -21,6 +21,7 @@ backend/.coverage_html/
 backend/htmlcov/
 backend/.mutmut-cache/
 backend/mutants/
+scripts/__pycache__/
 
 # Downloaded model assets and generated local backend payload
 backend/kokoro-v1.0.onnx

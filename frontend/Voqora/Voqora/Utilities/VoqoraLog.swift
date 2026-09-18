@@ -55,6 +55,17 @@ enum VoqoraLog {
     /// prose, credentials, or the per-launch IPC capability by accident.
     /// This is deliberately centralized because logging calls are distributed
     /// across UI, audio, and transport code.
+    ///
+    /// Key-name matching only protects a value logged under a conventionally
+    /// named field (e.g. `"path"`, `"apiKey"`). It cannot catch a sensitive
+    /// value passed under an unrelated key, so value-shape checks below are a
+    /// second, independent layer: the Gemini key prefix, bearer/IPC header
+    /// syntax, and — because a full path embeds it regardless of which key
+    /// it's logged under — the current user's own account name and home
+    /// directory. A bare random IPC token has no such fixed shape to check
+    /// for; guarding it requires call sites to keep using a `path`/`token`/
+    /// `key`-shaped field name, which every current call site in this app
+    /// does (see BackendService/BackendConnection call sites).
     static func redactedContext(_ context: [String: String]) -> [String: String] {
         var safe: [String: String] = [:]
         for (key, value) in context {
@@ -66,6 +77,7 @@ enum VoqoraLog {
             let sensitiveValue = value.localizedCaseInsensitiveContains("AIza")
                 || value.localizedCaseInsensitiveContains("bearer ")
                 || value.localizedCaseInsensitiveContains("x-voqora-ipc-token")
+                || containsLocalIdentity(value)
             if sensitiveKey || sensitiveValue {
                 safe["\(key)_redacted"] = "true"
             } else {
@@ -73,6 +85,22 @@ enum VoqoraLog {
             }
         }
         return safe
+    }
+
+    /// True if `value` embeds this Mac's account name or home directory —
+    /// the piece of a filesystem path that identifies the user, which can
+    /// otherwise slip through under a key name that doesn't contain "path"
+    /// (e.g. `"detail"`, `"message"`).
+    private static func containsLocalIdentity(_ value: String) -> Bool {
+        let account = NSUserName()
+        if !account.isEmpty, value.localizedCaseInsensitiveContains(account) {
+            return true
+        }
+        let home = NSHomeDirectory()
+        if !home.isEmpty, home != "/", value.contains(home) {
+            return true
+        }
+        return false
     }
 
     private static func emit(_ level: Level, _ logger: String, _ msg: String, _ context: [String: String]) {

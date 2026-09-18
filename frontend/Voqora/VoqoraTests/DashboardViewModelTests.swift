@@ -287,6 +287,70 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.status, .ready)
     }
 
+    /// Regression: `NowPlayingBar`'s stop ("xmark") button used to call
+    /// `AudiobookViewModel.stopPlayback()` directly, bypassing this
+    /// ViewModel's own `stopPlayback()` entirely. A manual mid-book stop is
+    /// not a natural completion, so `audio.playbackCompleted` stays false and
+    /// the `audio.$isPlaying` sink (see `setupBindings()`) resolves `status`
+    /// to `.paused` rather than `.ready` -- and nothing ever moved it off
+    /// `.paused` again once `nowPlaying` went nil, leaving `VoqoraWindow`'s
+    /// `miniPlayerHUD` ("PAUSED", stale dashboard-TTS history text) stuck
+    /// showing on every non-home tab indefinitely. The fix routes that
+    /// button through `vm.stopPlayback()` (this method), which delegates to
+    /// `audiobookVM.stopPlayback()` for the actual teardown but also resets
+    /// `status` back to `.ready` afterward. This test exercises that full
+    /// integration path -- a shared `AudioService` between a `DashboardViewModel`
+    /// and its `audiobookVM`, exactly as `VoqoraApp` wires them.
+    func test_stopPlayback_whenAudiobookPlaying_resetsDashboardStatusToReady() {
+        let audio = AudioService(startingEngine: false)
+        let vm = DashboardViewModel(
+            backend: BackendService(),
+            system: SystemService(),
+            audio: audio,
+            history: HistoryManager(),
+            startsBackgroundWork: false,
+            defaults: testDefaults
+        )
+        let audiobookVM = AudiobookViewModel(audio: audio)
+        vm.audiobookVM = audiobookVM
+
+        audiobookVM.nowPlaying = Audiobook(
+            bookID: "b1",
+            title: "Regression Book",
+            createdAt: "2026-07-30T00:00:00Z",
+            pageCount: 1,
+            status: "done",
+            phaseProgress: PhaseProgress(pageDone: 1, pageTotal: 1),
+            sections: [],
+            pageToTime: [:],
+            totalAudioSeconds: 0,
+            failedPages: [],
+            estimated: nil,
+            actual: nil,
+            engine: "kokoro",
+            voice: "af_bella",
+            speed: 1,
+            usesGeminiCleanup: false,
+            budget: nil,
+            error: nil
+        )
+        // Simulate the audiobook actually playing -- the sink flips `status`
+        // to `.speaking` exactly as it would for a real playing audiobook
+        // (see the `miniPlayerHUD` gating comment: `status` is genuinely
+        // ambiguous between TTS and audiobook playback).
+        audio.isPlaying = true
+        XCTAssertEqual(vm.status, .speaking, "precondition: sink reports speaking while audio.isPlaying")
+
+        // A manual stop before the book naturally ends.
+        vm.stopPlayback()
+
+        XCTAssertNil(audiobookVM.nowPlaying, "the audiobook must actually stop")
+        XCTAssertEqual(
+            vm.status, .ready,
+            "status must not stay stuck at .paused after a manual audiobook stop routed through DashboardViewModel"
+        )
+    }
+
     func test_togglePlayback_error_current_reset_returns_to_ready() {
         let vm = makeVM()
         vm.togglePlayback() // sets .error
