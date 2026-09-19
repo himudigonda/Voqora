@@ -80,15 +80,33 @@ is_exact_app_running() {
 }
 
 # A process is not a usable app until its bundled local service has loaded.
-# This checks the loopback-only health endpoint without emitting user content
-# or talking to a network service.
+#
+# This used to curl http://127.0.0.1:10101/health. That stopped working in
+# v1.2.3, which replaced the fixed port with an app-owned ephemeral socket
+# handed to the child, and also began requiring a per-launch auth token — so
+# the check could neither find the port nor authenticate against it, and
+# `run` silently spent its full 60-second budget before declaring failure on
+# a perfectly healthy app.
+#
+# The port is discoverable without the token: the backend inherits the
+# listening socket as fd 0, so the child process itself holds it. Readiness
+# is therefore established from the process tree rather than from an HTTP
+# response, which needs no secret and no fixed port.
 is_bundled_backend_ready() {
-  local health
-  health="$(/usr/bin/curl --connect-timeout 1 --max-time 1 --silent --show-error --fail \
-    http://127.0.0.1:10101/health 2>/dev/null)" || return 1
+  local backend_pid
+  backend_pid="$(/usr/bin/pgrep -f "$BUNDLE_ID/VoqoraServer/VoqoraServer" 2>/dev/null | /usr/bin/head -1)"
+  [ -n "$backend_pid" ] || return 1
 
-  printf '%s' "$health" | /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' \
-    && printf '%s' "$health" | /usr/bin/grep -Eq '"loaded"[[:space:]]*:[[:space:]]*true'
+  # A listening socket means uvicorn has bound the inherited descriptor and
+  # is accepting, which happens only after startup has progressed past
+  # import and configuration.
+  /usr/sbin/lsof -a -nP -p "$backend_pid" -iTCP -sTCP:LISTEN >/dev/null 2>&1 || return 1
+
+  # The model load is the slow part and is what "ready" actually means.
+  # The backend announces it on stdout, which the app tees into this log.
+  local log="$HOME/Library/Application Support/$BUNDLE_ID/frontend.log"
+  [ -f "$log" ] || return 1
+  /usr/bin/grep -q "startup.engine_load.ready" "$log"
 }
 
 verify_fresh_launch() {
