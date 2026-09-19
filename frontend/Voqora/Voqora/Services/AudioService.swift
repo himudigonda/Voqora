@@ -82,6 +82,13 @@ class AudioService: NSObject, ObservableObject {
     /// actually change how fast audio plays, instead of only relabeling a
     /// picker that never reached the engine.
     private let timePitch = AVAudioUnitTimePitch()
+
+    /// Output format the graph was last wired against. `AVAudioEngine` tears
+    /// down the connections that touch the output chain when the hardware
+    /// configuration changes, so a change of sample rate or channel count
+    /// invalidates the explicit 24 kHz mono connections `setupEngine()` made
+    /// and they have to be re-established.
+    private var lastOutputFormat: AVAudioFormat?
     /// AVAudioUnitTimePitch is a real Audio Unit and only accepts the
     /// engine's canonical Float32 format — connecting it with the Int16
     /// format this class used before crashes at `engine.connect(...)` with
@@ -163,6 +170,7 @@ class AudioService: NSObject, ObservableObject {
         engine.connect(playerNode, to: timePitch, format: format)
         engine.connect(timePitch, to: engine.mainMixerNode, format: format)
         engineConfigured = true
+        lastOutputFormat = engine.outputNode.outputFormat(forBus: 0)
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleEngineConfigChange),
@@ -176,14 +184,60 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
+    /// `.AVAudioEngineConfigurationChange` fires whenever the output device
+    /// or its format changes — switching between built-in speakers and an
+    /// HDMI display, Bluetooth connecting, a screen share grabbing the
+    /// device. This used to bail out unless playback was already in progress,
+    /// which is the rare case: almost every such change arrives while the app
+    /// is idle. The notification was then dropped and nothing ever rebuilt
+    /// the graph, so the connections kept whatever survived the teardown and
+    /// every later clip rendered through a chain that no longer matched the
+    /// hardware. Only relaunching the app cleared it, which is exactly how
+    /// the "sounds robotic until I reinstall" reports behaved.
     @objc private func handleEngineConfigChange(_: Notification) {
         Task { @MainActor [weak self] in
-            guard let self, isPlaying else { return }
-            do {
-                try engine.start()
+            guard let self, engineConfigured else { return }
+            reconcileEngineConfiguration()
+        }
+    }
+
+    /// Re-wires the graph when the output format actually moved, and brings
+    /// the engine back up. Safe to call when idle: re-connecting nodes is a
+    /// supported live operation and starting an engine with nothing scheduled
+    /// is a no-op.
+    private func reconcileEngineConfiguration() {
+        let current = engine.outputNode.outputFormat(forBus: 0)
+        let previous = lastOutputFormat
+        lastOutputFormat = current
+
+        // A sample-rate or channel-count change is what invalidates our
+        // connections. Other configuration notifications (volume, a device
+        // appearing that we did not switch to) leave the graph intact, and
+        // re-connecting on those would flush queued buffers for no reason.
+        let formatChanged = previous == nil
+            || previous?.sampleRate != current.sampleRate
+            || previous?.channelCount != current.channelCount
+
+        let wasPlaying = isPlaying
+        if formatChanged {
+            engine.connect(playerNode, to: timePitch, format: format)
+            engine.connect(timePitch, to: engine.mainMixerNode, format: format)
+            VoqoraLog.info("AudioService", "Rewired audio graph after output format change", [
+                "previousRate": previous.map { "\($0.sampleRate)" } ?? "unknown",
+                "currentRate": "\(current.sampleRate)",
+                "wasPlaying": "\(wasPlaying)",
+            ])
+        }
+
+        guard formatChanged || wasPlaying else { return }
+        do {
+            try engine.start()
+            if wasPlaying {
                 playerNode.play()
-            } catch {
-                VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
+            }
+        } catch {
+            VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
+            if wasPlaying {
                 stop()
             }
         }
