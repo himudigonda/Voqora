@@ -74,7 +74,7 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
                 "http.request.failed",
                 extra={
                     "method": request.method,
-                    "path": request.url.path,
+                    "route": request.url.path,
                     "duration_ms": round((time.perf_counter() - start) * 1000, 1),
                 },
             )
@@ -86,7 +86,7 @@ class CorrelationMiddleware(BaseHTTPMiddleware):
                 "http.request",
                 extra={
                     "method": request.method,
-                    "path": request.url.path,
+                    "route": request.url.path,
                     "status": response.status_code,
                     "duration_ms": duration_ms,
                 },
