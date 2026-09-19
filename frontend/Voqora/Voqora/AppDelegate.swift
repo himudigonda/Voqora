@@ -25,7 +25,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// value is never read) and disabling the autosave going forward (so it
     /// can never be written again) closes off this whole failure mode,
     /// regardless of whatever originally wrote the bad value.
+    /// True when this process stood down for an already-running Voqora, so
+    /// later launch steps can skip work that a second instance must not do.
+    private(set) var isRedundantInstance = false
+
+    /// Voqora must be a single instance per user session.
+    ///
+    /// Until v1.2.2 this was enforced by accident: the backend bound a fixed
+    /// loopback port, so a second app's server hit EADDRINUSE and could not
+    /// serve, and both apps talked to the one surviving backend — whose
+    /// module-level `interactive_tts_lock` then serialised them. v1.2.3 gave
+    /// every instance its own app-owned ephemeral socket, which removed that
+    /// accidental mutex: a second instance now gets a fully working private
+    /// backend, so two copies of a ~330 MB model load and run inference
+    /// against each other, and both register the same global hotkey.
+    ///
+    /// Voqora is also a login item, so an ordinary "open the app again" or
+    /// running a local build alongside the installed copy lands in exactly
+    /// that state. Activate the original and stand down instead.
+    private func standDownIfAlreadyRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+            .filter { !$0.isTerminated }
+        guard let original = others.first else { return false }
+
+        VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
+            "existingPid": "\(original.processIdentifier)",
+        ])
+        original.activate(options: [])
+        return true
+    }
+
     func applicationWillFinishLaunching(_: Notification) {
+        if standDownIfAlreadyRunning() {
+            isRedundantInstance = true
+            // Terminate before SwiftUI builds a window or BackendService
+            // spawns a server. `exit` rather than `NSApp.terminate` because
+            // the latter runs the normal shutdown path, which would tear down
+            // shared on-disk state (logs) this instance never owned.
+            exit(0)
+        }
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
             where key.hasPrefix("NSSplitView Subview Frames dashboard")
