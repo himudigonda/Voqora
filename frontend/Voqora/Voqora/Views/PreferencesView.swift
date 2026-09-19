@@ -241,12 +241,12 @@ struct PreferencesView: View {
                                 Label("Speech Speed", systemImage: "gauge.with.needle")
                                     .font(vm.font(.rowTitle))
                                 Spacer()
-                                Text("\(String(format: "%.1f", vm.speechSpeed))x")
+                                Text("\(String(format: "%.2f", vm.speechSpeed))x")
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(accentColor)
                                     .fontWeight(.bold)
                             }
-                            Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0)
+                            Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0, step: 0.05)
                                 .tint(accentColor)
                         }
 
@@ -260,7 +260,7 @@ struct PreferencesView: View {
                                     .foregroundStyle(accentColor)
                                     .fontWeight(.bold)
                             }
-                            Slider(value: $vm.speechVolume, in: 0.0 ... 1.5)
+                            Slider(value: $vm.speechVolume, in: 0.0 ... 1.5, step: 0.05)
                                 .tint(accentColor)
                         }
                     }
@@ -346,7 +346,7 @@ struct PreferencesView: View {
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(accentColor)
                             }
-                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75 ... 2.0).tint(accentColor)
+                            Slider(value: $bookVM.defaultBookSpeed, in: 0.75 ... 2.0, step: 0.05).tint(accentColor)
                         }
 
                         Text(
