@@ -62,8 +62,31 @@ if [ -n "$DMG_PATH" ]; then
     [ -L "$MOUNT_POINT/Applications" ] || fail "DMG does not contain an Applications alias."
     codesign --verify --deep --strict "$APP_PATH" || fail "Mounted app has an invalid code signature."
     MOUNTED_APP_SIGNING_DETAILS="$(codesign -dvv "$APP_PATH" 2>&1)"
+    MOUNTED_APP_REQUIREMENT="$(codesign -d -r- "$APP_PATH" 2>&1 | sed -n 's/^#* *designated => //p')"
+    [ -n "$MOUNTED_APP_REQUIREMENT" ] \
+        || fail "Could not read the mounted app's designated requirement."
     hdiutil detach "$MOUNT_POINT" >/dev/null
     trap - EXIT
+
+    # Refuse a cdhash-pinned designated requirement on EVERY path, including
+    # the deliberate unnotarized one. macOS keys Accessibility and Automation
+    # grants to this requirement and stores one row per bundle identifier, so
+    # a requirement naming a code hash rather than a certificate means every
+    # user loses those permissions on the next update — while the stale
+    # Settings toggle still reads as enabled. That is not a Gatekeeper
+    # tradeoff a release owner can knowingly accept for a faster ship; it
+    # silently breaks the product's core feature for existing users. v1.2.4
+    # shipped this way. An unsigned/unnotarized DMG remains possible, but it
+    # must still carry a certificate-backed identity.
+    case "$MOUNTED_APP_REQUIREMENT" in
+        *cdhash*)
+            fail "Mounted app has a cdhash-pinned designated requirement (ad-hoc signature).
+       Every user would lose Accessibility permission on the next update.
+       Set DEVELOPER_ID_APPLICATION, or LOCAL_SIGN_IDENTITY for a
+       non-distributable build. Requirement was:
+       $MOUNTED_APP_REQUIREMENT"
+            ;;
+    esac
 fi
 
 if [ "${REQUIRE_DISTRIBUTION_SIGNING:-0}" = "1" ]; then

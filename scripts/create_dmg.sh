@@ -82,7 +82,40 @@ echo "🏗  Archiving Voqora v${VERSION}..."
 # Start this disposable release archive clean on every build.
 rm -rf "${BUILD_DIR}/${APP_NAME}.xcarchive"
 ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}.log"
-SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:--}"
+# Signing identity, in descending order of preference:
+#
+#   1. DEVELOPER_ID_APPLICATION — the only identity valid for public
+#      distribution (Gatekeeper + notarization).
+#   2. LOCAL_SIGN_IDENTITY — a development certificate. NOT distributable,
+#      but it produces a *stable* designated requirement.
+#   3. Ad-hoc ("-") — last resort.
+#
+# Why this order matters, and why ad-hoc is no longer the silent default:
+# macOS keys an Accessibility grant to the app's designated requirement, and
+# TCC stores exactly ONE row per bundle identifier. An ad-hoc signature has no
+# certificate to anchor to, so its requirement degrades to a literal
+# `cdhash H"..."` — a hash of the built code itself. Every rebuild changes
+# that hash, so every update looks like a different application and the user
+# silently loses Accessibility, with the stale row still showing an enabled
+# toggle that no longer authorises anything. A certificate-backed requirement
+# names the signing certificate instead of the code hash, so it survives
+# rebuilds. v1.2.4 shipped ad-hoc and hit exactly this.
+SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+if [ -z "$SIGNING_IDENTITY" ]; then
+    CANDIDATE="${LOCAL_SIGN_IDENTITY:-Apple Development: himudigonda@gmail.com (C97M74Y2YF)}"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$CANDIDATE"; then
+        SIGNING_IDENTITY="$CANDIDATE"
+        echo "⚠️  DEVELOPER_ID_APPLICATION is not set — this DMG is NOT distributable."
+        echo "   Signing with the development identity so permission grants still survive:"
+        echo "   $SIGNING_IDENTITY"
+    else
+        SIGNING_IDENTITY="-"
+        echo "⚠️  No signing identity available. Falling back to AD-HOC signing."
+        echo "   This build's designated requirement is a bare cdhash, so EVERY user"
+        echo "   who installs it will lose Accessibility and Automation permission"
+        echo "   again on the next update. Do not publish this."
+    fi
+fi
 if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
