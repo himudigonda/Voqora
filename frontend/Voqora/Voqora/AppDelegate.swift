@@ -61,7 +61,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // The real check runs earlier, from `VoqoraApp.init()`, because by
         // the time this fires the log file has already been replaced. Kept
         // as a backstop for any launch path that bypasses that initialiser.
-        if Self.standDownIfAlreadyRunning() {
+        //
+        // Never under XCTest: the test bundle is hosted by this app target,
+        // so an ordinary Voqora running on the machine would make the test
+        // host stand down and take the whole suite with it.
+        if !RuntimeEnvironment.isRunningTests, Self.standDownIfAlreadyRunning() {
             isRedundantInstance = true
             exit(0)
         }
