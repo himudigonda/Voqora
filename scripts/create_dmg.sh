@@ -101,15 +101,18 @@ ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}.log"
 # names the signing certificate instead of the code hash, so it survives
 # rebuilds. v1.2.4 shipped ad-hoc and hit exactly this.
 SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+SIGNING_TEAM="${DEVELOPMENT_TEAM:-}"
 if [ -z "$SIGNING_IDENTITY" ]; then
     CANDIDATE="${LOCAL_SIGN_IDENTITY:-Apple Development: himudigonda@gmail.com (C97M74Y2YF)}"
     if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$CANDIDATE"; then
         SIGNING_IDENTITY="$CANDIDATE"
+        SIGNING_TEAM="${LOCAL_DEVELOPMENT_TEAM:-WL37Y6X6V9}"
         echo "⚠️  DEVELOPER_ID_APPLICATION is not set — this DMG is NOT distributable."
         echo "   Signing with the development identity so permission grants still survive:"
         echo "   $SIGNING_IDENTITY"
     else
         SIGNING_IDENTITY="-"
+        SIGNING_TEAM=""
         echo "⚠️  No signing identity available. Falling back to AD-HOC signing."
         echo "   This build's designated requirement is a bare cdhash, so EVERY user"
         echo "   who installs it will lose Accessibility and Automation permission"
@@ -126,6 +129,8 @@ if ! xcodebuild \
     MARKETING_VERSION="${VERSION}" \
     archive \
     CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+    ${SIGNING_TEAM:+CODE_SIGN_STYLE=Manual} \
+    ${SIGNING_TEAM:+DEVELOPMENT_TEAM="$SIGNING_TEAM"} \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     >"${ARCHIVE_LOG}" 2>&1; then
     grep -E "^(error:|warning: |Build |MARKETING)" "${ARCHIVE_LOG}" || true

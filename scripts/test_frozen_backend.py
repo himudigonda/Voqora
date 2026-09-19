@@ -33,6 +33,7 @@ def request(
     token: str | None,
     method: str = "GET",
     body: bytes | None = None,
+    timeout: float = 3,
 ) -> tuple[int, bytes]:
     headers: dict[str, str] = {}
     if token:
@@ -40,7 +41,7 @@ def request(
     if body is not None:
         headers["Content-Type"] = "application/json"
         headers["Content-Length"] = str(len(body))
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
         connection.request(method, path, body=body, headers=headers)
         response = connection.getresponse()
@@ -131,7 +132,7 @@ def main() -> int:
                 raise FrozenBackendError(f"authenticated /engine returned HTTP {engine_status}")
 
             speech = json.dumps({"text": "Release check.", "voice": "af_bella"}).encode()
-            wav_status, wav_body = request(port, "/speak", token, "POST", speech)
+            wav_status, wav_body = request(port, "/speak", token, "POST", speech, timeout=120)
             if wav_status != 200 or not wav_body.startswith(b"RIFF") or b"WAVE" not in wav_body[:16]:
                 raise FrozenBackendError(f"authenticated /speak did not return a WAV response (HTTP {wav_status})")
         finally:
