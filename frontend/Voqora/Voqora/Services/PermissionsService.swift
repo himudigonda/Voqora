@@ -24,11 +24,11 @@ final class PermissionsService: ObservableObject {
     @Published private(set) var notificationsStatus: NotificationsStatus = .unknown
 
     enum NotificationsStatus: Equatable {
-        case unknown          // never asked, status not yet read
-        case notDetermined    // never asked
-        case authorized       // granted
-        case denied           // user said no, or system disabled
-        case provisional      // limited (rare on macOS)
+        case unknown // never asked, status not yet read
+        case notDetermined // never asked
+        case authorized // granted
+        case denied // user said no, or system disabled
+        case provisional // limited (rare on macOS)
     }
 
     private var pollTask: Task<Void, Never>?
@@ -53,7 +53,12 @@ final class PermissionsService: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.refreshAccessibility()
+            // NotificationCenter's closure is nonisolated even with `.main`.
+            // Hop explicitly so Swift 6 never permits a synchronous mutation
+            // of this main-actor observable object from an arbitrary sender.
+            Task { @MainActor [weak self] in
+                self?.refreshAccessibility()
+            }
         }
     }
 
@@ -98,7 +103,9 @@ final class PermissionsService: ObservableObject {
     /// user can flip the toggle. After the system prompt, polling will detect
     /// the granted state and update `accessibilityGranted`.
     func requestAccessibility() {
-        if accessibilityGranted { return }
+        if accessibilityGranted {
+            return
+        }
         // Show the system prompt (no-op if already prompted before).
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
@@ -148,7 +155,9 @@ final class PermissionsService: ObservableObject {
     /// Trigger the system Notifications authorization prompt. No-op on macOS 27 beta or in tests.
     func requestNotifications() async {
         guard NSClassFromString("XCTestCase") == nil else { return }
-        if #available(macOS 27, *) { return }
+        if #available(macOS 27, *) {
+            return
+        }
         do {
             _ = try await UNUserNotificationCenter.current()
                 .requestAuthorization(options: [.alert, .sound, .badge])

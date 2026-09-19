@@ -114,7 +114,7 @@ enum SelectionManager {
         // pasteboard within a few ms, so the common case returns fast and
         // only the worst case pays the full ~500ms ceiling.
         var copiedText: String?
-        for _ in 0..<25 {
+        for _ in 0 ..< 25 {
             try? await Task.sleep(nanoseconds: 20_000_000)
             if pasteboard.changeCount != oldChangeCount {
                 copiedText = pasteboard.string(forType: .string)

@@ -14,6 +14,11 @@ import SwiftUI
 /// Presented full-window via `.fullScreenCover`-style overlay (not `.sheet`)
 /// so the user can't dismiss it by clicking outside.
 struct OnboardingView: View {
+    /// Shared bounding box for every step's hero icon (app icon image or SF
+    /// Symbol glyph) so they read as the same size as the wizard pages by,
+    /// rather than each icon's own intrinsic/font-implied size.
+    static let heroIconSize: CGFloat = 64
+
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
@@ -137,7 +142,7 @@ struct OnboardingView: View {
                 Spacer().frame(width: 80)
             }
             Spacer()
-            if step == 2 && !permissions.accessibilityGranted {
+            if step == 2, !permissions.accessibilityGranted {
                 // Do not turn a denied or unavailable macOS permission into a
                 // dead-end product. Selected-text reading stays unavailable
                 // until it is granted, but local audiobooks and the in-app
@@ -170,13 +175,13 @@ struct OnboardingView: View {
     /// unusable when the user declines it.
     private var canAdvance: Bool {
         switch step {
-        case 2: return permissions.accessibilityGranted
-        default: return true
+        case 2: permissions.accessibilityGranted
+        default: true
         }
     }
 
     private var advanceBlockedReason: String? {
-        if step == 2 && !permissions.accessibilityGranted {
+        if step == 2, !permissions.accessibilityGranted {
             return "Grant Accessibility access to continue"
         }
         return nil
@@ -190,7 +195,7 @@ struct OnboardingView: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(width: 76, height: 76)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.welcomeTitle)
                 .font(appFont(size: 32, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -224,6 +229,7 @@ struct OnboardingView: View {
             Image(systemName: "hand.tap.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.axTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -259,6 +265,7 @@ struct OnboardingView: View {
             Image(systemName: "bell.badge.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.notifTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -322,6 +329,7 @@ struct OnboardingView: View {
             Image(systemName: "envelope.fill")
                 .font(.system(size: 52))
                 .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.identityTitle)
                 .font(appFont(size: 22, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -376,6 +384,7 @@ struct OnboardingView: View {
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 64))
                 .foregroundStyle(Palette.success)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
             Text(OnboardingCopy.privacyTitle)
                 .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
@@ -425,9 +434,9 @@ struct OnboardingView: View {
     }
 }
 
-// Split out of the struct body to keep it under SwiftLint's
-// `type_body_length` — plain private members, not a separate API surface.
-// Same pattern already used for this reason in `VoqoraWindow.swift`.
+/// Split out of the struct body to keep it under SwiftLint's
+/// `type_body_length` — plain private members, not a separate API surface.
+/// Same pattern already used for this reason in `VoqoraWindow.swift`.
 private extension OnboardingView {
     func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
         switch selectedFontName {

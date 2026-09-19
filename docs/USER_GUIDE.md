@@ -68,7 +68,8 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 4. Return to the book when it is ready, then use its progress and playback
    controls to continue where you left off.
 
-Voqora stores audiobook state locally. Close the app and return later without
+Voqora stores the source document, extracted text, generated audio, transcript,
+and audiobook state locally until you delete that book. Close the app and return later without
 starting the document from the beginning.
 
 ### Optional document cleanup

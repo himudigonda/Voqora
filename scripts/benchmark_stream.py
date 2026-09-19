@@ -1,8 +1,14 @@
+import os
 import time
 
 import requests
 
-url = "http://localhost:10101/speak"
+base_url = os.environ.get("VOQORA_BACKEND_URL", "").rstrip("/")
+token = os.environ.get("VOQORA_IPC_TOKEN", "")
+if not base_url or not token:
+    raise SystemExit("Set VOQORA_BACKEND_URL and VOQORA_IPC_TOKEN for an authenticated development backend.")
+
+url = f"{base_url}/speak"
 payload = {
     "text": "This is a streaming test to measure the first audio chunk.",
     "voice": "af_bella",
@@ -11,7 +17,7 @@ payload = {
 print(f"📡 Sniffing stream latency from {url}...")
 try:
     start = time.perf_counter()
-    with requests.post(url, json=payload, stream=True) as r:
+    with requests.post(url, json=payload, headers={"X-Voqora-IPC-Token": token}, stream=True) as r:
         r.raise_for_status()
         first_byte_time = None
         first_audio_time = None

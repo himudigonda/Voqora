@@ -1,5 +1,98 @@
 # Changelog
 
+## [1.2.4] - 2026-09-17
+
+### Fixed — launch reliability
+
+- Voqora could fail to launch entirely on some Macs, due to a code-signing
+  conflict between the Hardened Runtime and the bundled Sparkle updater
+  framework. Launching now succeeds consistently.
+- A bundled-runtime integrity check could falsely report a healthy install as
+  corrupted, causing a working copy of Voqora to refuse to start until it was
+  reinstalled. The check now correctly recognizes an intact install.
+- The local speech backend could fail to start on launch due to how its
+  listening socket was handed off internally, leaving Voqora's window open
+  with no working narration.
+- Voqora could freeze completely on launch, before its window ever appeared,
+  while silently reapplying a previously chosen app icon — with no error and
+  no way to recover except a force-quit. The app-icon preference is now
+  applied without touching the app's own signed files, so it can neither
+  hang nor conflict with the app's code signature.
+- A first launch on some machines could fail during voice setup because a
+  very long install path silently truncated internally, causing the speech
+  engine to look for its voice data in the wrong place. Voqora now detects
+  and works around this automatically.
+
+### Fixed — playback and navigation
+
+- Switching tabs while the full audiobook player was open could leave
+  navigation stuck showing the audiobook player no matter which tab was
+  selected afterward.
+- Opening the Now Playing view while an audiobook was playing could show two
+  overlapping playback surfaces at once.
+- Stopping an audiobook from its mini player could leave a stale, unrelated
+  "Paused" indicator showing on other tabs afterward.
+- A brief, incorrect mini-player flash could appear for a fraction of a
+  second when leaving the full audiobook player from certain tabs.
+- Fixed a layout bug in the audiobook player where the scrub bar, sleep-timer
+  button, and export button could visually overlap.
+
+### Improved
+
+- App launch is meaningfully faster: redundant verification of the bundled
+  runtime has been eliminated, and the remaining check now runs off the main
+  thread, so Voqora's window and controls stay responsive during startup.
+- The app no longer re-verifies its own bundled runtime every few seconds
+  while waiting for the local speech backend to come up, which could make
+  the whole app feel sluggish if the backend was slow to start.
+- The accent color chosen in Preferences now applies consistently everywhere
+  it should, including a permissions banner that previously always showed a
+  fixed color regardless of the chosen accent.
+- Several controls throughout the app now have proper VoiceOver labels.
+
+## [1.2.3] - 2026-09-10
+
+### Security and release hardening
+
+- The desktop app and bundled local backend now use a fresh, authenticated
+  private connection for every launch. A process that merely occupies a known
+  localhost port can no longer impersonate Voqora's speech service.
+- The packaged local inference runtime is now sealed by a deterministic
+  manifest. Voqora validates the bundled archive before extraction and checks
+  every extracted runtime file, hash, mode, and path before it can run.
+- Release builds keep hardened-runtime library validation enabled. The release
+  preflight now rejects missing or mismatched backend integrity manifests in
+  both the source tree and the mounted DMG.
+- Document imports now stream to a staged file and enforce content-based file
+  checks plus page, archive, expansion, raster, duration, library-size, and
+  free-disk limits. Unsafe or incomplete imports are removed rather than
+  becoming partial library entries.
+- Exportable diagnostics redact document content, file paths, provider errors,
+  credentials, and local transport secrets. Source documents remain on this
+  Mac until their audiobook is deleted; the library also has an explicit
+  delete-all control with a clear scope.
+
+### Audiobooks and interaction
+
+- Repeated starts for the same book are rejected instead of creating duplicate
+  processing jobs or duplicate provider work.
+- Gemini cleanup no longer silently escalates from Flex to a higher-priced
+  tier. The app discloses a conservative per-book cost envelope and reserves
+  cleanup capacity before concurrent work begins. If Flex capacity would
+  require Standard-tier work beyond the selected cap, the book pauses for an
+  explicit new-cap approval or a finish-locally choice; it never spends first
+  and asks later.
+- Preferences now offers an intentional **Erase all local Voqora data** flow.
+  It stops active work, deletes every local book and source artifact, history,
+  settings, caches, local telemetry/email outbox, identifiers, and Gemini
+  credentials, then quits. It does not make an unrequested remote deletion.
+- Completed audiobooks can be exported through a normal Save panel from the
+  validated on-disk WAV; this is separate from the short-clip export action.
+- Music ducking is opt-in for new installs, restores each affected player's
+  exact prior volume, and reports automation permission failures.
+- A focused text editor keeps normal editing-shortcut precedence over Voqora's
+  global actions.
+
 ## [1.2.2] - 2026-09-10
 
 ### Fixed — narration no longer reads formatting aloud

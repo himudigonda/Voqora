@@ -158,9 +158,17 @@ def test_logging_formatter_emits_valid_json_for_arbitrary_extras(
     assert parsed["msg"] == "property test"
     assert parsed["cid"] == current_correlation_id()
     for k, v in extras.items():
-        # Values are either preserved as-is or coerced to string — the
-        # contract is "never crash, never drop the message".
-        assert k in parsed
+        if k.lower() in _JsonFormatter._REDACTED_EXTRA_KEYS:
+            # Arbitrary Unicode generation can produce case variants such as
+            # ``TEXT``. Privacy takes precedence over metadata preservation:
+            # those values must be absent while the structured redaction flag
+            # survives for operational diagnosis.
+            assert k not in parsed
+            assert parsed[f"{k}_redacted"] is True
+        else:
+            # Values are either preserved as-is or coerced to string — the
+            # contract is "never crash, never drop safe metadata".
+            assert k in parsed
 
 
 def test_logging_formatter_handles_non_serializable_value_without_crashing() -> None:

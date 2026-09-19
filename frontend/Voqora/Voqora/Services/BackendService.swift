@@ -11,9 +11,9 @@ final class BackendService: NSObject, @unchecked Sendable {
         var errorDescription: String? {
             switch self {
             case .noLogsAvailable:
-                return "There are no Voqora logs available to export yet."
+                "There are no Voqora logs available to export yet."
             case .couldNotSave:
-                return "Voqora could not save the debug logs to your Desktop."
+                "Voqora could not save the debug logs to your Desktop."
             }
         }
     }
@@ -35,6 +35,7 @@ final class BackendService: NSObject, @unchecked Sendable {
     private static let failedLaunchBackoff: TimeInterval = 2
     private let executableOverride: URL?
     private let applicationSupportOverride: URL?
+    private let connection: BackendConnection
     var isLaunching: Bool {
         stateQueue.sync { _isLaunching }
     }
@@ -53,7 +54,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         stateQueue.sync { process != nil }
     }
 
-    private let baseURL = URL(string: "http://127.0.0.1:10101")!
     private var continuations: [Int: AsyncThrowingStream<Data, Error>.Continuation] = [:]
 
     enum StreamError: Error, Equatable {
@@ -72,10 +72,12 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     init(
         executableOverride: URL? = nil,
-        applicationSupportOverride: URL? = nil
+        applicationSupportOverride: URL? = nil,
+        connection: BackendConnection = .shared
     ) {
         self.executableOverride = executableOverride
         self.applicationSupportOverride = applicationSupportOverride
+        self.connection = connection
         super.init()
     }
 
@@ -100,7 +102,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = applicationSupportOverride
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(bundleID)
+            .appendingPathComponent(bundleID)
         try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
         let executableURL = executableOverride
@@ -117,12 +119,37 @@ final class BackendService: NSObject, @unchecked Sendable {
             return
         }
 
+        let launchConfiguration: BackendConnection.LaunchConfiguration
+        do {
+            launchConfiguration = try connection.prepareForLaunch()
+        } catch {
+            stateQueue.sync {
+                _isLaunching = false
+                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
+                _lastLaunchFailure = "The local speech engine could not secure its connection."
+            }
+            VoqoraLog.error("BackendService", "Backend connection setup failed")
+            return
+        }
+
         let p = Process()
         p.executableURL = executableURL
 
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        env["VOQORA_IPC_TOKEN"] = launchConfiguration.token
+        // `Process` launches children via posix_spawn with every file
+        // descriptor closed except the three it explicitly wires up itself
+        // (stdin/stdout/stderr) — clearing FD_CLOEXEC on the listener socket
+        // in THIS process (done in BackendConnection) has no effect on what
+        // the child inherits; verified empirically (a plain `Process` launch
+        // does not carry a non-CLOEXEC FD across at all). `standardInput` is
+        // the one Foundation-supported way to hand a child an arbitrary FD,
+        // so the listener socket rides in on fd 0 instead of an arbitrary
+        // number, and the backend is told to read it from exactly there.
+        env["VOQORA_IPC_LISTENER_FD"] = "0"
         p.environment = env
+        p.standardInput = FileHandle(fileDescriptor: launchConfiguration.listenerFD, closeOnDealloc: false)
 
         let pipe = Pipe()
         p.standardOutput = pipe
@@ -146,7 +173,9 @@ final class BackendService: NSObject, @unchecked Sendable {
         var loggedWriteFailure = false
         pipe.fileHandleForReading.readabilityHandler = { [weak self] readHandle in
             let data = readHandle.availableData
-            if data.isEmpty { return }
+            if data.isEmpty {
+                return
+            }
             // Write via the persistent handle (serialized on stateQueue so
             // concurrent log lines don't interleave inside a single write).
             self?.stateQueue.async {
@@ -161,7 +190,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                         // is at least visible in the app's own diagnostic log.
                         if !loggedWriteFailure {
                             loggedWriteFailure = true
-                            VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["error": String(describing: error)])
+                            VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["failureCode": "backend_log_write_failed"])
                         }
                     }
                 }
@@ -175,7 +204,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         // the next heartbeat cycle can call start() again and restart it.
         p.terminationHandler = { [weak self] terminated in
             guard let self else { return }
-            self.stateQueue.sync {
+            stateQueue.sync {
                 if self.process === terminated {
                     self.process = nil
                     self._isLaunching = false
@@ -189,6 +218,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self.logFileHandle = nil
                 }
             }
+            connection.invalidate(generation: launchConfiguration.generation)
             VoqoraLog.warn("BackendService", "Backend process exited", ["pid": "\(terminated.processIdentifier)", "exitStatus": "\(terminated.terminationStatus)"])
         }
 
@@ -202,6 +232,29 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
 
         do {
+            // LaunchManager verifies the installed runtime during extraction;
+            // repeat the check immediately before every production execution
+            // so post-install tampering fails closed.
+            //
+            // This call reaches the session-scoped validation cache, which is
+            // why it is safe to leave on this line at all. `start()` is driven
+            // by the heartbeat and runs again every 2 seconds for as long as
+            // the backend is offline; the uncached check SHA-256'd ~578 MB on
+            // the main thread on every one of those attempts, which is how a
+            // backend outage turned into sustained UI jank rather than a
+            // quietly retrying reconnect. A cache hit re-stats the tree (fast,
+            // and still fails closed on any change) instead of re-reading it.
+            // Test fixtures intentionally bypass this sealed-bundle contract.
+            if executableOverride == nil {
+                let started = Date()
+                try LaunchManager.validateRuntimeForExecution(at: executableURL)
+                let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
+                // Logged because this is the exact cost that used to be paid
+                // on every heartbeat retry. A cache hit is single-digit to
+                // low-tens of ms; anything near a second means the session
+                // cache missed and the full hash ran.
+                VoqoraLog.info("BackendService", "Runtime integrity verified", ["verifyMs": "\(elapsedMs)"])
+            }
             try p.run()
             stateQueue.sync {
                 if self.process === p {
@@ -210,7 +263,8 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             VoqoraLog.info("BackendService", "Backend launched", ["pid": "\(p.processIdentifier)"])
         } catch {
-            VoqoraLog.error("BackendService", "Backend launch failed", ["error": String(describing: error), "path": executableURL.path])
+            VoqoraLog.error("BackendService", "Backend launch failed", ["error": "\(error)"])
+            connection.invalidate(generation: launchConfiguration.generation)
             stateQueue.sync {
                 if self.process === p {
                     self.process = nil
@@ -247,6 +301,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             process = nil
             processPipe = nil
         }
+        connection.invalidate()
 
         // `process?.terminate()` above is intentionally scoped to the child
         // Voqora started. Never kill every process named VoqoraServer: an
@@ -278,8 +333,10 @@ final class BackendService: NSObject, @unchecked Sendable {
                 exportedURLs.append(destinationURL)
             }
         } catch {
-            VoqoraLog.error("BackendService", "exportLogs failed", ["error": String(describing: error)])
-            for url in exportedURLs { try? fileManager.removeItem(at: url) }
+            VoqoraLog.error("BackendService", "exportLogs failed", ["failureCode": "log_export_failed"])
+            for url in exportedURLs {
+                try? fileManager.removeItem(at: url)
+            }
             throw LogExportError.couldNotSave
         }
 
@@ -305,10 +362,9 @@ final class BackendService: NSObject, @unchecked Sendable {
     }
 
     func checkHealth() async -> HealthStatus {
-        var request = URLRequest(url: baseURL.appendingPathComponent("health"))
-        // 1-second timeout: we poll at 500 ms when offline, so 3 s was wasting
-        // multiple entire poll cycles on each failed request.
-        request.timeoutInterval = 1
+        guard let request = try? connection.request(path: "health", timeout: 1) else {
+            return .offline
+        }
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else {
@@ -326,9 +382,9 @@ final class BackendService: NSObject, @unchecked Sendable {
     /// the first audio segment for the given text (lookahead cache).
     /// Returns immediately. Safe to call when model is already loaded.
     func prewarm(text: String? = nil, voice: String? = nil, speed: Double? = nil) async {
-        var request = URLRequest(url: baseURL.appendingPathComponent("prewarm"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = 2
+        guard var request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
+            return
+        }
         if let text, let voice, let speed {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed]
@@ -339,11 +395,13 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
-            let url = baseURL.appendingPathComponent("speak")
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
+            guard var request = try? self.connection.request(
+                path: "speak", method: "POST", timeout: 120
+            ) else {
+                continuation.finish(throwing: StreamError.requestEncodingFailed)
+                return
+            }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.timeoutInterval = 120
 
             let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed, "volume": volume]
 
@@ -365,7 +423,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     }
                 }
             } catch {
-                VoqoraLog.error("BackendService", "streamAudio request encoding failed", ["error": String(describing: error)])
+                VoqoraLog.error("BackendService", "streamAudio request encoding failed", ["failureCode": "stream_request_encoding_failed"])
                 continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
@@ -376,7 +434,7 @@ final class BackendService: NSObject, @unchecked Sendable {
     /// audio decoder and then be reported as a successful generation.
     static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {
         guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode),
+              (200 ..< 300).contains(http.statusCode),
               let contentType = http.value(forHTTPHeaderField: "Content-Type")?.lowercased()
         else {
             return false

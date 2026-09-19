@@ -48,6 +48,26 @@ def test_logger_skips_non_serializable_extras_gracefully(capsys):
     assert obj["thing"] == "<weird>"
 
 
+def test_logger_redacts_content_bearing_extra_and_exception_text(capsys):
+    log = voqora_logging.get_logger("test_logger")
+    canary = "CANARY private document sentence"
+    try:
+        raise RuntimeError(canary)
+    except RuntimeError:
+        log.error(
+            "processing.failed",
+            extra={"error": canary, "path": "/private/book"},
+            exc_info=True,
+        )
+    out = capsys.readouterr().out.strip()
+    assert canary not in out
+    assert "/private/book" not in out
+    obj = json.loads(out)
+    assert obj["error_redacted"] is True
+    assert obj["path_redacted"] is True
+    assert obj["exc_type"] == "RuntimeError"
+
+
 def test_correlation_id_default_when_unset():
     voqora_logging._correlation_id.set("-")  # reset
     assert voqora_logging.current_correlation_id() == "-"

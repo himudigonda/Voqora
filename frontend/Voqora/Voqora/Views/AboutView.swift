@@ -14,7 +14,6 @@ struct AboutView: View {
     @EnvironmentObject var installer: GuidedInstallerService
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
-    @State private var checkedOnAppear = false
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -42,11 +41,24 @@ struct AboutView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            // One check per visit, not per render — `state`/`latestGitHubVersion`
-            // publishing shouldn't retrigger the network call.
-            guard !checkedOnAppear else { return }
-            checkedOnAppear = true
-            await updater.checkGitHubReleaseForUpdate()
+            // Detached from this view's own task, and throttled by the
+            // updater. Two separate problems were making About the slowest
+            // tab in the app to open:
+            //
+            //   1. `await`ing directly in `.task` tied the tab's task
+            //      lifetime to a GitHub request with a 12-second timeout, so
+            //      switching to About read as "still loading" long after
+            //      everything on screen had finished drawing.
+            //   2. `checkedOnAppear` is `@State`, and the tab's view is torn
+            //      down and rebuilt on every switch — so "one check per
+            //      visit" meant a fresh network round trip every single time
+            //      the user came back, for an answer that had not changed.
+            //
+            // Nothing here is gated on the result: `updateSection` renders
+            // immediately from what the updater already knows (VoqoraApp runs
+            // a check at launch), and refreshes in place if a newer release
+            // does turn up.
+            Task { await updater.checkGitHubReleaseForUpdateIfStale() }
         }
     }
 
@@ -77,7 +89,6 @@ struct AboutView: View {
         }
     }
 
-    @ViewBuilder
     private var updateSection: some View {
         VStack(spacing: 12) {
             if let latest = updater.latestGitHubVersion {
@@ -155,27 +166,31 @@ struct AboutView: View {
                 Link(destination: URL(string: "https://github.com/himudigonda")!) {
                     Image("github")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 30, height: 30)
                 }
                 .help("GitHub")
+                // Image-only `Link`s carry no accessible name of their own.
+                .accessibilityLabel("GitHub profile")
 
                 Link(destination: URL(string: "https://www.linkedin.com/in/himudigonda")!) {
                     Image("linkedin")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 30, height: 30)
                 }
                 .help("LinkedIn")
+                .accessibilityLabel("LinkedIn profile")
 
                 Link(destination: URL(string: "https://himudigonda.me")!) {
                     Image(systemName: "globe")
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .scaledToFit()
                         .frame(width: 24, height: 24)
                         .padding(4)
                 }
                 .help("Website")
+                .accessibilityLabel("Personal website")
             }
             .foregroundStyle(accentColor)
         }

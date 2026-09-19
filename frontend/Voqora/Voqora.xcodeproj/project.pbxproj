@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		80FA17010000000000000002 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 80FA17010000000000000001 /* Fonts */; };
 		80E015062F24146E003FB2E4 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015052F24146E003FB2E4 /* KeyboardShortcuts */; };
 		80E015082F24146E003FB2E4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015072F24146E003FB2E4 /* Sparkle */; };
 /* End PBXBuildFile section */
@@ -22,6 +23,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		80FA17010000000000000001 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Voqora/Resources/Fonts; sourceTree = "<group>"; };
 		803C888C2F26758A003C0CAC /* VoqoraTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VoqoraTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		80E014F62F241426003FB2E4 /* Voqora.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Voqora.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -31,6 +33,16 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Resources/Fonts/GoogleSans-Black.ttf,
+				Resources/Fonts/GoogleSans-Bold.ttf,
+				Resources/Fonts/GoogleSans-Light.ttf,
+				Resources/Fonts/GoogleSans-Medium.ttf,
+				Resources/Fonts/GoogleSans-Regular.ttf,
+				Resources/Fonts/Poppins-Black.ttf,
+				Resources/Fonts/Poppins-Bold.ttf,
+				Resources/Fonts/Poppins-Light.ttf,
+				Resources/Fonts/Poppins-Medium.ttf,
+				Resources/Fonts/Poppins-Regular.ttf,
 			);
 			target = 80E014F52F241426003FB2E4 /* Voqora */;
 		};
@@ -76,6 +88,7 @@
 			isa = PBXGroup;
 			children = (
 				80E014F82F241426003FB2E4 /* Voqora */,
+				80FA17010000000000000001 /* Fonts */,
 				803C888D2F26758A003C0CAC /* VoqoraTests */,
 				80E014F72F241426003FB2E4 /* Products */,
 			);
@@ -195,6 +208,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				80FA17010000000000000002 /* Fonts in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -231,11 +245,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = WL37Y6X6V9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.VoqoraTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -252,11 +266,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = WL37Y6X6V9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.VoqoraTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -396,7 +410,7 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				SPARKLE_PUBLIC_ED_KEY = "OIPL/uwP6FPXEMPkNI8aYICpQwhcliTElFT+HD5IOlU=";
 				ENABLE_APP_SANDBOX = NO;
@@ -410,12 +424,13 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
+				EXTRACT_APP_INTENTS_METADATA = NO;
 				INFOPLIST_FILE = "Voqora/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.Voqora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -425,7 +440,7 @@
 				RUNTIME_EXCEPTION_ALLOW_UNSIGNED_EXECUTABLE_MEMORY = NO;
 				RUNTIME_EXCEPTION_DEBUGGING_TOOL = NO;
 				RUNTIME_EXCEPTION_DISABLE_EXECUTABLE_PAGE_PROTECTION = NO;
-				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = NO;
+				RUNTIME_EXCEPTION_DISABLE_LIBRARY_VALIDATION = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -443,7 +458,7 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 16;
 				DEVELOPMENT_TEAM = "";
 				SPARKLE_PUBLIC_ED_KEY = "OIPL/uwP6FPXEMPkNI8aYICpQwhcliTElFT+HD5IOlU=";
 				ENABLE_APP_SANDBOX = NO;
@@ -457,12 +472,13 @@
 				ENABLE_RESOURCE_ACCESS_PHOTO_LIBRARY = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
+				EXTRACT_APP_INTENTS_METADATA = NO;
 				INFOPLIST_FILE = "Voqora/Info.plist";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.2;
+				MARKETING_VERSION = 1.2.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.Voqora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";

@@ -6,8 +6,9 @@ import OSLog
 ///
 /// There is no sign-in. The only persistent identity is:
 ///   1. An anonymous UUID stored in UserDefaults under `anonymousUserID`
-///      (created on first launch and stable for that installation; sent only
-///      with optional product telemetry or an explicitly submitted email).
+///      (created only on the first telemetry/email use and stable thereafter;
+///      sent only with optional product telemetry or an explicitly submitted
+///      email).
 ///   2. An optional email address the user enters during onboarding (or in
 ///      Preferences). The email is POSTed to `/api/voqora/identify` so
 ///      analytics can group return-visits by email instead of by UUID.
@@ -31,9 +32,19 @@ final class IdentityService: ObservableObject {
     /// deleting the separate remote contact when a connection is available.
     @Published private(set) var hasPendingRemoval: Bool
 
-    /// Stable per-install UUID used as `anon_id` server-side. Read once
-    /// at init and cached; never changes for the lifetime of an install.
-    let anonID: String
+    /// Stable per-install UUID used as `anon_id` server-side. It is created
+    /// lazily only when the user opts into telemetry or submits an email; an
+    /// opt-out-only installation does not need a persistent identifier.
+    private var storedAnonID: String?
+    var anonID: String {
+        if let storedAnonID, !storedAnonID.isEmpty {
+            return storedAnonID
+        }
+        let fresh = UUID().uuidString
+        defaults.set(fresh, forKey: Self.anonKey)
+        storedAnonID = fresh
+        return fresh
+    }
 
     private let defaults: UserDefaults
     private let sendRequest: (URLRequest) async throws -> (Data, URLResponse)
@@ -46,19 +57,15 @@ final class IdentityService: ObservableObject {
     ) {
         self.defaults = defaults
         self.sendRequest = sendRequest
-        if let stored = defaults.string(forKey: Self.anonKey), !stored.isEmpty {
-            self.anonID = stored
-        } else {
-            let fresh = UUID().uuidString
-            defaults.set(fresh, forKey: Self.anonKey)
-            self.anonID = fresh
-        }
-        self.email = defaults.string(forKey: Self.emailKey)
-        self.hasPendingRemoval = defaults.bool(forKey: Self.pendingRemovalKey)
+        storedAnonID = defaults.string(forKey: Self.anonKey)
+        email = defaults.string(forKey: Self.emailKey)
+        hasPendingRemoval = defaults.bool(forKey: Self.pendingRemovalKey)
     }
 
     /// `true` if the user submitted an email during onboarding or in Preferences.
-    var hasIdentity: Bool { email?.isEmpty == false }
+    var hasIdentity: Bool {
+        email?.isEmpty == false
+    }
 
     /// Submit an email to the backend. On success, persist locally.
     /// Throws `IdentityError` if the email is malformed or the request fails.
@@ -85,20 +92,20 @@ final class IdentityService: ObservableObject {
         do {
             response = try await sendRequest(req).1
         } catch {
-            Self.log.error("identify network failure: \(error.localizedDescription, privacy: .public)")
-            throw IdentityError.network(error.localizedDescription)
+            Self.log.error("identify network failure")
+            throw IdentityError.network("Unable to contact the optional email service. Check your connection and try again.")
         }
         guard let http = response as? HTTPURLResponse else {
             throw IdentityError.server("non-HTTP response")
         }
-        if !(200..<300).contains(http.statusCode) {
+        if !(200 ..< 300).contains(http.statusCode) {
             Self.log.error("identify status=\(http.statusCode, privacy: .public)")
             throw IdentityError.server("Server error \(http.statusCode)")
         }
 
         defaults.set(trimmed, forKey: Self.emailKey)
         defaults.removeObject(forKey: Self.pendingRemovalKey)
-        self.email = trimmed
+        email = trimmed
         hasPendingRemoval = false
         Self.log.info("optional identity saved")
     }
@@ -109,6 +116,18 @@ final class IdentityService: ObservableObject {
     func clearEmail() {
         defaults.removeObject(forKey: Self.emailKey)
         email = nil
+    }
+
+    /// Permanently remove local identity state as part of the explicit
+    /// full-data erase action. It never makes an external request: a user can
+    /// erase this Mac while offline without retaining a retry marker locally.
+    func eraseLocalIdentity() {
+        defaults.removeObject(forKey: Self.emailKey)
+        defaults.removeObject(forKey: Self.anonKey)
+        defaults.removeObject(forKey: Self.pendingRemovalKey)
+        storedAnonID = nil
+        email = nil
+        hasPendingRemoval = false
     }
 
     enum RemovalResult: Equatable {
@@ -153,7 +172,7 @@ final class IdentityService: ObservableObject {
         guard let http = response as? HTTPURLResponse else {
             return false
         }
-        guard (200..<300).contains(http.statusCode) else {
+        guard (200 ..< 300).contains(http.statusCode) else {
             _ = responseData
             Self.log.error("identity delete status=\(http.statusCode, privacy: .public)")
             return false
@@ -168,8 +187,12 @@ final class IdentityService: ObservableObject {
         let parts = s.split(separator: "@")
         guard parts.count == 2 else { return false }
         let local = parts[0], domain = parts[1]
-        if local.isEmpty || domain.isEmpty { return false }
-        if !domain.contains(".") { return false }
+        if local.isEmpty || domain.isEmpty {
+            return false
+        }
+        if !domain.contains(".") {
+            return false
+        }
         return !s.contains(" ")
     }
 
@@ -180,9 +203,9 @@ final class IdentityService: ObservableObject {
 
         var errorDescription: String? {
             switch self {
-            case .invalidEmail: return "Please enter a valid email address."
-            case .network(let m): return "Network error: \(m)"
-            case .server(let m): return m
+            case .invalidEmail: "Please enter a valid email address."
+            case let .network(m): "Network error: \(m)"
+            case let .server(m): m
             }
         }
     }

@@ -106,6 +106,13 @@ struct VaultView: View {
                             .foregroundStyle(showOnlyFavorites ? .yellow : Palette.textSecondary)
                     }
                     .help("Show starred snippets only")
+                    // A bare star glyph carries no name at all, so VoiceOver
+                    // announced this filter as an unlabelled "button". The
+                    // label states the action the press performs, and the
+                    // trait carries the state the fill/outline conveys
+                    // visually — matching `AccentSwatchButton`'s pattern.
+                    .accessibilityLabel(showOnlyFavorites ? "Show all snippets" : "Show starred snippets only")
+                    .accessibilityAddTraits(showOnlyFavorites ? [.isSelected] : [])
 
                     Button(role: .destructive) {
                         showClearHistoryConfirmation = true
@@ -113,6 +120,10 @@ struct VaultView: View {
                         Label("Clear All", systemImage: "trash.slash")
                     }
                     .help("Clear entire history")
+                    // macOS collapses a toolbar `Label` to its icon, so name
+                    // it explicitly rather than relying on the title survivng
+                    // that collapse.
+                    .accessibilityLabel("Clear All")
                     .disabled(history.history.isEmpty)
                 }
             }
@@ -262,6 +273,10 @@ struct VaultEntryDetailView: View {
                         .foregroundStyle(Palette.textSecondary)
                 }
                 .buttonStyle(.plain)
+                // The only way out of this sheet, and it was nameless —
+                // matching `UploadEstimateModal`'s already-labelled close.
+                .accessibilityLabel("Close")
+                .help("Close")
             }
             .padding(24)
             .voqoraSurface(.raised, in: Rectangle())

@@ -121,10 +121,10 @@ class AudiobookStore:
                     cls._upsert_row(conn, meta)
                     os.remove(legacy)
                     log.info("store.legacy_meta_migrated", extra={"book_id": entry})
-                except (OSError, json.JSONDecodeError) as e:
+                except (OSError, json.JSONDecodeError):
                     log.warning(
                         "store.bad_legacy_meta",
-                        extra={"book_id": entry, "error": str(e)},
+                        extra={"book_id": entry, "failure_code": "legacy_meta_invalid"},
                         exc_info=True,
                     )
         except FileNotFoundError:
@@ -237,6 +237,13 @@ class AudiobookStore:
         """Save any source file type under source.{ext}."""
         Path(cls.source_file_path(book_id, ext)).write_bytes(content)
 
+    @classmethod
+    def adopt_staged_source(cls, book_id: str, staged_path: str, ext: str) -> str:
+        """Atomically adopt a validated upload staged inside our root dir."""
+        destination = cls.source_file_path(book_id, ext)
+        os.replace(staged_path, destination)
+        return destination
+
     # ---------- meta (SQLite-backed) ----------
 
     @classmethod
@@ -287,6 +294,24 @@ class AudiobookStore:
             meta.update(patch)
             cls.write_meta(book_id, meta)
             return meta
+
+    @classmethod
+    async def mutate_meta(cls, book_id: str, mutator) -> tuple[dict[str, Any], Any]:
+        """Atomically transform one book's metadata and return its result.
+
+        This is deliberately narrower than exposing the SQLite connection to
+        pipeline code. A budget reservation must read the current ledger,
+        verify available capacity, and write its receipt as one critical
+        section; separate read/update calls make that invariant racy whenever
+        page cleaning runs concurrently.
+        """
+        async with cls._lock(book_id):
+            meta = cls.read_meta(book_id)
+            if meta is None:
+                return {}, None
+            result = mutator(meta)
+            cls.write_meta(book_id, meta)
+            return meta, result
 
     @classmethod
     def initial_meta(
@@ -345,6 +370,21 @@ class AudiobookStore:
             db_existed = cur.rowcount > 0
         cls._meta_locks.pop(book_id, None)
         return existed or db_existed
+
+    @classmethod
+    def delete_all_books(cls) -> int:
+        """Delete every book and its source/derived artifacts.
+
+        This intentionally leaves application settings, credentials and logs
+        alone; the desktop's explicit *erase all Voqora data* action owns that
+        larger destructive scope. Repeated calls are safe and report zero.
+        """
+        book_ids = [book.get("book_id") for book in cls.list_books()]
+        deleted = 0
+        for book_id in book_ids:
+            if isinstance(book_id, str) and cls.delete_book(book_id):
+                deleted += 1
+        return deleted
 
     # ---------- test helpers ----------
 
