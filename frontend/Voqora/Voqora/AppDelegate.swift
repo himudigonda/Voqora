@@ -43,7 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// Voqora is also a login item, so an ordinary "open the app again" or
     /// running a local build alongside the installed copy lands in exactly
     /// that state. Activate the original and stand down instead.
-    private func standDownIfAlreadyRunning() -> Bool {
+    static func standDownIfAlreadyRunning() -> Bool {
         guard let bundleID = Bundle.main.bundleIdentifier else { return false }
         let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
@@ -58,12 +58,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_: Notification) {
-        if standDownIfAlreadyRunning() {
+        // The real check runs earlier, from `VoqoraApp.init()`, because by
+        // the time this fires the log file has already been replaced. Kept
+        // as a backstop for any launch path that bypasses that initialiser.
+        if Self.standDownIfAlreadyRunning() {
             isRedundantInstance = true
-            // Terminate before SwiftUI builds a window or BackendService
-            // spawns a server. `exit` rather than `NSApp.terminate` because
-            // the latter runs the normal shutdown path, which would tear down
-            // shared on-disk state (logs) this instance never owned.
             exit(0)
         }
         let defaults = UserDefaults.standard
