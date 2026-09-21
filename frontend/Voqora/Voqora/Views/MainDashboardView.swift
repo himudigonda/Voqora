@@ -54,13 +54,6 @@ struct MainDashboardView: View {
 
     private var accessibilityBanner: some View {
         HStack(spacing: 14) {
-            // Not `Palette.warning` — this is an action-needed CTA, not a
-            // semantic failure/error state (nothing here is "wrong"; the
-            // permission is simply not granted yet), so it follows the
-            // user's chosen accent color. Matches `OnboardingView`'s own
-            // Accessibility step, which tints this exact same icon/heading/
-            // button combo with `accentColor` and reserves `Palette.warning`
-            // for its small granted/pending status pill only.
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 18))
                 .foregroundStyle(accentColor)
@@ -69,19 +62,9 @@ struct MainDashboardView: View {
                 Text("Accessibility Access Required")
                     .font(vm.appFont(size: 12, weight: .bold))
                     .foregroundStyle(Palette.textPrimary)
-                // NOT `.fixedSize(horizontal: false, vertical: true)`. That
-                // modifier here — a wrapping `Text` inside an `HStack` that
-                // also holds a `Spacer()`, itself nested inside
-                // `NavigationSplitView` — was found to corrupt the height
-                // NavigationSplitView computes for the ENTIRE window: the
-                // sidebar's branding/nav and this screen's own header/footer
-                // all got pushed off the top and bottom of the visible
-                // window, while only content between two `Spacer()`s (the
-                // audio visualizer) stayed on-screen. Reproduced identically
-                // regardless of window size, display scaling, or Debug vs
-                // Release. `Text` already wraps within the width `HStack`
-                // gives it without this modifier; it bought nothing here
-                // that was worth the layout corruption.
+                // Deliberately no `.fixedSize(horizontal: false, vertical: true)`:
+                // on a wrapping Text in this HStack inside NavigationSplitView it
+                // corrupts the whole window's computed height.
                 Text("Voqora needs Accessibility permission to read your selected text. Without it, Cmd+Shift+. won't work.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.textSecondary)
@@ -92,9 +75,7 @@ struct MainDashboardView: View {
             Button("Open Settings") {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(accentColor)
-            .font(vm.appFont(size: 11, weight: .semibold))
+            .buttonStyle(.voqoraPrimary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
