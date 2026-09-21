@@ -1,6 +1,17 @@
 # Changelog
 
-## [1.2.4] - 2026-09-17
+## [1.2.3] - 2026-09-20
+
+### Fixed — audio
+
+- Narration could turn thin and robotic after the audio output device or its
+  format changed — plugging in headphones, connecting to a display, a screen
+  share taking the device — and stayed that way until Voqora was relaunched.
+  The audio graph is now rebuilt when the output format actually moves.
+- Opening Voqora a second time (or launching a local build beside the
+  installed copy) started a second speech backend, so two copies of the model
+  ran at once and both answered the same keyboard shortcut. A second copy now
+  activates the running one and exits.
 
 ### Fixed — launch reliability
 
@@ -37,6 +48,19 @@
 - Fixed a layout bug in the audiobook player where the scrub bar, sleep-timer
   button, and export button could visually overlap.
 
+### Fixed — preferences and appearance
+
+- The speech-speed and volume sliders now move in steady 0.05 steps, and the
+  speed reading shows two decimals, so the value shown is the value set.
+- The Accessibility banner's **Open Settings** button now uses the app's own
+  accent treatment. Its label previously rendered white on the accent fill,
+  which measures around 2.1:1 against every accent in dark mode; the app's
+  own ink measures at least 8.3:1.
+- The accent color chosen in Preferences applies consistently everywhere it
+  should, including a permissions banner that previously always showed a
+  fixed color regardless of the chosen accent.
+- Several controls throughout the app now have proper VoiceOver labels.
+
 ### Improved
 
 - App launch is meaningfully faster: redundant verification of the bundled
@@ -45,12 +69,11 @@
 - The app no longer re-verifies its own bundled runtime every few seconds
   while waiting for the local speech backend to come up, which could make
   the whole app feel sluggish if the backend was slow to start.
-- The accent color chosen in Preferences now applies consistently everywhere
-  it should, including a permissions banner that previously always showed a
-  fixed color regardless of the chosen accent.
-- Several controls throughout the app now have proper VoiceOver labels.
-
-## [1.2.3] - 2026-09-10
+- Exported diagnostics name the request route again instead of hiding it, so
+  a support log is actually diagnosable. Document content, file paths, and
+  credentials stay redacted.
+- Starting Voqora no longer replaces the diagnostic log file on disk, so a
+  log being watched or collected stays readable across a restart.
 
 ### Security and release hardening
 
@@ -71,6 +94,14 @@
   credentials, and local transport secrets. Source documents remain on this
   Mac until their audiobook is deleted; the library also has an explicit
   delete-all control with a clear scope.
+
+### Release and permissions
+
+- Releases can no longer be built without a real signing certificate. An
+  ad-hoc signature changes the app's identity on every build, which made
+  macOS silently drop the Accessibility permission on each update while
+  System Settings still showed the toggle switched on. The release check now
+  refuses such a build outright.
 
 ### Audiobooks and interaction
 
