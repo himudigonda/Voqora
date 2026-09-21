@@ -338,3 +338,53 @@ def test_speak_rejects_text_that_is_entirely_markup():
 
     with pytest.raises(ValidationError):
         SpeakRequest(text="---\n\n```\n```")
+
+
+def test_espeak_data_path_stays_within_espeak_path_home_buffer(tmp_path, monkeypatch):
+    """A long bundle path must not be handed to espeak-ng verbatim.
+
+    espeak-ng keeps the data directory in a fixed 160-byte global. Anything
+    longer is discarded *silently* in favour of the PATH_ESPEAK_DATA compiled
+    into the wheel (a GitHub Actions runner path), after which the deprecated
+    `espeak_Initialize()` entry point calls exit(1) — the whole backend dies
+    below Python with nothing for `_load_engine_background` to catch. Voqora's
+    own runtime lives under the user's home directory, so the length is not
+    under our control.
+    """
+    import os
+    import pathlib
+
+    from app.services import tts
+
+    long_data = tmp_path / ("d" * 200) / "espeak-ng-data"
+    long_data.mkdir(parents=True)
+    (long_data / "phontab").write_bytes(b"phontab")
+    (long_data / "lang").mkdir()
+    (long_data / "lang" / "gmw").write_bytes(b"gmw")
+    assert len(os.fsencode(os.path.realpath(long_data))) > tts._ESPEAK_PATH_HOME_LIMIT
+
+    monkeypatch.setattr(tts, "_espeak_short_data_path", None)
+    monkeypatch.setattr(tts.espeakng_loader, "get_data_path", lambda: str(long_data))
+
+    resolved = tts._resolve_espeak_data_path()
+
+    # phonemizer calls Path.resolve() before handing the directory to
+    # espeak-ng, so a symlink back to the long path would not have helped —
+    # what must be short is the *resolved* path.
+    assert len(os.fsencode(os.path.realpath(resolved))) <= tts._ESPEAK_PATH_HOME_LIMIT
+    assert not os.path.islink(resolved)
+    # Still the same data, nested files included.
+    assert (pathlib.Path(resolved) / "phontab").read_bytes() == b"phontab"
+    assert (pathlib.Path(resolved) / "lang" / "gmw").read_bytes() == b"gmw"
+
+
+def test_espeak_data_path_is_passed_through_unchanged_when_short(monkeypatch):
+    """The common case must not gain a symlink indirection it does not need."""
+    from app.services import tts
+
+    monkeypatch.setattr(tts, "_espeak_short_data_path", None)
+    monkeypatch.setattr(
+        tts.espeakng_loader, "get_data_path", lambda: "/opt/espeak-ng-data"
+    )
+
+    assert tts._resolve_espeak_data_path() == "/opt/espeak-ng-data"

@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: test-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -14,9 +17,9 @@ jobs:
     name: Backend (pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: true
       - name: Set up Python
@@ -32,6 +35,14 @@ jobs:
       - name: Tests
         working-directory: backend
         run: uv run pytest -q
+      - name: Locked dependency vulnerability audit
+        # Inspect the exact environment created by `uv sync --frozen`; auditing
+        # an exported requirements file under the runner's Python can attempt
+        # an incompatible resolver install instead of auditing this lockfile.
+        working-directory: backend
+        run: uvx --from 'pip-audit==2.10.1' pip-audit --path .venv
+      - name: Release channel wiring
+        run: bash scripts/test_ship_modes.sh
       - name: Coverage
         working-directory: backend
         # 74% is the current verified coverage floor. Coverage below that
@@ -45,22 +56,52 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          enable-cache: true
       - name: Select Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
+      - name: Install Swift quality tools
+        # Clean CI installs the review tools. Lint mode fails closed if a
+        # future tool release needs an intentional configuration review.
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install swiftlint swiftformat
+          swiftlint version
+          swiftformat --version
+      - name: Swift lint and format gate
+        run: |
+          swiftlint lint --strict --config .swiftlint.yml
+          swiftformat --lint frontend/Voqora/Voqora frontend/Voqora/VoqoraTests --swift-version 6
+      - name: Launch contract guards
+        run: python3 scripts/test_launch_contracts.py
       - name: Cache DerivedData
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/Library/Developer/Xcode/DerivedData
           key: ${{ runner.os }}-deriveddata-${{ hashFiles('frontend/Voqora/Voqora.xcodeproj/project.pbxproj') }}
           restore-keys: |
             ${{ runner.os }}-deriveddata-
-      - name: Stub backend zip (so LaunchManager bundle path resolves)
+      - name: Create sealed backend fixture for app-host tests
         run: |
-          mkdir -p frontend/Voqora/Voqora/Resources
-          touch frontend/Voqora/Voqora/Resources/VoqoraServer.zip
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          resource_dir = Path("frontend/Voqora/Voqora/Resources")
+          resource_dir.mkdir(parents=True, exist_ok=True)
+          info = zipfile.ZipInfo("VoqoraServer/VoqoraServer")
+          info.external_attr = 0o755 << 16
+          with zipfile.ZipFile(resource_dir / "VoqoraServer.zip", "w") as archive:
+              archive.writestr(info, b"test fixture; never executed")
+          PY
+          python3 scripts/generate_backend_manifest.py \
+            --archive frontend/Voqora/Voqora/Resources/VoqoraServer.zip \
+            --version 1.2.3 \
+            --output frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json
       - name: Build + test
         run: |
           xcodebuild test \
@@ -69,3 +110,33 @@ jobs:
             -destination 'platform=macOS,arch=arm64' \
             -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO
+
+      - name: Release source preflight
+        run: ./scripts/validate_release.sh 1.2.3
+
+  packaged-backend:
+    name: Packaged backend integrity
+    # PyInstaller packaging is macOS-specific: proving a Linux bundle builds
+    # would not prove the executable shipped inside the macOS application.
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          enable-cache: true
+      - name: Build frozen backend from the reviewed lockfile
+        run: FORCE_BACKEND_REBUILD=1 ./scripts/compile_backend.sh
+      - name: Verify sealed archive and deterministic rebuild receipt
+        run: |
+          python3 scripts/generate_backend_manifest.py \
+            --archive frontend/Voqora/Voqora/Resources/VoqoraServer.zip \
+            --version 1.2.3 \
+            --verify frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json
+          test -s frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
+          test -s frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
+          unzip -Z -1 frontend/Voqora/Voqora/Resources/VoqoraServer.zip | \
+            grep '^VoqoraServer/VoqoraServer$'
+      - name: Launch frozen backend through inherited authenticated listener
+        run: python3 scripts/test_frozen_backend.py

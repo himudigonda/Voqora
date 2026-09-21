@@ -20,7 +20,7 @@ enum AudiobookImportStaging {
         var errorDescription: String? {
             switch self {
             case .unsupportedFile:
-                return "Voqora audiobooks support \(supportedFormatsDescription) files."
+                "Voqora audiobooks support \(supportedFormatsDescription) files."
             }
         }
     }
@@ -50,7 +50,11 @@ enum AudiobookImportStaging {
         }
 
         let scoped = sourceURL.startAccessingSecurityScopedResource()
-        defer { if scoped { sourceURL.stopAccessingSecurityScopedResource() } }
+        defer {
+            if scoped {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
 
         let directory = root.appendingPathComponent(
             "\(directoryPrefix)\(UUID().uuidString)",

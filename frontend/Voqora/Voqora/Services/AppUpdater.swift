@@ -35,6 +35,40 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     @Published private(set) var latestGitHubVersion: String?
     private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases/latest")!
 
+    /// When the GitHub release check last completed a network round trip.
+    private var lastGitHubCheck: Date?
+
+    /// How long a completed check stays good enough. `VoqoraApp` already runs
+    /// one at launch, so under normal use every later opportunistic check —
+    /// notably the About tab's — is answered from this without touching the
+    /// network at all.
+    nonisolated static let gitHubCheckMinimumInterval: TimeInterval = 60 * 60
+
+    /// Whether an opportunistic check is worth making. Pure and static so the
+    /// throttle is testable without a network or a clock.
+    nonisolated static func shouldCheckGitHubRelease(
+        lastChecked: Date?,
+        now: Date = Date(),
+        minimumInterval: TimeInterval = gitHubCheckMinimumInterval
+    ) -> Bool {
+        guard let lastChecked else { return true }
+        return now.timeIntervalSince(lastChecked) >= minimumInterval
+    }
+
+    /// The opportunistic entry point for UI that merely *displays* update
+    /// state, as opposed to a button the user pressed meaning "check now".
+    ///
+    /// The About tab used to `await` the unthrottled check on every single
+    /// visit, so re-opening a tab whose content was already fully determined
+    /// re-issued a request with a 12-second timeout and made the screen feel
+    /// like it was still loading. Nothing on that screen depends on the
+    /// result arriving before it renders, and a release published seconds ago
+    /// is not worth a network round trip per tab switch.
+    func checkGitHubReleaseForUpdateIfStale() async {
+        guard Self.shouldCheckGitHubRelease(lastChecked: lastGitHubCheck) else { return }
+        await checkGitHubReleaseForUpdate()
+    }
+
     private struct GitHubReleaseTag: Decodable {
         let tagName: String
         enum CodingKeys: String, CodingKey { case tagName = "tag_name" }
@@ -53,9 +87,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("Voqora", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
-              let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
               let release = try? JSONDecoder().decode(GitHubReleaseTag.self, from: data)
         else { return }
+        // Stamped only on a real answer from GitHub: a failed or refused check
+        // must not silence the next hour's worth of opportunistic retries.
+        lastGitHubCheck = Date()
 
         let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
         guard Self.isVersion(latest, newerThan: current) else { return }
@@ -72,10 +109,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     static func isVersion(_ a: String, newerThan b: String) -> Bool {
         let partsA = a.split(separator: ".").compactMap { Int($0) }
         let partsB = b.split(separator: ".").compactMap { Int($0) }
-        for i in 0..<max(partsA.count, partsB.count) {
+        for i in 0 ..< max(partsA.count, partsB.count) {
             let x = i < partsA.count ? partsA[i] : 0
             let y = i < partsB.count ? partsB[i] : 0
-            if x != y { return x > y }
+            if x != y {
+                return x > y
+            }
         }
         return false
     }
@@ -123,13 +162,14 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     static func statusMessage(forUpdateCheckError error: NSError) -> String {
         guard error.domain == SUSparkleErrorDomain,
-              error.code == noUpdateErrorCode else {
+              error.code == noUpdateErrorCode
+        else {
             return "Couldn't check for updates. Your current Voqora still works. Try again later."
         }
         return "Voqora is up to date."
     }
 
-    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+    func updater(_: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
         isCheckingForUpdates = false
         updateStatusMessage = "Update \(item.displayVersionString) is ready to review."
         PermissionsService.shared.scheduleNotification(
@@ -138,17 +178,17 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         )
     }
 
-    func updaterDidNotFindUpdate(_ updater: SPUUpdater, error: Error) {
+    func updaterDidNotFindUpdate(_: SPUUpdater, error: Error) {
         isCheckingForUpdates = false
         updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
-    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+    func updater(_: SPUUpdater, didAbortWithError error: Error) {
         isCheckingForUpdates = false
         updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)
     }
 
-    func updater(_ updater: SPUUpdater, didFinishUpdateCycleFor updateCheck: SPUUpdateCheck, error: Error?) {
+    func updater(_: SPUUpdater, didFinishUpdateCycleFor _: SPUUpdateCheck, error: Error?) {
         isCheckingForUpdates = false
         if let error {
             updateStatusMessage = Self.statusMessage(forUpdateCheckError: error as NSError)

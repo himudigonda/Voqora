@@ -5,10 +5,12 @@ EngineManager.generate (yields short np arrays).
 """
 
 import asyncio
+import io
 import json
 import os
 import shutil
 import tempfile
+import zipfile
 from unittest.mock import AsyncMock, patch
 
 import numpy as np
@@ -22,6 +24,7 @@ from app.services.audiobook_service import (
     _wav_header,
 )
 from app.services.audiobook_store import AudiobookStore
+from app.services.gemini_cleaner import GeminiCleaner, GeminiUsage
 from app.services.text_normalizer import has_residual_markup
 
 
@@ -102,6 +105,109 @@ def test_meta_atomic_write_and_read():
     assert read["status"] == "ready"
 
 
+@pytest.mark.asyncio
+async def test_gemini_budget_ledger_reserves_atomically_and_reconciles_actual_usage():
+    """Concurrent page workers cannot spend the same per-book capacity."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(0.09)
+    AudiobookStore.write_meta(bid, meta)
+
+    receipts = await asyncio.gather(
+        *(
+            AudiobookService._reserve_gemini_operation(
+                bid, operation=f"clean_page:{n}", reserved_usd=0.03
+            )
+            for n in range(4)
+        )
+    )
+    accepted = [receipt for receipt in receipts if receipt is not None]
+    assert len(accepted) == 3
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["reserved_usd"] == pytest.approx(0.09)
+    assert budget["available_usd"] == pytest.approx(0.0)
+
+    await AudiobookService._reconcile_gemini_operation(
+        bid, accepted[0], GeminiUsage(100, 100, "flex")
+    )
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["actual_usd"] == pytest.approx(
+        GeminiCleaner.cost_for_tokens(100, 100, tier="flex")
+    )
+    assert budget["reserved_usd"] == pytest.approx(0.06)
+    assert budget["actual_usd"] + budget["reserved_usd"] <= budget["cap_usd"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_budget_keeps_ambiguous_reservation_after_restart():
+    """No response receipt is not proof that Gemini did not bill the call."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    AudiobookStore.write_meta(bid, meta)
+    receipt = await AudiobookService._reserve_gemini_operation(
+        bid, operation="ocr_page:1", reserved_usd=0.06
+    )
+    assert receipt is not None
+    await AudiobookService._reconcile_gemini_operation(bid, receipt, None)
+
+    # Simulate process restart: only durable SQLite metadata remains.
+    AudiobookStore._reset_for_tests()
+    assert (
+        await AudiobookService._reserve_gemini_operation(
+            bid, operation="ocr_page:2", reserved_usd=0.05
+        )
+        is None
+    )
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["reserved_usd"] == pytest.approx(0.06)
+
+
+@pytest.mark.asyncio
+async def test_cost_approval_requires_shown_cap_or_finishes_locally(monkeypatch):
+    """A capacity fallback cannot silently dispatch Standard-tier work."""
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "needs_cost_approval"
+    meta["uses_gemini_cleanup"] = True
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    meta["budget"]["cost_approval"] = {
+        "required_cap_usd": 0.25,
+        "tier": "standard",
+    }
+    AudiobookStore.write_meta(bid, meta)
+    enqueued: list[tuple[str, str]] = []
+
+    async def fake_enqueue(book_id: str, api_key: str) -> None:
+        enqueued.append((book_id, api_key))
+
+    monkeypatch.setattr(
+        AudiobookService,
+        "enqueue",
+        classmethod(lambda cls, b, key: fake_enqueue(b, key)),
+    )
+    with pytest.raises(ValueError, match="approved cap"):
+        await AudiobookService.resolve_cost_approval(
+            bid, "fake-key", approve=True, new_cap_usd=0.24
+        )
+    assert enqueued == []
+
+    assert await AudiobookService.resolve_cost_approval(
+        bid, "", approve=False, new_cap_usd=None
+    )
+    after = AudiobookStore.read_meta(bid)
+    assert after["status"] == "queued"
+    assert after["uses_gemini_cleanup"] is False
+    assert "cost_approval" not in after["budget"]
+    assert enqueued == [(bid, "")]
+
+
 def test_list_books_sorted_desc():
     b1 = AudiobookStore.create_book("a.pdf")
     AudiobookStore.write_meta(
@@ -122,6 +228,23 @@ def test_delete_book_removes_dir():
     assert AudiobookStore.delete_book(bid) is True
     assert not os.path.isdir(AudiobookStore.book_dir(bid))
     assert AudiobookStore.delete_book(bid) is False  # second delete
+
+
+def test_delete_all_books_removes_every_source_and_is_idempotent():
+    first = AudiobookStore.create_book("first.txt")
+    second = AudiobookStore.create_book("second.txt")
+    for book_id in (first, second):
+        meta = AudiobookStore.initial_meta(
+            book_id, "Test.txt", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        )
+        AudiobookStore.write_meta(book_id, meta)
+        AudiobookStore.save_source(book_id, b"private source", "txt")
+
+    assert AudiobookStore.delete_all_books() == 2
+    assert AudiobookStore.list_books() == []
+    assert not os.path.exists(AudiobookStore.book_dir(first))
+    assert not os.path.exists(AudiobookStore.book_dir(second))
+    assert AudiobookStore.delete_all_books() == 0
 
 
 @pytest.mark.asyncio
@@ -747,6 +870,44 @@ def test_start_rejects_a_book_already_claimed_for_processing(monkeypatch):
     response = TestClient(app).post(f"/audiobook/{bid}/start")
     assert response.status_code == 409
     assert "already processing" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_start_calls_for_same_book_claim_exactly_once():
+    """Exercises the real (unmocked) AudiobookService.start() under several
+    'simultaneous' calls -- e.g. a double-clicked Start button, or a client
+    that retries a slow-to-respond request -- for the same book_id. Only one
+    caller may win the atomic in-memory claim and enqueue the pipeline; every
+    other caller must get False, never a second enqueue of the same book."""
+    bid = AudiobookStore.create_book("Concurrent.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Concurrent.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    ran_pipeline: list[str] = []
+
+    async def fake_pipeline(cls, book_id):
+        ran_pipeline.append(book_id)
+
+    with patch.object(AudiobookService, "_run_pipeline", classmethod(fake_pipeline)):
+        try:
+            results = await asyncio.gather(
+                *(
+                    AudiobookService.start(bid, "", uses_gemini_cleanup=False)
+                    for _ in range(8)
+                )
+            )
+            # Let the worker loop drain the single queued job.
+            await asyncio.sleep(0.05)
+        finally:
+            await AudiobookService.shutdown(grace_seconds=0.5)
+
+    assert results.count(True) == 1
+    assert results.count(False) == 7
+    # The pipeline itself must never run twice for the one accepted claim.
+    assert ran_pipeline.count(bid) <= 1
 
 
 # ---------- resume ----------
@@ -1491,7 +1652,10 @@ async def test_run_pipeline_marks_failed_on_transcript_write_error(monkeypatch):
 
     final_meta = AudiobookStore.read_meta(bid)
     assert final_meta["status"] == "failed"
-    assert "transcript" in (final_meta.get("error") or "").lower()
+    # User-visible metadata must never persist raw exception text; the
+    # structured code gives the UI a stable recovery state instead.
+    assert final_meta["error_code"] == "processing_failed"
+    assert "simulated disk failure" not in (final_meta.get("error") or "").lower()
 
 
 # ---------- local (no-LLM) chapter detection for Markdown (T-3 gap) ----------
@@ -1805,6 +1969,49 @@ def test_upload_flags_byte_identical_reimport_as_duplicate(monkeypatch):
     assert second_body["book_id"] != first.json()["book_id"]
 
 
+def test_upload_rejects_when_disk_nearly_full_and_cleans_up_the_book_row(monkeypatch):
+    """A near-full disk (a real user's messy environment, not a contrived
+    one) must produce a clean 413 -- never a 500 -- and must not leave an
+    orphaned book row/directory behind. Regression coverage for
+    ensure_storage_capacity's free-disk-space branch, which previously had
+    no test at any level (unit or integration)."""
+    import collections
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import import_limits as _import_limits
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 3))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_word_count", classmethod(lambda cls, p: 50)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_char_count", classmethod(lambda cls, p: 250)
+    )
+
+    disk_usage = collections.namedtuple("usage", "total used free")
+    monkeypatch.setattr(
+        _import_limits.shutil,
+        "disk_usage",
+        lambda _path: disk_usage(10**9, 10**9 - 1024, 1024),
+    )
+
+    books_before = len(AudiobookStore.list_books())
+    client = TestClient(app)
+    files = {"file": ("test.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")}
+    response = client.post("/audiobook", files=files)
+
+    assert response.status_code == 413
+    assert "disk space" in response.json()["detail"].lower()
+    # No orphaned row left behind for the rejected upload.
+    assert len(AudiobookStore.list_books()) == books_before
+
+
 def test_upload_rejects_empty_pdf():
     """P9: zero-byte uploads should fail at the door."""
     from fastapi.testclient import TestClient
@@ -1891,8 +2098,16 @@ def test_upload_accepts_every_supported_text_document_kind(
         _te.TextExtractor, "render_cover", classmethod(lambda cls, _: None)
     )
 
+    if filename.endswith(".docx"):
+        payload = io.BytesIO()
+        with zipfile.ZipFile(payload, "w", compression=zipfile.ZIP_DEFLATED) as docx:
+            docx.writestr("[Content_Types].xml", b"<Types/>")
+            docx.writestr("word/document.xml", b"<w:document/>")
+        content = payload.getvalue()
+    else:
+        content = b"document content"
     response = TestClient(app).post(
-        "/audiobook", files={"file": (filename, b"document content", content_type)}
+        "/audiobook", files={"file": (filename, content, content_type)}
     )
     assert response.status_code == 200, response.text
     meta = AudiobookStore.read_meta(response.json()["book_id"])

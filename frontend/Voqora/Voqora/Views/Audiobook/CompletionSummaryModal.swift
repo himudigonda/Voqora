@@ -8,7 +8,7 @@ struct CompletionSummaryModal: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     let book: Audiobook
-    var onListenNow: ((Audiobook) -> Void)? = nil
+    var onListenNow: ((Audiobook) -> Void)?
     @State private var bouncing = false
 
     private var accentColor: Color {
@@ -140,7 +140,9 @@ struct CompletionSummaryModal: View {
         }
     }
 
-    private var prettyTitle: String { book.displayTitle }
+    private var prettyTitle: String {
+        book.displayTitle
+    }
 
     private func numberFormat(_ n: Int) -> String {
         let f = NumberFormatter()

@@ -80,15 +80,21 @@ is_exact_app_running() {
 }
 
 # A process is not a usable app until its bundled local service has loaded.
-# This checks the loopback-only health endpoint without emitting user content
-# or talking to a network service.
+#
+# v1.2.3 replaced the fixed port with an app-owned ephemeral socket handed to
+# the child as fd 0, behind a per-launch token, so readiness is read from the
+# process tree rather than an HTTP probe.
 is_bundled_backend_ready() {
-  local health
-  health="$(/usr/bin/curl --connect-timeout 1 --max-time 1 --silent --show-error --fail \
-    http://127.0.0.1:10101/health 2>/dev/null)" || return 1
+  local backend_pid
+  backend_pid="$(/usr/bin/pgrep -f "$BUNDLE_ID/VoqoraServer/VoqoraServer" 2>/dev/null | /usr/bin/head -1)"
+  [ -n "$backend_pid" ] || return 1
 
-  printf '%s' "$health" | /usr/bin/grep -Eq '"status"[[:space:]]*:[[:space:]]*"ready"' \
-    && printf '%s' "$health" | /usr/bin/grep -Eq '"loaded"[[:space:]]*:[[:space:]]*true'
+  /usr/sbin/lsof -a -nP -p "$backend_pid" -iTCP -sTCP:LISTEN >/dev/null 2>&1 || return 1
+
+  # The model load is what "ready" means; the backend announces it on stdout.
+  local log="$HOME/Library/Application Support/$BUNDLE_ID/frontend.log"
+  [ -f "$log" ] || return 1
+  /usr/bin/grep -q "startup.engine_load.ready" "$log"
 }
 
 verify_fresh_launch() {

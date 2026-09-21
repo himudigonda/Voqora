@@ -15,9 +15,9 @@ struct VoqoraWindow: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
-    // Tracked so the startup prepare() work can be cancelled if the window
-    // disappears before it finishes — previously an unstructured `Task` with
-    // no cancellation, harmless only because of downstream idempotency guards.
+    /// Tracked so the startup prepare() work can be cancelled if the window
+    /// disappears before it finishes — previously an unstructured `Task` with
+    /// no cancellation, harmless only because of downstream idempotency guards.
     @State private var launchTask: Task<Void, Never>?
 
     /// The app's accent, resolved once per body pass — GRiT's own rows,
@@ -91,6 +91,8 @@ struct VoqoraWindow: View {
                             Text("Preferences")
                                 .font(vm.font(.rowTitle))
                         }
+                        .accessibilityLabel("Preferences")
+                        .accessibilityAddTraits(vm.selectedTab == "preferences" ? [.isSelected] : [])
 
                         // Replaces the old sidebar-footer "DEVELOPED BY" block
                         // (name, three link icons, cramped into the nav rail)
@@ -107,6 +109,8 @@ struct VoqoraWindow: View {
                             Text("About")
                                 .font(vm.font(.rowTitle))
                         }
+                        .accessibilityLabel("About")
+                        .accessibilityAddTraits(vm.selectedTab == "about" ? [.isSelected] : [])
                     }
                     .padding(.horizontal, DesignTokens.Spacing.sm)
                     .padding(.bottom, DesignTokens.Spacing.sm)
@@ -128,8 +132,30 @@ struct VoqoraWindow: View {
                         .transition(.opacity)
                 }
 
-                // FLOATING MINI PLAYER (Global) - Hide when on main dashboard to avoid duplicate bars
-                if vm.status == .speaking || vm.status == .paused, vm.selectedTab != "home" {
+                // FLOATING MINI PLAYER (Global) - Hide when on main dashboard to avoid duplicate bars.
+                // `vm.status` is driven by `audio.$isPlaying` on the single
+                // `AudioService` shared between dashboard TTS and audiobook
+                // playback (see VoqoraApp.swift's "Audiobook VM uses the same
+                // shared AudioService" comment), so it reads `.speaking`/`.paused`
+                // for an audiobook exactly as it does for a TTS clip — it is
+                // NOT stale or TTS-specific, it is genuinely ambiguous about
+                // which one is playing. `bookVM.nowPlaying` is the disambiguator:
+                // it's set the instant a book starts (in `play()`) and cleared
+                // the instant one stops (in `stopPlayback()`), independent of
+                // `isPlayerViewActive`/`isNowPlayingBarVisible` — so gating on
+                // it here, rather than on `!bookVM.isNowPlayingBarVisible`,
+                // makes this branch and `NowPlayingBar`'s below mutually
+                // exclusive BY CONSTRUCTION (bookVM.nowPlaying == nil vs.
+                // != nil can never both hold) instead of merely usually
+                // agreeing. Without this, the `.id(vm.selectedTab)`
+                // re-identification below could rebuild this ZStack for a tab
+                // switch made from inside the full audiobook player before
+                // `isPlayerViewActive` (set in AudiobookPlayerView.onDisappear)
+                // had flipped to false — a one-frame window where `vm.status`
+                // already read `.speaking` but `isNowPlayingBarVisible` had not
+                // yet caught up, flashing this dashboard-TTS HUD (with stale
+                // history text) under an actively-playing audiobook.
+                if vm.status == .speaking || vm.status == .paused, vm.selectedTab != "home", bookVM.nowPlaying == nil {
                     miniPlayerHUD
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -137,14 +163,21 @@ struct VoqoraWindow: View {
                 // A full player and a compact player bar must never compete
                 // for the same audiobook. The view lifecycle, rather than
                 // `nowPlaying` alone, tells us whether the full player is up.
-                if bookVM.isNowPlayingBarVisible, let playing = bookVM.nowPlaying {
+                // Also hidden on "home" for the same reason as `miniPlayerHUD`
+                // above: that tab IS a full now-playing surface (the TTS
+                // reader's own circular visualizer and scrubber), so stacking
+                // this bar underneath it produced two independent
+                // scrubber/"now playing" UIs on screen at once — the TTS
+                // view's scrub track and glow circle with the audiobook bar's
+                // progress line and controls floating over the bottom of it.
+                if bookVM.isNowPlayingBarVisible, vm.selectedTab != "home", let playing = bookVM.nowPlaying {
                     NowPlayingBar(onTap: {
                         vm.selectedTab = "books"
                         bookVM.openPlayer(for: playing.bookID)
                     })
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .environmentObject(vm)
-                        .environmentObject(bookVM)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .environmentObject(vm)
+                    .environmentObject(bookVM)
                 }
 
                 // Toast / banner — top of detail pane.
@@ -158,6 +191,18 @@ struct VoqoraWindow: View {
             }
             .background(adaptiveBackdrop)
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.isNowPlayingBarVisible)
+            // Once the audiobook tab pushes its player via
+            // `.navigationDestination`, `NavigationSplitView`'s detail
+            // column ties its internal navigation-stack identity to the
+            // structural position of this outer `ZStack` — not to whatever
+            // `detailContent` produces underneath it — so it kept showing
+            // the pushed player on every other tab regardless of
+            // `selectedTab` changing correctly inside `detailContent`
+            // (confirmed with instrumentation: the `switch` there always
+            // picked the right case). Re-identifying this outer view on
+            // every tab change is what actually forces the column to
+            // rebuild and drop the stale push.
+            .id(vm.selectedTab)
         }
         .frame(minWidth: 800, minHeight: 600)
         // So standard system controls (Toggle, Slider, focus rings, plain
@@ -288,11 +333,19 @@ struct VoqoraWindow: View {
     }
 }
 
-// Split out of the struct body to keep it under SwiftLint's
-// `type_body_length` — plain private members, not a separate API surface.
+/// Split out of the struct body to keep it under SwiftLint's
+/// `type_body_length` — plain private members, not a separate API surface.
 private extension VoqoraWindow {
     @ViewBuilder
     var detailContent: some View {
+        // The real fix for the stuck-navigation bug (see `.id(vm.selectedTab)`
+        // on the `detail:` closure's outer `ZStack` in `body` above) lives one
+        // level up, not here — `NavigationSplitView` ties its detail column's
+        // navigation-stack identity to that outer view's structural position,
+        // not to whatever this `switch` produces on a later pass. Confirmed
+        // by instrumentation: this `switch` already re-evaluates to the right
+        // case on every `selectedTab` change; an `.id()` at this nested level
+        // changed nothing.
         switch vm.selectedTab {
         case "home": MainDashboardView()
         case "history": VaultView()
@@ -336,6 +389,14 @@ private extension VoqoraWindow {
             Text(title)
                 .font(vm.font(.rowTitle))
         }
+        // The row's `Button` wraps an unlabelled SF Symbol next to the title
+        // `Text`, and which of the two wins the synthesized accessibility
+        // name is not something to leave to inference on a navigation rail.
+        // State matters as much as the name here: selection is communicated
+        // purely by tint and fill, so without `.isSelected` VoiceOver cannot
+        // say which section the user is actually in.
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(vm.selectedTab == value ? [.isSelected] : [])
     }
 
     private func continueListeningButton(for book: Audiobook) -> some View {
@@ -366,6 +427,8 @@ private extension VoqoraWindow {
         }
         .buttonStyle(.plain)
         .foregroundStyle(Palette.textPrimary)
+        .accessibilityLabel("Continue Listening: \(book.displayTitle)")
+        .accessibilityHint("Resumes this audiobook and opens the player")
     }
 
     private var miniPlayerHUD: some View {
@@ -413,8 +476,11 @@ private extension VoqoraWindow {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             var url: URL?
-            if let data = item as? Data { url = URL(dataRepresentation: data, relativeTo: nil) }
-            else if let u = item as? URL { url = u }
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let u = item as? URL {
+                url = u
+            }
             guard let url else {
                 Task { @MainActor in
                     bookVM.showToast("Voqora could not read that dropped file.", kind: .error)

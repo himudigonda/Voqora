@@ -79,17 +79,25 @@ struct VoqoraIconButtonStyle: ButtonStyle {
 }
 
 extension ButtonStyle where Self == VoqoraPrimaryButtonStyle {
-    static var voqoraPrimary: VoqoraPrimaryButtonStyle { VoqoraPrimaryButtonStyle() }
+    static var voqoraPrimary: VoqoraPrimaryButtonStyle {
+        VoqoraPrimaryButtonStyle()
+    }
 }
 
 extension ButtonStyle where Self == VoqoraSecondaryButtonStyle {
-    static var voqoraSecondary: VoqoraSecondaryButtonStyle { VoqoraSecondaryButtonStyle() }
+    static var voqoraSecondary: VoqoraSecondaryButtonStyle {
+        VoqoraSecondaryButtonStyle()
+    }
 }
 
 extension ButtonStyle where Self == VoqoraDestructiveButtonStyle {
-    static var voqoraDestructive: VoqoraDestructiveButtonStyle { VoqoraDestructiveButtonStyle() }
+    static var voqoraDestructive: VoqoraDestructiveButtonStyle {
+        VoqoraDestructiveButtonStyle()
+    }
 }
 
 extension ButtonStyle where Self == VoqoraIconButtonStyle {
-    static var voqoraIcon: VoqoraIconButtonStyle { VoqoraIconButtonStyle() }
+    static var voqoraIcon: VoqoraIconButtonStyle {
+        VoqoraIconButtonStyle()
+    }
 }

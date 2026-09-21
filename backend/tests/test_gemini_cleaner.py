@@ -84,29 +84,24 @@ def test_reraise_typed_classifies_capacity_by_error_code() -> None:
         GeminiCleaner._reraise_typed(FakeApiError("server error"))
 
 
-# ---------- Flex -> Standard fallback ----------
+# ---------- Flex retry / explicit Standard approval ----------
 
 
-def test_with_retry_falls_back_to_standard_after_repeated_flex_capacity_errors(
+def test_with_retry_never_silently_falls_back_to_standard_after_capacity_errors(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
     seen_tiers: list = []
 
-    async def flaky_then_ok(tier):
+    async def always_capacity_limited(tier):
         seen_tiers.append(tier)
-        if tier == gemini_types.ServiceTier.FLEX:
-            raise GeminiCapacityError("503 UNAVAILABLE")
-        return "cleaned on standard"
+        raise GeminiCapacityError("503 UNAVAILABLE")
 
-    result = asyncio.run(GeminiCleaner._with_retry("test", flaky_then_ok))
-    assert result == "cleaned on standard"
-    # Two Flex attempts (hits _FLEX_FALLBACK_AFTER), then Standard succeeds.
-    assert seen_tiers == [
-        gemini_types.ServiceTier.FLEX,
-        gemini_types.ServiceTier.FLEX,
-        gemini_types.ServiceTier.STANDARD,
-    ]
+    with pytest.raises(GeminiCapacityError):
+        asyncio.run(GeminiCleaner._with_retry("test", always_capacity_limited))
+    # Standard pricing needs a user-approved, separately budgeted request;
+    # retries for a Flex request must remain in the original tier.
+    assert seen_tiers == [gemini_types.ServiceTier.FLEX] * GeminiCleaner._MAX_RETRIES
 
 
 def test_with_retry_never_falls_back_below_flex_fallback_threshold(monkeypatch) -> None:
@@ -141,6 +136,30 @@ def test_estimate_cost_is_monotonic_in_chars() -> None:
 
 def test_estimate_cost_is_nonzero_for_one_token() -> None:
     assert GeminiCleaner.estimate_cost_usd(1) > 0
+
+
+def test_usage_receipt_includes_thinking_tokens_in_billable_output() -> None:
+    class FakeUsage:
+        prompt_token_count = 101
+        candidates_token_count = 17
+        thoughts_token_count = 23
+
+    class FakeResponse:
+        usage_metadata = FakeUsage()
+
+    receipt = GeminiCleaner._usage_from_response(
+        FakeResponse(), gemini_types.ServiceTier.FLEX
+    )
+    assert receipt is not None
+    assert receipt.input_tokens == 101
+    assert receipt.output_tokens == 40
+    assert receipt.tier == "flex"
+
+
+def test_reservation_envelope_is_conservative_for_image_input() -> None:
+    text_only = GeminiCleaner.clean_reservation_cost_usd(500, tier="flex")
+    image = GeminiCleaner.clean_reservation_cost_usd(500, tier="flex", image_input=True)
+    assert image > text_only > 0
 
 
 # ---------- section JSON parsing ----------
@@ -313,3 +332,25 @@ def test_verify_key_uses_standard_tier_not_flex() -> None:
         assert asyncio.run(GeminiCleaner.verify_key("good")) is True
 
     assert seen_tiers == [gemini_types.ServiceTier.STANDARD]
+
+
+def test_verify_key_times_out_instead_of_hanging_forever(monkeypatch) -> None:
+    """Regression: Standard-tier calls get no HttpOptions, which the genai SDK
+    treats as an *unbounded* httpx timeout (see _async_clean). Before
+    _VERIFY_KEY_TIMEOUT_S existed, a dropped-packet/offline network made this
+    call — and the /audiobook/verify_key request it backs — hang forever
+    instead of failing fast. Use a near-zero timeout so the test itself
+    doesn't hang if the fix regresses.
+    """
+    monkeypatch.setattr(GeminiCleaner, "_VERIFY_KEY_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
+
+    async def hang_forever(*_args, **_kwargs):
+        await asyncio.sleep(10)
+        return "ok"
+
+    with patch.object(GeminiCleaner, "_async_clean", side_effect=hang_forever):
+        result = asyncio.run(
+            asyncio.wait_for(GeminiCleaner.verify_key("good"), timeout=2.0)
+        )
+    assert result is False

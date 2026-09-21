@@ -1,21 +1,128 @@
 import asyncio
+import atexit
 import concurrent.futures
 import gc
 import os
 import re
+import shutil
+import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
 
+import espeakng_loader
 import numpy as np
 import onnxruntime as ort
 from kokoro_onnx import Kokoro
+from kokoro_onnx.config import EspeakConfig
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
 
 log = get_logger(__name__)
+
+# espeak-ng stores the data directory handed to `espeak_Initialize()` in a
+# fixed 160-byte global (`char path_home[N_PATH_HOME]`). A longer path is NOT
+# reported as an error to the caller: espeak-ng silently discards it and falls
+# back through $ESPEAK_DATA_PATH, then $HOME/espeak-ng-data, then the
+# PATH_ESPEAK_DATA baked into the wheel at build time — which, for the
+# espeakng-loader wheels, is a GitHub Actions runner path that exists on no
+# user's machine. It then fails to read `phontab` and the deprecated
+# `espeak_Initialize()` entry point calls exit(1) directly, killing the whole
+# backend process below Python: no exception, no traceback, nothing for
+# `_load_engine_background`'s `except Exception` to catch.
+#
+# Our own data directory is
+#   <HOME>/Library/Application Support/com.himudigonda.Voqora/VoqoraServer
+#   /_internal/espeakng_loader/espeak-ng-data
+# whose fixed tail is already 105 bytes, so the whole thing fits only while the
+# user's home directory stays under ~47 bytes. That holds for an ordinary
+# /Users/<name> home and breaks for a network/mobile home, a relocated home, a
+# container path, or any test harness that points HOME at a temp directory.
+# Measured against the shipped libespeak-ng 1.52.0: 159 bytes initialises
+# cleanly, 160 bytes exits 1.
+_ESPEAK_PATH_HOME_LIMIT = 159
+
+_espeak_short_data_path: str | None = None
+
+
+def _espeak_visible_length(path: str) -> int:
+    """Bytes espeak-ng will actually store for `path`.
+
+    phonemizer runs the configured directory through `pathlib.Path.resolve()`
+    before calling `espeak_Initialize()`, so a symlink is useless here — only
+    the fully resolved path counts against espeak-ng's buffer.
+    """
+    return len(os.fsencode(os.path.realpath(path)))
+
+
+def _resolve_espeak_data_path() -> str:
+    """Return an espeak-ng data directory short enough for its 160-byte buffer.
+
+    The bundled directory is used as-is whenever it fits. When it does not, it
+    is mirrored into a private temporary directory, which is always far
+    shorter, so espeak-ng keeps the path we gave it instead of silently falling
+    back to a compiled-in default that does not exist. The mirror is built from
+    hard links, so it costs a few hundred directory entries rather than a copy
+    of the ~19 MB of voice data; a real copy is the fallback when the temporary
+    directory turns out to be on another filesystem.
+    """
+    global _espeak_short_data_path
+
+    real_path = espeakng_loader.get_data_path()
+    if _espeak_visible_length(real_path) <= _ESPEAK_PATH_HOME_LIMIT:
+        return real_path
+
+    if _espeak_short_data_path is not None:
+        return _espeak_short_data_path
+
+    # The default temporary directory first (private to this user on macOS),
+    # then /tmp, in case TMPDIR is itself relocated somewhere long.
+    for directory in (None, "/tmp"):
+        holder = None
+        try:
+            holder = tempfile.mkdtemp(prefix="voqora-espeak-", dir=directory)
+            mirror = os.path.join(holder, "espeak-ng-data")
+            if _espeak_visible_length(holder) + len(b"/espeak-ng-data") > (
+                _ESPEAK_PATH_HOME_LIMIT
+            ):
+                raise OSError("temporary directory is itself too long")
+            try:
+                shutil.copytree(real_path, mirror, copy_function=os.link)
+            except (OSError, shutil.Error):
+                # Different filesystem, or a link limit: fall back to a copy.
+                shutil.rmtree(mirror, ignore_errors=True)
+                shutil.copytree(real_path, mirror)
+        except (OSError, shutil.Error):
+            if holder is not None:
+                shutil.rmtree(holder, ignore_errors=True)
+            continue
+
+        atexit.register(shutil.rmtree, holder, True)
+        _espeak_short_data_path = mirror
+        log.info(
+            "tts.espeak_data_path_shortened",
+            extra={
+                "original_bytes": _espeak_visible_length(real_path),
+                "shortened_bytes": _espeak_visible_length(mirror),
+            },
+        )
+        return mirror
+
+    # Nothing shorter was available. Hand espeak-ng the real path anyway so the
+    # failure stays identical to what it would have been, and leave a breadcrumb
+    # explaining the exit(1) that is about to happen.
+    log.error(
+        "tts.espeak_data_path_too_long",
+        extra={
+            "failure_code": "espeak_data_path_too_long",
+            "original_bytes": _espeak_visible_length(real_path),
+            "limit_bytes": _ESPEAK_PATH_HOME_LIMIT,
+        },
+    )
+    return real_path
+
 
 # Module-level preemption lock: interactive /speak holds this; the audiobook
 # TTS phase awaits it between every page so a hotkey request fires within one
@@ -162,8 +269,12 @@ class TTSEngine:
                 speed,
                 lang,
             )
-        except Exception as e:
-            log.warning("tts.lookahead_error", extra={"error": str(e)}, exc_info=True)
+        except Exception:
+            log.warning(
+                "tts.lookahead_error",
+                extra={"failure_code": "lookahead_generation_failed"},
+                exc_info=True,
+            )
             return
 
         if audio is None:
@@ -190,7 +301,9 @@ class TTSEngine:
         # 2. Initialize the Model with optimized ONNX session
         if cls._model is None:
             active_model_path = settings.ACTIVE_MODEL_PATH
-            log.info("tts.model_load_start", extra={"path": active_model_path})
+            # Do not retain an app-private filesystem path in diagnostics.
+            # The bundled model identity is already fixed by the sealed runtime.
+            log.info("tts.model_load_start", extra={"model_source": "bundled"})
             try:
                 sess_options = ort.SessionOptions()
                 sess_options.enable_mem_pattern = True
@@ -219,16 +332,28 @@ class TTSEngine:
                     providers=["CPUExecutionProvider"],
                 )
 
-                cls._model = Kokoro.from_session(session, settings.VOICES_PATH)
+                # Pin the espeak-ng data directory explicitly. kokoro-onnx would
+                # otherwise hand espeak-ng the bundled path verbatim, which
+                # exits the process when it overflows espeak-ng's 160-byte
+                # path buffer (see _resolve_espeak_data_path).
+                cls._model = Kokoro.from_session(
+                    session,
+                    settings.VOICES_PATH,
+                    espeak_config=EspeakConfig(data_path=_resolve_espeak_data_path()),
+                )
                 log.info("tts.model_loaded_warming")
 
                 # Warm-up: first inference is 2-5x slower due to memory allocation
                 # and espeak-ng phonemizer initialization
                 cls._model.create("Hello.", "af_bella", 1.0, "en-us")
                 log.info("tts.ready")
-            except Exception as e:
-                log.error("tts.fatal_error", extra={"error": str(e)}, exc_info=True)
-                raise e
+            except Exception:
+                log.error(
+                    "tts.fatal_error",
+                    extra={"failure_code": "model_initialization_failed"},
+                    exc_info=True,
+                )
+                raise
 
         # Mark load time so idle_watcher doesn't immediately unload on reload.
         cls.touch()

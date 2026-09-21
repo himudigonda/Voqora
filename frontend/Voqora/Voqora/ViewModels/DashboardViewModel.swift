@@ -5,10 +5,10 @@ import SwiftUI
 
 @MainActor
 class DashboardViewModel: ObservableObject {
-    /// A one-time release migration for the new Voqora app identity. A prior
-    /// development build could leave a non-English voice in shared defaults;
-    /// every fresh v1 install and every upgrade from that build must begin with
-    /// the same predictable US-English voice.
+    // A one-time release migration for the new Voqora app identity. A prior
+    // development build could leave a non-English voice in shared defaults;
+    // every fresh v1 install and every upgrade from that build must begin with
+    // the same predictable US-English voice.
     // Version 7 supersedes the short-lived builds that could record v6 while
     // retaining a stale multilingual development voice. It resets only once,
     // then preserves every explicit choice made afterwards.
@@ -55,14 +55,14 @@ class DashboardViewModel: ObservableObject {
     private let history: HistoryManager
     private let defaults: UserDefaults
 
-    // State
+    /// State
     @Published var status: AppStatus = .ready
     /// Consecutive "no text found" failures per frontmost app name — reset
     /// on success or on switching apps. See speakSelection().
     private var selectionFailuresByApp: [String: Int] = [:]
     @Published var isBackendOnline = false
     @Published var isBackendInitializing = true // Start as initializing
-    @Published var isModelLoaded = false        // Model in ONNX session RAM
+    @Published var isModelLoaded = false // Model in ONNX session RAM
     /// Last-seen NSPasteboard.changeCount, used only to detect *that* a copy
     /// happened — never to read what was copied. See startPrewarmObservers().
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
@@ -86,17 +86,21 @@ class DashboardViewModel: ObservableObject {
             defaults.set(selectedVoice, forKey: "selectedVoice")
         }
     }
+
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
-    @AppStorage("enableDucking") var enableDucking = true
+    /// New installs must opt into cross-app Automation. Existing explicit
+    /// UserDefaults values are preserved by @AppStorage.
+    @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
-    @AppStorage("telemetryEnabled") var telemetryEnabled = true
+    @AppStorage("telemetryEnabled") var telemetryEnabled = false
     @AppStorage("selectedFontName") var selectedFontName = "Google Sans"
     @AppStorage("accentColorID") var accentColorID: AccentColorOption = .clay
     @AppStorage("appIconID") var appIconID: AppIconOption = .waveLight {
         didSet { appIconID.apply() }
     }
+
     /// The bundle version this profile last recorded seeing — compared
     /// against `CFBundleShortVersionString` on every launch so `VoqoraWindow`
     /// can detect "this launch is the first one after an update" and land on
@@ -165,7 +169,9 @@ class DashboardViewModel: ObservableObject {
         ("bm_george", "🇬🇧 George"), ("bm_lewis", "🇬🇧 Lewis"),
     ]
 
-    var availableVoices: [(id: String, display: String)] { Self.availableVoices }
+    var availableVoices: [(id: String, display: String)] {
+        Self.availableVoices
+    }
 
     /// Computed property for display
     var currentVoiceDisplay: String {
@@ -208,7 +214,7 @@ class DashboardViewModel: ObservableObject {
     ) {
         self.defaults = defaults
         _ = Self.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults)
-        self.selectedVoice = defaults.string(forKey: "selectedVoice") ?? "af_bella"
+        selectedVoice = defaults.string(forKey: "selectedVoice") ?? "af_bella"
         self.backend = backend
         self.system = system
         self.audio = audio
@@ -237,7 +243,11 @@ class DashboardViewModel: ObservableObject {
                 guard let self else { return }
                 if isPlaying {
                     status = .speaking
-                    if enableDucking { system.setMusicVolume(ducked: true) }
+                    if enableDucking {
+                        system.beginDucking { [weak self] message in
+                            self?.showTransientError(message)
+                        }
+                    }
                     // Cancel any pending unduck — we're playing again.
                     unduckTask?.cancel()
                     unduckTask = nil
@@ -255,8 +265,8 @@ class DashboardViewModel: ObservableObject {
                         unduckTask = Task { [weak self] in
                             try? await Task.sleep(nanoseconds: 1_000_000_000)
                             guard !Task.isCancelled, let self else { return }
-                            if !self.audio.isPlaying {
-                                self.system.setMusicVolume(ducked: false)
+                            if !audio.isPlaying {
+                                system.endDucking()
                             }
                         }
                     }
@@ -346,7 +356,9 @@ class DashboardViewModel: ObservableObject {
             guard let self else { return }
             defer {
                 if Task.isCancelled, generation == self.speakGeneration {
-                    if self.status == .thinking { self.status = .ready }
+                    if self.status == .thinking {
+                        self.status = .ready
+                    }
                     self.audio.stop()
                 }
                 if generation == self.speakGeneration {
@@ -376,15 +388,17 @@ class DashboardViewModel: ObservableObject {
                 var receivedAudio = false
 
                 for try await chunk in stream {
-                    guard !Task.isCancelled, generation == self.speakGeneration else {
+                    guard !Task.isCancelled, generation == speakGeneration else {
                         return
                     }
-                    if status == .thinking { status = .speaking }
+                    if status == .thinking {
+                        status = .speaking
+                    }
                     audio.playChunk(chunk, volume: Float(speechVolume))
                     receivedAudio = true
                 }
 
-                guard !Task.isCancelled, generation == self.speakGeneration else { return }
+                guard !Task.isCancelled, generation == speakGeneration else { return }
                 guard receivedAudio else {
                     VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": selectedVoice])
                     audio.stop()
@@ -403,8 +417,8 @@ class DashboardViewModel: ObservableObject {
                     audioSeconds: audio.renderedAudioSeconds
                 )
             } catch {
-                guard !Task.isCancelled, generation == self.speakGeneration else { return }
-                VoqoraLog.error("DashboardViewModel", "speak() failed", ["error": String(describing: error), "voice": selectedVoice, "chars": "\(cleaned.count)"])
+                guard !Task.isCancelled, generation == speakGeneration else { return }
+                VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": selectedVoice, "chars": "\(cleaned.count)"])
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error))
             }
@@ -420,9 +434,9 @@ class DashboardViewModel: ObservableObject {
             return "Voqora could not reach the local speech engine. Try again."
         }
         switch streamError {
-        case .rejectedResponse(let statusCode) where statusCode == 422:
+        case let .rejectedResponse(statusCode) where statusCode == 422:
             return "That selection is empty or too long. Try a shorter passage."
-        case .rejectedResponse(let statusCode) where statusCode == 503:
+        case let .rejectedResponse(statusCode) where statusCode == 503:
             return "Voqora's local speech engine is still warming up. Try again in a moment."
         case .emptyAudio:
             return "Voqora did not receive playable audio. Try the selection again."
@@ -478,7 +492,7 @@ class DashboardViewModel: ObservableObject {
         errorResetTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard !Task.isCancelled, let self else { return }
-            self.resetPlaybackError(for: resetGeneration)
+            resetPlaybackError(for: resetGeneration)
         }
     }
 
@@ -492,6 +506,11 @@ class DashboardViewModel: ObservableObject {
     }
 
     func exportLastClip() {
+        // The generic export is intentionally only for retained selected-text
+        // PCM. Audiobooks are file-backed and expose their own Save-panel
+        // export, so a global/menu invocation must be a no-op rather than
+        // surfacing a misleading "no audio" failure while a book is playing.
+        guard audio.canExportLastClip else { return }
         do {
             let url = try audio.exportToDesktop()
             showActionFeedback("Saved \(url.lastPathComponent) to Desktop")
@@ -506,7 +525,7 @@ class DashboardViewModel: ObservableObject {
             NSWorkspace.shared.activateFileViewerSelecting(urls)
             showActionFeedback("Saved \(urls.count) debug log\(urls.count == 1 ? "" : "s") to Desktop")
         } catch {
-            VoqoraLog.error("DashboardViewModel", "exportLogs failed", ["error": String(describing: error)])
+            VoqoraLog.error("DashboardViewModel", "exportLogs failed", ["failureCode": "log_export_failed"])
             showTransientError(error.localizedDescription)
         }
     }
@@ -517,7 +536,7 @@ class DashboardViewModel: ObservableObject {
         actionFeedbackTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 4_000_000_000)
             guard !Task.isCancelled, let self else { return }
-            self.actionFeedback = nil
+            actionFeedback = nil
         }
     }
 
@@ -595,7 +614,7 @@ class DashboardViewModel: ObservableObject {
                 isModelLoaded = health.isModelLoaded
 
                 // Detect backend crash: was online, now offline
-                if wasOnline && !isNowOnline {
+                if wasOnline, !isNowOnline {
                     VoqoraLog.error("DashboardViewModel", "Backend crash detected, cancelling in-flight stream", ["status": "\(status)"])
                     currentSpeakTask?.cancel()
                     currentSpeakTask = nil
@@ -687,9 +706,9 @@ class DashboardViewModel: ObservableObject {
                 // Type check only — never touches the actual clipboard content.
                 let shouldPrewarm = Self.shouldPrewarmOnPasteboardChange(
                     currentChangeCount: current,
-                    lastChangeCount: self.lastPasteboardChangeCount,
-                    isBackendOnline: self.isBackendOnline,
-                    isModelLoaded: self.isModelLoaded,
+                    lastChangeCount: lastPasteboardChangeCount,
+                    isBackendOnline: isBackendOnline,
+                    isModelLoaded: isModelLoaded,
                     hasReadableStringContent: pasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.string.rawValue])
                 )
                 guard shouldPrewarm else { return }
@@ -701,7 +720,7 @@ class DashboardViewModel: ObservableObject {
         // explicitly activates the selected-text shortcut.
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
-                guard let self, self.isBackendOnline, !self.isModelLoaded else { return }
+                guard let self, isBackendOnline, !self.isModelLoaded else { return }
                 Task { await self.backend.prewarm() }
             }
             .store(in: &cancellables)
@@ -720,5 +739,4 @@ class DashboardViewModel: ObservableObject {
         let newFont = fontManager.convert(.systemFont(ofSize: 12))
         selectedFontName = newFont.familyName ?? "System Standard"
     }
-
 }

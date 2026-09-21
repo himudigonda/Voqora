@@ -81,6 +81,23 @@ class _JsonFormatter(logging.Formatter):
             "taskName",
         }
     )
+    # Source prose, provider responses, paths and launch credentials can all
+    # appear in exception text. Logs are exportable support artifacts, not a
+    # second content store, so never serialize those values by accident.
+    _REDACTED_EXTRA_KEYS = frozenset(
+        {
+            "error",
+            "exception",
+            "text",
+            "content",
+            "prompt",
+            "path",
+            "api_key",
+            "key",
+            "token",
+            "authorization",
+        }
+    )
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
@@ -100,6 +117,9 @@ class _JsonFormatter(logging.Formatter):
                 # namespaced key so the data isn't silently dropped.
                 payload[f"x_{k}"] = v if _is_jsonable(v) else repr(v)
                 continue
+            if k.lower() in self._REDACTED_EXTRA_KEYS:
+                payload[f"{k}_redacted"] = True
+                continue
             try:
                 json.dumps(v)
                 payload[k] = v
@@ -107,10 +127,11 @@ class _JsonFormatter(logging.Formatter):
                 payload[k] = repr(v)
 
         if record.exc_info:
-            # The full traceback, not just the exception's final message line
-            # — the file/line/call-stack is exactly what makes a logged
-            # error debuggable instead of a bare "ValueError: something".
-            payload["exc"] = self.formatException(record.exc_info)
+            # Full tracebacks frequently embed parser input, provider bodies,
+            # filesystem paths, and credential-shaped values. Keep only the
+            # type; correlation ID + event name remain sufficient to diagnose
+            # a release build without retaining user content.
+            payload["exc_type"] = record.exc_info[0].__name__
 
         return json.dumps(payload, separators=(",", ":"))
 

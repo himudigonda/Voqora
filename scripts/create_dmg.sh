@@ -7,7 +7,7 @@ set -euo pipefail
 #   • Custom Voqora dark background with visible install instructions
 #   • App icon (left) + Applications alias (right)
 #   • Volume icon (Voqora.icns)
-#   • A focused 660×415 Finder window with only the two install targets
+#   • A reliable drag-and-drop volume containing only the app and Applications link
 # ============================================================
 
 APP_NAME="Voqora"
@@ -82,7 +82,30 @@ echo "🏗  Archiving Voqora v${VERSION}..."
 # Start this disposable release archive clean on every build.
 rm -rf "${BUILD_DIR}/${APP_NAME}.xcarchive"
 ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}.log"
-SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:--}"
+# TCC keys Accessibility to the designated requirement and stores one row
+# per bundle id; an ad-hoc signature pins that requirement to a per-build
+# cdhash, so every update silently drops the grant. Hence never ad-hoc by
+# default: DEVELOPER_ID_APPLICATION (distributable), else a development
+# certificate (stable requirement, not distributable), else "-".
+SIGNING_IDENTITY="${DEVELOPER_ID_APPLICATION:-}"
+SIGNING_TEAM="${DEVELOPMENT_TEAM:-}"
+if [ -z "$SIGNING_IDENTITY" ]; then
+    CANDIDATE="${LOCAL_SIGN_IDENTITY:-Apple Development: himudigonda@gmail.com (C97M74Y2YF)}"
+    if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$CANDIDATE"; then
+        SIGNING_IDENTITY="$CANDIDATE"
+        SIGNING_TEAM="${LOCAL_DEVELOPMENT_TEAM:-WL37Y6X6V9}"
+        echo "⚠️  DEVELOPER_ID_APPLICATION is not set — this DMG is NOT distributable."
+        echo "   Signing with the development identity so permission grants still survive:"
+        echo "   $SIGNING_IDENTITY"
+    else
+        SIGNING_IDENTITY="-"
+        SIGNING_TEAM=""
+        echo "⚠️  No signing identity available. Falling back to AD-HOC signing."
+        echo "   This build's designated requirement is a bare cdhash, so EVERY user"
+        echo "   who installs it will lose Accessibility and Automation permission"
+        echo "   again on the next update. Do not publish this."
+    fi
+fi
 if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
@@ -93,6 +116,8 @@ if ! xcodebuild \
     MARKETING_VERSION="${VERSION}" \
     archive \
     CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
+    ${SIGNING_TEAM:+CODE_SIGN_STYLE=Manual} \
+    ${SIGNING_TEAM:+DEVELOPMENT_TEAM="$SIGNING_TEAM"} \
     AD_HOC_CODE_SIGNING_ALLOWED=YES \
     >"${ARCHIVE_LOG}" 2>&1; then
     grep -E "^(error:|warning: |Build |MARKETING)" "${ARCHIVE_LOG}" || true
@@ -126,10 +151,15 @@ FONT_COUNT=$(ls -1 "$FONTS_DST"/*.ttf 2>/dev/null | wc -l | tr -d ' ')
 echo "   ✓ Bundled $FONT_COUNT font(s)."
 
 ZIP_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.zip"
+MANIFEST_SRC="frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json"
 if [ ! -f "$ZIP_SRC" ]; then
     echo "❌ Backend zip missing at $ZIP_SRC — run 'make backend' first." >&2; exit 1
 fi
+if [ ! -f "$MANIFEST_SRC" ]; then
+    echo "❌ Backend manifest missing at $MANIFEST_SRC — run 'make backend' first." >&2; exit 1
+fi
 cp "$ZIP_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
+cp "$MANIFEST_SRC" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/"
 echo "   ✓ Backend zip bundled ($(du -sh "$ZIP_SRC" | cut -f1))."
 
 for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
@@ -152,6 +182,17 @@ echo "   ✓ Final staged app signature seals bundled resources."
 echo "💿 Building installer DMG..."
 rm -f "${BUILD_DIR}/${DMG_NAME}.dmg"
 
+# Finder's layout AppleScript can hang indefinitely in a headless CI runner
+# with no interactive GUI session, so it must never be an unattended release
+# dependency there — but on an interactive Mac (a real local build, like a
+# release owner running `make release` at their own desk) it works fine and
+# is the only way `--background`/`--icon` positioning actually lands in the
+# DMG's .DS_Store instead of silently being ignored.
+DMG_EXTRA_ARGS=()
+if [ -n "${CI:-}" ]; then
+    DMG_EXTRA_ARGS+=(--skip-jenkins)
+fi
+
 create-dmg \
     --volname "${APP_NAME} ${VERSION}" \
     --volicon "${ICNS}" \
@@ -163,22 +204,32 @@ create-dmg \
     --hide-extension "${APP_NAME}.app" \
     --app-drop-link  495 205 \
     --no-internet-enable \
+    "${DMG_EXTRA_ARGS[@]+"${DMG_EXTRA_ARGS[@]}"}" \
     "${BUILD_DIR}/${DMG_NAME}.dmg" \
     "$STAGING_DIR"
 
 # ── 7. Cleanup ───────────────────────────────────────────────
 rm -rf "$STAGING_DIR"
 
-DMG_SIZE=$(du -sh "${BUILD_DIR}/${DMG_NAME}.dmg" | cut -f1)
+DMG_PATH="${BUILD_DIR}/${DMG_NAME}.dmg"
+CHECKSUM_PATH="${DMG_PATH}.sha256"
+DMG_SIZE=$(du -sh "$DMG_PATH" | cut -f1)
 
 if [ -n "${NOTARYTOOL_PROFILE:-}" ]; then
     echo "🍎 Submitting DMG for Apple notarization..."
-    xcrun notarytool submit "${BUILD_DIR}/${DMG_NAME}.dmg" \
+    xcrun notarytool submit "$DMG_PATH" \
         --keychain-profile "$NOTARYTOOL_PROFILE" --wait
-    xcrun stapler staple "${BUILD_DIR}/${DMG_NAME}.dmg"
-    xcrun stapler validate "${BUILD_DIR}/${DMG_NAME}.dmg"
+    xcrun stapler staple "$DMG_PATH"
+    xcrun stapler validate "$DMG_PATH"
     echo "   ✓ Notarization ticket stapled."
 fi
 
+# The DMG changes when a notarization ticket is stapled, so write the release
+# receipt only after every byte of the artifact is final. The manual
+# early-access channel uploads this alongside the DMG; the guided installer
+# independently checks GitHub's API digest before opening a download.
+shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+echo "   ✓ SHA-256 receipt: $CHECKSUM_PATH"
+
 echo ""
-echo "✅ DMG Created: ${BUILD_DIR}/${DMG_NAME}.dmg  (${DMG_SIZE})"
+echo "✅ DMG Created: $DMG_PATH  (${DMG_SIZE})"

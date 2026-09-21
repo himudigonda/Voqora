@@ -48,11 +48,15 @@ final class OnboardingCoordinator: ObservableObject {
     /// dashboard's persistent recovery banner owns the later grant/revoke
     /// path. Reopening a full wizard on every launch would turn a reversible
     /// choice into a product dead end.
-    var needsOnboarding: Bool { !hasOnboarded }
+    var needsOnboarding: Bool {
+        !hasOnboarded
+    }
 
     /// The step to resume at if a user quit mid-wizard without finishing.
     /// Zero for a fresh install, a fresh `reset()`, or after `markCompleted()`.
-    var resumeStep: Int { storedStep }
+    var resumeStep: Int {
+        storedStep
+    }
 
     /// Persists the step reached so far. Called on every step change; only
     /// meaningful if the wizard is abandoned before `markCompleted()` fires.

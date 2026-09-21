@@ -1,6 +1,6 @@
-@testable import Voqora
 import CryptoKit
 import Foundation
+@testable import Voqora
 import XCTest
 
 @MainActor

@@ -56,25 +56,15 @@ struct MainDashboardView: View {
         HStack(spacing: 14) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 18))
-                .foregroundStyle(Palette.warning)
+                .foregroundStyle(accentColor)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Accessibility Access Required")
                     .font(vm.appFont(size: 12, weight: .bold))
-                    .foregroundStyle(Palette.warning)
-                // NOT `.fixedSize(horizontal: false, vertical: true)`. That
-                // modifier here — a wrapping `Text` inside an `HStack` that
-                // also holds a `Spacer()`, itself nested inside
-                // `NavigationSplitView` — was found to corrupt the height
-                // NavigationSplitView computes for the ENTIRE window: the
-                // sidebar's branding/nav and this screen's own header/footer
-                // all got pushed off the top and bottom of the visible
-                // window, while only content between two `Spacer()`s (the
-                // audio visualizer) stayed on-screen. Reproduced identically
-                // regardless of window size, display scaling, or Debug vs
-                // Release. `Text` already wraps within the width `HStack`
-                // gives it without this modifier; it bought nothing here
-                // that was worth the layout corruption.
+                    .foregroundStyle(Palette.textPrimary)
+                // Deliberately no `.fixedSize(horizontal: false, vertical: true)`:
+                // on a wrapping Text in this HStack inside NavigationSplitView it
+                // corrupts the whole window's computed height.
                 Text("Voqora needs Accessibility permission to read your selected text. Without it, Cmd+Shift+. won't work.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.textSecondary)
@@ -85,9 +75,7 @@ struct MainDashboardView: View {
             Button("Open Settings") {
                 NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Palette.warning)
-            .font(vm.appFont(size: 11, weight: .semibold))
+            .buttonStyle(.voqoraPrimary)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
@@ -222,9 +210,15 @@ struct MainDashboardView: View {
                 Slider(value: $localProgress, in: 0 ... 1, onEditingChanged: { editing in
                     isEditingSlider = editing
                     audio.isDragging = editing
-                    if !editing { audio.seek(to: localProgress) }
+                    if !editing {
+                        audio.seek(to: localProgress)
+                    }
                 })
-                .onReceive(audio.$progress) { p in if !isEditingSlider { localProgress = p } }
+                .onReceive(audio.$progress) { p in
+                    if !isEditingSlider {
+                        localProgress = p
+                    }
+                }
                 .padding(.horizontal, 100)
             }
 
@@ -265,7 +259,7 @@ struct TransportButton: View {
     @EnvironmentObject var vm: DashboardViewModel
     let icon: String
     let size: CGFloat
-    var accessibilityLabel: String? = nil
+    var accessibilityLabel: String?
     let action: () -> Void
 
     var body: some View {

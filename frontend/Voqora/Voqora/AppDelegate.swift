@@ -5,6 +5,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// app launched. Never terminate a server merely because it shares a name.
     var stopOwnedBackend: (() -> Void)?
 
+    /// True when this process stood down for an already-running Voqora.
+    private(set) var isRedundantInstance = false
+
+    /// A second instance gets its own backend after the v1.2.3 ephemeral-socket
+    /// change, so two copies load the model and fight over the global hotkey.
+    /// Voqora is a login item, so this is reachable by just opening it again.
+    static func standDownIfAlreadyRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+            .filter { !$0.isTerminated }
+        guard let original = others.first else { return false }
+
+        VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
+            "existingPid": "\(original.processIdentifier)",
+        ])
+        original.activate(options: [])
+        return true
+    }
+
     /// `NavigationSplitView`'s sidebar column is backed by an AppKit
     /// `NSSplitView`, which by default persists its divider position via
     /// AppKit's frame-autosave mechanism — a `UserDefaults` key named
@@ -26,9 +46,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// can never be written again) closes off this whole failure mode,
     /// regardless of whatever originally wrote the bad value.
     func applicationWillFinishLaunching(_: Notification) {
+        // Backstop only; `VoqoraApp.init()` runs this before the log redirection.
+        // Not under XCTest: the test bundle is hosted by this app target, so a
+        // running Voqora would make the test host stand down mid-suite.
+        if !RuntimeEnvironment.isRunningTests, Self.standDownIfAlreadyRunning() {
+            isRedundantInstance = true
+            exit(0)
+        }
         let defaults = UserDefaults.standard
         for key in defaults.dictionaryRepresentation().keys
-        where key.hasPrefix("NSSplitView Subview Frames dashboard") {
+            where key.hasPrefix("NSSplitView Subview Frames dashboard")
+        {
             defaults.removeObject(forKey: key)
         }
     }

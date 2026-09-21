@@ -11,7 +11,7 @@ flowchart LR
     U["Selected text or document"] --> M["Voqora for macOS"]
     M --> L["LaunchManager"]
     L --> S["Bundled VoqoraServer"]
-    S --> A["FastAPI on 127.0.0.1:10101"]
+    S --> A["Authenticated FastAPI on app-owned ephemeral loopback socket"]
     A --> T["Kokoro ONNX + espeak-ng"]
     T --> A
     A --> P["Audio stream / audiobook files"]
@@ -23,9 +23,11 @@ flowchart LR
 ## Native app
 
 The SwiftUI application owns the interface, global shortcuts, playback,
-preferences, history, and audiobook views. It talks to the local service
-through `http://127.0.0.1:10101`; the speech request never needs an external
-speech endpoint.
+preferences, history, and audiobook views. It talks to the local service on an
+app-owned ephemeral `127.0.0.1` socket. `BackendConnection` creates a fresh
+256-bit token and listener for every backend launch, passes the inherited FD
+only to that child, and adds the token as an HTTP header to every local
+request. The speech request never needs an external speech endpoint.
 
 On launch, `LaunchManager` extracts the bundled server archive into the
 application-support directory for the current bundle identifier.
