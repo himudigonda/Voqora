@@ -52,10 +52,11 @@
 
 - The speech-speed and volume sliders now move in steady 0.05 steps, and the
   speed reading shows two decimals, so the value shown is the value set.
-- The Accessibility banner's **Open Settings** button now uses the app's own
-  accent treatment. Its label previously rendered white on the accent fill,
-  which measures around 2.1:1 against every accent in dark mode; the app's
-  own ink measures at least 8.3:1.
+- Accent-filled buttons — the Accessibility banner's **Open Settings**, and
+  the library's **Choose a File** and **Try Again** — now use the app's own
+  button styles. Their labels previously rendered white on the coloured fill,
+  which measures around 2.1:1 against every accent in dark mode and 2.6:1 on
+  the red fill; the app's own ink measures at least 7:1.
 - The accent color chosen in Preferences applies consistently everywhere it
   should, including a permissions banner that previously always showed a
   fixed color regardless of the chosen accent.
