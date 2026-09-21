@@ -104,16 +104,9 @@ if [ -n "$DMG_PATH" ]; then
     hdiutil detach "$MOUNT_POINT" >/dev/null
     trap - EXIT
 
-    # Refuse a cdhash-pinned designated requirement on EVERY path, including
-    # the deliberate unnotarized one. macOS keys Accessibility and Automation
-    # grants to this requirement and stores one row per bundle identifier, so
-    # a requirement naming a code hash rather than a certificate means every
-    # user loses those permissions on the next update — while the stale
-    # Settings toggle still reads as enabled. That is not a Gatekeeper
-    # tradeoff a release owner can knowingly accept for a faster ship; it
-    # silently breaks the product's core feature for existing users. v1.2.4
-    # shipped this way. An unsigned/unnotarized DMG remains possible, but it
-    # must still carry a certificate-backed identity.
+    # Enforced on the unnotarized path too: a cdhash-pinned requirement costs
+    # every existing user their Accessibility grant on update, which is not a
+    # tradeoff a release owner can knowingly take. See scripts/create_dmg.sh.
     case "$MOUNTED_APP_REQUIREMENT" in
         *cdhash*)
             fail "Mounted app has a cdhash-pinned designated requirement (ad-hoc signature).

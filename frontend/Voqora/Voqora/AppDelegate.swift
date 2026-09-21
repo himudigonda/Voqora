@@ -5,6 +5,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// app launched. Never terminate a server merely because it shares a name.
     var stopOwnedBackend: (() -> Void)?
 
+    /// True when this process stood down for an already-running Voqora.
+    private(set) var isRedundantInstance = false
+
+    /// A second instance gets its own backend after the v1.2.3 ephemeral-socket
+    /// change, so two copies load the model and fight over the global hotkey.
+    /// Voqora is a login item, so this is reachable by just opening it again.
+    static func standDownIfAlreadyRunning() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+            .filter { !$0.isTerminated }
+        guard let original = others.first else { return false }
+
+        VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
+            "existingPid": "\(original.processIdentifier)",
+        ])
+        original.activate(options: [])
+        return true
+    }
+
     /// `NavigationSplitView`'s sidebar column is backed by an AppKit
     /// `NSSplitView`, which by default persists its divider position via
     /// AppKit's frame-autosave mechanism — a `UserDefaults` key named
@@ -25,46 +45,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     /// value is never read) and disabling the autosave going forward (so it
     /// can never be written again) closes off this whole failure mode,
     /// regardless of whatever originally wrote the bad value.
-    /// True when this process stood down for an already-running Voqora, so
-    /// later launch steps can skip work that a second instance must not do.
-    private(set) var isRedundantInstance = false
-
-    /// Voqora must be a single instance per user session.
-    ///
-    /// Until v1.2.2 this was enforced by accident: the backend bound a fixed
-    /// loopback port, so a second app's server hit EADDRINUSE and could not
-    /// serve, and both apps talked to the one surviving backend — whose
-    /// module-level `interactive_tts_lock` then serialised them. v1.2.3 gave
-    /// every instance its own app-owned ephemeral socket, which removed that
-    /// accidental mutex: a second instance now gets a fully working private
-    /// backend, so two copies of a ~330 MB model load and run inference
-    /// against each other, and both register the same global hotkey.
-    ///
-    /// Voqora is also a login item, so an ordinary "open the app again" or
-    /// running a local build alongside the installed copy lands in exactly
-    /// that state. Activate the original and stand down instead.
-    static func standDownIfAlreadyRunning() -> Bool {
-        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
-        let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
-            .filter { !$0.isTerminated }
-        guard let original = others.first else { return false }
-
-        VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
-            "existingPid": "\(original.processIdentifier)",
-        ])
-        original.activate(options: [])
-        return true
-    }
-
     func applicationWillFinishLaunching(_: Notification) {
-        // The real check runs earlier, from `VoqoraApp.init()`, because by
-        // the time this fires the log file has already been replaced. Kept
-        // as a backstop for any launch path that bypasses that initialiser.
-        //
-        // Never under XCTest: the test bundle is hosted by this app target,
-        // so an ordinary Voqora running on the machine would make the test
-        // host stand down and take the whole suite with it.
+        // Backstop only; `VoqoraApp.init()` runs this before the log redirection.
+        // Not under XCTest: the test bundle is hosted by this app target, so a
+        // running Voqora would make the test host stand down mid-suite.
         if !RuntimeEnvironment.isRunningTests, Self.standDownIfAlreadyRunning() {
             isRedundantInstance = true
             exit(0)

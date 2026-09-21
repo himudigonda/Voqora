@@ -43,10 +43,8 @@ struct VoqoraApp: App {
 
     init() {
         let runningTests = RuntimeEnvironment.isRunningTests
-        // Before ANY shared on-disk state is touched. A second instance that
-        // gets as far as the log redirection below has already destroyed the
-        // original's log, which is precisely how the 1.2.4 bad-session log
-        // ended up empty. Stand down here, before the first side effect.
+        // Before any shared on-disk state is touched: reaching the log
+        // redirection below would already have destroyed the original's log.
         if !runningTests, AppDelegate.standDownIfAlreadyRunning() {
             exit(0)
         }
@@ -60,13 +58,8 @@ struct VoqoraApp: App {
 
             let logURL = appSupport.appendingPathComponent("frontend.log")
 
-            // Start each session with a fresh log, but truncate IN PLACE.
-            // `write(to:atomically:)` writes a temp file and renames it over
-            // the target, which creates a NEW inode — any process still
-            // holding the old descriptor (another Voqora, a `tail -f`) keeps
-            // writing into an unlinked file that nobody can ever read. Mode
-            // "w+" truncates the existing inode instead, so a stale writer
-            // keeps appending somewhere visible.
+            // "w+" truncates in place. `write(to:atomically:)` renames a temp
+            // file over the target, leaving other writers on an unlinked inode.
             freopen(logURL.path, "w+", stdout)
             freopen(logURL.path, "a+", stderr)
             setbuf(stdout, nil)
