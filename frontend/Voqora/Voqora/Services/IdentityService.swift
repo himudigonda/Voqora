@@ -2,19 +2,9 @@ import Combine
 import Foundation
 import OSLog
 
-/// Lightweight identity owner for Voqora analytics.
-///
-/// There is no sign-in. The only persistent identity is:
-///   1. An anonymous UUID stored in UserDefaults under `anonymousUserID`
-///      (created only on the first telemetry/email use and stable thereafter;
-///      sent only with optional product telemetry or an explicitly submitted
-///      email).
-///   2. An optional email address the user enters during onboarding (or in
-///      Preferences). The email is POSTed to `/api/voqora/identify` so
-///      analytics can group return-visits by email instead of by UUID.
-///
-/// Nothing about the app is gated on whether the user provided an email —
-/// this is identity for telemetry attribution only.
+/// Identity owner for Voqora analytics. Name and email are required during
+/// onboarding before the app can be used, and are POSTed to
+/// `/api/voqora/identify` alongside the stable per-install `anon_id`.
 @MainActor
 final class IdentityService: ObservableObject {
     static let shared = IdentityService()
@@ -23,18 +13,20 @@ final class IdentityService: ObservableObject {
     private static let endpoint = URL(string: "https://himudigonda.me/api/voqora/identify")!
     private static let anonKey = "anonymousUserID"
     private static let emailKey = "userIdentityEmail"
+    private static let nameKey = "userIdentityName"
     private static let pendingRemovalKey = "userIdentityRemovalPending"
+    private static let pendingSubmissionKey = "userIdentitySubmissionPending"
 
-    /// Current email if the user provided one. `nil` means anonymous.
     @Published private(set) var email: String?
-    /// A user may remove their optional email while offline. Their Mac must
-    /// honour that request immediately, while this marker lets the app retry
-    /// deleting the separate remote contact when a connection is available.
+    @Published private(set) var name: String?
+    /// Retained for installs that queued an email removal before identity
+    /// became mandatory; there is no current UI path that sets this again.
     @Published private(set) var hasPendingRemoval: Bool
+    /// True from the moment `submitIdentity` persists locally until the
+    /// backend confirms receipt. Onboarding never waits on this — it only
+    /// gates on `hasIdentity`, which flips true immediately.
+    @Published private(set) var hasPendingSubmission: Bool
 
-    /// Stable per-install UUID used as `anon_id` server-side. It is created
-    /// lazily only when the user opts into telemetry or submits an email; an
-    /// opt-out-only installation does not need a persistent identifier.
     private var storedAnonID: String?
     var anonID: String {
         if let storedAnonID, !storedAnonID.isEmpty {
@@ -59,75 +51,101 @@ final class IdentityService: ObservableObject {
         self.sendRequest = sendRequest
         storedAnonID = defaults.string(forKey: Self.anonKey)
         email = defaults.string(forKey: Self.emailKey)
+        name = defaults.string(forKey: Self.nameKey)
         hasPendingRemoval = defaults.bool(forKey: Self.pendingRemovalKey)
+        hasPendingSubmission = defaults.bool(forKey: Self.pendingSubmissionKey)
     }
 
-    /// `true` if the user submitted an email during onboarding or in Preferences.
     var hasIdentity: Bool {
-        email?.isEmpty == false
+        email?.isEmpty == false && name?.isEmpty == false
     }
 
-    /// Submit an email to the backend. On success, persist locally.
-    /// Throws `IdentityError` if the email is malformed or the request fails.
-    func submitEmail(_ raw: String) async throws {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard Self.looksLikeEmail(trimmed) else {
+    /// Validates, then persists locally and returns immediately — delivery to
+    /// the backend never blocks the caller or onboarding. A failed or offline
+    /// send is queued and retried by `retryPendingSubmission`, the same
+    /// pattern `retryPendingRemoval` already uses for email removal.
+    func submitIdentity(name rawName: String, email rawEmail: String) async throws {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedEmail = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.looksLikeName(trimmedName) else {
+            throw IdentityError.invalidName
+        }
+        guard Self.looksLikeEmail(trimmedEmail) else {
             throw IdentityError.invalidEmail
         }
+
+        defaults.set(trimmedName, forKey: Self.nameKey)
+        defaults.set(trimmedEmail, forKey: Self.emailKey)
+        defaults.set(true, forKey: Self.pendingSubmissionKey)
+        name = trimmedName
+        email = trimmedEmail
+        hasPendingSubmission = true
+
+        Task { await self.retryPendingSubmission() }
+    }
+
+    /// Sends the locally saved name/email to the backend if a send is still
+    /// pending. Quiet on failure — an unavailable identity endpoint must
+    /// never interrupt onboarding or reading, so this is safe to call from
+    /// launch, from `submitIdentity`, or on a future retry timer.
+    @discardableResult
+    func retryPendingSubmission() async -> Bool {
+        guard hasPendingSubmission, let name, let email else { return true }
         let appVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
         let body: [String: Any] = [
             "anon_id": anonID,
-            "email": trimmed,
+            "name": name,
+            "email": email,
             "app_version": appVersion,
             "platform": "macOS",
         ]
+        guard let requestBody = try? JSONSerialization.data(withJSONObject: body) else {
+            return false
+        }
 
         var req = URLRequest(url: Self.endpoint)
         req.httpMethod = "POST"
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        req.httpBody = requestBody
 
         let response: URLResponse
         do {
             response = try await sendRequest(req).1
         } catch {
             Self.log.error("identify network failure")
-            throw IdentityError.network("Unable to contact the optional email service. Check your connection and try again.")
+            return false
         }
         guard let http = response as? HTTPURLResponse else {
-            throw IdentityError.server("non-HTTP response")
+            return false
         }
-        if !(200 ..< 300).contains(http.statusCode) {
+        guard (200 ..< 300).contains(http.statusCode) else {
             Self.log.error("identify status=\(http.statusCode, privacy: .public)")
-            throw IdentityError.server("Server error \(http.statusCode)")
+            return false
         }
 
-        defaults.set(trimmed, forKey: Self.emailKey)
-        defaults.removeObject(forKey: Self.pendingRemovalKey)
-        email = trimmed
-        hasPendingRemoval = false
-        Self.log.info("optional identity saved")
+        defaults.removeObject(forKey: Self.pendingSubmissionKey)
+        hasPendingSubmission = false
+        Self.log.info("identity saved")
+        return true
     }
 
-    /// Clear the local email only. Primarily useful for tests and recovery;
-    /// normal product UI calls `removeEmail()` so the optional server-side
-    /// contact is removed too.
     func clearEmail() {
         defaults.removeObject(forKey: Self.emailKey)
         email = nil
     }
 
-    /// Permanently remove local identity state as part of the explicit
-    /// full-data erase action. It never makes an external request: a user can
-    /// erase this Mac while offline without retaining a retry marker locally.
     func eraseLocalIdentity() {
         defaults.removeObject(forKey: Self.emailKey)
+        defaults.removeObject(forKey: Self.nameKey)
         defaults.removeObject(forKey: Self.anonKey)
         defaults.removeObject(forKey: Self.pendingRemovalKey)
+        defaults.removeObject(forKey: Self.pendingSubmissionKey)
         storedAnonID = nil
         email = nil
+        name = nil
         hasPendingRemoval = false
+        hasPendingSubmission = false
     }
 
     enum RemovalResult: Equatable {
@@ -135,11 +153,9 @@ final class IdentityService: ObservableObject {
         case queuedForRetry
     }
 
-    /// Remove the optional email from this Mac first, then attempt the
-    /// independent remote-contact removal. A failed network request cannot
-    /// force someone to retain their local email. The anonymous event history
-    /// remains anonymous activity history; it is not rewritten into a person
-    /// count.
+    /// No product UI calls this any more — identity is mandatory. Kept for
+    /// the legacy erasure primitive it is: clears the local email first, then
+    /// attempts the independent remote-contact removal.
     func removeEmail() async -> RemovalResult {
         clearEmail()
         defaults.set(true, forKey: Self.pendingRemovalKey)
@@ -196,16 +212,18 @@ final class IdentityService: ObservableObject {
         return !s.contains(" ")
     }
 
-    enum IdentityError: LocalizedError {
+    static func looksLikeName(_ s: String) -> Bool {
+        (1 ... 120).contains(s.count)
+    }
+
+    enum IdentityError: LocalizedError, Equatable {
+        case invalidName
         case invalidEmail
-        case network(String)
-        case server(String)
 
         var errorDescription: String? {
             switch self {
+            case .invalidName: "Please enter your name."
             case .invalidEmail: "Please enter a valid email address."
-            case let .network(m): "Network error: \(m)"
-            case let .server(m): m
             }
         }
     }

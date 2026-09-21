@@ -40,9 +40,10 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertFalse(service.hasPendingRemoval)
     }
 
-    func test_eraseLocalIdentityRemovesEmailAnonIDAndPendingDeletion() {
+    func test_eraseLocalIdentityRemovesNameEmailAnonIDAndPendingDeletion() {
         defaults.set("anon-id", forKey: "anonymousUserID")
         defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        defaults.set("Seed User", forKey: "userIdentityName")
         defaults.set(true, forKey: "userIdentityRemovalPending")
         service = IdentityService(defaults: defaults)
 
@@ -50,9 +51,100 @@ final class IdentityServiceTests: XCTestCase {
 
         XCTAssertNil(defaults.string(forKey: "anonymousUserID"))
         XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
+        XCTAssertNil(defaults.string(forKey: "userIdentityName"))
         XCTAssertNil(defaults.object(forKey: "userIdentityRemovalPending"))
         XCTAssertNil(service.email)
+        XCTAssertNil(service.name)
         XCTAssertFalse(service.hasPendingRemoval)
+    }
+
+    // MARK: - hasIdentity requires both name and email
+
+    func test_hasIdentity_requiresBothNameAndEmail() {
+        XCTAssertFalse(service.hasIdentity)
+
+        defaults.set("seed@example.com", forKey: "userIdentityEmail")
+        service = IdentityService(defaults: defaults)
+        XCTAssertFalse(service.hasIdentity, "email alone must not count as a complete identity")
+
+        defaults.set("Seed User", forKey: "userIdentityName")
+        service = IdentityService(defaults: defaults)
+        XCTAssertTrue(service.hasIdentity)
+    }
+
+    // MARK: - submitIdentity
+
+    func test_submitIdentity_savesNameAndEmailOnSuccess() async throws {
+        let response = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "https://example.com")),
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        ))
+        service = IdentityService(defaults: defaults, sendRequest: { _ in (Data(), response) })
+
+        try await service.submitIdentity(name: "Ada Lovelace", email: "ADA@example.com")
+
+        XCTAssertEqual(service.name, "Ada Lovelace")
+        XCTAssertEqual(service.email, "ada@example.com")
+        XCTAssertEqual(defaults.string(forKey: "userIdentityName"), "Ada Lovelace")
+        XCTAssertEqual(defaults.string(forKey: "userIdentityEmail"), "ada@example.com")
+        XCTAssertTrue(service.hasIdentity)
+    }
+
+    func test_submitIdentity_rejectsEmptyName() async {
+        do {
+            try await service.submitIdentity(name: "  ", email: "ada@example.com")
+            XCTFail("expected invalidName to be thrown")
+        } catch {
+            XCTAssertEqual(error as? IdentityService.IdentityError, .invalidName)
+        }
+        XCTAssertNil(service.name)
+    }
+
+    func test_submitIdentity_succeedsLocallyAndQueuesRetryWhenOffline() async throws {
+        service = IdentityService(defaults: defaults, sendRequest: { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+
+        try await service.submitIdentity(name: "Ada Lovelace", email: "ada@example.com")
+
+        XCTAssertTrue(service.hasIdentity, "a failed network send must not undo the local save")
+        XCTAssertTrue(service.hasPendingSubmission)
+        XCTAssertEqual(defaults.string(forKey: "userIdentityName"), "Ada Lovelace")
+        XCTAssertEqual(defaults.string(forKey: "userIdentityEmail"), "ada@example.com")
+    }
+
+    func test_retryPendingSubmission_deliversQueuedIdentityOnceOnline() async throws {
+        defaults.set("Ada Lovelace", forKey: "userIdentityName")
+        defaults.set("ada@example.com", forKey: "userIdentityEmail")
+        defaults.set(true, forKey: "userIdentitySubmissionPending")
+        let response = try XCTUnwrap(try HTTPURLResponse(
+            url: XCTUnwrap(URL(string: "https://example.com")),
+            statusCode: 200,
+            httpVersion: nil,
+            headerFields: nil
+        ))
+        service = IdentityService(defaults: defaults, sendRequest: { _ in (Data(), response) })
+        XCTAssertTrue(service.hasPendingSubmission)
+
+        let delivered = await service.retryPendingSubmission()
+
+        XCTAssertTrue(delivered)
+        XCTAssertFalse(service.hasPendingSubmission)
+        XCTAssertNil(defaults.object(forKey: "userIdentitySubmissionPending"))
+    }
+
+    // MARK: - Name/email validation (pure)
+
+    func test_nameValidator_acceptsNonEmptyTrimmedNames() {
+        XCTAssertTrue(IdentityService.looksLikeName("Ada Lovelace"))
+        XCTAssertTrue(IdentityService.looksLikeName("A"))
+    }
+
+    func test_nameValidator_rejectsEmptyOrTooLong() {
+        XCTAssertFalse(IdentityService.looksLikeName(""))
+        XCTAssertFalse(IdentityService.looksLikeName(String(repeating: "a", count: 121)))
     }
 
     // MARK: - Email validation (pure)

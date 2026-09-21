@@ -21,7 +21,7 @@ struct VoqoraApp: App {
     /// First-launch + onboarding state.
     @StateObject private var onboarding: OnboardingCoordinator
 
-    /// Anonymous identity (anon_id + optional email) for analytics.
+    /// Identity (anon_id + required name/email) for analytics.
     @StateObject private var identity: IdentityService
 
     /// Live AX + Notifications permission status. Observed by onboarding.
@@ -146,6 +146,10 @@ struct VoqoraApp: App {
             // Retry the separate server-side contact removal quietly on launch;
             // it never depends on the anonymous-telemetry choice.
             Task { await identityInstance.retryPendingRemoval() }
+            // Onboarding's identity save never blocks on the network; retry
+            // delivering it here so an offline first launch still reaches the
+            // backend once connectivity returns.
+            Task { await identityInstance.retryPendingSubmission() }
             // Sparkle stays dormant until Voqora is notarized (see AppUpdater),
             // so this is the only thing that tells an early-access user a
             // newer release exists. It only checks and notifies — never downloads.

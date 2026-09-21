@@ -26,7 +26,10 @@ On first launch, Voqora opens a short setup flow before the speech engine is
 ready. It explains the shortcut and takes you to the macOS Accessibility
 setting. Accessibility is required for speaking selected text from other apps,
 but you can continue into Voqora without it and enable it later from the
-dashboard reminder. Notifications and an optional email are clearly optional.
+dashboard reminder. Notifications are optional; your name and email are not —
+Voqora asks for both during setup and the app cannot be used without them. The
+same flow also lets you pick an accent color and app icon, changeable anytime
+in Preferences.
 
 ## Speak selected text
 

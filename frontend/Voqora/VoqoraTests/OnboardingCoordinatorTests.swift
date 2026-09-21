@@ -75,9 +75,9 @@ final class OnboardingCoordinatorTests: XCTestCase {
 
     func test_revokedAccessibility_keepsCompletedOnboardingAndUsesDashboardRecovery() {
         defaults.set(true, forKey: "hasOnboarded")
-        // This represents a person who already completed the repaired v4
+        // This represents a person who already completed the current
         // onboarding and later revokes Accessibility in System Settings.
-        defaults.set(4, forKey: "onboardingVersion")
+        defaults.set(5, forKey: "onboardingVersion")
 
         let coord = makeCoordinator()
         XCTAssertFalse(coord.needsOnboarding,

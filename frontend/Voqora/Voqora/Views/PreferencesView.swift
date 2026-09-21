@@ -17,12 +17,11 @@ struct PreferencesView: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
+    @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
-    @State private var emailSubmitting = false
-    @State private var emailError: String?
-    @State private var emailSaved = false
-    @State private var emailRemoving = false
-    @State private var emailRemovalQueued = false
+    @State private var identitySubmitting = false
+    @State private var identityError: String?
+    @State private var identitySaved = false
     @State private var showEraseConfirmation = false
     @State private var erasingLocalData = false
     @State private var eraseError: String?
@@ -47,82 +46,64 @@ struct PreferencesView: View {
                 }
                 .padding(.bottom, 8)
 
-                // Section: Optional identity
+                // Section: Identity
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Optional email")
+                        Text("Your name and email")
                             .font(vm.font(.sectionTitle))
-                        Text(
-                            "Voqora works without an account. Add an email only if you want voluntary returning installs " +
-                                "to be recognised in aggregate adoption metrics. We never collect your text or files, " +
-                                "and you can remove your email at any time."
-                        )
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        Text("Email address")
-                            .font(vm.font(.sectionHeader))
+                        Text("Required to use Voqora. Used to attribute your activity in adoption metrics.")
+                            .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
 
                         HStack(alignment: .center, spacing: 10) {
+                            TextField("Full name", text: $nameDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .textContentType(.name)
+                                .font(vm.font(.rowTitle))
                             TextField("name@example.com", text: $emailDraft)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.emailAddress)
                                 .disableAutocorrection(true)
                                 .font(vm.font(.rowTitle))
                             Button {
-                                submitEmail()
+                                submitIdentity()
                             } label: {
-                                if emailSubmitting {
+                                if identitySubmitting {
                                     ProgressView().scaleEffect(0.6).frame(width: 96)
                                 } else {
-                                    Text(identity.hasIdentity ? "Update email" : "Save email").frame(width: 96)
+                                    Text(identity.hasIdentity ? "Update" : "Save").frame(width: 96)
                                 }
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(accentColor)
-                            .disabled(!canSaveEmail || emailSubmitting)
-                            .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
+                            .disabled(!canSaveIdentity || identitySubmitting)
                         }
 
-                        if let err = emailError {
+                        if let err = identityError {
                             Text(err).font(vm.font(.rowSubtitle)).foregroundStyle(Palette.danger)
-                        } else if emailRemovalQueued || identity.hasPendingRemoval {
-                            Text("Email removed from this Mac. Voqora will retry removing the optional server contact when it is online.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        } else if emailSaved {
+                        } else if identitySaved {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
                                 Text("Saved. Thanks!").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
                             }
-                        } else if let current = identity.email {
-                            HStack {
-                                Text("Email saved for this Mac")
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.textSecondary)
-                                Spacer()
-                                Button(emailRemoving ? "Removing…" : "Remove") {
-                                    removeEmail()
-                                }
-                                .buttonStyle(.plain)
+                        } else if identity.hasIdentity {
+                            Text(identity.hasPendingSubmission
+                                ? "Saved on this Mac. Syncing when online…"
+                                : "Saved for this Mac.")
                                 .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.danger)
-                                .disabled(emailRemoving)
-                            }
-                            .accessibilityLabel("Saved email: \(current)")
+                                .foregroundStyle(Palette.textSecondary)
                         } else {
-                            Text(emailDraft.isEmpty || canSaveEmail
-                                ? "No email saved. Voqora works fully without one."
-                                : "Enter a valid email to enable Save.")
+                            Text("Enter your name and a valid email to continue using Voqora.")
                                 .font(vm.font(.rowSubtitle))
                                 .foregroundStyle(Palette.textSecondary)
                         }
                     }
                 }
                 .onAppear {
+                    if nameDraft.isEmpty {
+                        nameDraft = identity.name ?? ""
+                    }
                     if emailDraft.isEmpty {
                         emailDraft = identity.email ?? ""
                     }
@@ -486,22 +467,14 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: Binding(
-                            get: { vm.telemetryEnabled },
-                            set: { enabled in
-                                vm.telemetryEnabled = enabled
-                                Task { await MetricsService.shared.setEnabled(enabled) }
-                            }
-                        )) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Anonymous Analytics")
-                                    .font(vm.font(.sectionTitle))
-                                Text("Help improve Voqora by sharing anonymous usage statistics with himudigonda.me")
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.textSecondary)
-                            }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Analytics")
+                                .font(vm.font(.sectionTitle))
+                            Text("Voqora always shares anonymous usage counts with himudigonda.me to improve the product. Never your text, filenames, audio, or API keys.")
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
-                        .help("We collect anonymous activity counts, never text, filenames, audio, or API keys. An email is sent only if you choose to provide one in Identity settings.")
 
                         Divider()
 
@@ -510,9 +483,9 @@ struct PreferencesView: View {
                                 .font(vm.font(.sectionTitle))
                             Text(
                                 "Permanently removes every audiobook and source document, generated audio, history, caches, " +
-                                    "settings, optional email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
-                                    "from this Mac. Voqora will quit when complete. This does not delete optional contact data " +
-                                    "already sent to the website; remove that first from Identity if needed."
+                                    "settings, your name and email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
+                                    "from this Mac. Voqora will quit when complete. This does not delete the contact record already " +
+                                    "sent to the website."
                             )
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
@@ -620,26 +593,24 @@ struct PreferencesView: View {
         } message: {
             Text(
                 "This cannot be undone. All local books, sources, audio, history, settings, caches, telemetry outbox, " +
-                    "optional email, anonymous identifier, and Gemini credential will be permanently removed. Voqora " +
+                    "your name and email, anonymous identifier, and Gemini credential will be permanently removed. Voqora " +
                     "will quit after the erase finishes."
             )
         }
     }
 
-    private func submitEmail() {
-        emailError = nil
-        emailSaved = false
-        emailRemovalQueued = false
-        let candidate = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty else { return }
-        emailSubmitting = true
+    private func submitIdentity() {
+        identityError = nil
+        identitySaved = false
+        guard canSaveIdentity else { return }
+        identitySubmitting = true
         Task {
-            defer { emailSubmitting = false }
+            defer { identitySubmitting = false }
             do {
-                try await identity.submitEmail(candidate)
-                emailSaved = true
+                try await identity.submitIdentity(name: nameDraft, email: emailDraft)
+                identitySaved = true
             } catch {
-                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+                identityError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
             }
         }
     }
@@ -668,25 +639,14 @@ struct PreferencesView: View {
         }
     }
 
-    private var canSaveEmail: Bool {
-        IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+    private var canSaveIdentity: Bool {
+        IdentityService.looksLikeName(nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)) &&
+            IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func resetShortcuts() {
         for name in KeyboardShortcuts.Name.allCases {
             KeyboardShortcuts.reset(name)
-        }
-    }
-
-    private func removeEmail() {
-        emailError = nil
-        emailSaved = false
-        emailRemoving = true
-        Task {
-            defer { emailRemoving = false }
-            let result = await identity.removeEmail()
-            emailDraft = ""
-            emailRemovalQueued = result == .queuedForRetry
         }
     }
 

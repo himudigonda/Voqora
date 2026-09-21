@@ -22,18 +22,13 @@ Some features can make external requests:
 
 | Feature | When it communicates externally |
 | --- | --- |
-| Optional product telemetry | When the telemetry toggle is enabled in Preferences. It sends product-use metadata, not the text selected for speech. |
+| Product telemetry | Always on; there is no opt-out. It sends allowlisted, counts-only product-use metadata, never the text selected for speech, filenames, audio, or API keys. |
+| Identity | Required once, during onboarding. Your name and email are sent to the product backend so activity can be attributed to you instead of an anonymous installation. |
 | Optional document cleanup or OCR | Only when you provide a Gemini API key and choose that flow. The relevant document text or scanned-page image is sent to Gemini for that operation. |
 | Release checks | At launch as a courtesy check or when you choose **Check for Updates**. The early-access app reads public GitHub release metadata to learn whether a newer version exists; it does not upload your text, files, account data, or replace the app automatically. |
 
-Telemetry reports anonymous installations, not a deduplicated count of people.
-If you voluntarily enter an email in Voqora, it is stored separately from
-anonymous events and is the only possible future basis for linking identity.
-Use **Preferences → Identity → Remove** to delete that optional contact from
-the product backend and this Mac. Removing it does not change the separate,
-anonymous event history.
-
-Voqora does not require an account to speak text. Review the relevant source
-before using an optional integration with material that should not leave your
-Mac. If you need help with data deletion or have a privacy question, open a
-GitHub issue in this repository.
+Voqora requires a name and email to be used; there is no anonymous or
+account-free mode. Both are stored on this Mac and on the product backend.
+Telemetry events themselves stay counts-only and are never rewritten into a
+person-level record. If you need help with data deletion or have a privacy
+question, open a GitHub issue in this repository.

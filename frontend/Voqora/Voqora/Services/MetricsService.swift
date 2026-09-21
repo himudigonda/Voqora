@@ -7,11 +7,12 @@ import SwiftUI
 /// - Sends ONLY the keys in `Props.allowedKeys`. Any unknown key is dropped
 ///   on the client *before* HTTP serialization. The server re-enforces this.
 /// - Launches flush immediately; other events batch every 30s or at 20 events.
-/// - Always anonymous: every request carries `anon_id` (a stable per-install
-///   UUID owned by `IdentityService`) and never a bearer token. Email-based
-///   identity is handled separately by `IdentityService.submitEmail`, which
-///   POSTs to `/api/voqora/identify` and is independent from event flush.
-/// - Honors the `telemetryEnabled` toggle as a hard kill switch.
+/// - Every request carries `anon_id` (a stable per-install UUID owned by
+///   `IdentityService`) and never a bearer token. Name/email identity is
+///   handled separately by `IdentityService.submitIdentity`, which POSTs to
+///   `/api/voqora/identify` and is independent from event flush.
+/// - Always enabled; there is no user-facing opt-out. Collection is
+///   allowlisted counts only, never text, filenames, audio, or API keys.
 /// - Outbox is persisted to UserDefaults across app restarts (cap 200).
 /// - Endpoint: POST /api/voqora/events on himudigonda.me.
 actor MetricsService {
@@ -42,32 +43,21 @@ actor MetricsService {
 
     private init() {
         userID = UserDefaults.standard.string(forKey: "anonymousUserID")
-        let enabledRaw = UserDefaults.standard.object(forKey: "telemetryEnabled") as? Bool
-        enabled = enabledRaw ?? false
+        enabled = true
         outbox = Self.loadOutbox()
     }
 
     // MARK: - Configuration
 
-    /// Toggle telemetry. When disabled, outbox is cleared.
-    func setEnabled(_ value: Bool) {
-        enabled = value
-        UserDefaults.standard.set(value, forKey: "telemetryEnabled")
-        if !value {
-            outbox.removeAll()
-            persistOutbox()
-        }
-    }
-
     /// Local, idempotent privacy erasure. The caller is responsible for any
     /// separately-authorized remote contact removal; this method never sends
-    /// a final telemetry request while deleting the outbox.
+    /// a final telemetry request while deleting the outbox. `enabled` is
+    /// restored to `true` on next launch — there is no persistent opt-out.
     func eraseLocalData() {
         enabled = false
         userID = nil
         outbox.removeAll()
         UserDefaults.standard.removeObject(forKey: outboxKey)
-        UserDefaults.standard.removeObject(forKey: "telemetryEnabled")
         UserDefaults.standard.removeObject(forKey: "anonymousUserID")
     }
 

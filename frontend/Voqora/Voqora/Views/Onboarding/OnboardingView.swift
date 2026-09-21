@@ -1,15 +1,16 @@
 import AppKit
 import SwiftUI
 
-/// Six-step first-launch wizard.
+/// Seven-step first-launch wizard.
 ///
 /// Steps:
 ///   1. Welcome
 ///   2. Hotkey explanation
 ///   3. Accessibility permission (required for selected-text reading)
-///   4. Notifications permission (optional)
-///   5. Identity / email (optional)
-///   6. Privacy + done
+///   4. Notifications permission
+///   5. Identity — name and email (required)
+///   6. Customize — accent color and app icon
+///   7. Privacy + done
 ///
 /// Presented full-window via `.fullScreenCover`-style overlay (not `.sheet`)
 /// so the user can't dismiss it by clicking outside.
@@ -22,31 +23,18 @@ struct OnboardingView: View {
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
+    @EnvironmentObject var vm: DashboardViewModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var step: Int = 0
+    @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
-    @State private var emailSubmitting: Bool = false
-    @State private var emailError: String?
-    @State private var emailSaved: Bool = false
-    /// Reads the same `UserDefaults` key `DashboardViewModel.accentColorID`
-    /// writes — `@AppStorage` needs no environment object to do that, so
-    /// this stays correct if the compiled default ever changes again
-    /// without this view needing `DashboardViewModel` threaded into it.
-    @AppStorage("accentColorID") private var accentColorID: AccentColorOption = .clay
-    /// Same reasoning as `accentColorID` above, for the same reason: every
-    /// body-text `.font()` call in this file was hardcoded to
-    /// `.system(..., design: .rounded)`, ignoring whatever font the user
-    /// actually has selected in Preferences → Typography — the only screen
-    /// in the app that did. `DashboardViewModel.appFont(size:weight:)` has
-    /// the real weight-mapping logic (Poppins/Google Sans ship discrete
-    /// static weight files rather than a variable font, so `.weight(_)`
-    /// can't synthesize on top of them); mirrored here rather than threading
-    /// `DashboardViewModel` into this view's environment.
-    @AppStorage("selectedFontName") private var selectedFontName: String = "Google Sans"
+    @State private var identitySubmitting: Bool = false
+    @State private var identityError: String?
+    @State private var identitySaved: Bool = false
 
-    private let stepCount = 6
+    private let stepCount = 7
 
     var body: some View {
         ZStack {
@@ -65,6 +53,7 @@ struct OnboardingView: View {
         }
         .frame(minWidth: 720, minHeight: 560)
         .onAppear {
+            nameDraft = identity.name ?? ""
             emailDraft = identity.email ?? ""
             // Resume where a previous session left off instead of replaying
             // already-granted permission steps from scratch.
@@ -81,17 +70,8 @@ struct OnboardingView: View {
 
     // MARK: - Chrome
 
-    /// `DashboardViewModel` isn't reachable from this view's environment
-    /// (see `VoqoraWindow.swift`, where `OnboardingView()` is only handed
-    /// `coordinator`/`permissions`/`identity`), so this reads `Palette`
-    /// directly with the `@AppStorage`-backed `accentColorID` above rather
-    /// than routing through `vm.accentColor`.
     private var accentColor: Color {
-        Palette.accentColors(
-            for: accentColorID,
-            appearance: colorScheme,
-            increaseContrast: colorSchemeContrast == .increased
-        ).accent
+        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
     }
 
     private var backdrop: some View {
@@ -129,6 +109,7 @@ struct OnboardingView: View {
         case 2: stepAccessibility
         case 3: stepNotifications
         case 4: stepIdentity
+        case 5: stepCustomize
         default: stepDone
         }
     }
@@ -172,10 +153,13 @@ struct OnboardingView: View {
 
     /// Step-specific Next-button gating. Accessibility gets a dedicated,
     /// explicit continue-without-access path rather than making the whole app
-    /// unusable when the user declines it.
+    /// unusable when the user declines it. Identity has no such bypass — a
+    /// name and email must be saved locally (delivery to the server is
+    /// queued and retried independently) before advancing.
     private var canAdvance: Bool {
         switch step {
         case 2: permissions.accessibilityGranted
+        case 4: identity.hasIdentity
         default: true
         }
     }
@@ -183,6 +167,9 @@ struct OnboardingView: View {
     private var advanceBlockedReason: String? {
         if step == 2, !permissions.accessibilityGranted {
             return "Grant Accessibility access to continue"
+        }
+        if step == 4, !identity.hasIdentity {
+            return "Save your name and email to continue"
         }
         return nil
     }
@@ -340,15 +327,18 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            VStack(spacing: 8) {
+                TextField(OnboardingCopy.identityNamePlaceholder, text: $nameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 280)
                 TextField(OnboardingCopy.identityPlaceholder, text: $emailDraft)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                     .frame(maxWidth: 280)
                 Button {
-                    submitEmail()
+                    submitIdentity()
                 } label: {
-                    if emailSubmitting {
+                    if identitySubmitting {
                         ProgressView().scaleEffect(0.6).frame(width: 80)
                     } else {
                         Text(OnboardingCopy.identitySaveButton).frame(width: 80)
@@ -356,27 +346,70 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(accentColor)
-                .disabled(!canSaveEmail || emailSubmitting)
-                .help(canSaveEmail ? "Save this optional email" : "Enter a valid email to enable Save")
+                .disabled(!canSaveIdentity || identitySubmitting)
             }
 
-            if let err = emailError {
+            if let err = identityError {
                 Text(err).font(appFont(size: 11)).foregroundStyle(Palette.danger)
-            } else if emailSaved {
+            } else if identitySaved || identity.hasIdentity {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
                     Text(OnboardingCopy.identitySavedLabel).foregroundStyle(Palette.success)
                 }.font(appFont(size: 12))
             } else {
-                Text(emailDraft.isEmpty || canSaveEmail ? " " : "Enter a valid email to enable Save")
+                Text(" ")
                     .font(appFont(size: 12))
                     .foregroundStyle(Palette.textSecondary)
             }
         }
     }
 
-    private var canSaveEmail: Bool {
-        IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+    private var canSaveIdentity: Bool {
+        IdentityService.looksLikeName(nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)) &&
+            IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private var stepCustomize: some View {
+        VStack(spacing: 22) {
+            Image(systemName: "paintpalette.fill")
+                .font(.system(size: 52))
+                .foregroundStyle(accentColor)
+                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
+            Text(OnboardingCopy.customizeTitle)
+                .font(appFont(size: 24, weight: .bold))
+                .foregroundStyle(Palette.textPrimary)
+            Text(OnboardingCopy.customizeBody)
+                .font(appFont(size: 14))
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 10) {
+                Text(OnboardingCopy.customizeAccentLabel)
+                    .font(appFont(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.textSecondary)
+                HStack(spacing: 14) {
+                    ForEach(AccentColorOption.allCases, id: \.self) { option in
+                        AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
+                            vm.accentColorID = option
+                        }
+                    }
+                }
+            }
+
+            VStack(spacing: 10) {
+                Text(OnboardingCopy.customizeIconLabel)
+                    .font(appFont(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.textSecondary)
+                HStack(spacing: 16) {
+                    ForEach(AppIconOption.allCases) { option in
+                        AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
+                            vm.appIconID = option
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var stepDone: some View {
@@ -398,21 +431,24 @@ struct OnboardingView: View {
 
     // MARK: - Helpers
 
-    private func submitEmail() {
-        emailError = nil
-        emailSaved = false
-        let candidate = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !candidate.isEmpty else { return }
-        emailSubmitting = true
+    private func submitIdentity() {
+        identityError = nil
+        identitySaved = false
+        guard canSaveIdentity else { return }
+        identitySubmitting = true
         Task {
-            defer { emailSubmitting = false }
+            defer { identitySubmitting = false }
             do {
-                try await identity.submitEmail(candidate)
-                emailSaved = true
+                try await identity.submitIdentity(name: nameDraft, email: emailDraft)
+                identitySaved = true
             } catch {
-                emailError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
+                identityError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
             }
         }
+    }
+
+    private func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        vm.appFont(size: size, weight: weight)
     }
 
     private func statusRow(isGranted: Bool, grantedLabel: String, pendingLabel: String) -> some View {
@@ -431,49 +467,5 @@ struct OnboardingView: View {
             .foregroundStyle(Palette.textPrimary)
             .frame(width: 56, height: 56)
             .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-    }
-}
-
-/// Split out of the struct body to keep it under SwiftLint's
-/// `type_body_length` — plain private members, not a separate API surface.
-/// Same pattern already used for this reason in `VoqoraWindow.swift`.
-private extension OnboardingView {
-    func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        switch selectedFontName {
-        case "System Rounded":
-            .system(size: size, weight: weight, design: .rounded)
-        case "System Mono":
-            .system(size: size, weight: weight, design: .monospaced)
-        case "System Serif":
-            .system(size: size, weight: weight, design: .serif)
-        case "System Standard":
-            .system(size: size, weight: weight, design: .default)
-        case "Poppins":
-            .custom(Self.poppinsPostScriptName(for: weight), size: size)
-        case "Google Sans":
-            .custom(Self.googleSansPostScriptName(for: weight), size: size)
-        default:
-            .custom(selectedFontName, size: size).weight(weight)
-        }
-    }
-
-    static func poppinsPostScriptName(for weight: Font.Weight) -> String {
-        switch weight {
-        case .black, .heavy: "Poppins-Black"
-        case .bold: "Poppins-Bold"
-        case .semibold, .medium: "Poppins-Medium"
-        case .light, .thin, .ultraLight: "Poppins-Light"
-        default: "Poppins-Regular"
-        }
-    }
-
-    static func googleSansPostScriptName(for weight: Font.Weight) -> String {
-        switch weight {
-        case .black, .heavy: "GoogleSansFlex24pt-Black"
-        case .bold: "GoogleSans17pt-Bold"
-        case .semibold, .medium: "GoogleSans17pt-Medium"
-        case .light, .thin, .ultraLight: "GoogleSansFlex24pt-Light"
-        default: "GoogleSans17pt-Regular"
-        }
     }
 }

@@ -289,6 +289,7 @@ struct VoqoraWindow: View {
                     .environmentObject(onboarding)
                     .environmentObject(permissions)
                     .environmentObject(identity)
+                    .environmentObject(vm)
                     .transition(.opacity)
             } else if !launchManager.isReady {
                 ZStack {

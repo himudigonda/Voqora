@@ -14,7 +14,10 @@ final class OnboardingCoordinator: ObservableObject {
     /// v4: re-runs the repaired flow once for profiles created by the early
     /// public builds, which could carry a completed flag while opening into a
     /// non-functional player. It never resets user content or preferences.
-    private static let currentVersion = 4
+    /// v5: identity (name + email) became mandatory post-beta; every profile,
+    /// including ones that previously completed the optional identity step,
+    /// must pass through it again to supply a name.
+    private static let currentVersion = 5
 
     @Published private(set) var version: Int = 0
     private let defaults: UserDefaults

@@ -94,7 +94,6 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
-    @AppStorage("telemetryEnabled") var telemetryEnabled = false
     @AppStorage("selectedFontName") var selectedFontName = "Google Sans"
     @AppStorage("accentColorID") var accentColorID: AccentColorOption = .clay
     @AppStorage("appIconID") var appIconID: AppIconOption = .waveLight {

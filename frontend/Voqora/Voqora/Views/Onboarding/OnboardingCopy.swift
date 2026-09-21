@@ -42,41 +42,47 @@ enum OnboardingCopy {
 
     // MARK: - Step 4 — Notifications (optional)
 
-    static let notifTitle = "Allow notifications (optional)"
+    static let notifTitle = "Allow notifications"
     static let notifBody = """
     Voqora can show small system notifications when a long audiobook \
-    finishes rendering or when an export completes. Entirely optional — \
-    skip this step and nothing else changes.
+    finishes rendering or when an export completes.
     """
     static let notifGrantButton = "Allow notifications"
     static let notifOpenSettingsButton = "Open Notification Settings"
     static let notifGrantedLabel = "Allowed"
     static let notifDeniedLabel = "Disabled (you can change this in System Settings)"
 
-    // MARK: - Step 5 — Identity (optional email)
+    // MARK: - Step 5 — Identity (required)
 
-    static let identityTitle = "Optional email"
+    static let identityTitle = "Create your identity"
     static let identityBody = """
-    Voqora works fully without an account. If you choose to add an email, \
-    we use it only to recognise voluntary returning installs in aggregate \
-    adoption metrics. There is no password and no sign-in. We never read \
-    your text or files.
-
-    Totally optional. You can stay anonymous or remove your email later in \
-    Preferences.
+    Voqora needs your name and email to continue. There is no password and \
+    no sign-in — this identifies your activity in adoption metrics. We \
+    never read your text or files.
     """
+    static let identityNamePlaceholder = "Full name"
     static let identityPlaceholder = "you@example.com"
-    static let identitySaveButton = "Save email"
+    static let identitySaveButton = "Save"
     static let identitySavedLabel = "Saved. Thanks!"
 
-    // MARK: - Step 6 — Privacy + done
+    // MARK: - Step 6 — Customize
+
+    static let customizeTitle = "Make it yours"
+    static let customizeBody = """
+    Pick an accent color and an app icon. You can change these anytime in \
+    Preferences.
+    """
+    static let customizeAccentLabel = "Accent Color"
+    static let customizeIconLabel = "App Icon"
+
+    // MARK: - Step 7 — Privacy + done
 
     static let privacyTitle = "You're all set"
     static let privacyBody = """
     Normal speech runs on your Mac. If you later choose Gemini cleanup for a \
-    document, Voqora tells you before document material leaves the Mac. Anonymous \
-    analytics contain counts only — never your text or files — and can be \
-    disabled in Preferences.
+    document, Voqora tells you before document material leaves the Mac. Voqora \
+    always shares anonymous usage counts — never your text or files — to help \
+    improve the product.
     """
 
     // MARK: - Buttons
