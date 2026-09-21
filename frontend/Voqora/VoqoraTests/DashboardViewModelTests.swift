@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CryptoKit
 @testable import Voqora
 import XCTest
@@ -546,6 +547,66 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(safe.values.contains(canary))
         XCTAssertFalse(safe.values.contains(key))
         XCTAssertFalse(safe.values.contains(token))
+    }
+
+    private func makeAppearanceViewModel() -> DashboardViewModel {
+        DashboardViewModel(
+            backend: BackendService(),
+            system: SystemService(),
+            audio: AudioService(startingEngine: false),
+            history: HistoryManager(),
+            startsBackgroundWork: false,
+            defaults: testDefaults
+        )
+    }
+
+    private func assertAppearanceChangePublishes(
+        _ label: String,
+        mutate: (DashboardViewModel) -> Void,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let vm = makeAppearanceViewModel()
+        var published = 0
+        let token = vm.objectWillChange.sink { _ in published += 1 }
+        defer { token.cancel() }
+
+        mutate(vm)
+
+        XCTAssertGreaterThan(
+            published, 0,
+            "Changing \(label) must republish, or views holding the view model keep the previous appearance until relaunch.",
+            file: file, line: line
+        )
+    }
+
+    func test_appearancePreferenceChangesRepublishToObservingViews() {
+        let originalAccent = UserDefaults.standard.string(forKey: "accentColorID")
+        let originalFont = UserDefaults.standard.string(forKey: "selectedFontName")
+        let originalTheme = UserDefaults.standard.string(forKey: "appTheme")
+        defer {
+            restoreStandardDefault("accentColorID", to: originalAccent)
+            restoreStandardDefault("selectedFontName", to: originalFont)
+            restoreStandardDefault("appTheme", to: originalTheme)
+        }
+
+        assertAppearanceChangePublishes("accentColorID") { vm in
+            vm.accentColorID = vm.accentColorID == .sage ? .teal : .sage
+        }
+        assertAppearanceChangePublishes("selectedFontName") { vm in
+            vm.selectedFontName = vm.selectedFontName == "System Rounded" ? "Menlo" : "System Rounded"
+        }
+        assertAppearanceChangePublishes("appTheme") { vm in
+            vm.appTheme = vm.appTheme == "dark" ? "light" : "dark"
+        }
+    }
+
+    private func restoreStandardDefault(_ key: String, to value: String?) {
+        if let value {
+            UserDefaults.standard.set(value, forKey: key)
+        } else {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
     }
 
     func test_focusedTextInputKeepsEditingShortcutPrecedence() {
