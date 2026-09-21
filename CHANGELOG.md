@@ -61,6 +61,9 @@
   should, including a permissions banner that previously always showed a
   fixed color regardless of the chosen accent.
 - Several controls throughout the app now have proper VoiceOver labels.
+- Turning on Music Ducking without Spotify installed prompted macOS to ask
+  "Where is Spotify?" on every spoken utterance. Ducking now only ever
+  touches an app that is actually installed.
 
 ### Improved
 
