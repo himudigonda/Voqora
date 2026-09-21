@@ -9,34 +9,41 @@ final class SystemService {
     private var savedVolumes: [String: Int] = [:]
     private var isDucked = false
 
+    /// Naming an uninstalled app anywhere in the AppleScript source pops "Where is <App>?" at compile time, even inside a never-executed `tell` block.
+    private static let duckableApps: [(name: String, bundleID: String)] = [
+        ("Music", "com.apple.Music"),
+        ("Spotify", "com.spotify.client"),
+    ]
+
+    private func installedDuckableApps() -> [String] {
+        Self.duckableApps
+            .filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
+            .map(\.name)
+    }
+
     func beginDucking(onFailure: @escaping @MainActor (String) -> Void) {
         queue.async { [weak self] in
             guard let self, !self.isDucked else { return }
-            let script = """
-            set musicVolume to -1
-            set spotifyVolume to -1
-            tell application "System Events"
-                set musicRunning to exists process "Music"
-                set spotifyRunning to exists process "Spotify"
-            end tell
-            if musicRunning then
-                try
-                    tell application "Music"
-                        set musicVolume to sound volume
-                        set sound volume to 10
-                    end tell
-                end try
-            end if
-            if spotifyRunning then
-                try
-                    tell application "Spotify"
-                        set spotifyVolume to sound volume
-                        set sound volume to 10
-                    end tell
-                end try
-            end if
-            return (musicVolume as text) & "," & (spotifyVolume as text)
-            """
+            let apps = installedDuckableApps()
+            guard !apps.isEmpty else { return }
+            let perAppScript = apps.map { app in
+                """
+                set \(app)Volume to -1
+                tell application "System Events"
+                    set \(app)Running to exists process "\(app)"
+                end tell
+                if \(app)Running then
+                    try
+                        tell application "\(app)"
+                            set \(app)Volume to sound volume
+                            set sound volume to 10
+                        end tell
+                    end try
+                end if
+                """
+            }.joined(separator: "\n")
+            let returnExpr = apps.map { "\"\($0)=\" & (\($0)Volume as text)" }.joined(separator: " & \";\" & ")
+            let script = perAppScript + "\nreturn " + returnExpr
             guard let appleScript = NSAppleScript(source: script) else {
                 Task { @MainActor in onFailure("Voqora could not prepare media ducking.") }
                 return
@@ -44,18 +51,14 @@ final class SystemService {
             var error: NSDictionary?
             let result = appleScript.executeAndReturnError(&error)
             guard error == nil else {
-                Task { @MainActor in onFailure("Voqora needs Automation permission to duck Music or Spotify.") }
+                Task { @MainActor in onFailure("Voqora needs Automation permission to duck \(apps.joined(separator: " or ")).") }
                 return
             }
-            let volumes = result.stringValue?
-                .split(separator: ",")
-                .compactMap { Int($0) } ?? []
             var snapshot: [String: Int] = [:]
-            if volumes.indices.contains(0), volumes[0] >= 0 {
-                snapshot["Music"] = volumes[0]
-            }
-            if volumes.indices.contains(1), volumes[1] >= 0 {
-                snapshot["Spotify"] = volumes[1]
+            for entry in result.stringValue?.split(separator: ";") ?? [] {
+                let parts = entry.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2, let volume = Int(parts[1]), volume >= 0 else { continue }
+                snapshot[String(parts[0])] = volume
             }
             savedVolumes = snapshot
             isDucked = !snapshot.isEmpty

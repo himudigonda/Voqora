@@ -365,9 +365,12 @@ struct PreferencesView: View {
                             VStack(alignment: .leading) {
                                 Text("Music Ducking")
                                     .font(vm.font(.paneTitle))
-                                Text("Optionally lowers Music and Spotify while Voqora speaks, then restores each app's previous volume. macOS may ask for Automation permission.")
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.textSecondary)
+                                Text(
+                                    "Optionally lowers Music and Spotify, whichever you have installed, while Voqora " +
+                                        "speaks, then restores each app's previous volume. macOS may ask for Automation permission."
+                                )
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
                             }
                         }
 
