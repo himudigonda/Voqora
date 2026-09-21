@@ -2,6 +2,18 @@
 
 ## [1.2.3] - 2026-09-20
 
+### Onboarding and identity
+
+- Voqora is out of beta: a name and email are now required during onboarding,
+  and the app cannot be used without them. Anonymous, opt-out analytics from
+  the beta period are gone too — usage counts are now always shared, with the
+  same tightly limited, allowlisted fields as before (never your text, files,
+  audio, or API keys). If an identity save can't reach the server right away,
+  it's saved on this Mac immediately and delivered automatically once you're
+  back online — a slow or offline first launch never gets stuck.
+- Onboarding gained a Customize step for picking an accent color and app
+  icon, both changeable later in Preferences.
+
 ### Fixed — audio
 
 - Narration could turn thin and robotic after the audio output device or its
