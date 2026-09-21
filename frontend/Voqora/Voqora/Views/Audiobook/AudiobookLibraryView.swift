@@ -407,11 +407,8 @@ struct AudiobookLibraryView: View {
             }
             Button { showImporter = true } label: {
                 Label("Choose a File", systemImage: "plus")
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(accentColor)
+            .buttonStyle(.voqoraPrimary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -436,11 +433,8 @@ struct AudiobookLibraryView: View {
             }
             Button { Task { await bookVM.refresh() } } label: {
                 Label("Try Again", systemImage: "arrow.clockwise")
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Palette.danger)
+            .buttonStyle(.voqoraDestructive)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
