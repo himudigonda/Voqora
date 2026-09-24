@@ -30,9 +30,6 @@ struct OnboardingView: View {
     @State private var step: Int = 0
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
-    @State private var identitySubmitting: Bool = false
-    @State private var identityError: String?
-    @State private var identitySaved: Bool = false
 
     private let stepCount = 7
 
@@ -132,7 +129,6 @@ struct OnboardingView: View {
                     withAnimation { step += 1 }
                 }
                 .buttonStyle(.bordered)
-                .help(OnboardingCopy.axContinueWithoutHelp)
             }
             if step == stepCount - 1 {
                 Button(OnboardingCopy.doneButton) { coordinator.markCompleted() }
@@ -140,38 +136,22 @@ struct OnboardingView: View {
                     .tint(accentColor)
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button(OnboardingCopy.nextButton) { withAnimation { step += 1 } }
+                Button(OnboardingCopy.nextButton) { advance() }
                     .buttonStyle(.borderedProminent)
                     .tint(accentColor)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canAdvance)
-                    .help(advanceBlockedReason ?? "")
             }
         }
         .padding(.horizontal, 40)
     }
 
-    /// Step-specific Next-button gating. Accessibility gets a dedicated,
-    /// explicit continue-without-access path rather than making the whole app
-    /// unusable when the user declines it. Identity has no such bypass — a
-    /// name and email must be saved locally (delivery to the server is
-    /// queued and retried independently) before advancing.
     private var canAdvance: Bool {
         switch step {
         case 2: permissions.accessibilityGranted
-        case 4: identity.hasIdentity
+        case 4: canSaveIdentity
         default: true
         }
-    }
-
-    private var advanceBlockedReason: String? {
-        if step == 2, !permissions.accessibilityGranted {
-            return "Grant Accessibility access to continue"
-        }
-        if step == 4, !identity.hasIdentity {
-            return "Save your name and email to continue"
-        }
-        return nil
     }
 
     // MARK: - Step views
@@ -330,31 +310,6 @@ struct OnboardingView: View {
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                     .frame(maxWidth: 280)
-                Button {
-                    submitIdentity()
-                } label: {
-                    if identitySubmitting {
-                        ProgressView().scaleEffect(0.6).frame(width: 80)
-                    } else {
-                        Text(OnboardingCopy.identitySaveButton).frame(width: 80)
-                    }
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accentColor)
-                .disabled(!canSaveIdentity || identitySubmitting)
-            }
-
-            if let err = identityError {
-                Text(err).font(appFont(size: 11)).foregroundStyle(Palette.danger)
-            } else if identitySaved || identity.hasIdentity {
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
-                    Text(OnboardingCopy.identitySavedLabel).foregroundStyle(Palette.success)
-                }.font(appFont(size: 12))
-            } else {
-                Text(" ")
-                    .font(appFont(size: 12))
-                    .foregroundStyle(Palette.textSecondary)
             }
         }
     }
@@ -408,7 +363,7 @@ struct OnboardingView: View {
                 .font(.system(size: 64))
                 .foregroundStyle(Palette.success)
                 .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.privacyTitle)
+            Text(OnboardingCopy.doneTitle)
                 .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
         }
@@ -416,19 +371,14 @@ struct OnboardingView: View {
 
     // MARK: - Helpers
 
-    private func submitIdentity() {
-        identityError = nil
-        identitySaved = false
-        guard canSaveIdentity else { return }
-        identitySubmitting = true
+    private func advance() {
+        guard step == 4 else {
+            withAnimation { step += 1 }
+            return
+        }
         Task {
-            defer { identitySubmitting = false }
-            do {
-                try await identity.submitIdentity(name: nameDraft, email: emailDraft)
-                identitySaved = true
-            } catch {
-                identityError = (error as? IdentityService.IdentityError)?.errorDescription ?? error.localizedDescription
-            }
+            try? await identity.submitIdentity(name: nameDraft, email: emailDraft)
+            withAnimation { step += 1 }
         }
     }
 

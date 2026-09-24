@@ -50,11 +50,11 @@ struct PreferencesView: View {
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .center, spacing: 10) {
-                            TextField("Full name", text: $nameDraft)
+                            TextField("Name", text: $nameDraft)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.name)
                                 .font(vm.font(.rowTitle))
-                            TextField("name@example.com", text: $emailDraft)
+                            TextField("Email", text: $emailDraft)
                                 .textFieldStyle(.roundedBorder)
                                 .textContentType(.emailAddress)
                                 .disableAutocorrection(true)
@@ -65,7 +65,7 @@ struct PreferencesView: View {
                                 if identitySubmitting {
                                     ProgressView().scaleEffect(0.6).frame(width: 96)
                                 } else {
-                                    Text(identity.hasIdentity ? "Update" : "Save").frame(width: 96)
+                                    Text("Save").frame(width: 96)
                                 }
                             }
                             .buttonStyle(.borderedProminent)
@@ -78,7 +78,7 @@ struct PreferencesView: View {
                         } else if identitySaved {
                             HStack(spacing: 4) {
                                 Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
-                                Text("Saved. Thanks!").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
+                                Text("Saved").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
                             }
                         }
                     }

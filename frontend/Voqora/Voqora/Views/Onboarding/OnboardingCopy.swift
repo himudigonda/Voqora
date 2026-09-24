@@ -1,76 +1,37 @@
 import Foundation
 
-/// Onboarding copy lives in code constants so the wording can be edited
-/// without view churn.
 enum OnboardingCopy {
-    // MARK: - Step 1 — Welcome
-
     static let welcomeTitle = "Welcome to Voqora"
-    static let welcomeBody = """
-    Voqora reads selected text aloud — fast, on-device, with neural voices. \
-    Press a global hotkey and listening begins while the rest of the passage \
-    is still rendering.
-    """
+    static let welcomeBody = "Hear any text on your Mac read aloud with natural voices."
 
-    // MARK: - Step 2 — The hotkey
+    static let hotkeyTitle = "Speak From Any App"
+    static let hotkeyBody = "Select text, then press ⌘⇧. to hear it. You can change the shortcut in Preferences."
 
-    static let hotkeyTitle = "Cmd ⇧ . anywhere"
-    static let hotkeyBody = """
-    Select text in any app — a PDF, a webpage, your editor — then press \
-    Cmd ⇧ . (period). Voqora speaks the selection. Press it again to \
-    interrupt and read something new. The shortcut is rebindable in \
-    Preferences.
-    """
-
-    // MARK: - Step 3 — Accessibility permission (required)
-
-    static let axTitle = "Grant Accessibility Access"
-    static let axBody = """
-    macOS needs to give Voqora permission to listen for the global \
-    hotkey and read the currently selected text.
-
-    Click the button below. macOS will open the Accessibility pane in \
-    System Settings. Toggle Voqora on, then come back to this window.
-    """
+    static let axTitle = "Allow Accessibility"
+    static let axBody = "Voqora needs Accessibility access to read the text you select."
     static let axGrantButton = "Open System Settings"
-    static let axGrantedLabel = "Granted"
-    static let axPendingLabel = "Waiting for you to grant access…"
-    static let axContinueWithoutButton = "Continue without access"
-    static let axContinueWithoutHelp = "You can still use audiobooks and enable selected-text reading later in Preferences."
+    static let axGrantedLabel = "Allowed"
+    static let axPendingLabel = "Waiting for access…"
+    static let axContinueWithoutButton = "Not Now"
 
-    // MARK: - Step 4 — Notifications (optional)
-
-    static let notifTitle = "Allow notifications"
-    static let notifBody = """
-    Voqora can show small system notifications when a long audiobook \
-    finishes rendering or when an export completes.
-    """
-    static let notifGrantButton = "Allow notifications"
+    static let notifTitle = "Notifications"
+    static let notifBody = "Get notified when an audiobook is ready or an export finishes."
+    static let notifGrantButton = "Turn On Notifications"
     static let notifOpenSettingsButton = "Open Notification Settings"
-    static let notifGrantedLabel = "Allowed"
-    static let notifDeniedLabel = "Disabled (you can change this in System Settings)"
+    static let notifGrantedLabel = "On"
+    static let notifDeniedLabel = "Off. You can turn them on in System Settings."
 
-    // MARK: - Step 5 — Identity (required)
+    static let identityTitle = "About You"
+    static let identityNamePlaceholder = "Name"
+    static let identityPlaceholder = "Email"
 
-    static let identityTitle = "Create your identity"
-    static let identityNamePlaceholder = "Full name"
-    static let identityPlaceholder = "you@example.com"
-    static let identitySaveButton = "Save"
-    static let identitySavedLabel = "Saved. Thanks!"
-
-    // MARK: - Step 6 — Customize
-
-    static let customizeTitle = "Make it yours"
+    static let customizeTitle = "Personalize"
     static let customizeAccentLabel = "Accent Color"
     static let customizeIconLabel = "App Icon"
 
-    // MARK: - Step 7 — Privacy + done
+    static let doneTitle = "You're All Set"
 
-    static let privacyTitle = "You're all set"
-
-    // MARK: - Buttons
-
-    static let nextButton = "Next"
+    static let nextButton = "Continue"
     static let backButton = "Back"
-    static let doneButton = "Get started"
+    static let doneButton = "Get Started"
 }
