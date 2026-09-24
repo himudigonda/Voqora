@@ -8,9 +8,8 @@ enum OnboardingCopy {
     static let welcomeTitle = "Welcome to Voqora"
     static let welcomeBody = """
     Voqora reads selected text aloud — fast, on-device, with neural voices. \
-    Normal speech stays on your Mac; your text is not sent to a cloud speech \
-    service. Press a global hotkey and listening begins while the rest of the \
-    passage is still rendering.
+    Press a global hotkey and listening begins while the rest of the passage \
+    is still rendering.
     """
 
     // MARK: - Step 2 — The hotkey
@@ -28,8 +27,7 @@ enum OnboardingCopy {
     static let axTitle = "Grant Accessibility Access"
     static let axBody = """
     macOS needs to give Voqora permission to listen for the global \
-    hotkey and read the currently selected text. Without it, the hotkey \
-    won't work — but no other Voqora feature depends on this.
+    hotkey and read the currently selected text.
 
     Click the button below. macOS will open the Accessibility pane in \
     System Settings. Toggle Voqora on, then come back to this window.
@@ -55,11 +53,6 @@ enum OnboardingCopy {
     // MARK: - Step 5 — Identity (required)
 
     static let identityTitle = "Create your identity"
-    static let identityBody = """
-    Voqora needs your name and email to continue. There is no password and \
-    no sign-in — this identifies your activity in adoption metrics. We \
-    never read your text or files.
-    """
     static let identityNamePlaceholder = "Full name"
     static let identityPlaceholder = "you@example.com"
     static let identitySaveButton = "Save"
@@ -68,22 +61,12 @@ enum OnboardingCopy {
     // MARK: - Step 6 — Customize
 
     static let customizeTitle = "Make it yours"
-    static let customizeBody = """
-    Pick an accent color and an app icon. You can change these anytime in \
-    Preferences.
-    """
     static let customizeAccentLabel = "Accent Color"
     static let customizeIconLabel = "App Icon"
 
     // MARK: - Step 7 — Privacy + done
 
     static let privacyTitle = "You're all set"
-    static let privacyBody = """
-    Normal speech runs on your Mac. If you later choose Gemini cleanup for a \
-    document, Voqora tells you before document material leaves the Mac. Voqora \
-    always shares anonymous usage counts — never your text or files — to help \
-    improve the product.
-    """
 
     // MARK: - Buttons
 

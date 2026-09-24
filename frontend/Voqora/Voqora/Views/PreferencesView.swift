@@ -49,13 +49,6 @@ struct PreferencesView: View {
                 // Section: Identity
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("Your name and email")
-                            .font(vm.font(.sectionTitle))
-                        Text("Required to use Voqora. Used to attribute your activity in adoption metrics.")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
                         HStack(alignment: .center, spacing: 10) {
                             TextField("Full name", text: $nameDraft)
                                 .textFieldStyle(.roundedBorder)
@@ -87,16 +80,6 @@ struct PreferencesView: View {
                                 Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
                                 Text("Saved. Thanks!").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
                             }
-                        } else if identity.hasIdentity {
-                            Text(identity.hasPendingSubmission
-                                ? "Saved on this Mac. Syncing when online…"
-                                : "Saved for this Mac.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
-                        } else {
-                            Text("Enter your name and a valid email to continue using Voqora.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
                         }
                     }
                 }
@@ -467,25 +450,13 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Analytics")
-                                .font(vm.font(.sectionTitle))
-                            Text("Voqora always shares anonymous usage counts with himudigonda.me to improve the product. Never your text, filenames, audio, or API keys.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        Divider()
-
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Erase all local Voqora data")
                                 .font(vm.font(.sectionTitle))
                             Text(
                                 "Permanently removes every audiobook and source document, generated audio, history, caches, " +
                                     "settings, your name and email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
-                                    "from this Mac. Voqora will quit when complete. This does not delete the contact record already " +
-                                    "sent to the website."
+                                    "from this Mac. Voqora will quit when complete."
                             )
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)

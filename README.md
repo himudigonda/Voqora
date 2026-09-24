@@ -70,9 +70,7 @@ flowchart LR
     E["Optional document cleanup with your Gemini key"] -. only when chosen .-> B
 ```
 
-The speech engine runs locally. Voqora asks for your name and email once
-during onboarding — there is no password and no sign-in, but the app is not
-usable until they are provided. Optional document cleanup is separate: if you
+The speech engine runs locally. Optional document cleanup is separate: if you
 provide a Gemini API key and choose that flow, the relevant document material
 is sent to Gemini for that operation. See [PRIVACY.md](PRIVACY.md) for the
 complete product boundary.
@@ -84,14 +82,12 @@ complete product boundary.
 | Speak selected text | Sends it to the bundled local speech service on your Mac. | Upload it to a hosted text-to-speech API. |
 | Add a PDF, TXT, DOCX, or Markdown file | Extracts, narrates, and stores audiobook progress locally. | Send the document to Voqora's servers. |
 | Clean a difficult document | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
-| Use Voqora at all | Requires a name and email, collected once during onboarding, and always sends a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
+| Use Voqora | Collects a name and email once during onboarding and sends a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
 | Get the latest build | Opens a SHA-256-verified DMG from Voqora's official GitHub release in Finder. | Replace the app automatically, alter Gatekeeper settings, or upload your reading activity or personal files. |
 
-Your name and email, collected once in onboarding, attribute activity to a
-returning installation instead of an anonymous one. Installations, download
-clicks, product events, and identified contacts are measured as different
-things, because a useful product dashboard should describe reality rather
-than manufacture a flattering audience number.
+Installations, download clicks, product events, and identified contacts are
+measured as different things, because a useful product dashboard should
+describe reality rather than manufacture a flattering audience number.
 
 ## Built as a native Mac utility
 

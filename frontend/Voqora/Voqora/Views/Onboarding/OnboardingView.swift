@@ -321,11 +321,6 @@ struct OnboardingView: View {
                 .font(appFont(size: 22, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
                 .multilineTextAlignment(.center)
-            Text(OnboardingCopy.identityBody)
-                .font(appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 8) {
                 TextField(OnboardingCopy.identityNamePlaceholder, text: $nameDraft)
@@ -378,11 +373,6 @@ struct OnboardingView: View {
             Text(OnboardingCopy.customizeTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.customizeBody)
-                .font(appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
 
             VStack(spacing: 10) {
                 Text(OnboardingCopy.customizeAccentLabel)
@@ -421,11 +411,6 @@ struct OnboardingView: View {
             Text(OnboardingCopy.privacyTitle)
                 .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.privacyBody)
-                .font(appFont(size: 15))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
