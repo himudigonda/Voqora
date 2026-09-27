@@ -40,7 +40,7 @@ from app.services.gemini_cleaner import (
     GeminiCleaner,
     GeminiRateLimitError,
 )
-from app.services.pdf_extractor import PDFExtractor
+from app.services.pdf_extractor import PDFExtractor, strip_layout_noise
 from app.services.text_extractor import TextExtractor
 from app.services.text_normalizer import (
     has_residual_markup,
@@ -206,6 +206,25 @@ class AudiobookService:
 
         _, receipt_id = await AudiobookStore.mutate_meta(book_id, reserve)
         return receipt_id
+
+    @classmethod
+    async def _release_gemini_reservation(
+        cls, book_id: str, receipt_id: str | None
+    ) -> None:
+        if receipt_id is None:
+            return
+
+        def release(meta: dict[str, Any]) -> None:
+            budget = dict(meta.get("budget") or {})
+            ledger = list(budget.get("ledger") or [])
+            for entry in ledger:
+                if entry.get("id") == receipt_id and entry.get("state") == "reserved":
+                    entry.update(state="released", released_at=_now_iso())
+                    break
+            budget["ledger"] = ledger
+            meta["budget"] = cls._budget_summary(budget)
+
+        await AudiobookStore.mutate_meta(book_id, release)
 
     @classmethod
     async def _reconcile_gemini_operation(
@@ -562,6 +581,7 @@ class AudiobookService:
             ]
             if needs_reclean:
                 paths.append(AudiobookStore.page_clean_path(book_id, n))
+                paths.append(AudiobookStore.page_raw_path(book_id, n))
             for p in paths:
                 try:
                     if os.path.exists(p):
@@ -980,6 +1000,7 @@ class AudiobookService:
             except GeminiAuthError:
                 raise
             except GeminiCapacityError:
+                await cls._release_gemini_reservation(book_id, receipt_id)
                 if gemini_tier == "standard":
                     raise
                 required_cap = await cls._request_standard_approval(
@@ -1111,6 +1132,7 @@ class AudiobookService:
                     raw_text = f.read()
 
                 is_ocr = is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD
+                local_text = strip_layout_noise(raw_text) if is_pdf else raw_text
                 receipt_id: str | None = None
                 if uses_gemini_cleanup:
                     receipt_id = await cls._reserve_gemini_operation(
@@ -1129,7 +1151,7 @@ class AudiobookService:
                         # strip at the write site below is the whole cleanup
                         # for this branch. Image-only pages remain blank until
                         # the user explicitly enables Gemini OCR.
-                        cleaned = raw_text
+                        cleaned = local_text
                     elif cost_capped:
                         # Narrate this page with local cleanup instead of
                         # Gemini. Falls through to the shared write site rather
@@ -1142,7 +1164,7 @@ class AudiobookService:
                             "audiobook.clean_cost_capped",
                             extra={"book_id": book_id, "page": n},
                         )
-                        cleaned = raw_text
+                        cleaned = local_text
                         await mark_page_failed(
                             n,
                             "cost_capped",
@@ -1181,7 +1203,7 @@ class AudiobookService:
                                 extra={"book_id": book_id, "page": n},
                                 exc_info=True,
                             )
-                            cleaned = raw_text
+                            cleaned = local_text
                             await mark_page_failed(n, "cleaning_failed")
                     else:
                         try:
@@ -1207,11 +1229,12 @@ class AudiobookService:
                                 extra={"book_id": book_id, "page": n},
                                 exc_info=True,
                             )
-                            cleaned = raw_text
+                            cleaned = local_text
                             await mark_page_failed(n, "cleaning_failed")
                 except GeminiAuthError:
                     raise
                 except GeminiCapacityError:
+                    await cls._release_gemini_reservation(book_id, receipt_id)
                     if gemini_tier == "standard":
                         raise
                     required_cap = await cls._request_standard_approval(
@@ -1232,7 +1255,7 @@ class AudiobookService:
                         },
                         exc_info=True,
                     )
-                    cleaned = raw_text
+                    cleaned = local_text
                     await mark_page_failed(
                         n,
                         "cleaning_failed",
@@ -1679,7 +1702,7 @@ class AudiobookService:
         lines: dict[str, list[dict[str, Any]]] = {}
         for n in range(1, page_count + 1):
             key = str(n)
-            if key in page_status:
+            if page_status.get(key) in _SILENT_PAGE_STATUSES:
                 continue
             path = AudiobookStore.page_timing_path(book_id, n)
             try:
@@ -1803,6 +1826,7 @@ def _wav_header(pcm_data_size: int) -> bytes:
 _LINE_ENDERS = frozenset(".!?:;\"')]”’")
 _SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*$")
 _MIN_SENTENCE_WORDS = 3
+_SILENT_PAGE_STATUSES = frozenset({"tts_failed", "duplicate"})
 
 
 def _speech_units(text: str) -> list[tuple[int, str]]:

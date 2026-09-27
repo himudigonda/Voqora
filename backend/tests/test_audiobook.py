@@ -168,6 +168,32 @@ async def test_gemini_budget_keeps_ambiguous_reservation_after_restart():
 
 
 @pytest.mark.asyncio
+async def test_released_gemini_reservation_returns_capacity_to_the_book():
+    bid = AudiobookStore.create_book("Budget.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Budget.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    AudiobookStore.write_meta(bid, meta)
+    receipt = await AudiobookService._reserve_gemini_operation(
+        bid, operation="clean_page:1", reserved_usd=0.08
+    )
+    assert receipt is not None
+
+    await AudiobookService._release_gemini_reservation(bid, receipt)
+
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["reserved_usd"] == pytest.approx(0.0)
+    assert budget["available_usd"] == pytest.approx(0.10)
+    assert (
+        await AudiobookService._reserve_gemini_operation(
+            bid, operation="clean_page:2", reserved_usd=0.08
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
 async def test_cost_approval_requires_shown_cap_or_finishes_locally(monkeypatch):
     """A capacity fallback cannot silently dispatch Standard-tier work."""
     bid = AudiobookStore.create_book("Budget.pdf")
@@ -547,6 +573,32 @@ async def test_transcript_publishes_exact_sentence_times_from_synthesis():
         ],
         "2": [{"paragraph": 0, "text": "Last page line.", "start": 3.0, "end": 4.0}],
     }
+
+
+def test_timed_lines_keep_locally_cleaned_pages_and_drop_silent_ones():
+    bid = AudiobookStore.create_book("Test.pdf")
+    for n in (1, 2, 3):
+        path = AudiobookStore.page_timing_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(
+                {
+                    "lines": [
+                        {"paragraph": 0, "text": f"Page {n}.", "start": 0.0, "end": 1.0}
+                    ]
+                },
+                f,
+            )
+
+    lines = AudiobookService._timed_lines(
+        bid,
+        3,
+        {"1": 0.0, "2": 1.0, "3": 2.0},
+        {"1": "cost_capped", "2": "tts_failed", "3": "cleaning_failed"},
+    )
+
+    assert sorted(lines) == ["1", "3"]
+    assert lines["3"][0]["start"] == 2.0
 
 
 # ---------- TTS progress stall for missing-clean-text pages (T-2) ----------
@@ -2519,6 +2571,76 @@ def test_sampling_reads_only_the_first_middle_and_last_pages(monkeypatch):
 
     assert PDFExtractor.sample_word_count("book.pdf") == 3
     assert requested == [[0, 200, 399]]
+
+
+def test_strip_layout_noise_keeps_prose_and_drops_tables_figures_and_references():
+    from app.services.pdf_extractor import strip_layout_noise
+
+    page = "\n".join(
+        [
+            "Table 3: Variations on the Transformer architecture.",
+            "N dmodel dff h dk dv",
+            "base 6 512 2048 8 64 64 0.1",
+            "(A)",
+            "1 512 512 5.29 24.9",
+            "4 128 128 5.00 25.5",
+            "We vary the number of attention heads [38, 24, 15].",
+            "a",
+            "majority",
+            "of",
+            "American",
+            "governments",
+            "have",
+            "References",
+            "[1] Jimmy Lei Ba and Geoffrey Hinton. Layer normalization.",
+            "[2] Dzmitry Bahdanau. Neural machine translation.",
+            "[3] Denny Britz. Massive exploration of neural machine",
+            "translation architectures.",
+            "9",
+        ]
+    )
+
+    assert strip_layout_noise(page).splitlines() == [
+        "Table 3: Variations on the Transformer architecture.",
+        "We vary the number of attention heads [38, 24, 15].",
+    ]
+
+
+def test_strip_layout_noise_separates_headings_and_paragraphs():
+    from app.services.pdf_extractor import strip_layout_noise
+
+    page = "\n".join(
+        [
+            "the model outperforms every previously reported ensemble in the same",
+            "setting by a wide margin.",
+            "7 Conclusion",
+            "In this work, we presented the Transformer, the first sequence model based",
+            "entirely on attention.",
+        ]
+    )
+
+    assert strip_layout_noise(page).split("\n\n") == [
+        "the model outperforms every previously reported ensemble in the same\n"
+        "setting by a wide margin.",
+        "7 Conclusion",
+        "In this work, we presented the Transformer, the first sequence model based\n"
+        "entirely on attention.",
+    ]
+
+
+def test_strip_layout_noise_keeps_short_dialogue():
+    from app.services.pdf_extractor import strip_layout_noise
+
+    dialogue = [
+        "\u201cYes.\u201d",
+        "\u201cNo.\u201d",
+        "\u201cWhy?\u201d",
+        "\u201cBecause.\u201d",
+        "\u201cFine.\u201d",
+        "\u201cGood.\u201d",
+    ]
+
+    assert strip_layout_noise("\n".join(dialogue)).split() == dialogue
 
 
 def test_resolve_line_hyphens_joins_split_words_and_keeps_real_compounds():

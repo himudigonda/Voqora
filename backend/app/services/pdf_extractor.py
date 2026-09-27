@@ -240,3 +240,143 @@ def resolve_line_hyphens(pages: list[str]) -> list[str]:
         return merged if merged.lower() in vocabulary else f"{head}-{tail}"
 
     return [_HYPHENATED.sub(join, page).replace(_SOFT_HYPHEN, "-") for page in pages]
+
+
+_NUMERIC_TOKEN = re.compile(
+    r"[(\[]?[-+±×~]?\d[\d.,:%×x/]*[KMBkmb%]?[)\]]?[.,;]?|[(\[][A-Za-z0-9]{1,2}[)\]]"
+)
+_PAGE_NUMBER = re.compile(r"\d{1,4}")
+_CITATION = re.compile(r"\[[\d,\s–-]+\]")
+_REFERENCE_ENTRY = re.compile(r"\[\d{1,3}\]\s+\S")
+_REFERENCES_HEADING = re.compile(
+    r"(\d+(\.\d+)*\.?\s+)?(references|bibliography|works cited)", re.IGNORECASE
+)
+_ARXIV_STAMP = re.compile(r"arXiv:\d{4}\.\d{4,5}", re.IGNORECASE)
+_NUMBERED_HEADING = re.compile(
+    r"(\d+(\.\d+)*\.?|[A-Z]\.\d*|[IVX]+\.)\s+[A-Z][^.!?;]{1,80}"
+)
+_NAMED_HEADING = re.compile(
+    r"(abstract|introduction|background|related work|conclusions?|discussion|"
+    r"acknowledg(e)?ments|appendix|summary|methods?|results)",
+    re.IGNORECASE,
+)
+_SHORT_LINE_RATIO = 0.7
+_SENTENCE_TERMINAL = (".", "!", "?", ":", ";")
+_CLOSERS = "\"'\u201d\u2019)]"
+_MIN_TABLE_ROWS = 3
+_MIN_WORD_LIST_ROWS = 6
+_MAX_TABLE_HEADER_ROWS = 3
+
+
+def _numeric_share(line: str) -> float:
+    tokens = _CITATION.sub(" ", line).split()
+    if not tokens:
+        return 0.0
+    return sum(1 for token in tokens if _NUMERIC_TOKEN.fullmatch(token)) / len(tokens)
+
+
+def _is_table_row(line: str) -> bool:
+    tokens = line.split()
+    if not tokens:
+        return False
+    numeric = _numeric_share(line)
+    if _ends_sentence(line):
+        return numeric >= 0.5
+    ends_in_number = len(tokens) <= 12 and bool(_NUMERIC_TOKEN.fullmatch(tokens[-1]))
+    return numeric >= 0.3 or ends_in_number or len(tokens) <= 3
+
+
+def _drop_runs(lines: list[str], matches, minimum: int, header_rows: int) -> list[str]:
+    keep = [True] * len(lines)
+    i = 0
+    while i < len(lines):
+        if not matches(lines[i]):
+            i += 1
+            continue
+        end = i
+        while end < len(lines) and matches(lines[end]):
+            end += 1
+        if end - i >= minimum:
+            start = i
+            numeric_rows = sum(1 for line in lines[i:end] if _numeric_share(line) > 0)
+            while (
+                numeric_rows * 2 >= end - i
+                and start > 0
+                and i - start < header_rows
+                and not _ends_sentence(lines[start - 1])
+                and len(lines[start - 1].split()) < 10
+            ):
+                start -= 1
+            for j in range(start, end):
+                keep[j] = False
+        i = end
+    return [line for line, kept in zip(lines, keep, strict=True) if kept]
+
+
+def strip_layout_noise(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines()]
+    lines = [
+        line
+        for line in lines
+        if line and not _PAGE_NUMBER.fullmatch(line) and not _ARXIV_STAMP.search(line)
+    ]
+    reference_starts = [
+        i for i, line in enumerate(lines) if _REFERENCE_ENTRY.match(line)
+    ]
+    if len(reference_starts) >= 3:
+        cut = reference_starts[0]
+        if cut > 0 and _REFERENCES_HEADING.fullmatch(lines[cut - 1]):
+            cut -= 1
+        lines = lines[:cut]
+    lines = _drop_runs(lines, _is_figure_token, _MIN_WORD_LIST_ROWS, 0)
+    lines = _drop_runs(lines, _is_table_row, _MIN_TABLE_ROWS, _MAX_TABLE_HEADER_ROWS)
+    lines = [line for line in lines if not _is_numeric_line(line)]
+    return "\n".join(_mark_structure(lines))
+
+
+def _is_heading(line: str) -> bool:
+    if _ends_sentence(line) or len(line.split()) > 10:
+        return False
+    return bool(_NUMBERED_HEADING.fullmatch(line) or _NAMED_HEADING.fullmatch(line))
+
+
+def _mark_structure(lines: list[str]) -> list[str]:
+    if not lines:
+        return lines
+    lengths = sorted(len(line) for line in lines)
+    typical = lengths[int(len(lengths) * 0.8)]
+    out: list[str] = []
+    for line in lines:
+        if _is_heading(line):
+            if out and out[-1]:
+                out.append("")
+            out.extend([line, ""])
+            continue
+        out.append(line)
+        if (
+            line.rstrip(_CLOSERS).endswith((".", "!", "?"))
+            and len(line) < typical * _SHORT_LINE_RATIO
+        ):
+            out.append("")
+    while out and not out[-1]:
+        out.pop()
+    return out
+
+
+def _ends_sentence(line: str) -> bool:
+    return line.rstrip(_CLOSERS).endswith(_SENTENCE_TERMINAL)
+
+
+def _is_figure_token(line: str) -> bool:
+    if not any(character.isalnum() for character in line):
+        return True
+    if _NAMED_HEADING.fullmatch(line):
+        return False
+    return len(line.split()) <= 2 and not line.rstrip(_CLOSERS).endswith(
+        (".", "!", "?", ",")
+    )
+
+
+def _is_numeric_line(line: str) -> bool:
+    tokens = line.split()
+    return len(tokens) >= 3 and _numeric_share(line) >= 0.5
