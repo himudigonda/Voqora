@@ -38,10 +38,6 @@ class HistoryManager: ObservableObject {
         saveHistory()
     }
 
-    /// Remove both the visible history and its private on-disk representation.
-    /// Used only by the explicit full-data erase action; it is safe to repeat
-    /// but reports a real filesystem failure to the caller instead of claiming
-    /// a full privacy erase succeeded.
     func eraseAll() throws {
         history.removeAll()
         persistenceError = nil

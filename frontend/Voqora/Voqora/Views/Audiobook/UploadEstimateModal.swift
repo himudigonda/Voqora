@@ -10,9 +10,6 @@ struct UploadEstimateModal: View {
 
     let documentURL: URL
 
-    /// An explicit, per-book choice. Text documents stay local unless this is
-    /// turned on; image-only PDFs need it because local extraction has no text
-    /// to narrate.
     @State private var useGeminiCleanup = false
 
     private var accentColor: Color {
@@ -22,15 +19,8 @@ struct UploadEstimateModal: View {
     var body: some View {
         VStack(spacing: 18) {
             header
-            // S6: re-check stored key whenever the modal becomes visible —
-            // covers the case where the user adds/removes a key in
-            // Preferences while this modal is open.
             EmptyView().task { bookVM.refreshKeyState() }
             if let est = bookVM.pendingEstimate {
-                // The estimate can be taller than a 640-point sheet once the
-                // privacy choice and Gemini warnings are present. Keep the
-                // primary action anchored and let only the details scroll,
-                // rather than clipping the bottom controls.
                 ScrollView {
                     VStack(spacing: 18) {
                         cover
@@ -87,10 +77,6 @@ struct UploadEstimateModal: View {
             if let pdf = PDFDocument(url: documentURL),
                let page = pdf.page(at: 0)
             {
-                // S7: PDFPage.thumbnail renders the page properly at the
-                // requested point size, unlike NSImage(data:) on a raw PDF
-                // page-representation blob (which sometimes shows the whole
-                // PDF or renders at low resolution).
                 let nsImage = page.thumbnail(of: NSSize(width: 280, height: 392), for: .cropBox)
                 Image(nsImage: nsImage)
                     .resizable()
@@ -110,7 +96,7 @@ struct UploadEstimateModal: View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
                 StatTile(label: "Pages", value: "\(est.pageCount)", icon: "doc.text", appFont: vm.appFont, accentColor: accentColor)
-                StatTile(label: "WORDS", value: numberFormat(est.wordCountEstimate), icon: "textformat", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "Words", value: numberFormat(est.wordCountEstimate), icon: "textformat", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
                 StatTile(label: "Processing", value: "~\(DurationFormatter.short(est.estimatedProcessingSeconds))", icon: "clock", appFont: vm.appFont, accentColor: accentColor)
@@ -118,14 +104,14 @@ struct UploadEstimateModal: View {
             }
             HStack(spacing: 12) {
                 StatTile(
-                    label: "GEMINI TOKENS",
+                    label: "Gemini Tokens",
                     value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF",
                     icon: "number",
                     appFont: vm.appFont,
                     accentColor: accentColor
                 )
                 StatTile(
-                    label: "GEMINI COST",
+                    label: "Gemini Cost",
                     value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF",
                     icon: "dollarsign.circle",
                     appFont: vm.appFont,
@@ -177,10 +163,6 @@ struct UploadEstimateModal: View {
                 .padding(.bottom, 4)
             }
             if useGeminiCleanup, !bookVM.hasStoredKey {
-                // Consistent with the cost/OCR warnings above (both warning-toned)
-                // — this used to be .yellow for no evident semantic reason,
-                // despite all three being the same "Start is blocked" class
-                // of warning in this same modal.
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
                     Text("Add a Gemini API key in Preferences.")
@@ -218,11 +200,6 @@ struct UploadEstimateModal: View {
                         kind: .error
                     )
                 } else {
-                    // Do NOT call dismiss() here — modal dismisses automatically
-                    // when startProcessing() clears pendingDocument on success.
-                    // Calling dismiss() immediately would race with the async
-                    // /start call: the sheet binding setter fires cancelUpload()
-                    // which deletes the staged book before /start completes.
                     bookVM.startProcessing(useGeminiCleanup: useGeminiCleanup)
                 }
             } label: {
@@ -259,12 +236,6 @@ struct UploadEstimateModal: View {
         .buttonStyle(.voqoraSecondary)
     }
 
-    /// T-19: pure Start-Processing disabled-condition, kept testable without
-    /// a live view per the `AudiobookPlayerLayout`/`AudiobookPlayerView`
-    /// precedent. A scanned (image-only) PDF needs Gemini OCR to have any
-    /// text to narrate; Gemini cleanup toggled on with no saved key can
-    /// never succeed either -- both proactively disable Start rather than
-    /// letting the user tap it and hit a toast.
     static func isStartDisabled(
         startingProcessing: Bool,
         isImageOnly: Bool,

@@ -1,10 +1,6 @@
 @testable import Voqora
 import XCTest
 
-/// Pure-logic tests for `UploadEstimateModal`'s Start-Processing
-/// disabled-condition (jira-audiobook-quality.md T-19). Exercises the
-/// `internal` static member added specifically so this logic is testable
-/// without a live view, matching the `AudiobookPlayerLayoutTests` precedent.
 final class UploadEstimateModalTests: XCTestCase {
     func test_isStartDisabled_falseForOrdinaryTextDocument() {
         XCTAssertFalse(UploadEstimateModal.isStartDisabled(

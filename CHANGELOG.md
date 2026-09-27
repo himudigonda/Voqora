@@ -27,6 +27,32 @@
 - Retrying a finished book kept playing the old cached audio.
 - PDF text extraction dropped spaces between words on many papers.
 - The selected-text mini player showed the previous clip's text.
+- After opening an audiobook, choosing The Vault, Preferences, or About left
+  the player on screen.
+- Pages narrated with local cleanup were shown dimmed as "Not narrated", so
+  the highlighted line disappeared after scrubbing into them.
+- Local cleanup read PDF tables, figure labels, page numbers, and reference
+  lists aloud. It now skips them and keeps headings as their own lines.
+  Retry Failed Pages re-reads those pages from the PDF.
+- Changing playback speed also changed the narration speed of the next book,
+  so new books played back faster twice over.
+- A book waiting for cost approval stayed stuck on its progress caption.
+- Stopping selected-text speech and pressing Play resumed mid-clip.
+- A Gemini capacity rejection kept its budget reservation, so later pages hit
+  the cost cap early.
+
+### Player and library
+
+- Selected-text speech uses the same player as audiobooks: artwork, scrubber,
+  transport, volume, and the transcript side by side.
+- Papers without detected chapters get sections from their headings, used by
+  the Sections list, the scrubber markers, and Previous/Next Section.
+- The library loads at launch, so Continue Listening appears right away, and
+  Nothing Playing offers to resume the last book.
+- The mini player no longer covers the bottom of the page it sits on.
+- Delete All Audiobooks moved from the toolbar into the View Options menu.
+- The Vault shows voice names, plays an item on double-click, and uses
+  consistent labels.
 
 ## [1.2.3] - 2026-09-20
 

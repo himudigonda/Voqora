@@ -4,11 +4,6 @@ import Foundation
 import Security
 import SwiftUI
 
-/// The only authority allowed to construct requests to Voqora's local backend.
-///
-/// The macOS app binds the loopback socket before it starts Python and keeps
-/// that descriptor open for the backend lifetime. A unique token is attached
-/// as an HTTP header, never encoded in a URL or persisted in user defaults.
 final class BackendConnection: @unchecked Sendable {
     static let shared = BackendConnection()
 
@@ -54,8 +49,6 @@ final class BackendConnection: @unchecked Sendable {
         state = State()
     }
 
-    /// Binds an app-owned listener and creates a fresh token for one child
-    /// launch. Any prior listener is retired before the new one is exposed.
     func prepareForLaunch() throws -> LaunchConfiguration {
         try stateQueue.sync {
             closeLocked()
@@ -93,16 +86,6 @@ final class BackendConnection: @unchecked Sendable {
                 throw ConnectionError.listenerCreationFailed
             }
 
-            // `Foundation.Process` actually ignores this bit entirely — it
-            // launches children with every descriptor closed except the
-            // three it explicitly wires itself, so clearing FD_CLOEXEC alone
-            // never got this socket into the child (see BackendService,
-            // which now hands it over explicitly via `standardInput`
-            // instead). Left cleared here anyway: harmless, and keeps this
-            // FD usable if a future launch path ever does go through a
-            // plain fork+exec. The parent keeps its own copy open the whole
-            // time regardless, which is what actually prevents a port
-            // takeover during launch.
             let descriptorFlags = fcntl(fd, F_GETFD)
             guard descriptorFlags >= 0,
                   fcntl(fd, F_SETFD, descriptorFlags & ~FD_CLOEXEC) == 0
@@ -151,8 +134,6 @@ final class BackendConnection: @unchecked Sendable {
         }
     }
 
-    /// Closes only the matching launch's listener. An old process termination
-    /// cannot tear down a newer process's listener/token pair.
     func invalidate(generation: UUID? = nil) {
         stateQueue.sync {
             guard generation == nil || state.generation == generation else { return }
@@ -181,8 +162,6 @@ final class BackendConnection: @unchecked Sendable {
     }
 }
 
-/// Authenticated replacement for AsyncImage when the image lives on the local
-/// backend. URLSession receives the token in a header, not a cacheable URL.
 struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
     let path: String
     let content: (Image) -> Content

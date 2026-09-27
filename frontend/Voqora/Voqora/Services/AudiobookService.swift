@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 
-/// HTTP client for the audiobook backend endpoints. SSE consumer.
 final class AudiobookService: NSObject, @unchecked Sendable {
     private let connection: BackendConnection
 
@@ -10,8 +9,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    /// Keep multipart metadata aligned with the file kinds the native picker,
-    /// analytics boundary, and backend deliberately support.
     static func mimeType(forFileExtension fileExtension: String) -> String {
         switch fileExtension.lowercased() {
         case "pdf": "application/pdf"
@@ -21,7 +18,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Local cache root for downloaded audio files.
     private var cacheDir: URL {
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -31,13 +27,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return appSupport
     }
 
-    // MARK: - Listing
-
     func list() async throws -> [Audiobook] {
         let req = try connection.request(path: "audiobook", timeout: 10)
         let (data, _) = try await URLSession.shared.data(for: req)
-        // Decode each entry individually so one corrupt/partial book (e.g. a ghost
-        // entry left by a failed upload) doesn't poison the whole library load.
         guard let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return try JSONDecoder().decode([Audiobook].self, from: data)
         }
@@ -67,9 +59,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: cached)
     }
 
-    /// Deletes the whole local audiobook library through the authenticated
-    /// backend, then removes only this client's derived-audio cache. The
-    /// caller owns confirmation UI and active-playback coordination.
     func deleteAll() async throws {
         let request = try connection.request(path: "audiobook", method: "DELETE", timeout: 30)
         let (_, response) = try await URLSession.shared.data(for: request)
@@ -86,7 +75,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         _ = try? await URLSession.shared.data(for: req)
     }
 
-    /// Fetch the transcript JSON (sections + page→time + per-page text).
     func transcript(for id: String) async throws -> Transcript {
         let req = try connection.request(path: "audiobook/\(id)/transcript", timeout: 15)
         let (data, _) = try await URLSession.shared.data(for: req)
@@ -99,12 +87,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let pageToTime: [String: Double]
         let totalAudioSeconds: Double
         let pages: [String: String]
-        /// Per-page marker for a page whose transcript text doesn't match
-        /// its audio: "tts_failed" (synthesis failed, page is near-silent),
-        /// "cleaning_failed" (Gemini cleanup failed), or "duplicate"
-        /// (byte-identical page, skipped and marked "-" to avoid redundant
-        /// cost). Absent for a normally-narrated page. Additive — older
-        /// books simply have no entries here. See jira-audiobook-quality.md T-1.
         let pageStatus: [String: String]?
         let lines: [String: [TranscriptDocument.TimedLine]]?
 
@@ -118,8 +100,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             case lines
         }
     }
-
-    // MARK: - Upload
 
     func upload(document: URL, voice: String?, speed: Double?, engine: String?) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
@@ -135,10 +115,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         )
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
-        // `upload(for:fromFile:)` streams the staged multipart body.  Do not
-        // turn a user document into `Data`: a permitted 100 MiB import must
-        // not also become a 100 MiB app-memory spike while the backend/model
-        // is running.
         let (data, response) = try await URLSession.shared.upload(for: req, fromFile: bodyURL)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Upload failed"
@@ -147,10 +123,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return try JSONDecoder().decode(AudiobookEstimateResponse.self, from: data)
     }
 
-    /// Materializes a multipart envelope on disk while copying the document in
-    /// bounded chunks. The backend independently validates content and limits;
-    /// this early check gives the user a fast, local error and avoids staging a
-    /// request it will necessarily reject.
     private static func makeMultipartUploadBody(
         document: URL,
         boundary: String,
@@ -191,9 +163,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                 try appendField("engine", engine)
             }
 
-            // A local filename cannot normally contain CR/LF, but removing
-            // them prevents it ever becoming a multipart-header injection
-            // primitive when a URL arrives from a nonstandard file provider.
             let filename = document.lastPathComponent
                 .replacingOccurrences(of: "\r", with: "")
                 .replacingOccurrences(of: "\n", with: "")
@@ -261,8 +230,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - Start
-
     func start(_ id: String, apiKey: String?, useGeminiCleanup: Bool) async throws {
         var req = try connection.request(path: "audiobook/\(id)/start", method: "POST")
         if useGeminiCleanup {
@@ -278,14 +245,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - SSE progress
-
-    /// Stream SSE events as raw JSON dictionaries until done/failed.
-    /// Auto-reconnects with exponential backoff if the connection drops while
-    /// the book is still in a non-terminal state. Stops permanently on:
-    ///   - terminal event (done/failed)
-    ///   - HTTP 404 (book deleted) or 410
-    ///   - task cancellation
     func subscribe(to id: String) -> AsyncStream<[String: Any]> {
         AsyncStream { continuation in
             let task = Task {
@@ -299,8 +258,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                     var bookGone = false
                     do {
                         let (bytes, response) = try await URLSession.shared.bytes(for: req)
-                        // C6: backend returns 404 for deleted books — bail out
-                        // of the reconnect loop instead of spinning forever.
                         if let http = response as? HTTPURLResponse,
                            http.statusCode == 404 || http.statusCode == 410
                         {
@@ -340,12 +297,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    // MARK: - Audio caching + cover
-
-    /// Download audio.wav once to local cache, return file URL.
-    /// S9: validates HTTP status, content-type, expected size, AND a quick
-    /// WAV magic-byte sanity check before promoting the temp file to the
-    /// cache. If a previous failed download left a stale file, re-fetches.
     func ensureLocalAudio(for id: String) async throws -> URL {
         let local = cacheDir.appendingPathComponent("\(id).wav")
         if FileManager.default.fileExists(atPath: local.path),
@@ -353,7 +304,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         {
             return local
         }
-        // Drop a corrupt cache file before re-fetching.
         try? FileManager.default.removeItem(at: local)
 
         let request = try connection.request(path: "audiobook/\(id)/audio", timeout: 60)
@@ -366,14 +316,11 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         guard http.statusCode == 200 else {
             throw AudiobookServiceError.audioNotReady
         }
-        // Content-type sanity (be permissive — server says audio/wav today).
         if let ct = http.value(forHTTPHeaderField: "Content-Type"),
            !ct.lowercased().contains("audio"), !ct.lowercased().contains("wav")
         {
             throw AudiobookServiceError.audioNotReady
         }
-        // Expected size (Content-Length). FileResponse sets this; range
-        // responses set it for the slice. We only follow non-range here.
         if let lenStr = http.value(forHTTPHeaderField: "Content-Length"),
            let expected = Int(lenStr)
         {
@@ -382,7 +329,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                 throw AudiobookServiceError.audioNotReady
             }
         }
-        // WAV magic-byte sanity check: "RIFF" .. "WAVE".
         guard Self.isValidWAVHeader(at: downloadedURL) else {
             throw AudiobookServiceError.audioNotReady
         }
@@ -390,7 +336,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return local
     }
 
-    /// Quick header check: bytes 0..3 == "RIFF" and bytes 8..11 == "WAVE".
     private static func isValidWAVHeader(at url: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
         defer { try? handle.close() }
@@ -399,12 +344,6 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let wave = header.subdata(in: 8 ..< 12)
         return riff == "RIFF".data(using: .ascii) && wave == "WAVE".data(using: .ascii)
     }
-
-    func coverPath(for id: String) -> String {
-        "audiobook/\(id)/cover"
-    }
-
-    // MARK: - Key verification
 
     func verifyKey(_ key: String) async -> Bool {
         guard var req = try? connection.request(

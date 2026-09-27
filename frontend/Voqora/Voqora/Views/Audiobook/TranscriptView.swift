@@ -30,7 +30,7 @@ struct TranscriptView: View {
                     }
                     .frame(maxWidth: 720, alignment: .leading)
                     .padding(.horizontal, 28)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                     .background(ScrollInteractionMonitor(onUserScroll: userDidScroll))
                 }
                 .scrollIndicators(isFollowing ? .hidden : .automatic)
@@ -237,13 +237,13 @@ private struct TranscriptLineRow: View {
     }
 
     private var opacity: Double {
-        if !line.isNarrated {
-            return 0.2
-        }
         if isActive {
             return 1
         }
-        return isHovered ? 0.6 : 0.3
+        if isHovered {
+            return 0.6
+        }
+        return line.isNarrated ? 0.3 : 0.2
     }
 }
 

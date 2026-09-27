@@ -44,7 +44,7 @@ final class TranscriptDocumentTests: XCTestCase {
         XCTAssertNotEqual(pageOne[1].block, pageOne[2].block)
     }
 
-    func test_pagesWithStatusAreMarkedNotNarratedAndIgnoreTimedLines() {
+    func test_silentPagesAreMarkedNotNarratedAndIgnoreTimedLines() {
         let transcript = makeTranscript(
             pages: ["1": "Failed page."],
             pageToTime: ["1": 0],
@@ -57,6 +57,53 @@ final class TranscriptDocumentTests: XCTestCase {
         XCTAssertEqual(document.lines.count, 1)
         XCTAssertFalse(document.lines[0].isNarrated)
         XCTAssertFalse(document.lines[0].isExactlyTimed)
+    }
+
+    func test_locallyCleanedPagesAreStillNarratedWithExactTimes() {
+        let transcript = makeTranscript(
+            pages: ["1": "Capped page.", "2": "Cleanup failed page."],
+            pageToTime: ["1": 0, "2": 5],
+            total: 10,
+            pageStatus: ["1": "cost_capped", "2": "cleaning_failed"],
+            lines: ["1": [.init(paragraph: 0, text: "Capped page.", start: 0, end: 5)]]
+        )
+        let document = TranscriptDocument(transcript: transcript)
+
+        XCTAssertEqual(document.lines.map(\.isNarrated), [true, true])
+        XCTAssertTrue(document.lines[0].isExactlyTimed)
+    }
+
+    @MainActor
+    func test_chaptersComeFromTranscriptHeadingsWhenTheBookHasNoRealSections() {
+        let transcript = makeTranscript(
+            pages: ["1": "Intro text here.", "2": "3.3 Feed-Forward Networks\n\nBody sentence here.", "3": "7 Conclusion\n\nWe are done now."],
+            pageToTime: ["1": 0, "2": 10, "3": 20],
+            total: 30
+        )
+        let book = Audiobook.fixture(sections: [AudiobookSection(title: "Paper.pdf", startPage: 1, endPage: 3, startTime: 0)])
+
+        let chapters = AudiobookViewModel.chapters(for: book, document: TranscriptDocument(transcript: transcript))
+
+        XCTAssertEqual(chapters.map(\.title), ["Paper", "3.3 Feed-Forward Networks", "7 Conclusion"])
+        XCTAssertEqual(chapters.map(\.startTime), [0, 10, 20])
+        XCTAssertEqual(Set(chapters.map(\.id)).count, 3)
+        XCTAssertEqual(chapters.section(at: 25)?.title, "7 Conclusion")
+    }
+
+    @MainActor
+    func test_realBackendSectionsWinOverHeadings() {
+        let sections = [
+            AudiobookSection(title: "One", startPage: 1, endPage: 1, startTime: 0),
+            AudiobookSection(title: "Two", startPage: 2, endPage: 2, startTime: 10),
+        ]
+        let chapters = AudiobookViewModel.chapters(for: .fixture(sections: sections), document: .empty)
+        XCTAssertEqual(chapters.map(\.title), ["One", "Two"])
+    }
+
+    func test_chapterTitlesRejectTableRows() {
+        XCTAssertTrue(TranscriptText.isChapterTitle("6.3 English Constituency Parsing"))
+        XCTAssertFalse(TranscriptText.isChapterTitle("16 32 32 4.91 25.8"))
+        XCTAssertFalse(TranscriptText.isChapterTitle("(B)"))
     }
 
     func test_blankPageMarkersProduceNoLines() {
@@ -183,5 +230,30 @@ final class TranscriptFollowerTests: XCTestCase {
         audio.duration = 40
         XCTAssertEqual(follower.activeIndex, 0, "a longer real duration moves the same clock earlier in the text")
         XCTAssertEqual(follower.revision, revision, "duration changes must not rebuild the document")
+    }
+}
+
+extension Audiobook {
+    static func fixture(id: String = "book", title: String = "Paper.pdf", sections: [AudiobookSection] = []) -> Audiobook {
+        Audiobook(
+            bookID: id,
+            title: title,
+            createdAt: "2026-09-27T00:00:00Z",
+            pageCount: 1,
+            status: "done",
+            phaseProgress: PhaseProgress(pageDone: 1, pageTotal: 1),
+            sections: sections,
+            pageToTime: [:],
+            totalAudioSeconds: 120,
+            failedPages: [],
+            estimated: nil,
+            actual: nil,
+            engine: "kokoro",
+            voice: "af_bella",
+            speed: 1,
+            usesGeminiCleanup: false,
+            budget: nil,
+            error: nil
+        )
     }
 }

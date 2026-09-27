@@ -48,8 +48,6 @@ final class HistoryManagerTests: XCTestCase {
         XCTAssertTrue(history.history.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: storageURL.path))
 
-        // A repeat erase is a normal recovery action after an interrupted
-        // privacy erase, not an error state.
         XCTAssertNoThrow(try history.eraseAll())
     }
 }

@@ -85,6 +85,33 @@ final class PlaybackNavigationTests: XCTestCase {
         XCTAssertLessThan(audio.currentTime, 1)
     }
 
+    func test_stoppingASpeechClipRewindsItButKeepsItForReplay() {
+        let audio = AudioService(startingEngine: false)
+        audio.prepareForStream()
+        audio.playChunk(wav(seconds: 4), volume: 1)
+        audio.finishStream()
+        audio.seek(toSeconds: 3)
+
+        audio.stop()
+
+        XCTAssertEqual(audio.currentTime, 0)
+        XCTAssertEqual(audio.progress, 0)
+        XCTAssertEqual(audio.duration, 4, accuracy: 0.001)
+        XCTAssertTrue(audio.hasMedia)
+    }
+
+    func test_playbackSpeedDoesNotChangeTheNarrationSpeedForNewBooks() {
+        let audio = AudioService(startingEngine: false)
+        let viewModel = AudiobookViewModel(audio: audio)
+        let narration = viewModel.defaultBookSpeed
+        defer { viewModel.setSpeed(1) }
+
+        viewModel.setSpeed(1.75)
+
+        XCTAssertEqual(viewModel.defaultBookSpeed, narration)
+        XCTAssertEqual(Double(audio.playbackRate), 1.75, accuracy: 0.001)
+    }
+
     func test_seekWithNothingLoadedIsANoOp() {
         let audio = AudioService(startingEngine: false)
         audio.seek(toSeconds: 10)

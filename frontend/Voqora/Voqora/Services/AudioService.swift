@@ -229,10 +229,6 @@ class AudioService: NSObject, ObservableObject {
         seek(toSeconds: max(0, min(1, percentage)) * duration)
     }
 
-    func seekAudiobook(toSeconds seconds: TimeInterval) {
-        seek(toSeconds: seconds)
-    }
-
     func skip(by seconds: TimeInterval) {
         guard duration > 0 else { return }
         seek(toSeconds: max(0, min(duration, currentTime + seconds)))
@@ -491,11 +487,11 @@ class AudioService: NSObject, ObservableObject {
         audiobookTotalFrames = 0
         activeSessionID = nil
         completedSessionID = nil
+        currentTime = 0
+        timelineOrigin = 0
+        progress = 0
         if wasFileBacked {
-            currentTime = 0
-            timelineOrigin = 0
             duration = 0
-            progress = 0
         }
     }
 

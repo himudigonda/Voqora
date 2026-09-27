@@ -1,9 +1,6 @@
 @testable import Voqora
 import XCTest
 
-/// Covers the pasteboard save/restore helpers backing the Cmd+C clipboard
-/// fallback in SelectionManager. Runs against a scratch NSPasteboard (never
-/// NSPasteboard.general) so it can't disturb the real system clipboard.
 @MainActor
 final class SelectionManagerTests: XCTestCase {
     func test_snapshotAndRestore_roundTripsOriginalContent() {

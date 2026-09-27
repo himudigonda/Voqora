@@ -2,7 +2,6 @@ import AppKit
 import Combine
 import Foundation
 
-/// A thread-safe service to manage the Python backend process and handle streaming requests.
 final class BackendService: NSObject, @unchecked Sendable {
     enum LogExportError: LocalizedError {
         case noLogsAvailable
@@ -20,17 +19,11 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     private var process: Process?
     private var processPipe: Pipe?
-    /// Persistent log handle. Held for the lifetime of the backend process so
-    /// the readability handler doesn't open/close per-chunk. See HARD-013.
     private var logFileHandle: FileHandle?
     private let stateQueue = DispatchQueue(label: "com.voqora.backend.state", qos: .userInitiated)
 
-    // Thread-safe state managed by stateQueue
     private var _isLaunching = false
     private var nextLaunchAllowedAt = Date.distantPast
-    /// A short, non-sensitive diagnostic for the UI while the owned local
-    /// process is being retried. This is intentionally not a raw system error
-    /// or a path: those stay in the exported debug log.
     private var _lastLaunchFailure: String?
     private static let failedLaunchBackoff: TimeInterval = 2
     private let executableOverride: URL?
@@ -48,8 +41,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         stateQueue.sync { _lastLaunchFailure = nil }
     }
 
-    /// Internal lifecycle visibility for deterministic fast-exit regression
-    /// coverage. Product code never uses this to control backend ownership.
     var hasOwnedProcess: Bool {
         stateQueue.sync { process != nil }
     }
@@ -63,7 +54,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         case emptyAudio
     }
 
-    /// Shared session for streaming this is a
     private lazy var session: URLSession = {
         let config = URLSessionConfiguration.default
         config.httpMaximumConnectionsPerHost = 10
@@ -81,11 +71,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         super.init()
     }
 
-    // MARK: - Process Management
-
     func start() {
-        // CRITICAL: stateQueue.sync closure `return` only exits the closure, NOT this
-        // function. Use a flag so we can guard at function scope.
         var shouldStart = false
         stateQueue.sync {
             guard process == nil,
@@ -95,8 +81,6 @@ final class BackendService: NSObject, @unchecked Sendable {
             _isLaunching = true
             shouldStart = true
         }
-        // Real function-level guard — prevents repeated launch attempts while
-        // the server is already starting or during a bounded failure backoff.
         guard shouldStart else { return }
 
         let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
@@ -108,7 +92,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         let executableURL = executableOverride
             ?? appSupport.appendingPathComponent("VoqoraServer/VoqoraServer")
 
-        // Just check if LaunchManager did its job
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             stateQueue.sync {
                 _isLaunching = false
@@ -138,15 +121,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
         env["VOQORA_IPC_TOKEN"] = launchConfiguration.token
-        // `Process` launches children via posix_spawn with every file
-        // descriptor closed except the three it explicitly wires up itself
-        // (stdin/stdout/stderr) — clearing FD_CLOEXEC on the listener socket
-        // in THIS process (done in BackendConnection) has no effect on what
-        // the child inherits; verified empirically (a plain `Process` launch
-        // does not carry a non-CLOEXEC FD across at all). `standardInput` is
-        // the one Foundation-supported way to hand a child an arbitrary FD,
-        // so the listener socket rides in on fd 0 instead of an arbitrary
-        // number, and the backend is told to read it from exactly there.
         env["VOQORA_IPC_LISTENER_FD"] = "0"
         p.environment = env
         p.standardInput = FileHandle(fileDescriptor: launchConfiguration.listenerFD, closeOnDealloc: false)
@@ -161,9 +135,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
         _ = try? "".write(to: logURL, atomically: true, encoding: .utf8)
 
-        // Open the log handle ONCE for the lifetime of the process. The previous
-        // per-chunk FileHandle(forWritingTo:) was an `open()` + `seek` + `close`
-        // syscall per backend log line. See HARD-013.
         let handle = try? FileHandle(forWritingTo: logURL)
         _ = try? handle?.seekToEnd()
         stateQueue.sync {
@@ -176,18 +147,11 @@ final class BackendService: NSObject, @unchecked Sendable {
             if data.isEmpty {
                 return
             }
-            // Write via the persistent handle (serialized on stateQueue so
-            // concurrent log lines don't interleave inside a single write).
             self?.stateQueue.async {
                 if let lh = self?.logFileHandle {
                     do {
                         try lh.write(contentsOf: data)
                     } catch {
-                        // Silent here previously meant a real crash could leave
-                        // the exported backend.log empty with zero indication
-                        // why. Log once (not per-chunk — this runs on every
-                        // backend stdout line) so a full disk/permission loss
-                        // is at least visible in the app's own diagnostic log.
                         if !loggedWriteFailure {
                             loggedWriteFailure = true
                             VoqoraLog.error("BackendService", "backend.log write failed, further failures suppressed", ["failureCode": "backend_log_write_failed"])
@@ -200,8 +164,6 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
         }
 
-        // When the process exits (crash or intentional stop), clear the reference so
-        // the next heartbeat cycle can call start() again and restart it.
         p.terminationHandler = { [weak self] terminated in
             guard let self else { return }
             stateQueue.sync {
@@ -222,37 +184,16 @@ final class BackendService: NSObject, @unchecked Sendable {
             VoqoraLog.warn("BackendService", "Backend process exited", ["pid": "\(terminated.processIdentifier)", "exitStatus": "\(terminated.terminationStatus)"])
         }
 
-        // Register ownership before starting the child. A binary can fail fast
-        // (for example, after a damaged extraction); recording it only after
-        // `run()` races its termination handler and can leave the app holding a
-        // dead Process forever. Never terminate a separately running copy here.
         stateQueue.sync {
             self.process = p
             self.processPipe = pipe
         }
 
         do {
-            // LaunchManager verifies the installed runtime during extraction;
-            // repeat the check immediately before every production execution
-            // so post-install tampering fails closed.
-            //
-            // This call reaches the session-scoped validation cache, which is
-            // why it is safe to leave on this line at all. `start()` is driven
-            // by the heartbeat and runs again every 2 seconds for as long as
-            // the backend is offline; the uncached check SHA-256'd ~578 MB on
-            // the main thread on every one of those attempts, which is how a
-            // backend outage turned into sustained UI jank rather than a
-            // quietly retrying reconnect. A cache hit re-stats the tree (fast,
-            // and still fails closed on any change) instead of re-reading it.
-            // Test fixtures intentionally bypass this sealed-bundle contract.
             if executableOverride == nil {
                 let started = Date()
                 try LaunchManager.validateRuntimeForExecution(at: executableURL)
                 let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
-                // Logged because this is the exact cost that used to be paid
-                // on every heartbeat retry. A cache hit is single-digit to
-                // low-tens of ms; anything near a second means the session
-                // cache missed and the full hash ran.
                 VoqoraLog.info("BackendService", "Runtime integrity verified", ["verifyMs": "\(elapsedMs)"])
             }
             try p.run()
@@ -280,12 +221,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Terminates the current process (if any) and immediately attempts to
-    /// relaunch it. `start()` is normally a no-op whenever `process != nil` —
-    /// that's correct for an actually-healthy process, but leaves no recovery
-    /// path if the process is alive per macOS yet wedged (e.g. a deadlocked
-    /// event loop) and stops answering `/health`. Callers use this to force
-    /// a fresh process when sustained health-check failures indicate a hang.
     func forceRestart() {
         stop()
         start()
@@ -293,7 +228,6 @@ final class BackendService: NSObject, @unchecked Sendable {
 
     func stop() {
         stateQueue.sync {
-            // Close pipe readability handler to avoid file descriptor leak on restart
             processPipe?.fileHandleForReading.readabilityHandler = nil
             try? logFileHandle?.close()
             logFileHandle = nil
@@ -302,11 +236,6 @@ final class BackendService: NSObject, @unchecked Sendable {
             processPipe = nil
         }
         connection.invalidate()
-
-        // `process?.terminate()` above is intentionally scoped to the child
-        // Voqora started. Never kill every process named VoqoraServer: an
-        // installed app and a local candidate can otherwise tear each other
-        // down during ordinary testing.
     }
 
     func exportLogs() throws -> [URL] {
@@ -378,17 +307,9 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
     }
 
-    /// Fire-and-forget: ask the backend to reload the model and optionally pre-compute
-    /// the first audio segment for the given text (lookahead cache).
-    /// Returns immediately. Safe to call when model is already loaded.
-    func prewarm(text: String? = nil, voice: String? = nil, speed: Double? = nil) async {
-        guard var request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
+    func prewarm() async {
+        guard let request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
             return
-        }
-        if let text, let voice, let speed {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         }
         _ = try? await URLSession.shared.data(for: request)
     }
@@ -429,9 +350,6 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
     }
 
-    /// A local /speak response is useful only when it is a successful WAV
-    /// stream. Without this guard, a JSON error body could be handed to the
-    /// audio decoder and then be reported as a successful generation.
     static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {
         guard let http = response as? HTTPURLResponse,
               (200 ..< 300).contains(http.statusCode),
@@ -466,7 +384,6 @@ extension BackendService: URLSessionDataDelegate {
 
     func urlSession(_: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         let id = dataTask.taskIdentifier
-        // Use async dispatch to avoid blocking the URLSession delegate queue
         stateQueue.async {
             self.continuations[id]?.yield(data)
         }

@@ -11,14 +11,10 @@ struct AudiobookCardView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    /// The app's accent, resolved once per body pass — matches
-    /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
     }
 
-    /// The full five-shade ramp, needed for the cover placeholder's gradient
-    /// (opaque `subtle`/`muted` shades rather than a translucent cyan wash).
     private var accentRamp: AccentRamp {
         Palette.accentRamp(
             for: vm.accentColorID,
@@ -27,17 +23,12 @@ struct AudiobookCardView: View {
         )
     }
 
-    /// T-16: cover width/height ratio (was a hardcoded 180x252 that didn't
-    /// track the grid's adaptive column). Applied via `.aspectRatio` so the
-    /// cover fills whatever width `AudiobookLibraryView`'s
-    /// `GridItem(.adaptive(...))` offers instead of a fixed pixel width.
     static let coverAspectRatio: CGFloat = 180.0 / 252.0
 
     var status: ProcessingStatus {
         bookVM.processingState[book.bookID] ?? book.displayStatus
     }
 
-    /// Live progress fraction derived from SSE state, falling back to book model.
     private var progressFraction: Double {
         switch status {
         case let .extracting(p, t), let .cleaning(p, t), let .generating(p, t),
@@ -182,12 +173,6 @@ struct AudiobookCardView: View {
 
     private var placeholderCover: some View {
         ZStack {
-            // Opaque ramp shades rather than a translucent cyan wash — a
-            // `subtle`/`muted` fill reads the same regardless of what's
-            // behind it, and the ink below is `textPrimary` (rather than a
-            // hardcoded `.white`) precisely because `subtle`/`muted` flip
-            // from light-on-light to dark-on-dark between appearances, the
-            // same way `textPrimary` itself does.
             LinearGradient(
                 colors: [Color(accentRamp.muted), Color(accentRamp.subtle)],
                 startPoint: .topLeading, endPoint: .bottomTrailing
@@ -264,9 +249,6 @@ struct AudiobookCardView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
     }
 
-    // P8: Use TimelineView instead of a per-card Timer.publish so all processing
-    // cards share the system animation compositor — zero extra timers regardless
-    // of how many cards are visible simultaneously.
     private var processingWaveform: some View {
         TimelineView(.animation) { ctx in
             let phase = ctx.date.timeIntervalSinceReferenceDate * 2.9

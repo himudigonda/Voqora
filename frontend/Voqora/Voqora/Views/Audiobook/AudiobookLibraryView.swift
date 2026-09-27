@@ -1,14 +1,10 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Routes pushed by the library: only the player today, but easy to extend.
 enum AudiobookRoute: Hashable {
-    case player(String) // book_id
+    case player(String)
 }
 
-/// Single source-of-truth for which (mutually exclusive) sheet the library is
-/// presenting. Replaces three stacked `.sheet(item:)` modifiers — macOS only
-/// fires one of those, which was hiding the upload + completion modals.
 enum LibrarySheet: Identifiable {
     case upload(URL)
     case completion(Audiobook)
@@ -24,20 +20,12 @@ enum LibrarySheet: Identifiable {
 struct AudiobookLibraryView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var hoveringDrop = false
     @State private var showImporter = false
     @State private var searchText = ""
-    @State private var sort: SortMode = .recent
+    @AppStorage("librarySortMode") private var sort: SortMode = .recent
     @State private var showDeleteAllConfirmation = false
-
-    /// The app's accent, resolved once per body pass — matches
-    /// `VoqoraWindow.accentColor`'s pattern rather than a hardcoded `.cyan`.
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
 
     enum SortMode: String, CaseIterable, Identifiable {
         case recent, alpha, duration
@@ -69,77 +57,85 @@ struct AudiobookLibraryView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $bookVM.libraryPath) {
-            ZStack {
-                content
-                if hoveringDrop {
-                    dropOverlay.transition(.opacity)
-                }
+        ZStack {
+            switch bookVM.libraryPath.last {
+            case let .player(bookID):
+                playerDestination(bookID)
+                    .transition(.opacity)
+            case nil:
+                browser
+                    .transition(.opacity)
             }
-            .navigationTitle("Audiobooks")
-            // T-14: search field was fully wired (`filteredSorted`, `searchText`)
-            // but never rendered anywhere. Matches VaultView.swift's convention.
-            .searchable(text: $searchText, placement: .sidebar, prompt: "Search audiobooks...")
-            .toolbar { toolbarContent }
-            .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
-            .fileImporter(
-                isPresented: $showImporter,
-                allowedContentTypes: supportedDocumentTypes
-            ) { result in
-                switch result {
-                case let .success(url):
-                    stageAndPresentDocument(url)
-                case let .failure(error):
-                    bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
-                }
+        }
+        .animation(.easeInOut(duration: 0.2), value: bookVM.libraryPath)
+        .fileImporter(isPresented: $showImporter, allowedContentTypes: supportedDocumentTypes) { result in
+            switch result {
+            case let .success(url):
+                stageAndPresentDocument(url)
+            case let .failure(error):
+                bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
             }
-            // ONE sheet, driven by a computed binding that prefers the
-            // completion modal over an in-flight upload modal. Dismissal
-            // (X, Cmd+W, click-outside) routes through the appropriate
-            // VM cleanup so we never orphan a staged book on disk.
-            .sheet(item: librarySheetBinding) { sheet in
-                switch sheet {
-                case let .upload(url):
-                    UploadEstimateModal(documentURL: url)
-                        .environmentObject(vm)
-                        .environmentObject(bookVM)
-                case let .completion(book):
-                    CompletionSummaryModal(book: book, onListenNow: { openPlayer($0) })
-                        .environmentObject(vm)
-                        .environmentObject(bookVM)
-                }
+        }
+        .sheet(item: librarySheetBinding) { sheet in
+            switch sheet {
+            case let .upload(url):
+                UploadEstimateModal(documentURL: url)
+                    .environmentObject(vm)
+                    .environmentObject(bookVM)
+            case let .completion(book):
+                CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
+                    .environmentObject(vm)
+                    .environmentObject(bookVM)
             }
-            .navigationDestination(for: AudiobookRoute.self) { route in
-                switch route {
-                case let .player(bookID):
-                    if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
-                        AudiobookPlayerView(book: book)
-                            .environmentObject(vm)
-                            .environmentObject(bookVM)
-                            .navigationBarBackButtonHidden(false)
-                    } else if bookVM.hasLoadedOnce {
-                        Color.clear.onAppear { bookVM.libraryPath = [] }
-                    } else {
-                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
+        }
+        .onAppear { bookVM.startPolling() }
+        .onDisappear { bookVM.stopPolling() }
+    }
+
+    private var browser: some View {
+        ZStack {
+            content
+            if hoveringDrop {
+                dropOverlay.transition(.opacity)
             }
-            .task {
-                await bookVM.refresh()
-                bookVM.startPolling()
-            }
-            .onDisappear { bookVM.stopPolling() }
-            .alert("Delete All Audiobooks?", isPresented: $showDeleteAllConfirmation) {
-                Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This deletes every audiobook and its source file. You can't undo this action.")
-            }
+        }
+        .navigationTitle("Audiobooks")
+        .searchable(text: $searchText, placement: .toolbar, prompt: "Search Audiobooks")
+        .toolbar { toolbarContent }
+        .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
+        .alert("Delete All Audiobooks?", isPresented: $showDeleteAllConfirmation) {
+            Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This deletes every audiobook and its source file. You can't undo this action.")
         }
     }
 
-    /// Single binding the .sheet modifier uses. Reads from VM publishers,
-    /// writes back to clear them on dismiss (handles C4 — orphan cleanup).
+    private func playerDestination(_ bookID: String) -> some View {
+        Group {
+            if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
+                AudiobookPlayerView(book: book)
+            } else if bookVM.hasLoadedOnce {
+                Color.clear.onAppear { bookVM.libraryPath = [] }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle("")
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    bookVM.libraryPath = []
+                } label: {
+                    Label("Library", systemImage: "chevron.backward")
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .help("Back to Library")
+            }
+        }
+        .onExitCommand { bookVM.libraryPath = [] }
+    }
+
     private var librarySheetBinding: Binding<LibrarySheet?> {
         Binding(
             get: {
@@ -152,9 +148,7 @@ struct AudiobookLibraryView: View {
                 return nil
             },
             set: { newValue in
-                if newValue != nil {
-                    return
-                }
+                guard newValue == nil else { return }
                 if bookVM.completionSummary != nil {
                     bookVM.completionSummary = nil
                 } else if bookVM.pendingDocument != nil {
@@ -164,17 +158,11 @@ struct AudiobookLibraryView: View {
         )
     }
 
-    private func openPlayer(_ book: Audiobook) {
-        bookVM.openPlayer(for: book.bookID)
-    }
-
     @ViewBuilder
     private var content: some View {
         if !bookVM.hasLoadedOnce {
             skeletonGrid
         } else if bookVM.loadFailed, bookVM.books.isEmpty {
-            // T-17: a first-load failure (e.g. backend unreachable) must read
-            // as distinctly different from a genuinely empty library.
             loadFailedState
         } else if bookVM.books.isEmpty {
             emptyState
@@ -185,22 +173,13 @@ struct AudiobookLibraryView: View {
                 LazyVGrid(columns: columns, spacing: 32) {
                     ForEach(filteredSorted, id: \.id) { book in
                         let isProcessing = (bookVM.processingState[book.bookID] ?? book.displayStatus).isProcessing
-                        // T-15: gate only the tap-to-open action, not hit-testing for the
-                        // whole subtree. `.allowsHitTesting(!isProcessing)` here used to
-                        // disable AudiobookCardView's own `.contextMenu` too, making its
-                        // only "Cancel Processing" affordance unreachable by right-click
-                        // exactly when a card was processing.
                         Button {
                             guard !isProcessing else { return }
                             openBook(book)
                         } label: {
                             AudiobookCardView(book: book)
-                                .environmentObject(vm)
-                                .environmentObject(bookVM)
                         }
                         .buttonStyle(.plain)
-                        // P7: without contentShape, macOS hit-testing fires only over
-                        // visible pixels. This extends hover/click to the full card rect.
                         .contentShape(Rectangle())
                     }
                 }
@@ -218,10 +197,6 @@ struct AudiobookLibraryView: View {
         }
     }
 
-    /// T-14: pure trigger condition for the "no results" empty state, kept
-    /// testable without a live view per the `AudiobookPlayerLayout`/
-    /// `AudiobookPlayerView.shouldAutoScroll` precedent. A non-empty search
-    /// that matches nothing is distinct from a genuinely empty library.
     static func showsNoResultsState(searchText: String, matchCount: Int) -> Bool {
         !searchText.isEmpty && matchCount == 0
     }
@@ -229,13 +204,13 @@ struct AudiobookLibraryView: View {
     private var filteredSorted: [Audiobook] {
         var result = bookVM.books
         if !searchText.isEmpty {
-            result = result.filter { $0.title.localizedCaseInsensitiveContains(searchText) }
+            result = result.filter { $0.displayTitle.localizedCaseInsensitiveContains(searchText) }
         }
         switch sort {
         case .recent:
             result.sort { $0.createdAt > $1.createdAt }
         case .alpha:
-            result.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            result.sort { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
         case .duration:
             result.sort { $0.totalAudioSeconds > $1.totalAudioSeconds }
         }
@@ -245,9 +220,12 @@ struct AudiobookLibraryView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            // T-20: an empty title left this control unlabeled for
-            // VoiceOver. `.menu` style still shows only the selected value's
-            // icon, so the title change is accessibility-only.
+            Button { showImporter = true } label: {
+                Label("Add Book", systemImage: "plus")
+            }
+            .keyboardShortcut("o", modifiers: .command)
+            .help("Add Book")
+
             Menu {
                 Picker("Sort By", selection: $sort) {
                     ForEach(SortMode.allCases) { mode in
@@ -255,187 +233,120 @@ struct AudiobookLibraryView: View {
                     }
                 }
                 .pickerStyle(.inline)
+                Divider()
+                Button("Delete All Audiobooks…", role: .destructive) { showDeleteAllConfirmation = true }
+                    .disabled(bookVM.books.isEmpty || bookVM.deletingAllBooks)
             } label: {
-                Label("Sort By", systemImage: "arrow.up.arrow.down")
+                Label("View Options", systemImage: "ellipsis.circle")
             }
-            .help("Sort By")
-            .accessibilityLabel("Sort Audiobooks")
-
-            if !bookVM.books.isEmpty {
-                Button(role: .destructive) { showDeleteAllConfirmation = true } label: {
-                    Label("Delete All", systemImage: "trash")
-                }
-                .disabled(bookVM.deletingAllBooks)
-                // macOS collapses a toolbar `Label` to its icon, so name both
-                // of these explicitly instead of relying on the title
-                // surviving that collapse.
-                .accessibilityLabel("Delete all audiobooks")
-                .accessibilityHint("Permanently deletes every local audiobook and source document")
-            }
-
-            Button { showImporter = true } label: {
-                Label("Add Book", systemImage: "plus.circle.fill")
-            }
-            .accessibilityLabel("Add Book")
-            .accessibilityHint("Choose a document to convert into an audiobook")
+            .help("View Options")
         }
     }
 
     private func openBook(_ book: Audiobook) {
         switch book.displayStatus {
-        case .ready: openPlayer(book)
-        case .failed: bookVM.retry(book)
-        case .cancelled: bookVM.retry(book)
+        case .ready: bookVM.openPlayer(for: book.bookID)
+        case .failed, .cancelled: bookVM.retry(book)
         case .needsKey: bookVM.resumeNeedsKey(book)
-        case .needsCostApproval:
-            // The card presents an explicit Standard/local choice; tapping the
-            // grid background must never spend or silently select a path.
-            break
-        default:
-            // Processing — clicking through is a no-op for now (future: progress drawer).
-            break
+        default: break
         }
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            var url: URL?
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let u = item as? URL {
-                url = u
-            }
-            guard let url else {
-                Task { @MainActor in
+            let url = (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) } ?? (item as? URL)
+            Task { @MainActor in
+                guard let url else {
                     bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
+                    return
                 }
-                return
-            }
-            guard AudiobookImportStaging.supports(url) else {
-                Task { @MainActor in
+                guard AudiobookImportStaging.supports(url) else {
                     bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
+                    return
                 }
-                return
+                stageAndPresentDocument(url)
             }
-            Task { @MainActor in stageAndPresentDocument(url) }
         }
         return true
     }
 
-    /// A Finder-selected file can be security-scoped. Copy it before the
-    /// selection callback ends, preserving the filename inside a unique
-    /// temporary folder so two documents with the same name never overwrite each
-    /// other while they wait in the upload queue.
     private func stageAndPresentDocument(_ sourceURL: URL) {
         do {
             let stagedURL = try AudiobookImportStaging.stageDocument(from: sourceURL)
-            presentEstimate(for: stagedURL)
+            bookVM.presentEstimate(for: stagedURL, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
         } catch {
             bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
         }
     }
 
-    private func presentEstimate(for pdf: URL) {
-        // Prefer the audiobook-specific defaults from Preferences; fall back to
-        // the user's live clipboard-TTS voice if they haven't set one.
-        let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
-        let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
-        bookVM.presentEstimate(
-            for: pdf,
-            voice: voice,
-            speed: speed,
-            engine: "kokoro"
-        )
-    }
-
-    // MARK: - Drop overlay
-
     private var dropOverlay: some View {
-        DocumentDropOverlay(
-            subtitle: "PDF, Word, text, or Markdown",
-            appFont: vm.appFont
-        )
-        .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
+        DocumentDropOverlay(subtitle: "PDF, Word, text, or Markdown", appFont: vm.appFont)
+            .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
     }
-
-    // MARK: - Empty state
 
     private var emptyState: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "books.vertical")
-                .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(Palette.textTertiary.opacity(0.4))
-            VStack(spacing: 6) {
-                // Heavy black-weight kerned all-caps was the old techy
-                // aesthetic; a semibold sectionTitle with a light kern reads
-                // much closer to GRiT's tone for a headline this size.
-                Text("No Audiobooks")
-                    .font(vm.font(.sectionTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                Text("Add a PDF, Word, text, or Markdown file.")
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-            }
+        LibraryPlaceholder(
+            systemImage: "books.vertical",
+            title: "No Audiobooks",
+            message: "Add a PDF, Word, text, or Markdown file, or drop one here."
+        ) {
             Button { showImporter = true } label: {
                 Label("Add File…", systemImage: "plus")
             }
             .buttonStyle(.voqoraPrimary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Load-failure state (T-17)
-
     private var loadFailedState: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "wifi.exclamationmark")
-                .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(Palette.danger.opacity(0.6))
-            VStack(spacing: 6) {
-                Text("Couldn't Load Library")
-                    .font(vm.font(.sectionTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                Text("The speech engine isn't responding.")
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
+        LibraryPlaceholder(
+            systemImage: "exclamationmark.triangle",
+            title: "Couldn't Load Library",
+            message: "The speech engine isn't responding."
+        ) {
             Button { Task { await bookVM.refresh() } } label: {
                 Label("Try Again", systemImage: "arrow.clockwise")
             }
-            .buttonStyle(.voqoraDestructive)
+            .buttonStyle(.voqoraSecondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - No-results state (T-14)
-
     private var noResultsState: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 96, weight: .ultraLight))
-                .foregroundStyle(Palette.textTertiary.opacity(0.4))
-            VStack(spacing: 6) {
-                Text("No Results")
-                    .font(vm.font(.sectionTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                Text("No audiobooks match “\(searchText)”.")
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-            }
+        LibraryPlaceholder(
+            systemImage: "magnifyingglass",
+            title: "No Results",
+            message: "No audiobooks match “\(searchText)”."
+        ) {
+            EmptyView()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-/// Allow URL? to drive .sheet(item:)
-extension URL: @retroactive Identifiable {
-    public var id: String {
-        absoluteString
+private struct LibraryPlaceholder<Actions: View>: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    let systemImage: String
+    let title: String
+    let message: String
+    @ViewBuilder var actions: Actions
+
+    var body: some View {
+        VStack(spacing: 18) {
+            Image(systemName: systemImage)
+                .font(.system(size: 56, weight: .light))
+                .foregroundStyle(Palette.textTertiary)
+            VStack(spacing: 6) {
+                Text(title)
+                    .font(vm.font(.sectionTitle))
+                    .foregroundStyle(Palette.textPrimary)
+                Text(message)
+                    .font(vm.font(.rowTitle))
+                    .foregroundStyle(Palette.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            actions
+        }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -444,11 +355,6 @@ private struct SkeletonCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // T-16: track the grid's adaptive column instead of a hard 180pt,
-            // matching AudiobookCardView's cover fix. An opaque neutral fill
-            // (rather than `.ultraThinMaterial`) so the shimmer placeholder
-            // reads as a stable flat shape, not a smeared blur of whatever
-            // scrolls beneath it.
             RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
                 .fill(Palette.controlFill)
                 .aspectRatio(AudiobookCardView.coverAspectRatio, contentMode: .fit)

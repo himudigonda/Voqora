@@ -3,27 +3,9 @@ import Foundation
 @testable import Voqora
 import XCTest
 
-/// Integration coverage for the ONE mechanism that actually gets Voqora's
-/// app-owned loopback listener into the Python backend process.
-///
-/// Shipped 1.2.x tried to hand the listener over by clearing `FD_CLOEXEC` and
-/// telling the child its raw descriptor number in `VOQORA_IPC_LISTENER_FD`.
-/// That cannot work: `Foundation.Process` launches via `posix_spawn` and closes
-/// every descriptor except the three it wires itself, regardless of CLOEXEC
-/// state — so the backend never received the socket and the app could not talk
-/// to it. The fix hands the descriptor over as `standardInput` (fd 0) and tells
-/// the backend to read it from exactly there.
-///
-/// These tests spawn a REAL child process through the REAL `Process` API and
-/// prove both halves of that statement, so a future "cleanup" that reverts to
-/// the environment-variable approach fails here instead of in a user's hands.
 final class BackendListenerHandoffIntegrationTests: XCTestCase {
     private static let python = "/usr/bin/python3"
 
-    /// Adopts `VOQORA_IPC_LISTENER_FD` as a listening socket, serves exactly one
-    /// HTTP request, and answers 200 only when the expected IPC token header is
-    /// present. Exits non-zero when the descriptor is absent or is not a
-    /// listening socket, so an unrelated inherited descriptor cannot false-pass.
     private static let listenerChildProgram = #"""
     import os
     import socket
@@ -112,7 +94,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         process.environment = environment
 
         if attachToStandardInput {
-            // The exact production line under test.
             process.standardInput = FileHandle(fileDescriptor: listenerFD, closeOnDealloc: false)
         }
         process.standardOutput = Pipe()
@@ -151,10 +132,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Bug #3 regression
-
-    /// The production hand-off. Fails if anybody swaps `standardInput` back for
-    /// a bare environment variable.
     func test_listenerSocketReachesTheChildThroughStandardInput() throws {
         let launch = try BackendConnection.shared.prepareForLaunch()
         XCTAssertGreaterThan(launch.listenerFD, 2)
@@ -182,14 +159,9 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         XCTAssertEqual(child.terminationStatus, 0)
     }
 
-    /// The shipped-and-broken approach, pinned as broken so nobody "restores"
-    /// it. `prepareForLaunch()` already clears `FD_CLOEXEC` on this descriptor;
-    /// that is deliberately not enough.
     func test_advertisingTheRawDescriptorNumberDoesNotReachTheChild() throws {
         let launch = try BackendConnection.shared.prepareForLaunch()
 
-        // Prove the premise: CLOEXEC really is clear on the parent's copy, so
-        // the failure below is about posix_spawn, not about a stale flag.
         let flags = fcntl(launch.listenerFD, F_GETFD)
         XCTAssertGreaterThanOrEqual(flags, 0)
         XCTAssertEqual(flags & FD_CLOEXEC, 0, "BackendConnection is expected to clear FD_CLOEXEC")
@@ -215,9 +187,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         )
     }
 
-    /// A child told to adopt fd 0 when fd 0 is not a listening socket must fail
-    /// loudly rather than silently serve nothing — this is what makes the
-    /// positive test above meaningful rather than vacuous.
     func test_childRejectsAStandardInputThatIsNotAListeningSocket() throws {
         let launch = try BackendConnection.shared.prepareForLaunch()
         let pipe = Pipe()
@@ -240,11 +209,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         XCTAssertNotEqual(child.terminationStatus, 0)
     }
 
-    // MARK: - Listener lifecycle edge cases
-
-    /// A relaunch must not leave the previous generation's listener bound; the
-    /// app is the only holder of that port and a leak would eventually exhaust
-    /// descriptors across restarts.
     func test_repeatedPreparationDoesNotLeakDescriptorsOrUseTheDevPort() throws {
         var descriptors: [Int32] = []
         var ports: [Int] = []
@@ -256,9 +220,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
             ports.append(launch.baseURL.port ?? -1)
         }
 
-        // A leaked listener would force each new socket() onto a higher
-        // descriptor; a correctly-retired one is immediately reusable, so the
-        // numbers must stay flat rather than climbing once per relaunch.
         let first = try XCTUnwrap(descriptors.first)
         let highest = try XCTUnwrap(descriptors.max())
         XCTAssertLessThanOrEqual(
@@ -272,9 +233,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         XCTAssertTrue(ports.allSatisfy { $0 > 1024 }, "An ephemeral loopback port is expected, not a privileged one")
     }
 
-    /// Nothing may be requestable once the connection is invalidated — a
-    /// half-torn-down state that still hands out URLs would let a stale
-    /// backend generation be addressed.
     func test_requestsAreRefusedAfterInvalidation() throws {
         _ = try BackendConnection.shared.prepareForLaunch()
         BackendConnection.shared.invalidate()
@@ -284,7 +242,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         }
     }
 
-    /// Path shapes the app actually passes, including an already-rooted one.
     func test_requestBuilderNormalizesPathsAndNeverPutsTheTokenInTheURL() throws {
         let launch = try BackendConnection.shared.prepareForLaunch()
 
@@ -300,8 +257,6 @@ final class BackendListenerHandoffIntegrationTests: XCTestCase {
         }
     }
 
-    /// Tokens are per-launch secrets; a weak or repeated one would let any
-    /// local process talk to the backend.
     func test_perLaunchTokensAreUniqueAndFullEntropy() throws {
         var tokens = Set<String>()
         for _ in 0 ..< 16 {

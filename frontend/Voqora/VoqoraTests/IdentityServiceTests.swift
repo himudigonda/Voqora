@@ -58,8 +58,6 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertFalse(service.hasPendingRemoval)
     }
 
-    // MARK: - hasIdentity requires both name and email
-
     func test_hasIdentity_requiresBothNameAndEmail() {
         XCTAssertFalse(service.hasIdentity)
 
@@ -71,8 +69,6 @@ final class IdentityServiceTests: XCTestCase {
         service = IdentityService(defaults: defaults)
         XCTAssertTrue(service.hasIdentity)
     }
-
-    // MARK: - submitIdentity
 
     func test_submitIdentity_savesNameAndEmailOnSuccess() async throws {
         let response = try XCTUnwrap(try HTTPURLResponse(
@@ -135,8 +131,6 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertNil(defaults.object(forKey: "userIdentitySubmissionPending"))
     }
 
-    // MARK: - Name/email validation (pure)
-
     func test_nameValidator_acceptsNonEmptyTrimmedNames() {
         XCTAssertTrue(IdentityService.looksLikeName("Ada Lovelace"))
         XCTAssertTrue(IdentityService.looksLikeName("A"))
@@ -146,8 +140,6 @@ final class IdentityServiceTests: XCTestCase {
         XCTAssertFalse(IdentityService.looksLikeName(""))
         XCTAssertFalse(IdentityService.looksLikeName(String(repeating: "a", count: 121)))
     }
-
-    // MARK: - Email validation (pure)
 
     func test_emailValidator_acceptsCommonShapes() {
         XCTAssertTrue(IdentityService.looksLikeEmail("a@b.co"))
@@ -166,10 +158,7 @@ final class IdentityServiceTests: XCTestCase {
     }
 
     func test_clearEmail_resetsState() {
-        // Direct write to UserDefaults to seed state without hitting the network.
         defaults.set("seed@example.com", forKey: "userIdentityEmail")
-        // Re-read via a fresh observer of shared singleton's state is awkward;
-        // instead exercise the clear path through the public API and verify UD.
         service.clearEmail()
         XCTAssertNil(defaults.string(forKey: "userIdentityEmail"))
         XCTAssertNil(service.email)

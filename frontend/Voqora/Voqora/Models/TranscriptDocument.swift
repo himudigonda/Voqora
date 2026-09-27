@@ -63,7 +63,7 @@ nonisolated extension TranscriptDocument {
         for (index, entry) in pageStarts.enumerated() {
             let key = String(entry.page)
             let end = index + 1 < pageStarts.count ? pageStarts[index + 1].time : transcript.totalAudioSeconds
-            let narrated = transcript.pageStatus?[key] == nil
+            let narrated = !TranscriptText.silentPageStatuses.contains(transcript.pageStatus?[key] ?? "")
             if narrated, let timed = transcript.lines?[key], !timed.isEmpty {
                 builder.appendTimed(timed, page: entry.page)
             } else if let text = transcript.pages[key] {
@@ -168,6 +168,7 @@ nonisolated extension TranscriptDocument {
 
 nonisolated enum TranscriptText {
     static let pauseWeight = 6.0
+    static let silentPageStatuses: Set<String> = ["tts_failed", "duplicate"]
 
     private static let lineEnders: Set<Character> = [".", "!", "?", ":", ";", "\"", "'", ")", "]", "\u{201D}", "\u{2019}"]
 
@@ -181,6 +182,13 @@ nonisolated enum TranscriptText {
         guard !trimmed.isEmpty, trimmed.count <= 70, !trimmed.contains("\n") else { return false }
         guard let last = trimmed.last, !".!?,;:".contains(last) else { return false }
         return trimmed.split(separator: " ").count <= 12
+    }
+
+    static func isChapterTitle(_ text: String) -> Bool {
+        let visible = text.filter { !$0.isWhitespace }
+        let letters = visible.filter(\.isLetter).count
+        guard letters >= 3, let first = visible.first, first.isLetter || first.isNumber else { return false }
+        return Double(letters) / Double(visible.count) >= 0.6
     }
 
     static func joinLines(_ lines: [String]) -> String {

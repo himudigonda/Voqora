@@ -25,15 +25,23 @@ private struct SpeechPlayerView: View {
                 AccessibilityBanner()
             }
             if vm.spokenText != nil {
-                TranscriptView(follower: vm.speechFollower, fontSize: 28, anchor: 0.32) { line in
-                    vm.playSpokenText(from: line)
+                PlayerScaffold { height in
+                    SpeechArtwork(height: height)
+                } header: { alignment in
+                    PlayerTitle(title: "Selected Text", subtitle: "Narrated by \(vm.currentVoiceDisplay)", alignment: alignment)
+                } controls: { compact in
+                    SpeechControls(compact: compact)
+                } content: { fontSize in
+                    TranscriptView(follower: vm.speechFollower, fontSize: fontSize) { line in
+                        vm.playSpokenText(from: line)
+                    }
+                    .padding(.top, 24)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                SpeechControls()
-                    .frame(maxWidth: 560)
-                    .padding(.horizontal, 40)
-                    .padding(.top, 8)
-                    .padding(.bottom, 28)
+                .focusable()
+                .focusEffectDisabled()
+                .onKeyPress(.space) { vm.togglePlayback(); return .handled }
+                .onKeyPress(.leftArrow) { vm.skipSpeech(by: -10); return .handled }
+                .onKeyPress(.rightArrow) { vm.skipSpeech(by: 10); return .handled }
             } else {
                 IdleState()
             }
@@ -43,96 +51,107 @@ private struct SpeechPlayerView: View {
     }
 }
 
-private struct SpeechControls: View {
+private struct SpeechArtwork: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let height: CGFloat
 
     var body: some View {
-        VStack(spacing: 14) {
+        let playing = audio.isPlaying
+        let ramp = Palette.accentRamp(for: vm.accentColorID, appearance: colorScheme, increaseContrast: contrast == .increased)
+        let radius: CGFloat = height > 120 ? 18 : 10
+        let side = height > 120 ? height * AudiobookCardView.coverAspectRatio : height
+        ZStack {
+            LinearGradient(colors: [Color(ramp.strong), Color(ramp.muted)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            Image(systemName: "waveform")
+                .font(.system(size: side * 0.3, weight: .medium))
+                .foregroundStyle(.white.opacity(0.92))
+                .symbolEffect(.variableColor.iterative.dimInactiveLayers, isActive: playing && !reduceMotion)
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .shadow(color: .black.opacity(playing ? 0.3 : 0.18), radius: playing ? 22 : 10, y: playing ? 10 : 5)
+        .scaleEffect(playing || height <= 120 ? 1 : 0.94)
+        .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.8), value: playing)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SpeechControls: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    @EnvironmentObject var audio: AudioService
+    let compact: Bool
+
+    var body: some View {
+        VStack(spacing: compact ? 14 : 22) {
             PlaybackScrubber(
                 isEnabled: audio.hasMedia,
                 onScrub: { vm.speechFollower.scrub(to: $0) },
                 onCommit: { audio.seek(toSeconds: $0) }
             )
-            ZStack {
-                HStack {
-                    Text(vm.currentVoiceDisplay)
-                        .font(vm.appFont(size: 12, weight: .medium))
-                        .foregroundStyle(Palette.textSecondary)
-                    Spacer()
-                    if audio.canExportLastClip {
-                        Button {
-                            vm.exportLastClip()
-                        } label: {
-                            Image(systemName: "square.and.arrow.down")
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(Palette.textPrimary)
-                                .frame(width: 30, height: 30)
-                                .background(Circle().fill(Palette.controlFill))
-                        }
-                        .buttonStyle(.plain)
-                        .help("Save Clip to Desktop")
-                        .accessibilityLabel("Save Clip to Desktop")
-                    }
+            HStack(spacing: compact ? 14 : 22) {
+                TransportGlyph(systemName: "gobackward.10", label: "Back 10 Seconds") { vm.skipSpeech(by: -10) }
+                PlayerPlayButton(isPlaying: audio.isPlaying, isLoading: vm.status == .thinking, size: compact ? 48 : 64) {
+                    vm.togglePlayback()
                 }
-                HStack(spacing: 22) {
-                    TransportGlyph(systemName: "gobackward.10", label: "Back 10 Seconds") { audio.skip(by: -10) }
-                    playButton
-                    TransportGlyph(systemName: "goforward.10", label: "Forward 10 Seconds") { audio.skip(by: 10) }
+                TransportGlyph(systemName: "goforward.10", label: "Forward 10 Seconds") { vm.skipSpeech(by: 10) }
+            }
+            HStack(spacing: 10) {
+                PlayerCircleButton(systemName: "stop.fill", label: "Stop", isEnabled: audio.hasMedia) {
+                    vm.stopPlayback()
+                }
+                Spacer(minLength: 0)
+                PlayerVolumeControl()
+                Spacer(minLength: 0)
+                PlayerCircleButton(
+                    systemName: "square.and.arrow.down",
+                    label: "Save Clip to Desktop",
+                    isEnabled: audio.canExportLastClip
+                ) {
+                    vm.exportLastClip()
                 }
             }
+            .frame(maxWidth: compact ? 420 : .infinity)
         }
-    }
-
-    private var playButton: some View {
-        let playing = audio.isPlaying
-        return Button {
-            vm.togglePlayback()
-        } label: {
-            ZStack {
-                Circle().fill(vm.accentColor(scheme: colorScheme, contrast: contrast))
-                if vm.status == .thinking {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
-                } else {
-                    Image(systemName: playing ? "pause.fill" : "play.fill")
-                        .font(.system(size: 22, weight: .bold))
-                        .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
-                        .offset(x: playing ? 0 : 2)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-            }
-            .frame(width: 60, height: 60)
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-        }
-        .buttonStyle(PressScaleButtonStyle())
-        .accessibilityLabel(playing ? "Pause" : "Play")
-        .help(playing ? "Pause" : "Play")
     }
 }
 
 private struct IdleState: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @EnvironmentObject var bookVM: AudiobookViewModel
 
     private var shortcut: String {
         KeyboardShortcuts.getShortcut(for: .playText)?.description ?? "⌘⇧."
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "text.bubble")
+        VStack(spacing: 14) {
+            Image(systemName: "waveform")
                 .font(.system(size: 44, weight: .light))
                 .foregroundStyle(Palette.textTertiary)
-            Text("Nothing Playing")
-                .font(vm.appFont(size: 20, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
-            Text("Select text in any app, then press \(shortcut).")
-                .font(vm.appFont(size: 13))
-                .foregroundStyle(Palette.textSecondary)
+            VStack(spacing: 6) {
+                Text("Nothing Playing")
+                    .font(vm.appFont(size: 20, weight: .semibold))
+                    .foregroundStyle(Palette.textPrimary)
+                Text("Press \(shortcut) to hear selected text from any app")
+                    .font(vm.appFont(size: 13))
+                    .foregroundStyle(Palette.textSecondary)
+            }
+            if let book = bookVM.continueListeningBook {
+                Button {
+                    vm.openAudiobook(book.bookID)
+                } label: {
+                    Label("Resume \(book.displayTitle)", systemImage: "play.fill")
+                        .lineLimit(1)
+                }
+                .buttonStyle(.voqoraSecondary)
+                .padding(.top, 6)
+            }
         }
+        .padding(.horizontal, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

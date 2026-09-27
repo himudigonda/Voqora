@@ -1,23 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Seven-step first-launch wizard.
-///
-/// Steps:
-///   1. Welcome
-///   2. Hotkey explanation
-///   3. Accessibility permission (required for selected-text reading)
-///   4. Notifications permission
-///   5. Identity — name and email (required)
-///   6. Customize — accent color and app icon
-///   7. Privacy + done
-///
-/// Presented full-window via `.fullScreenCover`-style overlay (not `.sheet`)
-/// so the user can't dismiss it by clicking outside.
 struct OnboardingView: View {
-    /// Shared bounding box for every step's hero icon (app icon image or SF
-    /// Symbol glyph) so they read as the same size as the wizard pages by,
-    /// rather than each icon's own intrinsic/font-implied size.
     static let heroIconSize: CGFloat = 64
 
     @EnvironmentObject var coordinator: OnboardingCoordinator
@@ -52,8 +36,6 @@ struct OnboardingView: View {
         .onAppear {
             nameDraft = identity.name ?? ""
             emailDraft = identity.email ?? ""
-            // Resume where a previous session left off instead of replaying
-            // already-granted permission steps from scratch.
             step = min(max(0, coordinator.resumeStep), stepCount - 1)
             permissions.startPolling()
         }
@@ -64,8 +46,6 @@ struct OnboardingView: View {
             coordinator.recordStep(newValue)
         }
     }
-
-    // MARK: - Chrome
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -90,9 +70,6 @@ struct OnboardingView: View {
             }
         }
         .frame(maxWidth: 480)
-        // Step position was conveyed purely by capsule fill color, which
-        // VoiceOver can't perceive — a VoiceOver user got no "step 3 of 6"
-        // announcement at all from this custom-drawn control.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Progress")
         .accessibilityValue("Step \(step + 1) of \(stepCount)")
@@ -121,10 +98,6 @@ struct OnboardingView: View {
             }
             Spacer()
             if step == 2, !permissions.accessibilityGranted {
-                // Do not turn a denied or unavailable macOS permission into a
-                // dead-end product. Selected-text reading stays unavailable
-                // until it is granted, but local audiobooks and the in-app
-                // experience remain usable with the persistent dashboard cue.
                 Button(OnboardingCopy.axContinueWithoutButton) {
                     withAnimation { step += 1 }
                 }
@@ -153,8 +126,6 @@ struct OnboardingView: View {
         default: true
         }
     }
-
-    // MARK: - Step views
 
     private var stepWelcome: some View {
         VStack(spacing: 22) {
@@ -244,13 +215,6 @@ struct OnboardingView: View {
 
             VStack(spacing: 12) {
                 Button {
-                    // Once macOS has denied notifications, it will never
-                    // re-prompt from `requestNotifications()` (see
-                    // `PermissionsService`'s own comment on that) — that
-                    // left this button a silent no-op with no way inside
-                    // the wizard to reach the Notifications pane, unlike
-                    // the Accessibility step just before it. Mirrors that
-                    // step's own pattern: open the settings pane directly.
                     if permissions.notificationsStatus == .denied {
                         permissions.openNotificationSettings()
                     } else {
@@ -368,8 +332,6 @@ struct OnboardingView: View {
                 .foregroundStyle(Palette.textPrimary)
         }
     }
-
-    // MARK: - Helpers
 
     private func advance() {
         guard step == 4 else {

@@ -1,7 +1,6 @@
 @testable import Voqora
 import XCTest
 
-/// Tests for OnboardingCoordinator (S1-E3 / G6).
 @MainActor
 final class OnboardingCoordinatorTests: XCTestCase {
     private var defaults: UserDefaults!
@@ -15,8 +14,6 @@ final class OnboardingCoordinatorTests: XCTestCase {
         suiteName = "OnboardingCoordinatorTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
-        // Each test starts with a clean flag + version baseline so the
-        // upgrade-reset path doesn't fire spuriously.
         defaults.removeObject(forKey: "hasOnboarded")
         defaults.set(99, forKey: "onboardingVersion")
     }
@@ -53,7 +50,6 @@ final class OnboardingCoordinatorTests: XCTestCase {
     }
 
     func test_upgrade_resetsHasOnboardedFromOlderVersion() {
-        // Simulate an install that completed the preceding v2 onboarding.
         defaults.set(true, forKey: "hasOnboarded")
         defaults.set(2, forKey: "onboardingVersion")
 
@@ -63,8 +59,6 @@ final class OnboardingCoordinatorTests: XCTestCase {
     }
 
     func test_brokenPublicProfile_rerunsRepairedOnboardingEvenWhenAccessibilityIsGranted() {
-        // This matches an early public profile that claimed setup was complete
-        // but opened into an unusable player instead of showing the guide.
         defaults.set(true, forKey: "hasOnboarded")
         defaults.set(3, forKey: "onboardingVersion")
 
@@ -75,8 +69,6 @@ final class OnboardingCoordinatorTests: XCTestCase {
 
     func test_revokedAccessibility_keepsCompletedOnboardingAndUsesDashboardRecovery() {
         defaults.set(true, forKey: "hasOnboarded")
-        // This represents a person who already completed the current
-        // onboarding and later revokes Accessibility in System Settings.
         defaults.set(5, forKey: "onboardingVersion")
 
         let coord = makeCoordinator()

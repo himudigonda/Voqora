@@ -2,9 +2,6 @@ import Combine
 import Foundation
 import OSLog
 
-/// Identity owner for Voqora analytics. Name and email are required during
-/// onboarding before the app can be used, and are POSTed to
-/// `/api/voqora/identify` alongside the stable per-install `anon_id`.
 @MainActor
 final class IdentityService: ObservableObject {
     static let shared = IdentityService()
@@ -19,12 +16,7 @@ final class IdentityService: ObservableObject {
 
     @Published private(set) var email: String?
     @Published private(set) var name: String?
-    /// Retained for installs that queued an email removal before identity
-    /// became mandatory; there is no current UI path that sets this again.
     @Published private(set) var hasPendingRemoval: Bool
-    /// True from the moment `submitIdentity` persists locally until the
-    /// backend confirms receipt. Onboarding never waits on this — it only
-    /// gates on `hasIdentity`, which flips true immediately.
     @Published private(set) var hasPendingSubmission: Bool
 
     private var storedAnonID: String?
@@ -60,10 +52,6 @@ final class IdentityService: ObservableObject {
         email?.isEmpty == false && name?.isEmpty == false
     }
 
-    /// Validates, then persists locally and returns immediately — delivery to
-    /// the backend never blocks the caller or onboarding. A failed or offline
-    /// send is queued and retried by `retryPendingSubmission`, the same
-    /// pattern `retryPendingRemoval` already uses for email removal.
     func submitIdentity(name rawName: String, email rawEmail: String) async throws {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedEmail = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -84,10 +72,6 @@ final class IdentityService: ObservableObject {
         Task { await self.retryPendingSubmission() }
     }
 
-    /// Sends the locally saved name/email to the backend if a send is still
-    /// pending. Quiet on failure — an unavailable identity endpoint must
-    /// never interrupt onboarding or reading, so this is safe to call from
-    /// launch, from `submitIdentity`, or on a future retry timer.
     @discardableResult
     func retryPendingSubmission() async -> Bool {
         guard hasPendingSubmission, let name, let email else { return true }
@@ -153,9 +137,6 @@ final class IdentityService: ObservableObject {
         case queuedForRetry
     }
 
-    /// No product UI calls this any more — identity is mandatory. Kept for
-    /// the legacy erasure primitive it is: clears the local email first, then
-    /// attempts the independent remote-contact removal.
     func removeEmail() async -> RemovalResult {
         clearEmail()
         defaults.set(true, forKey: Self.pendingRemovalKey)
@@ -163,9 +144,6 @@ final class IdentityService: ObservableObject {
         return await retryPendingRemoval() ? .removedRemotely : .queuedForRetry
     }
 
-    /// Retry a previously requested remote-contact removal. This is quiet on
-    /// startup because an unavailable analytics endpoint must never interrupt
-    /// reading or onboarding.
     @discardableResult
     func retryPendingRemoval() async -> Bool {
         guard hasPendingRemoval else { return true }

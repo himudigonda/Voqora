@@ -4,62 +4,41 @@ import SwiftUI
 
 @main
 struct VoqoraApp: App {
-    /// 0. App Lifecycle Management
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
-    // 1. Single Sources of Truth (Services)
     @StateObject private var audio: AudioService
     @StateObject private var history: HistoryManager
     @StateObject private var launchManager: LaunchManager
 
-    /// 2. Logic Controller (ViewModel)
     @StateObject private var dashboardVM: DashboardViewModel
 
-    /// Audiobook ViewModel (own state)
     @StateObject private var audiobookVM: AudiobookViewModel
 
-    /// First-launch + onboarding state.
     @StateObject private var onboarding: OnboardingCoordinator
 
-    /// Identity (anon_id + required name/email) for analytics.
     @StateObject private var identity: IdentityService
 
-    /// Live AX + Notifications permission status. Observed by onboarding.
-    /// Uses the shared singleton so view models can schedule notifications
-    /// (audiobook ready, speaking, update available) without needing this
-    /// service injected into their initializers.
     @StateObject private var permissions = PermissionsService.shared
 
-    /// Native Sparkle 2 lifecycle. It owns background checks, verified
-    /// downloads, replacement, and relaunch instead of the former custom DMG
-    /// downloader.
     @StateObject private var updater: AppUpdater
 
-    /// Pre-notarization releases use this explicit, verified Finder handoff.
     @StateObject private var installer: GuidedInstallerService
 
-    /// 3. Backend (Kept private, managed by VM, but we own the instance to stop deinit)
     private let backend: BackendService
 
     init() {
         let runningTests = RuntimeEnvironment.isRunningTests
-        // Before any shared on-disk state is touched: reaching the log
-        // redirection below would already have destroyed the original's log.
         if !runningTests, AppDelegate.standDownIfAlreadyRunning() {
             exit(0)
         }
         if !runningTests {
-            // 1. REDIRECT FRONTEND LOGS TO FILE
             let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
 
-            // Ensure directory exists
             try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
 
             let logURL = appSupport.appendingPathComponent("frontend.log")
 
-            // "w+" truncates in place. `write(to:atomically:)` renames a temp
-            // file over the target, leaving other writers on an unlinked inode.
             freopen(logURL.path, "w+", stdout)
             freopen(logURL.path, "a+", stderr)
             setbuf(stdout, nil)
@@ -70,17 +49,8 @@ struct VoqoraApp: App {
             VoqoraLog.info("VoqoraApp", "Frontend log started", ["version": appVersion, "build": buildNumber, "os": osVersion])
         }
 
-        // Touch AppActivityMonitor.shared as early as possible — it's lazily
-        // instantiated, and NotificationCenter doesn't replay missed
-        // notifications to a late subscriber. Background work (heartbeat,
-        // audiobook poll) doesn't start until deep in an async chain
-        // (LaunchManager.prepare() completing), so without this, a
-        // didResignActiveNotification firing during that startup window
-        // would be silently dropped and isBackgrounded would stay wrong
-        // until the next activation transition.
         _ = AppActivityMonitor.shared
 
-        // Create instances
         let audioInstance = AudioService(startingEngine: !runningTests)
         let historyInstance = HistoryManager()
         let launchInstance = LaunchManager()
@@ -94,22 +64,16 @@ struct VoqoraApp: App {
             ? IdentityService(defaults: testDefaults!)
             : IdentityService.shared
 
-        // Create VM with dependency injection
         let vmInstance = DashboardViewModel(
             backend: backendInstance,
             system: systemInstance,
             audio: audioInstance,
             history: historyInstance,
-            // LaunchManager owns unpacking the bundled local server. Starting
-            // the health loop before it is ready starts a process which the
-            // extractor immediately replaces on fresh installs.
             startsBackgroundWork: false
         )
 
-        // Audiobook VM uses the same shared AudioService for playback
         let audiobookInstance = AudiobookViewModel(audio: audioInstance)
 
-        // Assign to StateObjects
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
         _launchManager = StateObject(wrappedValue: launchInstance)
@@ -120,7 +84,6 @@ struct VoqoraApp: App {
         _updater = StateObject(wrappedValue: updaterInstance)
         _installer = StateObject(wrappedValue: installerInstance)
 
-        // Wire mutual exclusion between TTS hotkey playback and audiobook playback
         vmInstance.audiobookVM = audiobookInstance
 
         backend = backendInstance
@@ -129,30 +92,16 @@ struct VoqoraApp: App {
         }
 
         if !runningTests {
-            // Don't trigger permission prompts here — the onboarding wizard
-            // gates them behind explicit buttons. SystemService still drives
-            // ducking + AppleScript permissions on first hotkey use.
             setupShortcuts(vm: vmInstance)
 
             if !RuntimeEnvironment.disablesTelemetry {
                 MetricsService.shared.trackLaunch()
-                // Start the periodic flush driver (previously embedded inside the
-                // singleton init; now externalized so the actor can stay isolated).
                 Task { @MainActor in
                     MetricsFlushDriver.shared.start()
                 }
             }
-            // A privacy removal made while offline is honoured locally first.
-            // Retry the separate server-side contact removal quietly on launch;
-            // it never depends on the anonymous-telemetry choice.
             Task { await identityInstance.retryPendingRemoval() }
-            // Onboarding's identity save never blocks on the network; retry
-            // delivering it here so an offline first launch still reaches the
-            // backend once connectivity returns.
             Task { await identityInstance.retryPendingSubmission() }
-            // Sparkle stays dormant until Voqora is notarized (see AppUpdater),
-            // so this is the only thing that tells an early-access user a
-            // newer release exists. It only checks and notifies — never downloads.
             Task { await updaterInstance.checkGitHubReleaseForUpdate() }
             checkRunningLocation()
         }
@@ -168,7 +117,6 @@ struct VoqoraApp: App {
             alert.addButton(withTitle: "Quit")
 
             if alert.runModal() == .alertFirstButtonReturn {
-                // Open Applications folder so user can drag-and-drop
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications"))
                 NSApplication.shared.terminate(nil)
             } else {
@@ -215,9 +163,6 @@ struct VoqoraApp: App {
         VoqoraLog.info("KeyboardShortcuts", "All shortcuts registered")
     }
 
-    /// Global app actions must never steal normal editing shortcuts. AppKit
-    /// exposes a field's active editor as an NSTextView, so walk the responder
-    /// chain rather than trying to infer focus from a particular SwiftUI view.
     @MainActor
     static func focusedTextInputOwnsShortcut() -> Bool {
         focusedTextInputOwnsShortcut(responder: NSApp.keyWindow?.firstResponder)
@@ -241,9 +186,6 @@ struct VoqoraApp: App {
         WindowGroup(id: "dashboard") {
             Group {
                 if RuntimeEnvironment.isRunningTests {
-                    // The test target is app-hosted so it can import internal
-                    // Swift symbols. It must not also run the product window
-                    // lifecycle.
                     EmptyView()
                 } else {
                     VoqoraWindow()
@@ -264,8 +206,6 @@ struct VoqoraApp: App {
         .handlesExternalEvents(matching: ["dashboard"])
 
         MenuBarExtra(isInserted: $showMenuBarIcon) {
-            // MARK: Playback
-
             Button {
                 Task { await dashboardVM.speakSelection() }
             } label: {
@@ -295,8 +235,6 @@ struct VoqoraApp: App {
 
             Divider()
 
-            // MARK: Quick actions
-
             Button {
                 dashboardVM.exportLastClip()
             } label: {
@@ -316,8 +254,6 @@ struct VoqoraApp: App {
             }
 
             Divider()
-
-            // MARK: Library
 
             Menu("Recent") {
                 if history.history.isEmpty {
@@ -352,8 +288,6 @@ struct VoqoraApp: App {
 
             Divider()
 
-            // MARK: App
-
             Button {
                 dashboardVM.selectedTab = "home"
                 NSApp.activate(ignoringOtherApps: true)
@@ -386,9 +320,6 @@ struct VoqoraApp: App {
 
             Button("Quit Voqora") {
                 dashboardVM.stopHeartbeat()
-                // Stop only the child process this app owns before macOS
-                // tears the process down. A detached Task can be pre-empted
-                // by termination and leave a local server behind.
                 backend.stop()
                 NSApplication.shared.terminate(nil)
             }
@@ -399,8 +330,6 @@ struct VoqoraApp: App {
             case .speaking:
                 Label("Speaking", systemImage: "waveform.circle.fill")
             default:
-                // The `.thinking`/`.speaking` cases above are `Label`s and so
-                // carry a name; the idle case is a bare image and did not.
                 Image("MenuBarIcon")
                     .accessibilityLabel("Voqora")
             }

@@ -2,11 +2,6 @@ import Foundation
 @testable import Voqora
 import XCTest
 
-/// Exercises `VoqoraLog.redactedContext` with realistic secret-bearing
-/// dictionaries. Exported `frontend.log` is a support artifact a user might
-/// attach to a bug report, so nothing here should ever reach the redacted
-/// output verbatim: a Gemini API key, the per-launch IPC token, or a
-/// filesystem path that embeds the local account name.
 final class VoqoraLogTests: XCTestCase {
     private func serialized(_ context: [String: String]) -> String {
         VoqoraLog.redactedContext(context)
@@ -22,8 +17,6 @@ final class VoqoraLogTests: XCTestCase {
     }
 
     func testGeminiKeyRedactedEvenUnderGenericKeyName() {
-        // Value-shape detection (the "AIza" prefix) must catch this even
-        // when the caller didn't use a key name like "apiKey"/"key".
         let apiKey = "AIzaSyD-fakeKeyForTestingPurposesOnly123"
         let out = serialized(["value": apiKey])
         XCTAssertFalse(out.contains(apiKey))
@@ -49,9 +42,6 @@ final class VoqoraLogTests: XCTestCase {
         XCTAssertFalse(out.contains(NSUserName()))
     }
 
-    /// Regression test: a full path embeds the local account name whether or
-    /// not the caller happened to name the field "path". Value-shape
-    /// detection (current user + home directory) must catch it either way.
     func testPathWithUsernameRedactedEvenUnderGenericKeyName() {
         let path = NSHomeDirectory() + "/Documents/Projects/Voqora/backend.log"
         let out = serialized(["detail": path])

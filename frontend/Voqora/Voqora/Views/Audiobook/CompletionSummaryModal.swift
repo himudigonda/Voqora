@@ -55,9 +55,6 @@ struct CompletionSummaryModal: View {
                     let callback = onListenNow
                     let snapshot = book
                     dismiss()
-                    // Defer the navigation push until after the sheet finishes
-                    // dismissing — pushing during dismissal can leave the
-                    // NavigationStack in a half-dismissed state on macOS.
                     Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(250))
                         callback?(snapshot)
@@ -72,18 +69,11 @@ struct CompletionSummaryModal: View {
             }
         }
         .padding(28)
-        // T-16: match UploadEstimateModal's frame so the two modals in the
-        // same upload -> completion flow don't visibly change size.
         .frame(width: 520, height: 640)
         .voqoraSurface(.floating, in: Rectangle())
         .onAppear { bouncing.toggle() }
     }
 
-    /// The backend already tracks exactly which pages failed to clean or
-    /// narrate (book.failedPages), but nothing surfaced it here — a book
-    /// with degraded pages completed with the same unqualified celebration
-    /// as a fully clean one, and the only way to discover a problem was to
-    /// open the transcript and scroll to the specific page.
     private var failedPagesWarning: some View {
         HStack(alignment: .top, spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")

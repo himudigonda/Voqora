@@ -26,9 +26,6 @@ struct PreferencesView: View {
     @State private var erasingLocalData = false
     @State private var eraseError: String?
 
-    /// The app's accent, resolved once per body pass — every row, button,
-    /// and link in this screen reads through this rather than a hardcoded
-    /// `.cyan`.
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
     }
@@ -36,7 +33,6 @@ struct PreferencesView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 32) {
-                // Header
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Preferences")
                         .font(vm.font(.pageTitle))
@@ -46,7 +42,6 @@ struct PreferencesView: View {
                 }
                 .padding(.bottom, 8)
 
-                // Section: Identity
                 PreferenceSection(title: "Identity", icon: "person.crop.circle") {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .center, spacing: 10) {
@@ -92,7 +87,6 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Notifications
                 PreferenceSection(title: "Notifications", icon: "bell.badge") {
                     VStack(alignment: .leading, spacing: 14) {
                         HStack {
@@ -141,7 +135,6 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Appearance
                 PreferenceSection(title: "Appearance", icon: "paintpalette") {
                     VStack(alignment: .leading, spacing: 20) {
                         VStack(alignment: .leading, spacing: 10) {
@@ -180,14 +173,13 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Voice Engine
                 PreferenceSection(title: "Voice Engine", icon: "cpu") {
                     VStack(spacing: 20) {
                         HStack {
                             Label("Active Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
                             Spacer()
-                            Picker("", selection: $vm.selectedVoice) {
+                            Picker("Voice", selection: $vm.selectedVoice) {
                                 ForEach(vm.availableVoices, id: \.id) { voice in
                                     Text(voice.display).tag(voice.id)
                                 }
@@ -230,7 +222,6 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Audiobooks
                 PreferenceSection(title: "Audiobooks", icon: "books.vertical") {
                     VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -286,7 +277,7 @@ struct PreferencesView: View {
                             Label("Default Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
                             Spacer()
-                            Picker("", selection: $bookVM.defaultBookVoice) {
+                            Picker("Audiobook Voice", selection: $bookVM.defaultBookVoice) {
                                 ForEach(vm.availableVoices, id: \.id) { voice in
                                     Text(voice.display).tag(voice.id)
                                 }
@@ -303,7 +294,7 @@ struct PreferencesView: View {
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Label("Default Speed", systemImage: "gauge.with.needle")
+                                Label("Narration Speed", systemImage: "gauge.with.needle")
                                     .font(vm.font(.rowTitle))
                                 Spacer()
                                 Text(String(format: "%.2fx", bookVM.defaultBookSpeed))
@@ -322,7 +313,6 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Audio Environment
                 PreferenceSection(title: "Audio Environment", icon: "hifispeaker") {
                     VStack(alignment: .leading, spacing: 16) {
                         Toggle(isOn: $vm.enableDucking) {
@@ -352,7 +342,6 @@ struct PreferencesView: View {
                     }
                 }
 
-                // Section: Keyboard Shortcuts
                 PreferenceSection(title: "Shortcuts", icon: "keyboard") {
                     VStack(spacing: 0) {
                         ShortcutRow(title: "Speak Selection", name: .playText)
@@ -375,19 +364,18 @@ struct PreferencesView: View {
                             }
                             .buttonStyle(.borderless)
                             .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.danger)
+                            .foregroundStyle(accentColor)
                         }
                     }
                 }
 
-                // Section: System & Appearance
                 PreferenceSection(title: "Application", icon: "window.badge.magnifyingglass") {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack {
                             Text("Theme")
                                 .font(vm.font(.rowTitle))
                             Spacer()
-                            Picker("", selection: $vm.appTheme) {
+                            Picker("Appearance", selection: $vm.appTheme) {
                                 Text("System").tag("system")
                                 Text("Light").tag("light")
                                 Text("Dark").tag("dark")
@@ -408,7 +396,7 @@ struct PreferencesView: View {
                             }
                             Spacer()
                             VStack(alignment: .trailing, spacing: 12) {
-                                Picker("", selection: $vm.selectedFontName) {
+                                Picker("Font", selection: $vm.selectedFontName) {
                                     Text("Google Sans").tag("Google Sans")
                                     Text("Poppins").tag("Poppins")
                                     Divider()
@@ -422,7 +410,7 @@ struct PreferencesView: View {
                                 Button {
                                     vm.showFontPanel()
                                 } label: {
-                                    Label("More Fonts...", systemImage: "textformat.size")
+                                    Label("More Fonts…", systemImage: "textformat.size")
                                         .font(vm.font(.sectionHeader))
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 6)
@@ -520,7 +508,7 @@ struct PreferencesView: View {
                             .fixedSize(horizontal: false, vertical: true)
 
                             if case .failed = installer.state {
-                                Button("Try again") { installer.reset(); installer.downloadAndOpenLatest() }
+                                Button("Try Again") { installer.reset(); installer.downloadAndOpenLatest() }
                                     .buttonStyle(.bordered)
                             }
                         }
@@ -632,8 +620,6 @@ struct PreferencesView: View {
                 return
             }
 
-            // Stop user-visible playback before removing its cache. The backend
-            // has already cancelled/deleted active book work above.
             audio.stop()
             var failures: [String] = []
             do {
@@ -653,9 +639,6 @@ struct PreferencesView: View {
                 .appendingPathComponent(bundleID, isDirectory: true)
             let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent(bundleID, isDirectory: true)
-            // These are application-owned directories. The operation is
-            // intentionally idempotent and is followed by termination so no
-            // live component can recreate data under the erased root.
             for (name, directory) in [("application support files", appSupport), ("cache files", caches)] {
                 guard fileManager.fileExists(atPath: directory.path) else { continue }
                 do {
@@ -692,10 +675,6 @@ struct ShortcutRow: View {
     }
 }
 
-/// One tappable circle in the accent-color picker, filled with `option`'s
-/// own resolved color rather than a static swatch — it re-resolves with
-/// the current color scheme and Increase Contrast, same as every other
-/// accent read in the app.
 struct AccentSwatchButton: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
@@ -732,9 +711,6 @@ struct AccentSwatchButton: View {
     }
 }
 
-/// One tappable preview in the app-icon picker. Loads the actual asset
-/// catalog image rather than redrawing the wave, so the preview can never
-/// drift from what `AppIconOption.apply()` sets as the real Dock/Finder icon.
 struct AppIconChoiceButton: View {
     @EnvironmentObject var vm: DashboardViewModel
     let option: AppIconOption

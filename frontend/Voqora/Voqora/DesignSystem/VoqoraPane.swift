@@ -1,20 +1,6 @@
-//
-//  VoqoraPane.swift
-//  Voqora
-//
-//  Shared building blocks for the sidebar's contents, matching GRiT's
-//  `GRiTPane.swift`. GRiT's own nav rail is a plain `VStack` of these rows —
-//  not a native `List` — because a `List`'s vibrancy/selection material is
-//  exactly the "glass" look this design language moves away from. Voqora's
-//  sidebar adopts the same shape so the two apps' primary navigation reads as
-//  one component.
-//
-
 import AppKit
 import SwiftUI
 
-/// The quiet label above a group of sidebar rows: small, uppercase, tracked
-/// out, so it stays legible without competing with the rows below it.
 struct PaneSectionHeader: View {
     @EnvironmentObject var vm: DashboardViewModel
     let title: String
@@ -29,7 +15,6 @@ struct PaneSectionHeader: View {
     }
 }
 
-/// A labelled group inside the sidebar: header, then rows.
 struct PaneSection<Content: View>: View {
     let title: String?
     @ViewBuilder var content: Content
@@ -49,11 +34,6 @@ struct PaneSection<Content: View>: View {
     }
 }
 
-/// A selectable row — the shape shared by every "row in a list" surface in
-/// the sidebar. Opaque accent-ramp shades for the selection/hover fill,
-/// never `accent.opacity(…)`: the sidebar sits on the ivory chrome, and a
-/// translucent tint would render differently if the same row style were ever
-/// reused over the canvas.
 struct PaneRow<Leading: View, Label: View>: View {
     let isSelected: Bool
     let action: () -> Void

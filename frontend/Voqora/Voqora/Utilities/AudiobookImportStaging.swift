@@ -1,16 +1,8 @@
 import Foundation
 
-/// Owns the short-lived local copy made from a Finder security-scoped document.
-///
-/// The audiobook backend receives the file immediately, but the estimate sheet
-/// also needs it for the cover preview. Keeping that copy in a unique folder
-/// avoids name collisions and gives cancellation one narrow, safe cleanup
-/// target.
 enum AudiobookImportStaging {
     static let directoryPrefix = "VoqoraImport-"
 
-    /// The shared product contract for every document entry point: importer,
-    /// drag and drop, upload MIME type, and analytics must agree on this set.
     nonisolated static let supportedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
     nonisolated static let supportedFormatsDescription = "PDF, TXT, DOCX, and Markdown"
 
@@ -29,10 +21,6 @@ enum AudiobookImportStaging {
         supportedExtensions.contains(sourceURL.pathExtension.lowercased())
     }
 
-    /// Strips a supported source-file extension (case-insensitive) from a
-    /// filename or book title, if present. Single source of truth for
-    /// "pretty title" display — previously copy-pasted across 5 views, 2 of
-    /// which had drifted to only strip ".pdf".
     nonisolated static func strippingSupportedExtension(from name: String) -> String {
         for ext in supportedExtensions where name.lowercased().hasSuffix(".\(ext)") {
             return String(name.dropLast(ext.count + 1))
@@ -71,9 +59,6 @@ enum AudiobookImportStaging {
         }
     }
 
-    /// Removes only a Voqora-owned import directory directly below the chosen
-    /// temporary root. A regular user file or a sibling temporary directory is
-    /// never a valid cleanup target.
     static func discard(
         _ stagedURL: URL?,
         in root: URL = FileManager.default.temporaryDirectory,

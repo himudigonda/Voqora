@@ -1,15 +1,7 @@
 @testable import Voqora
 import XCTest
 
-/// Tests for the v1.1 telemetry pipeline (S1-G6).
-///
-/// We test the static `Props.sanitizedPayload` boundary directly — that's where
-/// the privacy guarantee lives. Higher-level concerns (HTTP batching,
-/// outbox persistence) are covered by manual HAR captures listed in the
-/// sprint verification section.
 final class MetricsServiceTests: XCTestCase {
-    // MARK: - Whitelist
-
     func test_sanitizedPayload_dropsUnknownKeys() {
         let raw: [String: Any] = [
             "chars": 42,
@@ -26,10 +18,6 @@ final class MetricsServiceTests: XCTestCase {
     }
 
     func test_sanitizedPayload_rejectsBadValues() {
-        // Client validator is intentionally permissive on `voice` so a
-        // server-added voice doesn't get dropped client-side. The server
-        // re-validates against the enum (lib/voqora-validate.js). The
-        // rest of these should drop client-side.
         let raw: [String: Any] = [
             "chars": -5, // negative — drop
             "speed": 3.0, // out of [0.5, 2.0] — drop
@@ -63,8 +51,6 @@ final class MetricsServiceTests: XCTestCase {
         }
     }
 
-    // MARK: - Event names
-
     func test_eventNames_allowedSetIsClosed() {
         let known = MetricsService.Event.allowedNames
         XCTAssertEqual(known.count, 10)
@@ -77,8 +63,6 @@ final class MetricsServiceTests: XCTestCase {
         XCTAssertTrue(known.contains("installer_failed"))
         XCTAssertFalse(known.contains("anything_else"))
     }
-
-    // MARK: - Outbox persistence
 
     func test_event_roundtrip_throughSerialization() {
         let evt = MetricsService.Event(

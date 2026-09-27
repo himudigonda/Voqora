@@ -9,8 +9,6 @@ private enum LibraryLoadFailure: Error {
     case backendUnreachable
 }
 
-/// Crosses the `@Sendable` async list seam without capturing mutable local
-/// state. This keeps the regression test honest under Swift 6 concurrency.
 private actor LibraryLoadFailureSwitch {
     private var shouldFail = true
 
@@ -51,9 +49,6 @@ private actor DelayedAudioLoader {
     }
 }
 
-/// Generic ordering gate for T-8's overlapping-`refresh()` test: lets the
-/// test hold one call's `listBooks()` open until it has confirmed a second,
-/// faster call already resolved -- deterministic without a real network delay.
 private actor ResolutionGate {
     private var released = false
     private var releaseWaiter: CheckedContinuation<Void, Never>?
@@ -127,18 +122,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertFalse(audio.isPlaying)
     }
 
-    // MARK: - stopPlayback(fadeOverSeconds:) — audiobook/global-speak interruption fix
-
     func test_stopPlayback_withFade_cancelsArmedSleepTimer() {
-        // Regression: DashboardViewModel.speak() used to interrupt audiobook
-        // playback via a raw `avm.audio.fadeOutAndStop(...)` + manual
-        // `nowPlaying`/`currentTranscript` clear, bypassing stopPlayback()
-        // entirely -- including cancelSleepTimer(). An armed sleep timer kept
-        // running and later called audio.stop() on whatever became "the
-        // shared audio" next (a new TTS clip, or a subsequently started
-        // audiobook), silently killing it with no explanation. The fix adds
-        // a `fadeOverSeconds` parameter to stopPlayback() itself so the
-        // interruption path gets every other side effect for free.
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         let book = makeBook(bookID: "b1", status: "done")
         viewModel.nowPlaying = book
@@ -153,22 +137,18 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
         XCTAssertNil(viewModel.sleepTimerEndsAt)
         XCTAssertNil(viewModel.nowPlaying, "interruption must still clear nowPlaying like a normal stop")
-        XCTAssertNil(viewModel.currentTranscript)
+        XCTAssertEqual(viewModel.transcriptState, .idle)
     }
 
     func test_stopPlayback_defaultParameter_behavesExactlyAsBefore() {
-        // The no-argument call site (Stop button, etc.) must be unaffected
-        // by adding the optional fadeOverSeconds parameter.
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         viewModel.nowPlaying = makeBook(bookID: "b1")
 
         viewModel.stopPlayback()
 
         XCTAssertNil(viewModel.nowPlaying)
-        XCTAssertNil(viewModel.currentTranscript)
+        XCTAssertEqual(viewModel.transcriptState, .idle)
     }
-
-    // MARK: - libraryPollInterval (jira-cpu-ram-optimization.md T-6)
 
     func test_libraryPollInterval_foreground_matchesExistingSSECadence() {
         XCTAssertEqual(
@@ -192,8 +172,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
     }
 
-    // MARK: - sseTasks defer race (jira-audiobook-quality.md T-7)
-
     func test_subscribe_supersededSubscriptionCannotApplyEventsOrClearNewerRegistration() async {
         var continuationA: AsyncStream<[String: Any]>.Continuation!
         let streamA = AsyncStream<[String: Any]> { continuationA = $0 }
@@ -208,18 +186,12 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             }
         )
 
-        // As startProcessing()/retry() do: subscribe twice in quick
-        // succession for the same book. The first task's `defer` cleanup
-        // (delayed since URLSession cancellation isn't instant) must not
-        // fire before the second registration exists, nor clear it once it
-        // does.
         viewModel.subscribe(to: "book1")
         try? await Task.sleep(nanoseconds: 10_000_000)
         viewModel.subscribe(to: "book1")
         try? await Task.sleep(nanoseconds: 10_000_000)
         XCTAssertNotNil(viewModel.sseTasks["book1"], "a live registration must exist after the second subscribe()")
 
-        // A stale event from the superseded (first) stream must be ignored.
         continuationA.yield([
             "type": "snapshot", "status": "cleaning",
             "phase_progress": ["page_done": 1, "page_total": 10],
@@ -230,7 +202,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             "the superseded subscription must not be able to apply events"
         )
 
-        // The current (second) subscription's event must still apply.
         continuationB.yield([
             "type": "snapshot", "status": "cleaning",
             "phase_progress": ["page_done": 5, "page_total": 10],
@@ -243,16 +214,12 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertEqual(page, 5)
         XCTAssertEqual(total, 10)
 
-        // Finishing the now-superseded first stream (its `defer` firing late)
-        // must not wipe out the still-live second registration.
         continuationA.finish()
         try? await Task.sleep(nanoseconds: 15_000_000)
         XCTAssertNotNil(viewModel.sseTasks["book1"], "an older task's deferred cleanup must not clear a newer registration")
 
         continuationB.finish()
     }
-
-    // MARK: - processingState / completionSummary race guards (jira-audiobook-quality.md T-8)
 
     func test_refresh_doesNotOverwriteProcessingState_forBookWithActiveSSE() async {
         let book = makeBook(bookID: "b1", status: "cleaning", pageDone: 1, pageTotal: 10)
@@ -263,7 +230,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
         viewModel.subscribe(to: "b1")
         try? await Task.sleep(nanoseconds: 10_000_000)
-        // SSE already advanced this book further than the GET snapshot knows about.
         viewModel.processingState["b1"] = .generating(page: 9, total: 10)
 
         await viewModel.refresh()
@@ -313,8 +279,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let bookA = makeBook(bookID: "A", status: "done")
         let bookB = makeBook(bookID: "B", status: "done")
 
-        // A's "done" event is received first, B's second -- but A's fetch
-        // resolves *after* B's (simulating a slower fetchDetailWithFallback).
         let generationA = viewModel.beginCompletionFetch()
         let generationB = viewModel.beginCompletionFetch()
 
@@ -326,8 +290,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             "completionSummary must reflect the event received last (B), not whichever fetch resolved last (A)"
         )
     }
-
-    // MARK: - delete() cancels its SSE task (jira-audiobook-quality.md T-9)
 
     func test_delete_cancelsAndRemovesSSETask_lateEventIsNoOp() async {
         var continuation: AsyncStream<[String: Any]>.Continuation!
@@ -343,11 +305,8 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertNotNil(viewModel.sseTasks["b1"], "precondition: an active SSE task exists before delete()")
 
         viewModel.delete(book)
-        // sseTasks/sseGeneration are cleared synchronously by delete(), ahead
-        // of its async network-delete Task -- no need to wait for that here.
         XCTAssertNil(viewModel.sseTasks["b1"], "delete() must cancel and remove the book's SSE task")
 
-        // A late event, arriving after delete(), must be a no-op.
         continuation.yield([
             "type": "snapshot", "status": "cleaning",
             "phase_progress": ["page_done": 3, "page_total": 10],
@@ -359,8 +318,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         )
         continuation.finish()
     }
-
-    // MARK: - completion-mis-attribution mitigation (jira-audiobook-quality.md T-10)
 
     func test_completionObserver_attributesToTheSessionThatCompleted_notCurrentNowPlaying() {
         let bookPosKeyA = "bookPos_t10-book-a"
@@ -377,12 +334,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         UserDefaults.standard.set(42.0, forKey: bookPosKeyA)
         UserDefaults.standard.set(7.0, forKey: bookPosKeyB)
 
-        // Simulate: book A's natural-completion signal was scheduled with A's
-        // identity captured (AudioService's own internal step, mirrored here
-        // by setting completedSessionID directly)...
         audio.completedSessionID = "t10-book-a"
-        // ...but by the time the sink actually observes it, the user has
-        // already started book B -- nowPlaying has moved on.
         viewModel.nowPlaying = makeBook(bookID: "t10-book-b")
 
         audio.playbackCompleted = true
@@ -396,8 +348,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             "book B's resume position must be untouched -- it did not complete"
         )
     }
-
-    // MARK: - Distinct library-load-failure state (jira-audiobook-quality.md T-17)
 
     func test_refresh_catchPath_setsLoadFailedFlag() async {
         let viewModel = AudiobookViewModel(
@@ -435,8 +385,6 @@ final class AudiobookPlaybackStateTests: XCTestCase {
 
         XCTAssertFalse(viewModel.loadFailed, "a subsequent successful refresh() must clear the flag")
     }
-
-    // MARK: - "sectioning" status gap (jira-audiobook-quality.md T-6)
 
     func test_displayStatus_sectioning_returnsDistinctCase_notQueued() {
         let book = makeBook(status: "sectioning", pageDone: 3, pageTotal: 10)

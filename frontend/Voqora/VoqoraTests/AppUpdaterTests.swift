@@ -35,12 +35,6 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertNil(updater.updateStatusMessage)
     }
 
-    // MARK: - Opportunistic GitHub check throttle
-
-    /// The About tab fires a check every time it appears, and its view is torn
-    /// down and rebuilt on every tab switch. Without this throttle each visit
-    /// re-issued a 12-second-timeout request for an answer that had not moved,
-    /// which is what made About the slowest tab in the app to open.
     func test_gitHubCheckThrottleAllowsFirstCheckThenSuppressesRepeats() {
         let now = Date()
 
@@ -87,10 +81,6 @@ final class AppUpdaterTests: XCTestCase {
         )
     }
 
-    /// A failed check must not stamp the throttle — otherwise one offline
-    /// moment would silence update checks for the rest of the hour. The stamp
-    /// is only written after a decoded 2xx response, so a test-runner no-op
-    /// (which returns before any request) leaves the throttle open.
     func test_aCheckThatNeverReachedGitHubLeavesTheThrottleOpen() async {
         let updater = AppUpdater()
         await updater.checkGitHubReleaseForUpdateIfStale()
@@ -106,7 +96,6 @@ final class AppUpdaterTests: XCTestCase {
         XCTAssertTrue(AppUpdater.isVersion("1.0.1", newerThan: "1.0.0"))
         XCTAssertTrue(AppUpdater.isVersion("1.1.0", newerThan: "1.0.9"))
         XCTAssertTrue(AppUpdater.isVersion("2.0.0", newerThan: "1.9.9"))
-        // Numeric comparison, not lexical — "1.0.10" must beat "1.0.9".
         XCTAssertTrue(AppUpdater.isVersion("1.0.10", newerThan: "1.0.9"))
     }
 
@@ -117,16 +106,12 @@ final class AppUpdaterTests: XCTestCase {
     }
 
     func test_isVersionNewerThan_handlesMissingComponents() {
-        // "1.1" vs "1.0.5" — missing patch component defaults to 0.
         XCTAssertTrue(AppUpdater.isVersion("1.1", newerThan: "1.0.5"))
         XCTAssertFalse(AppUpdater.isVersion("1.0", newerThan: "1.0.0"))
     }
 
     func test_checkGitHubReleaseForUpdate_isNoOpInTestRunner() async {
         let updater = AppUpdater()
-        // Same XCTestCase guard as PermissionsService's network-touching
-        // methods — a real GitHub API call during a unit test run would be
-        // flaky, slow, and rate-limited.
         await updater.checkGitHubReleaseForUpdate()
         XCTAssertNil(updater.latestGitHubVersion)
     }

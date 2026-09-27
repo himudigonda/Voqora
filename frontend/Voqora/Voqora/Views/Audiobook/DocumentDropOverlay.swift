@@ -1,15 +1,6 @@
 import SwiftUI
 
-/// Shared "drop a document here" overlay. Shown both by AudiobookLibraryView
-/// (dropping onto the library) and VoqoraWindow (dropping from anywhere in
-/// the app) — previously two independent implementations with drifted icon
-/// size (72 vs 64), corner radius (24 vs 22), and padding (48 vs 40), so the
-/// overlay visibly changed shape depending on which tab the drop landed on.
 struct DocumentDropOverlay: View {
-    // Not passed in by either call site (AudiobookLibraryView, VoqoraWindow)
-    // — both already sit under the app root's `.environmentObject(dashboardVM)`,
-    // so this resolves the same accent they'd otherwise have to thread through
-    // an unchanged initializer.
     @EnvironmentObject var vm: DashboardViewModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast

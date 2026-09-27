@@ -1,8 +1,6 @@
 import Foundation
 import Security
 
-/// Minimal Keychain wrapper for sensitive strings.
-/// Uses kSecAttrAccessibleAfterFirstUnlock so background relaunch can read.
 enum KeychainKey: String, CaseIterable {
     case geminiAPIKey = "com.himudigonda.Voqora.gemini_api_key"
     case sessionToken = "com.himudigonda.Voqora.session_token"
@@ -16,7 +14,6 @@ enum KeychainService {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key.rawValue,
         ]
-        // Delete existing then add (simpler than SecItemUpdate's attribute dance).
         SecItemDelete(query as CFDictionary)
 
         var addQuery = query

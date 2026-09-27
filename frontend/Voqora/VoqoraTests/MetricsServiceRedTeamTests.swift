@@ -1,32 +1,7 @@
 @testable import Voqora
 import XCTest
 
-/// Red-team tests — adversarial payloads MUST be dropped before
-/// `MetricsService` ever hands a request to URLSession.
-///
-/// This file is the **load-bearing** privacy test in the Swift app. If any
-/// test in this file regresses, the public PRIVACY.md claim no longer
-/// holds. Treat additions to this file as you would a security review:
-/// every new event-shape or props key needs an adversarial case here.
-///
-/// The taxonomy of attacks we defend against:
-///   1. Obvious leak keys: `text`, `email`, `prompt`, `content`, `body`.
-///   2. Unicode lookalikes: `tеxt` (Cyrillic 'е'), zero-width characters.
-///   3. Casing tricks: `Text`, `TEXT`, `tExt`.
-///   4. Nested structures: dicts containing `text`, arrays of strings.
-///   5. Encoded payloads: base64-blobbed prose under any key.
-///   6. Reserved/internal keys that could overwrite metadata: `event`, `ts`,
-///      `anon_id`, `app_version`, `platform`.
-///   7. Out-of-spec value shapes for allowed keys (handled by Props validators).
-///
-/// We assert in two ways:
-///   - Whitelist filter output contains only allowed keys.
-///   - Byte-wise: serialized JSON of the cleaned event contains none of the
-///     adversarial string values.
 final class MetricsServiceRedTeamTests: XCTestCase {
-    // MARK: - The adversarial taxonomy
-
-    /// Strings we must never see in outbound JSON.
     private let secrets: [String] = [
         "This is the user's private text.",
         "user@example.com",
@@ -36,8 +11,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         "../../etc/passwd",
         "OPENAI_API_KEY=sk-test",
     ]
-
-    // MARK: - Obvious leak keys
 
     func test_redTeam_obviousLeakKeysAllDropped() {
         let raw: [String: Any] = [
@@ -57,11 +30,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertEqual(cleaned.count, 0, "every adversarial key MUST be dropped")
     }
 
-    // MARK: - Unicode lookalikes / casing tricks
-
     func test_redTeam_unicodeLookalikeKeysDropped() {
-        // 'tеxt' uses Cyrillic 'е' (U+0435), not Latin 'e' (U+0065). A naive
-        // string filter would let this through; the closed allowlist must not.
         let raw: [String: Any] = [
             "tеxt": secrets[0], // Cyrillic
             "te\u{200B}xt": secrets[0], // zero-width space
@@ -82,8 +51,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertEqual(cleaned.count, 0, "the allowlist is case-sensitive — only 'voice' (lower) lets a string through")
     }
 
-    // MARK: - Nested structures hiding leaks
-
     func test_redTeam_nestedDictUnderUnknownKeyDropped() {
         let raw: [String: Any] = [
             "metadata": [
@@ -103,8 +70,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertEqual(cleaned.count, 0)
     }
 
-    // MARK: - Encoded / disguised payloads
-
     func test_redTeam_base64BlobUnderUnknownKeyDropped() {
         let blob = Data(secrets[0].utf8).base64EncodedString()
         let raw: [String: Any] = [
@@ -115,11 +80,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertEqual(cleaned.count, 0)
     }
 
-    // MARK: - Server-reserved keys must not be hijacked through props
-
     func test_redTeam_reservedTopLevelKeysIgnoredInProps() {
-        // Even if an attacker tries to overwrite the outbox's top-level
-        // shape via props, those keys aren't in the allowlist, so they drop.
         let raw: [String: Any] = [
             "event": "definitely_not_allowed",
             "ts": "1970-01-01T00:00:00Z",
@@ -130,8 +91,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertEqual(cleaned.count, 0)
     }
-
-    // MARK: - Out-of-spec values for allowed keys
 
     func test_redTeam_allowedKeysWithAdversarialValues() {
         let raw: [String: Any] = [
@@ -150,17 +109,13 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertNil(cleaned["pages"])
         XCTAssertNil(cleaned["file_kind"])
         XCTAssertNil(cleaned["book_id_hash"])
-        // NaN: validators check `>= 0` which is false for NaN → drop
         XCTAssertNil(cleaned["seconds_played"])
     }
-
-    // MARK: - Byte-wise: serialized JSON contains no leaked content
 
     func test_redTeam_serializedEventBytesContainNoAdversarialContent() throws {
         let raw: [String: Any] = [
             "chars": 10,
             "voice": "af_bella",
-            // All of these MUST be filtered before serialization.
             "text": secrets[0],
             "email": secrets[1],
             "prompt": secrets[2],
@@ -181,11 +136,9 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             return
         }
 
-        // The output should contain the allowed keys.
         XCTAssertTrue(bytes.contains("\"voice\""))
         XCTAssertTrue(bytes.contains("\"chars\""))
 
-        // The output MUST NOT contain any of the adversarial values.
         for secret in secrets {
             XCTAssertFalse(
                 bytes.contains(secret),
@@ -193,7 +146,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             )
         }
 
-        // Nor the adversarial keys.
         for badKey in ["text", "email", "prompt", "metadata", "user_selection", "Text", "tеxt"] {
             XCTAssertFalse(
                 bytes.contains("\"\(badKey)\":"),
@@ -201,8 +153,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
             )
         }
     }
-
-    // MARK: - Event name closed-set
 
     func test_redTeam_unknownEventNamesAreRejectedFromOutbox() {
         let attacker: [String: Any] = [
@@ -230,8 +180,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertNil(restored?.props["email"])
     }
 
-    // MARK: - Empty + nil tolerance
-
     func test_redTeam_emptyPropsProducesEmptyDict() {
         let cleaned = MetricsService.Props.sanitizedPayload([:])
         XCTAssertEqual(cleaned.count, 0)
@@ -245,7 +193,6 @@ final class MetricsServiceRedTeamTests: XCTestCase {
 }
 
 private extension String {
-    /// 64-char string starting with the receiver, padded with 'X' (non-hex).
     func paddedToFiftyFour() -> String {
         let pad = String(repeating: "X", count: 64 - count)
         return self + pad

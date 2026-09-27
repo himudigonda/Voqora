@@ -32,7 +32,7 @@ struct NowPlayingBar: View {
         } title: {
             Text(book.displayTitle)
         } subtitle: {
-            Text(book.subtitle(at: audio.currentTime))
+            Text(book.subtitle(at: audio.currentTime, chapters: bookVM.chapters(for: book)))
         }
     }
 }

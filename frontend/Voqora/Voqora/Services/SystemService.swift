@@ -1,15 +1,11 @@
 import AppKit
 import Foundation
 
-/// Opt-in media ducking which restores each player's *actual* prior volume.
-/// The work stays on one queue because playback notifications can arrive in
-/// rapid stop/start succession and AppleScript must not race its snapshots.
 final class SystemService {
     private let queue = DispatchQueue(label: "com.himudigonda.Voqora.ducking")
     private var savedVolumes: [String: Int] = [:]
     private var isDucked = false
 
-    /// Naming an uninstalled app anywhere in the AppleScript source pops "Where is <App>?" at compile time, even inside a never-executed `tell` block.
     private static let duckableApps: [(name: String, bundleID: String)] = [
         ("Music", "com.apple.Music"),
         ("Spotify", "com.spotify.client"),

@@ -4,23 +4,6 @@ import CryptoKit
 @testable import Voqora
 import XCTest
 
-/// Pure-logic state-machine tests for DashboardViewModel.
-///
-/// These tests pin the most user-visible behaviors that don't require a
-/// running backend:
-///   - togglePlayback error path when nothing has been spoken yet
-///   - currentVoiceDisplay formatting
-///   - isOnline reflecting backend state
-///   - Status enum coverage
-///
-/// HARD-044 (the planned full BackendServiceProtocol / AudioServiceProtocol
-/// dependency-injection refactor) was scoped down to focused public-surface
-/// tests instead. Reasoning: the speak() / streamAudio integration path is
-/// already exercised end-to-end via manual launch + the backend's own
-/// streaming-contract tests; adding mock-everything protocols for
-/// 1,200 lines of frontend would cost more in adapter glue than it
-/// would catch in regressions. The behaviors below are the ones a real
-/// user trips most often.
 @MainActor
 final class DashboardViewModelTests: XCTestCase {
     private var testDefaults: UserDefaults!
@@ -45,17 +28,12 @@ final class DashboardViewModelTests: XCTestCase {
 
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
         defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
-        // v6 could already be recorded by an early local build without
-        // actually applying the Bella default before the voice model initialized.
         defaults.set(6, forKey: "voiceDefaultsMigrationVersion")
 
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
         XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
 
-        // A short-lived pre-release could persist the migration marker before
-        // storing Bella. The marker must not leave this public-only build
-        // displaying a voice it cannot actually offer.
         defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
         defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
         defaults.set(8, forKey: "voiceDefaultsMigrationVersion")
@@ -107,8 +85,6 @@ final class DashboardViewModelTests: XCTestCase {
         vm.startBackgroundWork()
         XCTAssertTrue(vm.backgroundWorkStarted)
 
-        // A second window appearance must not create another health loop or
-        // prewarm subscription.
         vm.startBackgroundWork()
         XCTAssertTrue(vm.backgroundWorkStarted)
         vm.stopHeartbeat()
@@ -263,11 +239,8 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertThrowsError(try LaunchManager.validateInstalledRuntime(at: runtime, manifest: manifest))
     }
 
-    // MARK: - togglePlayback error path
-
     func test_togglePlayback_with_zero_duration_sets_error() {
         let vm = makeVM()
-        // Fresh AudioService starts with duration == 0 (no buffer scheduled).
         XCTAssertEqual(vm.audio.duration, 0)
 
         vm.togglePlayback()
@@ -288,20 +261,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.status, .ready)
     }
 
-    /// Regression: `NowPlayingBar`'s stop ("xmark") button used to call
-    /// `AudiobookViewModel.stopPlayback()` directly, bypassing this
-    /// ViewModel's own `stopPlayback()` entirely. A manual mid-book stop is
-    /// not a natural completion, so `audio.playbackCompleted` stays false and
-    /// the `audio.$isPlaying` sink (see `setupBindings()`) resolves `status`
-    /// to `.paused` rather than `.ready` -- and nothing ever moved it off
-    /// `.paused` again once `nowPlaying` went nil, leaving `VoqoraWindow`'s
-    /// `miniPlayerHUD` ("PAUSED", stale dashboard-TTS history text) stuck
-    /// showing on every non-home tab indefinitely. The fix routes that
-    /// button through `vm.stopPlayback()` (this method), which delegates to
-    /// `audiobookVM.stopPlayback()` for the actual teardown but also resets
-    /// `status` back to `.ready` afterward. This test exercises that full
-    /// integration path -- a shared `AudioService` between a `DashboardViewModel`
-    /// and its `audiobookVM`, exactly as `VoqoraApp` wires them.
     func test_stopPlayback_whenAudiobookPlaying_resetsDashboardStatusToReady() {
         let audio = AudioService(startingEngine: false)
         let vm = DashboardViewModel(
@@ -335,14 +294,9 @@ final class DashboardViewModelTests: XCTestCase {
             budget: nil,
             error: nil
         )
-        // Simulate the audiobook actually playing -- the sink flips `status`
-        // to `.speaking` exactly as it would for a real playing audiobook
-        // (see the `miniPlayerHUD` gating comment: `status` is genuinely
-        // ambiguous between TTS and audiobook playback).
         audio.isPlaying = true
         XCTAssertEqual(vm.status, .speaking, "precondition: sink reports speaking while audio.isPlaying")
 
-        // A manual stop before the book naturally ends.
         vm.stopPlayback()
 
         XCTAssertNil(audiobookVM.nowPlaying, "the audiobook must actually stop")
@@ -365,8 +319,6 @@ final class DashboardViewModelTests: XCTestCase {
         let vm = makeVM()
         vm.togglePlayback() // .error #1
         let firstGeneration = vm.errorResetGeneration
-        // The HARD-021 fix cancels the prior errorResetTask; re-triggering
-        // shouldn't leak a second timer.
         vm.togglePlayback() // .error #2
         let secondGeneration = vm.errorResetGeneration
 
@@ -374,18 +326,14 @@ final class DashboardViewModelTests: XCTestCase {
             XCTFail("expected .error after two toggles; got \(vm.status)")
         }
 
-        // A stale reset may wake up, but cannot clear a newer error.
         vm.resetPlaybackError(for: firstGeneration)
         if case .error = vm.status {} else {
             XCTFail("the cancelled reset cleared the second error too early")
         }
 
-        // The current reset must still return to .ready.
         vm.resetPlaybackError(for: secondGeneration)
         XCTAssertEqual(vm.status, .ready)
     }
-
-    // MARK: - currentVoiceDisplay
 
     func test_currentVoiceDisplay_humanizes_voice_id() {
         let vm = makeVM()
@@ -406,8 +354,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(restored.selectedVoice, "bf_emma")
     }
 
-    // MARK: - isOnline
-
     func test_isOnline_reflects_isBackendOnline() {
         let vm = makeVM()
         XCTAssertFalse(vm.isOnline)
@@ -417,16 +363,12 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(vm.isOnline)
     }
 
-    // MARK: - status equality (covers the Equatable conformance for SwiftUI)
-
     func test_status_equality_for_all_cases() {
         XCTAssertEqual(AppStatus.ready, AppStatus.ready)
         XCTAssertEqual(AppStatus.error("hi"), AppStatus.error("hi"))
         XCTAssertNotEqual(AppStatus.error("a"), AppStatus.error("b"))
         XCTAssertNotEqual(AppStatus.ready, AppStatus.speaking)
     }
-
-    // MARK: - heartbeatDelay (jira-cpu-ram-optimization.md T-5)
 
     func test_heartbeatDelay_foreground_matchesExistingOnlineOfflineCadence() {
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: true, isBackgrounded: false), 5_000_000_000)
@@ -437,8 +379,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: true, isBackgrounded: true), 30_000_000_000)
         XCTAssertEqual(DashboardViewModel.heartbeatDelay(isOnline: false, isBackgrounded: true), 30_000_000_000)
     }
-
-    // MARK: - heartbeatOutcome (single-poll-miss no longer kills playback)
 
     func test_heartbeatOutcome_singleMissWhileOnline_isDebouncedNotReportedOffline() {
         let outcome = DashboardViewModel.heartbeatOutcome(
@@ -487,8 +427,6 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertFalse(justPast.shouldForceRestart, "should not fire again until the next interval boundary")
     }
 
-    // MARK: - shouldPrewarmOnPasteboardChange (content-blind clipboard prewarm)
-
     func test_shouldPrewarmOnPasteboardChange_firesOnNewTextCopyWhileColdAndOnline() {
         XCTAssertTrue(DashboardViewModel.shouldPrewarmOnPasteboardChange(
             currentChangeCount: 2, lastChangeCount: 1,
@@ -497,8 +435,6 @@ final class DashboardViewModelTests: XCTestCase {
     }
 
     func test_shouldPrewarmOnPasteboardChange_skipsWhenModelAlreadyLoaded() {
-        // The core "don't burn CPU for no reason" guard: once warm, repeated
-        // copies during a session are free no-ops until the backend idle-unloads.
         XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
             currentChangeCount: 2, lastChangeCount: 1,
             isBackendOnline: true, isModelLoaded: true, hasReadableStringContent: true
@@ -520,8 +456,6 @@ final class DashboardViewModelTests: XCTestCase {
     }
 
     func test_shouldPrewarmOnPasteboardChange_skipsNonTextCopiesLikeImagesOrFiles() {
-        // Only the declared pasteboard type is checked here (never content),
-        // so an image/file copy shouldn't trigger a pointless model load.
         XCTAssertFalse(DashboardViewModel.shouldPrewarmOnPasteboardChange(
             currentChangeCount: 2, lastChangeCount: 1,
             isBackendOnline: true, isModelLoaded: false, hasReadableStringContent: false

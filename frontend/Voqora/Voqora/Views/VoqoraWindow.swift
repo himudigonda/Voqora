@@ -13,45 +13,17 @@ struct VoqoraWindow: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
-    /// Tracked so the startup prepare() work can be cancelled if the window
-    /// disappears before it finishes — previously an unstructured `Task` with
-    /// no cancellation, harmless only because of downstream idempotency guards.
     @State private var launchTask: Task<Void, Never>?
 
-    /// The app's accent, resolved once per body pass — GRiT's own rows,
-    /// buttons and links all read through this same call rather than a
-    /// hardcoded `.cyan`.
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
     }
 
     var body: some View {
         NavigationSplitView {
-            // A `ZStack` of two independently top/bottom-pinned stacks,
-            // NOT a single `VStack` with an interior `Spacer()` — on this
-            // machine, `NavigationSplitView`'s sidebar column was observed
-            // proposing a wildly-oversized height to its content (an
-            // absolute ~1500-1600pt, independent of the column's real
-            // on-screen size), which a flexible `Spacer()` dutifully
-            // expanded to fill, pushing the branding header off the top of
-            // the visible window and the preferences/attribution block off
-            // the bottom. Reproduced on unmodified pre-redesign code and
-            // across Debug/Release, so it isn't specific to this file's own
-            // styling — but pinning each block to its own edge via
-            // `.frame(maxHeight: .infinity, alignment:)` instead of relying
-            // on `Spacer()` to negotiate the split sidesteps it regardless
-            // of root cause.
             ZStack {
                 VStack(alignment: .leading, spacing: 0) {
-                    // APP BRANDING HEADER
                     HStack(spacing: DesignTokens.Spacing.md) {
-                        // NOT `NSApplication.shared.applicationIconImage` —
-                        // that property isn't Combine/SwiftUI-observable, so
-                        // this row never re-rendered when the user picked a
-                        // different icon in Preferences even though the
-                        // Dock/Finder icon itself changed correctly. Reading
-                        // through `vm.appIconID` (an `@AppStorage` on the
-                        // already-observed view model) makes this reactive.
                         Image(nsImage: NSImage(named: vm.appIconID.assetName) ?? NSApplication.shared.applicationIconImage)
                             .resizable()
                             .interpolation(.high)
@@ -71,7 +43,6 @@ struct VoqoraWindow: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
 
                 VStack(spacing: 0) {
-                    // SYSTEM / PREFERENCES AT BOTTOM
                     VStack(spacing: DesignTokens.Spacing.xs) {
                         Rectangle()
                             .fill(Palette.separator)
@@ -92,11 +63,6 @@ struct VoqoraWindow: View {
                         .accessibilityLabel("Preferences")
                         .accessibilityAddTraits(vm.selectedTab == "preferences" ? [.isSelected] : [])
 
-                        // Replaces the old sidebar-footer "DEVELOPED BY" block
-                        // (name, three link icons, cramped into the nav rail)
-                        // with a single row into a proper About screen that
-                        // carries version/build, an update check, and the
-                        // same credit links with room to breathe.
                         PaneRow(isSelected: vm.selectedTab == "about", action: {
                             vm.selectedTab = "about"
                         }) {
@@ -119,30 +85,16 @@ struct VoqoraWindow: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             ZStack(alignment: .bottom) {
-                // MAIN CONTENT
                 detailContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
 
-                // Global drop overlay shown across any non-Audiobooks tab when a supported document is hovering.
                 if globalDropHovering, vm.selectedTab != "books" {
                     globalDropOverlay
                         .transition(.opacity)
                 }
 
-                if vm.selectedTab != "home" {
-                    if let playing = bookVM.nowPlaying {
-                        if !bookVM.isPlayerViewActive {
-                            NowPlayingBar(book: playing)
-                                .transition(.move(edge: .bottom).combined(with: .opacity))
-                        }
-                    } else if vm.spokenText != nil, vm.status == .speaking || vm.status == .paused || vm.status == .thinking {
-                        SpeechNowPlayingBar()
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
-                }
-
-                // Toast / banner — top of detail pane.
                 VStack {
                     AudiobookToastView()
                         .environmentObject(vm)
@@ -154,27 +106,11 @@ struct VoqoraWindow: View {
             .background(adaptiveBackdrop)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: bookVM.isNowPlayingBarVisible)
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.status)
-            // Once the audiobook tab pushes its player via
-            // `.navigationDestination`, `NavigationSplitView`'s detail
-            // column ties its internal navigation-stack identity to the
-            // structural position of this outer `ZStack` — not to whatever
-            // `detailContent` produces underneath it — so it kept showing
-            // the pushed player on every other tab regardless of
-            // `selectedTab` changing correctly inside `detailContent`
-            // (confirmed with instrumentation: the `switch` there always
-            // picked the right case). Re-identifying this outer view on
-            // every tab change is what actually forces the column to
-            // rebuild and drop the stale push.
-            .id(vm.selectedTab)
         }
         .frame(minWidth: 800, minHeight: 600)
-        // So standard system controls (Toggle, Slider, focus rings, plain
-        // `.buttonStyle(.borderedProminent)` buttons) pick up the chosen
-        // accent ramp too, not just views explicitly styled against it.
         .tint(accentColor)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
-            // Prepare backend if needed
             launchTask = Task {
                 await launchManager.prepare()
                 guard !Task.isCancelled else { return }
@@ -183,38 +119,14 @@ struct VoqoraWindow: View {
                 }
             }
 
-            // First-launch onboarding is the highest-priority surface. It
-            // must not compete with a backend loading curtain or the legacy
-            // migration alert, otherwise a fresh install can look frozen.
             if onboarding.needsOnboarding {
                 DispatchQueue.main.async {
                     showOnboarding = true
                 }
             } else if !permissions.accessibilityGranted {
-                // NOT `permissions.requestAccessibility()` — that force-opens
-                // System Settings' Accessibility pane, and this branch runs
-                // on every single launch a completed setup still lacks the
-                // permission, including for someone who deliberately chose
-                // "Continue without access" in the wizard on the explicit
-                // promise (`OnboardingCopy.swift`) that they could enable it
-                // later in Preferences. Doing that unconditionally on every
-                // launch broke that promise into a repeating, unprompted
-                // System Settings pop-open — exactly the kind of behavior a
-                // public release can't ship. `refreshAccessibility()` only
-                // updates the published status so the dashboard's own
-                // persistent banner (which already owns a manual "Open
-                // Settings" button) can react to it; nothing here yanks focus
-                // away from the app.
                 permissions.refreshAccessibility()
             }
 
-            // A returning user (onboarding already complete) whose bundle
-            // version differs from the last one this profile recorded just
-            // got updated — land on About so they see what changed and that
-            // the credit links still work, same destination first-time users
-            // reach right after the wizard closes below. `lastSeenAppVersion`
-            // starts empty, so a fresh install's own first launch never
-            // matches this — only a version CHANGE does.
             let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
             if !onboarding.needsOnboarding, !vm.lastSeenAppVersion.isEmpty, vm.lastSeenAppVersion != currentVersion {
                 vm.selectedTab = "about"
@@ -227,15 +139,12 @@ struct VoqoraWindow: View {
             launchTask?.cancel()
             launchTask = nil
         }
+        .task(id: vm.isBackendOnline) {
+            if vm.isBackendOnline, !bookVM.hasLoadedOnce || bookVM.loadFailed {
+                await bookVM.refresh()
+            }
+        }
         .onChange(of: onboarding.version) { _, _ in
-            // NOT `vm.selectedTab = "about"` here — that was sending EVERY
-            // first-run completion to the About screen, contradicting the
-            // wizard's own "Get started" button (`OnboardingCopy.swift`),
-            // which promises entry into the product, not a credits page.
-            // The update-detected branch in `.onAppear` above already routes
-            // a RETURNING user to About after a version change; a fresh
-            // completion should just fall through to `selectedTab`'s
-            // existing "home" default.
             if !onboarding.needsOnboarding {
                 showOnboarding = false
             } else {
@@ -243,10 +152,6 @@ struct VoqoraWindow: View {
             }
         }
         .overlay {
-            // Keep onboarding in the same window and above startup state.
-            // A native sheet can otherwise be visually hidden by this overlay
-            // while the local engine warms up, which is indistinguishable
-            // from a frozen first launch.
             if showOnboarding {
                 OnboardingView()
                     .environmentObject(onboarding)
@@ -297,19 +202,24 @@ struct VoqoraWindow: View {
     }
 }
 
-/// Split out of the struct body to keep it under SwiftLint's
-/// `type_body_length` — plain private members, not a separate API surface.
 private extension VoqoraWindow {
     @ViewBuilder
+    var miniPlayer: some View {
+        if vm.selectedTab != "home" {
+            if let playing = bookVM.nowPlaying {
+                if !bookVM.isPlayerViewActive {
+                    NowPlayingBar(book: playing)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            } else if vm.spokenText != nil, vm.status == .speaking || vm.status == .paused || vm.status == .thinking {
+                SpeechNowPlayingBar()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    @ViewBuilder
     var detailContent: some View {
-        // The real fix for the stuck-navigation bug (see `.id(vm.selectedTab)`
-        // on the `detail:` closure's outer `ZStack` in `body` above) lives one
-        // level up, not here — `NavigationSplitView` ties its detail column's
-        // navigation-stack identity to that outer view's structural position,
-        // not to whatever this `switch` produces on a later pass. Confirmed
-        // by instrumentation: this `switch` already re-evaluates to the right
-        // case on every `selectedTab` change; an `.id()` at this nested level
-        // changed nothing.
         switch vm.selectedTab {
         case "home": MainDashboardView()
         case "history": VaultView()
@@ -320,13 +230,9 @@ private extension VoqoraWindow {
         }
     }
 
-    /// A plain `VStack` of `PaneRow`s rather than a native `List` — a
-    /// `List(.sidebar)` paints its own vibrant/translucent material, which is
-    /// exactly the "glass" look this design language replaces. Matches
-    /// GRiT's own nav rail (`AppSidebarView`) shape for shape.
     private var sidebarNavigation: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Layout.sectionGap) {
-            PaneSection("Library") {
+            PaneSection {
                 VStack(spacing: DesignTokens.Spacing.xxs) {
                     sidebarLink("Now Playing", icon: "play.circle.fill", value: "home")
                     sidebarLink("The Vault", icon: "clock.arrow.circlepath", value: "history")
@@ -359,12 +265,6 @@ private extension VoqoraWindow {
             Text(title)
                 .font(vm.font(.rowTitle))
         }
-        // The row's `Button` wraps an unlabelled SF Symbol next to the title
-        // `Text`, and which of the two wins the synthesized accessibility
-        // name is not something to leave to inference on a navigation rail.
-        // State matters as much as the name here: selection is communicated
-        // purely by tint and fill, so without `.isSelected` VoiceOver cannot
-        // say which section the user is actually in.
         .accessibilityLabel(title)
         .accessibilityAddTraits(vm.selectedTab == value ? [.isSelected] : [])
     }
@@ -424,15 +324,8 @@ private extension VoqoraWindow {
                 }
                 do {
                     let stagedURL = try AudiobookImportStaging.stageDocument(from: url)
-                    vm.selectedTab = "books"
-                    let voice = bookVM.defaultBookVoice.isEmpty ? vm.selectedVoice : bookVM.defaultBookVoice
-                    let speed = bookVM.defaultBookSpeed > 0 ? bookVM.defaultBookSpeed : vm.speechSpeed
-                    bookVM.presentEstimate(
-                        for: stagedURL,
-                        voice: voice,
-                        speed: speed,
-                        engine: "kokoro"
-                    )
+                    vm.showLibrary()
+                    bookVM.presentEstimate(for: stagedURL, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
                 } catch {
                     bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
                 }

@@ -2,14 +2,6 @@ import AppKit
 
 @MainActor
 enum SelectionManager {
-    /// Serializes overlapping calls instead of racing them. Without this, a
-    /// rapid double-press of the shortcut could run two concurrent
-    /// snapshot -> Cmd+C -> poll -> restore cycles against the same system
-    /// pasteboard: call B could snapshot call A's synthetic copy (not the
-    /// user's real prior clipboard) and later "restore" that permanently, or
-    /// call A's restore could fire mid-poll for call B and make it time out
-    /// even though a real selection existed. A second caller now awaits the
-    /// first call's result instead of starting its own pasteboard mutation.
     private static var inFlightTask: Task<String?, Never>?
 
     static func getSelectedText() async -> String? {
@@ -34,13 +26,6 @@ enum SelectionManager {
             return text
         }
 
-        // AXSelectedText is only implemented by apps that opt into the
-        // Accessibility text APIs. Terminal, VS Code, browsers, and most
-        // Electron apps never do, even though they support plain copy — so
-        // for them AX alone can never satisfy "select text in any app".
-        // Fall back to synthesizing Cmd+C. The user's existing clipboard is
-        // saved and restored around it so the fallback has no visible
-        // side effect.
         VoqoraLog.warn("SelectionManager", "AX returned no text, falling back to Clipboard (Cmd+C)", ["app": frontAppName])
         if let text = await getSelectedTextViaClipboard() {
             VoqoraLog.info("SelectionManager", "Found text via Clipboard fallback", ["app": frontAppName, "chars": "\(text.count)"])
@@ -67,9 +52,6 @@ enum SelectionManager {
         }
 
         var selectedText: AnyObject?
-        // AXUIElementCopyAttributeValue bridges the Core Foundation value
-        // as AnyObject. The type-ID check above makes this bridge safe
-        // without relying on an unchecked forced cast.
         let element = unsafeBitCast(focusedElement, to: AXUIElement.self)
         let textResult = AXUIElementCopyAttributeValue(element, kAXSelectedTextAttribute as CFString, &selectedText)
 
@@ -85,7 +67,6 @@ enum SelectionManager {
         let savedItems = snapshotPasteboard(pasteboard)
         let oldChangeCount = pasteboard.changeCount
 
-        // Use the 'annotated' source to ensure macOS sees this as a legitimate user-driven event
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
             VoqoraLog.error("SelectionManager", "Could not create CGEventSource for Cmd+C fallback")
             return nil
@@ -104,15 +85,11 @@ enum SelectionManager {
         cUp?.flags = .maskCommand
         cmdUp?.flags = .maskCommand // Cmd should stay up at the end
 
-        // Post events
         cmdDown?.post(tap: .cghidEventTap)
         cDown?.post(tap: .cghidEventTap)
         cUp?.post(tap: .cghidEventTap)
         cmdUp?.post(tap: .cghidEventTap)
 
-        // Poll instead of a single blind sleep: most apps update the
-        // pasteboard within a few ms, so the common case returns fast and
-        // only the worst case pays the full ~500ms ceiling.
         var copiedText: String?
         for _ in 0 ..< 25 {
             try? await Task.sleep(nanoseconds: 20_000_000)
@@ -122,8 +99,6 @@ enum SelectionManager {
             }
         }
 
-        // Always restore, even on failure — Cmd+C may have altered the
-        // pasteboard without us observing the change in time.
         restorePasteboard(savedItems, pasteboard: pasteboard)
 
         guard let text = copiedText, !text.isEmpty else {

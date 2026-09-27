@@ -3,12 +3,6 @@ import Combine
 import CryptoKit
 import Foundation
 
-/// Downloads the exact DMG published by the official Voqora GitHub release,
-/// verifies its GitHub-published SHA-256 digest, then opens the disk image.
-///
-/// This is intentionally a *guided manual* update path. It never replaces the
-/// running app, changes Gatekeeper settings, or runs a shell command. The user
-/// still drags the verified app to Applications in Finder.
 @MainActor
 final class GuidedInstallerService: ObservableObject {
     enum State: Equatable {
@@ -102,10 +96,6 @@ final class GuidedInstallerService: ObservableObject {
     private static let latestReleaseAPIURL = URL(string: "https://api.github.com/repos/himudigonda/Voqora/releases/latest")!
 
     @Published private(set) var state: State = .idle
-    /// Fraction complete (0...1) for the active download, driving a real
-    /// progress bar rather than just the static "Downloading…" message.
-    /// Meaningless outside `.downloading`; reset to 0 at the start of every
-    /// attempt so a retry after a failure doesn't briefly show the old value.
     @Published private(set) var downloadProgress: Double = 0
 
     func downloadAndOpenLatest() {
@@ -191,11 +181,6 @@ final class GuidedInstallerService: ObservableObject {
         return temporaryURL
     }
 
-    /// `URLSession.download(for:)`'s async convenience API has no progress
-    /// callback, so this drives the classic completion-handler
-    /// `URLSessionDownloadTask` instead and bridges it back to async/await —
-    /// that's the only API surface that exposes a KVO-observable `Progress`
-    /// object during the transfer.
     private static func progressTrackingDownload(
         _ request: URLRequest,
         onProgress: @escaping (Double) -> Void
@@ -213,9 +198,6 @@ final class GuidedInstallerService: ObservableObject {
                     return
                 }
                 do {
-                    // The completion handler's temporary file is deleted as
-                    // soon as this closure returns, so it must be moved
-                    // somewhere stable before handing it back to the caller.
                     let stable = FileManager.default.temporaryDirectory
                         .appendingPathComponent(UUID().uuidString)
                     try FileManager.default.moveItem(at: location, to: stable)

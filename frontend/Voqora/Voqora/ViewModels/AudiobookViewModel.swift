@@ -3,8 +3,6 @@ import Combine
 import CryptoKit
 import SwiftUI
 
-/// SHA-256 hex of a string. Used to anonymize book ids before they leave the device
-/// (see `docs/specs/accounts-analytics.md` §5.3).
 private func sha256Hex(_ input: String) -> String {
     let digest = SHA256.hash(data: Data(input.utf8))
     return digest.map { String(format: "%02x", $0) }.joined()
@@ -12,36 +10,22 @@ private func sha256Hex(_ input: String) -> String {
 
 @MainActor
 final class AudiobookViewModel: ObservableObject {
-    // Dependencies
     private let service: AudiobookService
     let audio: AudioService
-    /// Narrow seam around the only long-running step in audiobook playback.
-    /// Keeping it here makes the stop/delete race deterministic to exercise
-    /// without changing the production service contract.
     private let localAudioURL: @MainActor (String) async throws -> URL
 
-    // Library
     @Published var books: [Audiobook] = []
     @Published var nowPlaying: Audiobook? = nil
-    /// Held only briefly during upload-modal failure paths. All other error
-    /// surfaces flow through `toast`. Kept so the upload modal can show a
-    /// dedicated error state without competing with a global toast.
     @Published var loadingError: String? = nil
     @Published var hasLoadedOnce: Bool = false
-    /// T-17: distinguishes "the last `refresh()` failed" from a genuinely
-    /// empty library, so the library view can render a distinct state
-    /// instead of falling back to the same empty-shelf UI. Set on
-    /// `refresh()`'s catch path, cleared on the next successful refresh.
     @Published var loadFailed: Bool = false
 
-    // Upload flow
     @Published var pendingDocument: URL? = nil
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
     @Published private(set) var deletingAllBooks = false
     @Published var completionSummary: Audiobook? = nil
 
-    /// One document dropped while another upload was already pending.
     private struct QueuedUpload {
         let document: URL
         let voice: String
@@ -49,11 +33,8 @@ final class AudiobookViewModel: ObservableObject {
         let engine: String
     }
 
-    /// Queue of documents dropped while another upload was already pending.
-    /// They are processed one after the other.
     private var uploadQueue: [QueuedUpload] = []
 
-    // Toast / banner for transient errors (B4).
     @Published var toast: Toast? = nil
     private var toastDismissTask: Task<Void, Never>?
 
@@ -64,46 +45,24 @@ final class AudiobookViewModel: ObservableObject {
         enum Kind: Equatable { case error, info, success }
     }
 
-    // Settings (Keychain-backed Gemini key)
     @Published var draftKey: String = ""
     @Published var keyVerified: Bool = false
     @Published var verifyingKey: Bool = false
     @AppStorage("defaultBookSpeed") var defaultBookSpeed: Double = 1.0
+    @AppStorage("audiobookPlaybackRate") private var playbackRate: Double = 1.0
     @AppStorage("defaultBookVoice") var defaultBookVoice: String = "af_bella"
     @AppStorage("lastPlayedBookID") var lastPlayedBookID: String = ""
 
-    /// True while the /start network call is in flight; prevents double-tap and
-    /// drives a loading indicator in UploadEstimateModal.
     @Published var startingProcessing: Bool = false
 
-    /// Per-book live processing state, keyed by book_id.
     @Published var processingState: [String: ProcessingStatus] = [:]
-    /// `private(set)` (not `private`) so unit tests can observe the effect of
-    /// the D1/T-7 race fix without a live backend.
     private(set) var sseTasks: [String: Task<Void, Never>] = [:]
-    /// D1/T-7: one UUID minted per `subscribe(to:)` attempt for a book. A
-    /// subscription's deferred cleanup only clears `sseTasks`/`sseGeneration`
-    /// if it still owns this slot — otherwise a delayed cleanup from an older,
-    /// already-superseded subscription (URLSession cancellation isn't
-    /// instant) would wipe out a newer one's live registration. Mirrors
-    /// AudioService's `volumeRampToken` (HARD-020).
     private var sseGeneration: [String: UUID] = [:]
-    /// D2.2: monotonic token for `refresh()` calls. A slower-resolving
-    /// overlapping refresh (plain polling racing a user action, or two
-    /// closely-spaced user actions) must not apply its response after a
-    /// newer refresh already did. Mirrors `DashboardViewModel.speakGeneration`.
     private var refreshGeneration = 0
-    /// D2.3: monotonic token bumped the moment a "done" SSE event is
-    /// *received*, before the async detail fetch that follows. Gates
-    /// `completionSummary` writes so the event received last wins, not
-    /// whichever fetch happens to resolve last. Mirrors
-    /// `DashboardViewModel.errorResetGeneration`.
     private(set) var completionGeneration = 0
 
-    /// Polling for library refresh.
     private var pollTask: Task<Void, Never>?
 
-    @Published var currentTranscript: AudiobookService.Transcript?
     @Published private(set) var transcriptState: TranscriptState = .idle
     let follower: TranscriptFollower
     private var transcriptTask: Task<Void, Never>?
@@ -116,23 +75,18 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     @Published var libraryPath: [AudiobookRoute] = []
+    @Published private(set) var chapters: [AudiobookSection] = []
 
     func openPlayer(for bookID: String) {
         libraryPath = [.player(bookID)]
     }
 
-    /// The player view owns this visibility signal. It is deliberately
-    /// separate from `nowPlaying`: an audiobook can keep playing after the
-    /// user leaves the full player, while the compact bar must never render
-    /// underneath that full player.
     @Published var isPlayerViewActive = false
 
-    /// Single source of truth for the compact audiobook bar.
     var isNowPlayingBarVisible: Bool {
         nowPlaying != nil && !isPlayerViewActive
     }
 
-    // Sleep timer
     @Published var sleepTimerEndsAt: Date? = nil
     @Published var sleepUntilEndOfBook: Bool = false
     private var sleepTimerTask: Task<Void, Never>?
@@ -140,13 +94,7 @@ final class AudiobookViewModel: ObservableObject {
     private var completionObserver: AnyCancellable?
     private var resumePointSaver: AnyCancellable?
 
-    /// Test seam mirroring `localAudioURL`: lets tests simulate SSE events
-    /// through a controlled `AsyncStream` instead of opening a real
-    /// connection (needed to exercise the T-7/T-8/T-9 race fixes
-    /// deterministically).
     private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
-    /// Test seam mirroring `localAudioURL`: lets tests control `refresh()`'s
-    /// library snapshot deterministically instead of hitting a live backend.
     private let listBooks: @MainActor () async throws -> [Audiobook]
 
     init(
@@ -165,24 +113,6 @@ final class AudiobookViewModel: ObservableObject {
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.listBooks = listBooks ?? { try await resolvedService.list() }
         follower = TranscriptFollower(audio: audio)
-        // NOT a synchronous `KeychainService.has`/`get` call here, and NOT
-        // `Task.detached` either — this runs inside `VoqoraApp.init()`,
-        // before any window exists. `SecItemCopyMatching` can block waiting
-        // on a Keychain authorization dialog (a locked/out-of-sync login
-        // keychain, an iCloud Keychain resync, or — reliably reproduced
-        // during local dev builds, where every rebuild changes the signing
-        // identity — a signing-identity re-prompt with nobody present to
-        // answer it). A first attempt used `Task.detached`, verified fixed
-        // by the test suite — but a `sample` of the actual release archive
-        // launching for real showed the SAME main-thread hang: Swift's
-        // cooperative thread pool does not guarantee a detached task's
-        // synchronous body actually runs off the main thread — under real
-        // launch-time contention (AVAudioEngine setup, KeyboardShortcuts
-        // registration, MetricsService all starting around the same
-        // window), it scheduled this blocking call onto the idle main
-        // thread anyway. Plain `DispatchQueue.global().async` uses
-        // libdispatch's own thread pool instead, which carries no such
-        // ambiguity for a purely synchronous blocking call like this one.
         keyVerified = false
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let stored = KeychainService.get(.geminiAPIKey)
@@ -194,13 +124,6 @@ final class AudiobookViewModel: ObservableObject {
                 }
             }
         }
-        // Clear saved position when a book plays to its natural end.
-        // T-10: reads `audio.completedSessionID` (the book identity AudioService
-        // captured when *that* session started) instead of `self.nowPlaying`
-        // (read fresh here, at sink-execution time). If the user starts a new
-        // book in the exact instant an older one finishes, `nowPlaying` may
-        // have already moved on by the time this sink runs — the completed
-        // session's own captured identity can't drift out from under it.
         completionObserver = audio.$playbackCompleted
             .filter(\.self)
             .sink { [weak self] _ in
@@ -226,11 +149,7 @@ final class AudiobookViewModel: ObservableObject {
         KeychainService.has(.geminiAPIKey)
     }
 
-    // MARK: - Library
-
     func refresh() async {
-        // D2.2: reserve this call's place before the await so a slower-
-        // resolving overlapping refresh can detect it's been superseded.
         refreshGeneration &+= 1
         let generation = refreshGeneration
         do {
@@ -239,15 +158,7 @@ final class AudiobookViewModel: ObservableObject {
             books = fresh
             hasLoadedOnce = true
             loadFailed = false
-            // Keep processingState in sync with anything still in flight.
             for book in fresh {
-                // D2.1: SSE already owns this book's live state while it has
-                // an active subscription — a GET snapshot here can be stale
-                // relative to an SSE event that already applied. This makes
-                // the code actually honor the "SSE is source of truth"
-                // comment on the poll loop below, not just gate whether
-                // refresh() is *called*, but what it *writes* once called
-                // from elsewhere (retry/startProcessing/cancel/delete).
                 if sseTasks[book.bookID] == nil {
                     processingState[book.bookID] = book.displayStatus
                 }
@@ -263,10 +174,6 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// `.onDisappear` (which stops this poll) fires on in-app tab
-    /// navigation, but not when the whole app is backgrounded while this
-    /// view stays mounted — so this loop also widens its interval directly
-    /// when backgrounded, to a 60 s floor. Never shrinks the interval.
     static func libraryPollInterval(hasActiveSSE: Bool, isBackgrounded: Bool) -> UInt64 {
         let baseInterval: UInt64 = hasActiveSSE ? 15_000_000_000 : 5_000_000_000
         return isBackgrounded ? max(baseInterval, 60_000_000_000) : baseInterval
@@ -277,22 +184,6 @@ final class AudiobookViewModel: ObservableObject {
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                // SSE is the source of truth for a *subscribed book's* live
-                // state, and refresh() honors that — it will not overwrite
-                // processingState for a book that has an active subscription
-                // (see the guard in refresh()). But only a library-level GET
-                // can see a book that was added or deleted, and SSE is
-                // per-book, so it can never report one.
-                //
-                // This used to skip the refresh entirely whenever any SSE was
-                // live, which meant a single generating book froze the whole
-                // library for as long as it ran: new books never appeared,
-                // deletions never applied, and a book left in a stale
-                // processingState could never self-heal — and a card whose
-                // state says "processing" is not tappable, so it stayed dead
-                // until the app was relaunched. The longer interval below was
-                // always meant to be the throttle for this case, not a total
-                // skip.
                 let hasActiveSSE = !sseTasks.isEmpty
                 await refresh()
                 let interval = Self.libraryPollInterval(
@@ -309,13 +200,8 @@ final class AudiobookViewModel: ObservableObject {
         pollTask = nil
     }
 
-    // MARK: - Upload flow
-
-    /// Drop hook used by the library + global drop. Snapshots the user's current
-    /// engine/voice/speed so the book is generated with what they expect.
     func presentEstimate(for document: URL, voice: String, speed: Double, engine: String) {
         if pendingDocument != nil || uploadInProgress {
-            // A modal is already up — queue this drop for later.
             uploadQueue.append(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine))
             showToast("Queued \(AudiobookImportStaging.strippingSupportedExtension(from: document.lastPathComponent))", kind: .info)
             return
@@ -334,25 +220,30 @@ final class AudiobookViewModel: ObservableObject {
                     fileKind: document.pathExtension.lowercased()
                 )
             } catch {
-                // Keep the estimate sheet open with a readable recovery state
-                // instead of silently closing it after a failed upload.
                 loadingError = error.localizedDescription
                 showToast("Could not read this document. Check the file and try again.", kind: .error)
             }
         }
     }
 
+    func presentEstimate(for document: URL, defaultVoice: String, defaultSpeed: Double) {
+        presentEstimate(
+            for: document,
+            voice: defaultBookVoice.isEmpty ? defaultVoice : defaultBookVoice,
+            speed: defaultBookSpeed > 0 ? defaultBookSpeed : defaultSpeed,
+            engine: "kokoro"
+        )
+    }
+
     func cancelUpload() {
         let stagedDocument = pendingDocument
         if let est = pendingEstimate {
-            // Throw away the staged book so it doesn't sit in the library forever.
             Task { try? await service.delete(est.bookID) }
         }
         pendingDocument = nil
         pendingEstimate = nil
         loadingError = nil
         AudiobookImportStaging.discard(stagedDocument)
-        // Drain the queue if anything is waiting.
         flushUploadQueue()
     }
 
@@ -381,8 +272,6 @@ final class AudiobookViewModel: ObservableObject {
                     apiKey: key,
                     useGeminiCleanup: useGeminiCleanup
                 )
-                // Clear pendingDocument/pendingEstimate to collapse the sheet binding → modal
-                // dismisses automatically without calling cancelUpload().
                 pendingDocument = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
@@ -391,7 +280,6 @@ final class AudiobookViewModel: ObservableObject {
                 flushUploadQueue()
             } catch {
                 showToast(error.localizedDescription, kind: .error)
-                // /start failed — the book was staged but never started; delete orphan.
                 Task { try? await service.delete(bookID) }
                 pendingDocument = nil
                 pendingEstimate = nil
@@ -400,16 +288,11 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// T-18: an error toast's message is no longer truncated (see
-    /// AudiobookToastView.lineLimit(for:)), so it needs longer on screen to
-    /// actually be read than a short info/success confirmation does.
     static func dismissDelayNanoseconds(for kind: Toast.Kind) -> UInt64 {
         kind == .error ? 8_000_000_000 : 4_000_000_000
     }
 
     func showToast(_ message: String, kind: Toast.Kind = .info) {
-        // S4: cancel any previously-scheduled dismiss so a stale timer
-        // doesn't kill this fresh toast a fraction of a second later.
         toastDismissTask?.cancel()
         let new = Toast(message: message, kind: kind)
         toast = new
@@ -429,8 +312,6 @@ final class AudiobookViewModel: ObservableObject {
         toastDismissTask = nil
         toast = nil
     }
-
-    // MARK: - Retry / Resume
 
     func retry(_ book: Audiobook) {
         let key = KeychainService.get(.geminiAPIKey)
@@ -454,16 +335,11 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func resumeNeedsKey(_ book: Audiobook) {
-        // Same code path as retry — the backend re-enqueues from the saved meta.
         retry(book)
     }
 
-    /// Internal (not private) so unit tests can drive it directly with the
-    /// `subscribeToEvents` seam instead of a live backend.
     func subscribe(to bookID: String) {
         sseTasks[bookID]?.cancel()
-        // D1/T-7: mint a fresh token for *this* attempt. The deferred cleanup
-        // below only fires for the attempt that still owns this slot.
         let token = UUID()
         sseGeneration[bookID] = token
         sseTasks[bookID] = Task { [weak self] in
@@ -475,9 +351,6 @@ final class AudiobookViewModel: ObservableObject {
             }
             guard let self else { return }
             for await event in subscribeToEvents(bookID) {
-                // T-7/T-9: a subscription superseded by a newer one (or
-                // dropped by delete()) must stop applying events immediately,
-                // not just eventually clean up its dictionary slot.
                 guard sseGeneration[bookID] == token else { break }
                 let type = event["type"] as? String ?? ""
                 if type == "snapshot" {
@@ -492,18 +365,16 @@ final class AudiobookViewModel: ObservableObject {
                     let total = event["total"] as? Int ?? 0
                     applyPhase(bookID: bookID, phase: phase, page: page, total: total)
                 } else if type == "done" {
-                    // D2.3: reserve this event's place in completion ordering
-                    // *now*, before the slow refresh()/fetch below — receipt
-                    // order, not resolution order, decides the winner.
                     let generation = beginCompletionFetch()
-                    // Refresh the library list AND fetch the canonical detail
-                    // for this book so we present the completion modal even
-                    // if list endpoint is racing the meta.json write (C7).
                     await refresh()
                     let book = await fetchDetailWithFallback(bookID: bookID)
                     if let book {
                         applyCompletion(book, generation: generation)
                     }
+                    break
+                } else if type == "needs_cost_approval" {
+                    processingState[bookID] = .needsCostApproval(requiredCap: event["required_cap_usd"] as? Double)
+                    await refresh()
                     break
                 } else if type == "failed" || type == "cancelled" {
                     await refresh()
@@ -513,9 +384,6 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// Try the in-memory `books` list first, then a direct GET, with up to 3
-    /// retries spaced 200 ms apart. Used to defeat the SSE-done-vs-meta.json
-    /// write race (C7).
     private func fetchDetailWithFallback(bookID: String) async -> Audiobook? {
         for attempt in 0 ..< 3 {
             if let local = books.first(where: { $0.bookID == bookID }), local.status == "done" {
@@ -529,26 +397,17 @@ final class AudiobookViewModel: ObservableObject {
                 await refresh()
             }
         }
-        // Last-ditch: return whatever we have, even if status hasn't flipped to done.
         if let local = books.first(where: { $0.bookID == bookID }) {
             return local
         }
         return try? await service.get(bookID)
     }
 
-    /// D2.3: call when a "done" SSE event is *received*, before the async
-    /// detail fetch that follows. Returns the generation to pass to
-    /// `applyCompletion` once that fetch resolves — reserves this event's
-    /// place in completion ordering ahead of time.
     func beginCompletionFetch() -> Int {
         completionGeneration &+= 1
         return completionGeneration
     }
 
-    /// D2.3: apply a completion fetch's result only if no newer "done" event
-    /// has been received since `generation` was captured — a slow-resolving
-    /// fetch for an older event must not clobber a newer one that already
-    /// applied. Internal (not private) so unit tests can drive it directly.
     func applyCompletion(_ book: Audiobook, generation: Int) {
         guard generation == completionGeneration else { return }
         completionSummary = book
@@ -558,8 +417,6 @@ final class AudiobookViewModel: ObservableObject {
         )
     }
 
-    /// Internal (not private) so unit tests can drive the SSE `snapshot`
-    /// mapping directly without a live backend.
     func applyStatus(bookID: String, status: String, pageDone: Int, pageTotal: Int, error: String?) {
         let s: ProcessingStatus = switch status {
         case "extracting": .extracting(page: pageDone, total: pageTotal)
@@ -576,8 +433,6 @@ final class AudiobookViewModel: ObservableObject {
         processingState[bookID] = s
     }
 
-    /// Internal (not private) so unit tests can drive the SSE `phase_started`/
-    /// `page_done` mapping directly without a live backend.
     func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
         let status: ProcessingStatus
         switch phase {
@@ -590,18 +445,10 @@ final class AudiobookViewModel: ObservableObject {
         processingState[bookID] = status
     }
 
-    // MARK: - Playback
-
-    /// Set true while a play() is in flight; prevents double-click race (S3).
     @Published private(set) var isLoadingAudio: Bool = false
-    /// Each play/stop action receives a generation. A delayed local-file fetch
-    /// from an older action must never resurrect audio after the user stopped,
-    /// deleted, or switched books.
     private(set) var playbackGeneration = 0
     private var pendingPlaybackBookID: String?
 
-    /// True while a local audiobook file is being prepared but has not yet
-    /// become `nowPlaying`. Global Stop uses this so it can cancel that gap too.
     var isPreparingPlayback: Bool {
         pendingPlaybackBookID != nil
     }
@@ -611,20 +458,15 @@ final class AudiobookViewModel: ObservableObject {
 
         if nowPlaying?.bookID == book.bookID {
             if audio.playbackCompleted {
-                // Book finished — fall through to restart from beginning
             } else if !audio.isPlaying {
-                // Paused mid-playback — just resume, don't reload
                 audio.togglePause()
                 return
             } else {
-                // Already playing
                 return
             }
         }
 
         if nowPlaying != nil {
-            // Switching books must use the normal teardown path so the prior
-            // resume point and listening metrics are not silently discarded.
             stopPlayback()
         }
 
@@ -651,8 +493,9 @@ final class AudiobookViewModel: ObservableObject {
                     sessionID: book.bookID,
                     startingAt: savedTime > 2.0 ? savedTime : 0
                 )
-                audio.setPlaybackRate(Float(defaultBookSpeed))
+                audio.setPlaybackRate(Float(playbackRate))
                 nowPlaying = book
+                chapters = Self.chapters(for: book, document: .empty)
                 lastPlayedBookID = book.bookID
                 loadTranscript(for: book.bookID)
             } catch {
@@ -662,11 +505,6 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// Resolves the already-completed book through the same authenticated,
-    /// WAV-validating cache path used by playback. The UI chooses the save
-    /// destination; there is intentionally no generic clip export fallback
-    /// here because a book export must always originate from validated book
-    /// audio, not transient in-memory PCM.
     func validatedAudioURL(for book: Audiobook) async throws -> URL {
         guard book.status == "done" else {
             throw AudiobookServiceError.audioNotReady
@@ -674,7 +512,6 @@ final class AudiobookViewModel: ObservableObject {
         return try await localAudioURL(book.bookID)
     }
 
-    /// Returns the most recently played book that's still ready, if any.
     var continueListeningBook: Audiobook? {
         guard !lastPlayedBookID.isEmpty else { return nil }
         return books.first(where: { $0.bookID == lastPlayedBookID && $0.status == "done" })
@@ -698,7 +535,9 @@ final class AudiobookViewModel: ObservableObject {
                 transcript.map(TranscriptDocument.init(transcript:))
             }.value
             guard let self, !Task.isCancelled, nowPlaying?.bookID == bookID else { return }
-            currentTranscript = transcript
+            if let book = nowPlaying {
+                chapters = Self.chapters(for: book, document: document ?? .empty)
+            }
             if let document, !document.isEmpty {
                 follower.load(document)
                 transcriptState = .loaded
@@ -712,8 +551,8 @@ final class AudiobookViewModel: ObservableObject {
     private func clearTranscript() {
         transcriptTask?.cancel()
         transcriptTask = nil
-        currentTranscript = nil
         transcriptState = .idle
+        chapters = []
         follower.clear()
     }
 
@@ -728,27 +567,11 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// - Parameter fadeOverSeconds: when set, fades output out over this
-    ///   duration instead of stopping abruptly (used when a higher-priority
-    ///   source, e.g. the global selected-text speech feature, interrupts
-    ///   playback — see DashboardViewModel.speak()). Every other side effect
-    ///   (resume-position save, metrics, transcript-task cancel, sleep-timer
-    ///   cancel) is identical regardless of how the audio itself stops —
-    ///   previously the interruption path bypassed this method entirely and
-    ///   skipped all of them, most importantly the sleep timer: an armed
-    ///   timer kept running and later called `audio.stop()` on whatever
-    ///   later became "the shared audio" (a new TTS clip or a subsequently
-    ///   started audiobook), stopping it with no explanation.
     func stopPlayback(fadeOverSeconds: TimeInterval? = nil) {
-        // Invalidate an in-flight local-file request before touching audio.
-        // Without this, a delayed request can schedule a new buffer after
-        // the user explicitly pressed Stop.
         playbackGeneration &+= 1
         pendingPlaybackBookID = nil
         isLoadingAudio = false
         saveResumePoint()
-        // Emit audiobook_play on manual stop too (natural completion is handled
-        // in the playbackCompleted observer). Only counts non-trivial sessions.
         if let book = nowPlaying, audio.currentTime > 5.0, !audio.playbackCompleted {
             MetricsService.shared.trackAudiobookPlay(
                 bookIDHash: sha256Hex(book.bookID),
@@ -763,11 +586,6 @@ final class AudiobookViewModel: ObservableObject {
         }
         nowPlaying = nil
         cancelSleepTimer()
-    }
-
-    func seek(percentage: Double) {
-        audio.seek(to: percentage)
-        saveResumePoint()
     }
 
     func seek(toSeconds seconds: Double) {
@@ -788,20 +606,45 @@ final class AudiobookViewModel: ObservableObject {
         saveResumePoint()
     }
 
-    // MARK: - Section navigation
+    func chapters(for book: Audiobook) -> [AudiobookSection] {
+        nowPlaying?.bookID == book.bookID && !chapters.isEmpty ? chapters : book.sortedSections
+    }
 
     func currentSection(in book: Audiobook) -> AudiobookSection? {
-        book.section(at: audio.currentTime)
+        chapters(for: book).section(at: audio.currentTime)
+    }
+
+    static func chapters(for book: Audiobook, document: TranscriptDocument) -> [AudiobookSection] {
+        let sections = book.sortedSections
+        let titled = sections.filter { $0.title.caseInsensitiveCompare(book.displayTitle) != .orderedSame }
+        if titled.count >= 2 {
+            return sections
+        }
+        var headings: [AudiobookSection] = []
+        for line in document.lines where line.isHeading && line.isNarrated && TranscriptText.isChapterTitle(line.text) {
+            guard headings.last?.title.caseInsensitiveCompare(line.text) != .orderedSame else { continue }
+            headings.append(AudiobookSection(title: line.text, startPage: line.page, endPage: line.page, startTime: line.start))
+        }
+        guard headings.count >= 2 else { return sections }
+        if let first = headings.first, first.startTime > 1 {
+            let opening = AudiobookSection(title: book.displayTitle, startPage: 1, endPage: first.startPage, startTime: 0)
+            if first.title.caseInsensitiveCompare(book.displayTitle) == .orderedSame {
+                headings[0] = opening
+            } else {
+                headings.insert(opening, at: 0)
+            }
+        }
+        return headings
     }
 
     func setSpeed(_ speed: Double) {
         let clamped = min(2.0, max(0.75, (speed * 100).rounded() / 100))
-        defaultBookSpeed = clamped
+        playbackRate = clamped
         audio.setPlaybackRate(Float(clamped))
     }
 
     func jumpToNextSection(in book: Audiobook) {
-        let sorted = book.sections.sorted { $0.startTime < $1.startTime }
+        let sorted = chapters(for: book)
         let t = audio.currentTime
         if let next = sorted.first(where: { $0.startTime > t + 0.5 }) {
             seek(toSeconds: next.startTime)
@@ -809,9 +652,8 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func jumpToPreviousSection(in book: Audiobook) {
-        let sorted = book.sections.sorted { $0.startTime < $1.startTime }
+        let sorted = chapters(for: book)
         let t = audio.currentTime
-        // If we're more than 3s into the current section, go to its start; else to prior section.
         if let current = sorted.last(where: { $0.startTime <= t }), t - current.startTime > 3 {
             seek(toSeconds: current.startTime)
             return
@@ -823,8 +665,6 @@ final class AudiobookViewModel: ObservableObject {
             seek(toSeconds: 0)
         }
     }
-
-    // MARK: - Sleep timer
 
     enum SleepDuration: String, Identifiable, CaseIterable {
         case fiveMinutes = "5m"
@@ -868,8 +708,7 @@ final class AudiobookViewModel: ObservableObject {
         } else if option == .endOfSection {
             guard let book = currentBook,
                   let section = currentSection(in: book) else { return }
-            let nextStart = book.sections
-                .sorted { $0.startTime < $1.startTime }
+            let nextStart = chapters(for: book)
                 .first(where: { $0.startTime > section.startTime })?
                 .startTime ?? book.totalAudioSeconds
             let remaining = max(0, nextStart - audio.currentTime)
@@ -877,7 +716,6 @@ final class AudiobookViewModel: ObservableObject {
             scheduleSleepTask(after: remaining)
         } else if option == .endOfBook {
             sleepUntilEndOfBook = true
-            // Audio naturally ends on its own; stop on completion handled via audio.playbackCompleted.
         }
     }
 
@@ -892,29 +730,11 @@ final class AudiobookViewModel: ObservableObject {
         sleepTimerTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            // Routed through stopPlayback (not a raw audio.stop()) for the same
-            // reason the hotkey-interrupt path is — see stopPlayback's own doc
-            // comment. This one was missed when that fix landed, and it is the
-            // worst place to miss it: the entire point of a sleep timer is that
-            // the listener is asleep when it fires, so nothing that goes wrong
-            // is observed until morning. A raw stop skipped the resume-position
-            // save (losing up to the whole timer's worth of progress, or
-            // restarting the book at 0:00 on a first session), left nowPlaying
-            // stale, and left the player in a state where the next Play resumed
-            // a node with no scheduled buffers — UI showing "playing", moving
-            // progress bar, and silence.
             stopPlayback(fadeOverSeconds: 1.5)
             sleepTimerEndsAt = nil
             sleepTimerTask = nil
         }
     }
-
-    var sleepRemainingSeconds: TimeInterval? {
-        guard let end = sleepTimerEndsAt else { return nil }
-        return max(0, end.timeIntervalSinceNow)
-    }
-
-    // MARK: - Cancel processing
 
     func cancel(_ book: Audiobook) {
         Task {
@@ -923,19 +743,10 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Delete
-
     func delete(_ book: Audiobook) {
-        // A loading book has no `nowPlaying` value yet, so invalidate it here
-        // as well. Otherwise its request could finish after deletion and start
-        // audio for a book that no longer exists in the library.
         if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
             stopPlayback()
         }
-        // T-9: cancel and drop this book's SSE subscription synchronously,
-        // independent of whether the network delete below succeeds. Removing
-        // sseGeneration[bookID] also makes subscribe()'s per-token guard
-        // reject any event already in flight for the (now-stale) task.
         sseTasks[book.bookID]?.cancel()
         sseTasks.removeValue(forKey: book.bookID)
         sseGeneration.removeValue(forKey: book.bookID)
@@ -946,21 +757,15 @@ final class AudiobookViewModel: ObservableObject {
                 showToast("Could not delete book", kind: .error)
                 return
             }
-            // P1: clear Continue Listening pointer if the deleted book was it.
             if lastPlayedBookID == book.bookID {
                 UserDefaults.standard.removeObject(forKey: "lastPlayedBookID")
                 lastPlayedBookID = ""
             }
-            // P5: drop processing-state entry so it doesn't leak.
             processingState.removeValue(forKey: book.bookID)
             await refresh()
         }
     }
 
-    /// Resolve the explicit Flex-capacity choice. Approval uses the exact
-    /// absolute cap shown by the backend receipt; local completion sends no
-    /// Gemini credential and permanently switches the remaining pipeline to
-    /// deterministic local cleanup.
     func resolveCostApproval(_ book: Audiobook, approveStandard: Bool) {
         let requiredCap = book.budget?.costApproval?.requiredCapUsd
         let key = approveStandard ? KeychainService.get(.geminiAPIKey) : nil
@@ -988,18 +793,10 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    /// Remove every local source, transcript and derived-audio artifact after
-    /// the view has presented an explicit destructive confirmation. Stop and
-    /// invalidate all local playback/SSE work before the backend starts its
-    /// coordinated delete so a stale task cannot repopulate the shelf.
     func deleteAllBooks() {
         Task { _ = await deleteAllBooksForErasure(showSuccess: true) }
     }
 
-    /// The awaitable form is used by the full local-data erase flow. It does
-    /// not clear unrelated app state unless the backend has confirmed removal
-    /// of every book/source/derived artifact, so a failed delete cannot be
-    /// followed by a misleading "all data erased" message.
     @discardableResult
     func deleteAllBooksForErasure(showSuccess: Bool = false) async -> Bool {
         guard !deletingAllBooks else { return false }
@@ -1027,11 +824,6 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Key
-
-    /// Re-derive `keyVerified` from the Keychain. Useful for views that need
-    /// to react to a change made elsewhere (e.g., user pasted a key in
-    /// Preferences while an upload modal is up). S6.
     func refreshKeyState() {
         keyVerified = KeychainService.has(.geminiAPIKey)
     }

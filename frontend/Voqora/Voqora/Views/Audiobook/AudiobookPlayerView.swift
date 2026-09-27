@@ -4,7 +4,6 @@ import SwiftUI
 struct AudiobookPlayerView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
-    @Environment(\.colorScheme) private var colorScheme
 
     let book: Audiobook
     @State private var panel: Panel = .transcript
@@ -20,18 +19,33 @@ struct AudiobookPlayerView: View {
     }
 
     var body: some View {
-        GeometryReader { geometry in
-            let wide = AudiobookPlayerLayout.columnVisibility(for: geometry.size.width).showCover
-            ZStack {
-                background
-                if wide {
-                    wideLayout(height: geometry.size.height)
-                } else {
-                    compactLayout
+        PlayerScaffold(tint: tint) { height in
+            PlayerArtwork(book: book, height: height)
+        } header: { alignment in
+            AudiobookTitle(book: book, alignment: alignment)
+        } controls: { compact in
+            VStack(spacing: compact ? 14 : 22) {
+                PlaybackScrubber(
+                    markers: bookVM.chapters(for: book).map(\.startTime),
+                    isEnabled: isCurrentBook,
+                    onScrub: { bookVM.follower.scrub(to: $0) },
+                    onCommit: { bookVM.seek(toSeconds: $0) }
+                )
+                PlayerTransport(book: book, compact: compact)
+                PlayerSecondaryControls(book: book)
+                    .frame(maxWidth: compact ? 420 : .infinity)
+            }
+        } content: { fontSize in
+            VStack(spacing: 0) {
+                PlayerSegmentedHeader(selection: $panel)
+                switch panel {
+                case .transcript:
+                    transcript(fontSize: fontSize)
+                case .sections:
+                    PlayerSectionsList(book: book)
                 }
             }
         }
-        .frame(minWidth: AudiobookPlayerLayout.minWidth, minHeight: 520)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) { bookVM.togglePlayback(); return .handled }
@@ -41,8 +55,8 @@ struct AudiobookPlayerView: View {
         .onKeyPress("l") { bookVM.skip(by: 30); return .handled }
         .onKeyPress("n") { bookVM.jumpToNextSection(in: book); return .handled }
         .onKeyPress("p") { bookVM.jumpToPreviousSection(in: book); return .handled }
-        .onKeyPress("[") { bookVM.setSpeed(bookVM.audio.playbackRate.asDouble - 0.25); return .handled }
-        .onKeyPress("]") { bookVM.setSpeed(bookVM.audio.playbackRate.asDouble + 0.25); return .handled }
+        .onKeyPress("[") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) - 0.25); return .handled }
+        .onKeyPress("]") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) + 0.25); return .handled }
         .onAppear {
             bookVM.isPlayerViewActive = true
             if bookVM.nowPlaying?.bookID != book.bookID {
@@ -62,84 +76,12 @@ struct AudiobookPlayerView: View {
         }
     }
 
-    private var background: some View {
-        ZStack {
-            Palette.surfaceBase
-            if let tint {
-                RadialGradient(
-                    colors: [tint.opacity(colorScheme == .dark ? 0.22 : 0.12), .clear],
-                    center: .topLeading,
-                    startRadius: 0,
-                    endRadius: 900
-                )
-            }
-        }
-        .ignoresSafeArea()
-    }
-
-    private func wideLayout(height: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 22) {
-                Spacer(minLength: 0)
-                PlayerArtwork(book: book, height: AudiobookPlayerLayout.artworkHeight(forAvailableHeight: height))
-                PlayerTitleBlock(book: book, alignment: .center)
-                PlayerScrubber(book: book)
-                PlayerTransport(book: book, compact: false)
-                PlayerSecondaryControls(book: book)
-                Spacer(minLength: 0)
-            }
-            .frame(width: AudiobookPlayerLayout.controlsColumnWidth)
-            .padding(.leading, 36)
-            .padding(.trailing, 12)
-            .padding(.vertical, 24)
-
-            contentPanel(fontSize: 26)
-                .padding(.trailing, 12)
-        }
-    }
-
-    private var compactLayout: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .center, spacing: 14) {
-                PlayerArtwork(book: book, height: 84)
-                PlayerTitleBlock(book: book, alignment: .leading)
-                Spacer(minLength: 0)
-            }
-            PlayerScrubber(book: book)
-            PlayerTransport(book: book, compact: true)
-            PlayerSecondaryControls(book: book)
-                .frame(maxWidth: 420)
-            contentPanel(fontSize: 22)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-    }
-
-    private func contentPanel(fontSize: CGFloat) -> some View {
-        VStack(spacing: 0) {
-            Picker("View", selection: $panel) {
-                ForEach(Panel.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 220)
-            .padding(.top, 16)
-            .padding(.bottom, 4)
-
-            switch panel {
-            case .transcript:
-                transcript(fontSize: fontSize)
-            case .sections:
-                PlayerSectionsList(book: book)
-                    .padding(.top, 12)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private var isCurrentBook: Bool {
+        bookVM.nowPlaying?.bookID == book.bookID
     }
 
     @ViewBuilder
     private func transcript(fontSize: CGFloat) -> some View {
-        let isCurrentBook = bookVM.nowPlaying?.bookID == book.bookID
         switch (isCurrentBook, bookVM.transcriptState) {
         case (true, .loaded):
             TranscriptView(follower: bookVM.follower, fontSize: fontSize) { line in
@@ -155,16 +97,29 @@ struct AudiobookPlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         default:
-            ProgressView()
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Loading Transcript…")
+                    .font(vm.appFont(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.textTertiary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
 
-private extension Float {
-    var asDouble: Double {
-        Double(self)
+private struct AudiobookTitle: View {
+    @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var audio: AudioService
+    let book: Audiobook
+    let alignment: HorizontalAlignment
+
+    var body: some View {
+        PlayerTitle(
+            title: book.displayTitle,
+            subtitle: book.subtitle(at: audio.currentTime, chapters: bookVM.chapters(for: book)),
+            alignment: alignment
+        )
     }
 }
 
@@ -187,14 +142,15 @@ private struct PlayerArtwork: View {
 
     var body: some View {
         let playing = audio.isPlaying
+        let ramp = Palette.accentRamp(for: vm.accentColorID, appearance: colorScheme, increaseContrast: contrast == .increased)
         AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
             image.resizable().scaledToFill()
         } placeholder: {
             ZStack {
-                Palette.surfaceRaised
-                Image(systemName: "book.closed.fill")
-                    .font(.system(size: height * 0.18))
-                    .foregroundStyle(vm.accentColor(scheme: colorScheme, contrast: contrast).opacity(0.7))
+                LinearGradient(colors: [Color(ramp.muted), Color(ramp.subtle)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: "book.fill")
+                    .font(.system(size: height * 0.18, weight: .ultraLight))
+                    .foregroundStyle(Palette.textPrimary.opacity(0.7))
             }
         }
         .frame(width: width, height: height)
@@ -207,51 +163,9 @@ private struct PlayerArtwork: View {
     }
 }
 
-private struct PlayerTitleBlock: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    @EnvironmentObject var audio: AudioService
-    let book: Audiobook
-    let alignment: HorizontalAlignment
-
-    var body: some View {
-        VStack(alignment: alignment, spacing: 4) {
-            Text(book.displayTitle)
-                .font(vm.appFont(size: alignment == .center ? 19 : 16, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-                .lineLimit(3)
-                .multilineTextAlignment(alignment == .center ? .center : .leading)
-                .help(book.displayTitle)
-            Text(book.subtitle(at: audio.currentTime))
-                .font(vm.appFont(size: 13, weight: .medium))
-                .foregroundStyle(Palette.textSecondary)
-                .lineLimit(1)
-                .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.25), value: book.subtitle(at: audio.currentTime))
-        }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
-    }
-}
-
-private struct PlayerScrubber: View {
-    @EnvironmentObject var bookVM: AudiobookViewModel
-    let book: Audiobook
-
-    var body: some View {
-        PlaybackScrubber(
-            markers: book.sortedSections.map(\.startTime),
-            isEnabled: bookVM.nowPlaying?.bookID == book.bookID,
-            onScrub: { bookVM.follower.scrub(to: $0) },
-            onCommit: { bookVM.seek(toSeconds: $0) }
-        )
-    }
-}
-
 private struct PlayerTransport: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
     let compact: Bool
 
@@ -267,7 +181,17 @@ private struct PlayerTransport: View {
             TransportGlyph(systemName: "gobackward.15", label: "Back 15 Seconds") {
                 bookVM.skip(by: -15)
             }
-            playButton
+            PlayerPlayButton(
+                isPlaying: isCurrentBook && audio.isPlaying,
+                isLoading: bookVM.isLoadingAudio,
+                size: compact ? 48 : 64
+            ) {
+                if isCurrentBook {
+                    bookVM.togglePlayback()
+                } else {
+                    bookVM.play(book)
+                }
+            }
             TransportGlyph(systemName: "goforward.30", label: "Forward 30 Seconds") {
                 bookVM.skip(by: 30)
             }
@@ -276,70 +200,6 @@ private struct PlayerTransport: View {
             }
         }
         .disabled(!isCurrentBook && bookVM.isLoadingAudio)
-    }
-
-    private var playButton: some View {
-        let playing = isCurrentBook && audio.isPlaying
-        let size: CGFloat = compact ? 48 : 64
-        return Button {
-            if isCurrentBook {
-                bookVM.togglePlayback()
-            } else {
-                bookVM.play(book)
-            }
-        } label: {
-            ZStack {
-                Circle().fill(vm.accentColor(scheme: colorScheme, contrast: contrast))
-                if bookVM.isLoadingAudio {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
-                } else {
-                    Image(systemName: playing ? "pause.fill" : "play.fill")
-                        .font(.system(size: size * 0.36, weight: .bold))
-                        .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
-                        .offset(x: playing ? 0 : size * 0.03)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-            }
-            .frame(width: size, height: size)
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
-        }
-        .buttonStyle(PressScaleButtonStyle())
-        .accessibilityLabel(playing ? "Pause" : "Play")
-        .help(playing ? "Pause" : "Play")
-    }
-}
-
-struct TransportGlyph: View {
-    let systemName: String
-    let label: String
-    var size: CGFloat = 18
-    let action: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary.opacity(hovering ? 1 : 0.8))
-                .frame(width: size * 2.2, height: size * 2.2)
-                .background(Circle().fill(hovering ? Palette.controlFill : Color.clear))
-                .contentShape(Circle())
-        }
-        .buttonStyle(PressScaleButtonStyle())
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-        .help(label)
-        .accessibilityLabel(label)
-    }
-}
-
-struct PressScaleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 }
 
@@ -350,7 +210,6 @@ private struct PlayerSecondaryControls: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
-    var showsVolume = true
     @State private var isExporting = false
 
     private var accent: Color {
@@ -360,13 +219,16 @@ private struct PlayerSecondaryControls: View {
     var body: some View {
         HStack(spacing: 10) {
             speedMenu
-            if showsVolume {
-                Spacer(minLength: 0)
-                volume
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
+            PlayerVolumeControl()
+            Spacer(minLength: 0)
             sleepMenu
-            exportButton
+            PlayerCircleButton(
+                systemName: "square.and.arrow.down",
+                label: "Export Audio…",
+                isEnabled: !isExporting && book.status == "done",
+                action: export
+            )
         }
     }
 
@@ -405,21 +267,6 @@ private struct PlayerSecondaryControls: View {
             ? String(format: "%.0f", speed)
             : String(format: "%g", speed)
         return formatted + "×"
-    }
-
-    private var volume: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "speaker.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.textSecondary)
-            Slider(value: Binding(get: { Double(audio.volume) }, set: { audio.setVolume(Float($0)) }), in: 0 ... 1.5)
-                .controlSize(.mini)
-                .frame(maxWidth: 110)
-                .accessibilityLabel("Volume")
-            Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.textSecondary)
-        }
     }
 
     private var sleepIsArmed: Bool {
@@ -462,22 +309,6 @@ private struct PlayerSecondaryControls: View {
         .accessibilityLabel("Sleep Timer")
     }
 
-    private var exportButton: some View {
-        Button(action: export) {
-            Image(systemName: "square.and.arrow.down")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Palette.textPrimary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Palette.controlFill))
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isExporting || book.status != "done")
-        .opacity(book.status == "done" ? 1 : 0.4)
-        .help("Export Audio…")
-        .accessibilityLabel("Export Audio")
-    }
-
     private func export() {
         guard !isExporting else { return }
         isExporting = true
@@ -512,8 +343,8 @@ private struct PlayerSectionsList: View {
     @State private var hoveredID: AudiobookSection.ID?
 
     var body: some View {
-        let sections = book.sortedSections
-        let currentID = bookVM.nowPlaying?.bookID == book.bookID ? book.section(at: audio.currentTime)?.id : nil
+        let sections = bookVM.chapters(for: book)
+        let currentID = bookVM.nowPlaying?.bookID == book.bookID ? sections.section(at: audio.currentTime)?.id : nil
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
@@ -536,12 +367,12 @@ private struct PlayerSectionsList: View {
 
     private func row(_ section: AudiobookSection, number: Int, isCurrent: Bool) -> some View {
         let accent = vm.accentColor(scheme: colorScheme, contrast: contrast)
+        let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
         return Button {
-            if bookVM.nowPlaying?.bookID == book.bookID {
-                bookVM.seek(toSeconds: section.startTime)
-                if !audio.isPlaying {
-                    audio.resume()
-                }
+            guard bookVM.nowPlaying?.bookID == book.bookID else { return }
+            bookVM.seek(toSeconds: section.startTime)
+            if !audio.isPlaying {
+                audio.resume()
             }
         } label: {
             HStack(spacing: 14) {
@@ -558,7 +389,7 @@ private struct PlayerSectionsList: View {
                 .font(vm.appFont(size: 12, weight: .semibold))
                 .monospacedDigit()
                 .frame(width: 24)
-                Text(AudiobookImportStaging.strippingSupportedExtension(from: section.title))
+                Text(title)
                     .font(vm.appFont(size: 14, weight: isCurrent ? .semibold : .regular))
                     .foregroundStyle(isCurrent ? accent : Palette.textPrimary)
                     .lineLimit(2)
@@ -579,7 +410,7 @@ private struct PlayerSectionsList: View {
         }
         .buttonStyle(.plain)
         .onHover { hoveredID = $0 ? section.id : (hoveredID == section.id ? nil : hoveredID) }
-        .accessibilityLabel("\(section.title), \(DurationFormatter.clock(section.startTime))")
+        .accessibilityLabel("\(title), \(DurationFormatter.clock(section.startTime))")
         .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
     }
 }

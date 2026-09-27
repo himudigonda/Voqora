@@ -3,23 +3,8 @@ import Foundation
 @testable import Voqora
 import XCTest
 
-/// Regression + edge-case coverage for `LaunchManager`'s runtime integrity
-/// logic against REAL on-disk directory trees, not pre-extracted pure helpers.
-///
-/// This exists because the 1.2.x "integrity check failed" bug shipped despite a
-/// green suite: `validateInstalledRuntime` computed only each manifest entry's
-/// *immediate* parent directory, so any package directory whose own children are
-/// all directories (`_internal/numpy`, whose files live under
-/// `_internal/numpy/core/...`) was reported as an unexpected extra directory and
-/// a perfectly good install was condemned as corrupt. The same function also
-/// failed to exclude its own `.bundle_version` fast-path marker, so *every*
-/// launch after the first one failed. Neither is observable without building a
-/// realistic directory tree on disk and running the real validator over it —
-/// which is exactly what these tests do.
 @MainActor
 final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
-    // MARK: - Fixture plumbing
-
     private var root: URL!
 
     override func setUpWithError() throws {
@@ -41,8 +26,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Writes `contents` at `relativePath` under `serverURL`, creating every
-    /// intermediate directory, and returns the matching manifest entry.
     @discardableResult
     private func materialize(
         _ relativePath: String,
@@ -77,8 +60,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// Builds a `VoqoraServer/` directory under `root` containing exactly the
-    /// listed (path, contents, mode) triples, and the manifest describing it.
     private func buildRuntime(
         _ files: [(String, String, Int)]
     ) throws -> (serverURL: URL, manifest: LaunchManager.RuntimeManifest) {
@@ -108,12 +89,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         }
     }
 
-    // MARK: - Bug #2 regression: ancestor-directory computation
-
-    /// THE regression test for the shipped false-failure. `_internal` and
-    /// `_internal/numpy` contain no files of their own — every file lives
-    /// deeper — yet the enumerator visits both. Computing only immediate
-    /// parents (the shipped 1.2.x logic) leaves them unrecognized and throws.
     func test_validatesPackageDirectoriesThatContainNoFilesOfTheirOwn() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "#!/bin/sh\n", 0o755),
@@ -130,9 +105,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// The pathological depth case: one file, five levels of intermediate
-    /// directories, none of which are any file's immediate parent except the
-    /// last. Every one of them must be recognized.
     func test_validatesDeeplyNestedSingleFileRuntime() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "bin", 0o755),
@@ -147,8 +119,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// The degenerate opposite: a manifest with no nested entries at all must
-    /// not accidentally synthesize expected directories.
     func test_validatesFlatRuntimeWithOnlyTopLevelFiles() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "bin", 0o755),
@@ -163,12 +133,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    // MARK: - Bug #2 regression: `.bundle_version` marker exclusion
-
-    /// The marker is stamped by `prepare()` immediately after a successful
-    /// install and is never an archive member. Before the fix, its presence
-    /// made every launch after the very first one fail integrity, forcing a
-    /// full re-extraction that then failed anyway.
     func test_ignoresItsOwnBundleVersionMarkerFile() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "bin", 0o755),
@@ -189,8 +153,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// The exclusion must be exact. A *nested* `.bundle_version`, or a
-    /// similarly-named file, is a genuinely unexpected member.
     func test_rejectsBundleVersionLookalikesThatAreNotTheRootMarker() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "bin", 0o755),
@@ -227,8 +189,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             "`.bundle_version.bak` is not the marker and must not be tolerated"
         )
     }
-
-    // MARK: - The validator must still fail closed on real tampering
 
     func test_rejectsAnExtraFileNotInTheManifest() throws {
         let runtime = try buildRuntime([("VoqoraServer", "bin", 0o755)])
@@ -350,9 +310,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// An empty `files` array can never reach the validator through
-    /// `runtimeManifest`, but the validator must not treat "no expectations"
-    /// as "everything is fine" if it is ever called directly.
     func test_emptyManifestRejectsANonEmptyRuntime() throws {
         let serverURL = root.appendingPathComponent("VoqoraServer")
         try FileManager.default.createDirectory(at: serverURL, withIntermediateDirectories: true)
@@ -364,17 +321,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    // MARK: - Session validation cache
-
-    /// The whole point of the cache: the second call must not repeat the
-    /// SHA-256 pass. Proven without a stopwatch by corrupting a file's
-    /// *contents* while leaving its size, mode and mtime exactly as they were
-    /// — a full verification would catch that, a legitimate cache hit will
-    /// not. That is precisely the trade this cache makes, so asserting it
-    /// documents the trade rather than hiding it.
-    /// Pins every entry in `serverURL` to one exact modification date, so a
-    /// test can rewrite a file and put the tree back into a byte-identical
-    /// stat state without depending on timestamp precision.
     private func pinModificationDates(_ date: Date, under serverURL: URL) throws {
         var targets = [serverURL]
         if let enumerator = FileManager.default.enumerator(at: serverURL, includingPropertiesForKeys: nil) {
@@ -382,7 +328,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
                 targets.append(url)
             }
         }
-        // Deepest first: touching a child would otherwise re-dirty its parent.
         for url in targets.sorted(by: { $0.path.count > $1.path.count }) {
             try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
         }
@@ -403,9 +348,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
         try LaunchManager.verifyInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest)
 
-        // Identical byte count, identical permissions, identical modification
-        // dates — nothing the fingerprint looks at has moved, only the bytes
-        // the SHA-256 pass would have read.
         let target = runtime.serverURL.appendingPathComponent("VoqoraServer")
         try Data("tampered".utf8).write(to: target)
         try pinModificationDates(pinned, under: runtime.serverURL)
@@ -425,10 +367,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// Every ordinary way a runtime can change still forces the full hash,
-    /// because the fingerprint covers the whole tree, not just the entry
-    /// point: an added file, a deleted file, a rewritten file, a chmod, and a
-    /// symlink swapped in for a real one.
     func test_everyOrdinaryRuntimeChangeDefeatsTheCache() throws {
         let extraFile = { (server: URL) in
             try Data("evil".utf8).write(to: server.appendingPathComponent("injected.dylib"))
@@ -478,8 +416,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         }
     }
 
-    /// The cache is keyed on the tree AND the manifest that vouches for it, so
-    /// a swapped manifest can never inherit the previous one's approval.
     func test_cacheIsKeyedOnTheManifestNotJustTheTree() throws {
         LaunchManager.invalidateRuntimeValidation()
         let runtime = try buildRuntime([("VoqoraServer", "bin", 0o755)])
@@ -511,9 +447,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// `invalidateRuntimeValidation` is what `prepare()` calls before it
-    /// re-extracts, so a fresh install is never waved through on the strength
-    /// of the runtime it replaces.
     func test_explicitInvalidationForcesAFullReverification() throws {
         LaunchManager.invalidateRuntimeValidation()
         let runtime = try buildRuntime([("VoqoraServer", "bin", 0o755)])
@@ -537,8 +470,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    /// The fingerprint must be stable across repeated walks of an untouched
-    /// tree, or the cache would never hit and the whole exercise is pointless.
     func test_fingerprintIsStableAndFailsSafeOnAMissingRuntime() throws {
         let runtime = try buildRuntime([
             ("VoqoraServer", "bin", 0o755),
@@ -558,8 +489,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             "No tree to fingerprint must read as `re-verify properly`, never as a hit"
         )
     }
-
-    // MARK: - Manifest decoding edge cases
 
     private func decodeManifest(_ json: String) throws -> LaunchManager.RuntimeManifest {
         let url = root.appendingPathComponent("\(UUID().uuidString).manifest.json")
@@ -612,8 +541,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    // MARK: - Backend marker identity
-
     func test_backendMarkerPrefersArchiveIdentityAndFallsBackSafely() {
         XCTAssertEqual(
             LaunchManager.backendMarker(bundleVersion: "1.2.4", archiveBuildID: "abc123"),
@@ -642,8 +569,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             LaunchManager.backendMarker(bundleVersion: "1.2.4", archiveBuildID: "b")
         )
     }
-
-    // MARK: - Staging-directory reaper
 
     func test_reaperRemovesOnlyOldStagingDirectories() throws {
         let appSupport = root.appendingPathComponent("support")
@@ -694,14 +619,10 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             "`>= minimumAge` must include the boundary itself"
         )
 
-        // Must be a silent no-op, never a crash, on a first launch where
-        // Application Support does not exist yet.
         LaunchManager.removeStaleBackendStagingDirectories(
             in: root.appendingPathComponent("never-created")
         )
     }
-
-    // MARK: - Atomic install handoff
 
     func test_installPromotesStagedRuntimeAndReplacesAnExistingOne() throws {
         let staged = root.appendingPathComponent("staging/VoqoraServer")
@@ -752,11 +673,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         )
     }
 
-    // MARK: - Round trip: install, stamp the marker, re-validate
-
-    /// The exact sequence `prepare()` performs on a first launch, followed by
-    /// the validation `validateRuntimeForExecution` runs before *every*
-    /// subsequent `Process.run()`. Shipped 1.2.x failed the second pass.
     func test_installThenStampThenRevalidateSucceedsRepeatedly() throws {
         let staged = root.appendingPathComponent("stage/VoqoraServer")
         try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
@@ -781,7 +697,6 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             encoding: .utf8
         )
 
-        // Three more launches' worth of pre-exec validation.
         for launch in 1 ... 3 {
             XCTAssertNoThrow(
                 try LaunchManager.validateInstalledRuntime(at: installed, manifest: sealed),

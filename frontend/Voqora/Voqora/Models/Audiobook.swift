@@ -1,6 +1,5 @@
 import Foundation
 
-/// Mirror of backend `meta.json` schema.
 struct Audiobook: Identifiable, Codable, Hashable {
     let bookID: String
     let title: String
@@ -21,9 +20,6 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let budget: GeminiBudget?
     let error: String?
 
-    /// Books created before this field existed always used Gemini cleanup.
-    /// Treat an absent value as that legacy behavior so an interrupted old
-    /// book cannot silently change its document-processing boundary on resume.
     var requiresGeminiCleanup: Bool {
         usesGeminiCleanup ?? true
     }
@@ -32,13 +28,6 @@ struct Audiobook: Identifiable, Codable, Hashable {
         bookID
     }
 
-    /// `title` with any supported source-file extension stripped. Single
-    /// source of truth for this — it was previously copy-pasted across 5
-    /// views and drifted: 3 correctly stripped every extension
-    /// (AudiobookImportStaging.supportedExtensions), 2 only stripped ".pdf",
-    /// so a .docx/.txt/.md book showed its raw filename in exactly the two
-    /// most-visible spots (the completion modal and the sidebar's "Continue
-    /// Listening" button).
     var displayTitle: String {
         AudiobookImportStaging.strippingSupportedExtension(from: title)
     }
@@ -51,12 +40,9 @@ struct Audiobook: Identifiable, Codable, Hashable {
         sections.sorted { $0.startTime < $1.startTime }
     }
 
-    func section(at time: TimeInterval) -> AudiobookSection? {
-        sortedSections.last { $0.startTime <= time }
-    }
-
-    func subtitle(at time: TimeInterval) -> String {
-        guard sections.count > 1, let section = section(at: time) else {
+    func subtitle(at time: TimeInterval, chapters: [AudiobookSection]? = nil) -> String {
+        let chapters = chapters ?? sortedSections
+        guard chapters.count > 1, let section = chapters.section(at: time) else {
             return "Narrated by \(narratorName)"
         }
         let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
@@ -114,9 +100,6 @@ struct Audiobook: Identifiable, Codable, Hashable {
     }
 }
 
-/// Additive local receipt for a Gemini-assisted book. Only the approval
-/// envelope is shown in the UI; operation identifiers and token counts remain
-/// internal diagnostics rather than product copy.
 struct GeminiBudget: Codable, Hashable {
     let capUsd: Double?
     let actualUsd: Double?
@@ -155,7 +138,7 @@ struct PhaseProgress: Codable, Hashable {
 
 nonisolated struct AudiobookSection: Identifiable, Codable, Hashable, Sendable {
     var id: String {
-        "\(startPage)-\(endPage)"
+        "\(startPage)-\(endPage)-\(Int(startTime * 1000))"
     }
 
     let title: String
@@ -168,6 +151,12 @@ nonisolated struct AudiobookSection: Identifiable, Codable, Hashable, Sendable {
         case startPage = "start_page"
         case endPage = "end_page"
         case startTime = "start_time"
+    }
+}
+
+extension [AudiobookSection] {
+    func section(at time: TimeInterval) -> AudiobookSection? {
+        last { $0.startTime <= time }
     }
 }
 
@@ -205,7 +194,6 @@ struct ActualStats: Codable, Hashable {
     }
 }
 
-/// Upload-time estimate response from POST /audiobook.
 struct AudiobookEstimateResponse: Codable, Hashable {
     let bookID: String
     let title: String
@@ -214,15 +202,10 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     let estimatedProcessingSeconds: Double
     let estimatedAudioSeconds: Double
     let estimatedCostUsd: Double
-    /// Conservative envelope used for the per-book admission cap. Optional
-    /// so an already-uploaded legacy estimate remains decodable.
     let maximumCostUsd: Double?
     let estimatedTokenCount: Int
     let isImageOnly: Bool
     let costWarning: Bool
-    /// Set when this exact file content already exists as another book.
-    /// Warned, not blocked — a deliberate re-import (different voice) is
-    /// still a legitimate use.
     let duplicateOfBookID: String?
     let duplicateOfTitle: String?
 
@@ -247,10 +230,6 @@ enum ProcessingStatus: Hashable {
     case queued
     case extracting(page: Int, total: Int)
     case cleaning(page: Int, total: Int)
-    /// The backend's outline/chaptering phase (T-6). Every book passes
-    /// through this — on the Gemini-detect-sections path it can take up to
-    /// 120s — so it needs its own case rather than falling through to
-    /// `.queued` (which made the UI look stuck/reverted).
     case sectioning(page: Int, total: Int)
     case generating(page: Int, total: Int)
     case ready
@@ -289,7 +268,6 @@ enum ProcessingStatus: Hashable {
     }
 }
 
-/// Format a duration into "1h 24m" / "12m 5s" / "45s".
 enum DurationFormatter {
     static func short(_ seconds: Double) -> String {
         let total = Int(seconds.rounded())

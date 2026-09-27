@@ -1,20 +1,6 @@
 import Foundation
 import SwiftUI
 
-/// MetricsService v3 — counts-only analytics with an allowlisted outbox.
-///
-/// Design contract:
-/// - Sends ONLY the keys in `Props.allowedKeys`. Any unknown key is dropped
-///   on the client *before* HTTP serialization. The server re-enforces this.
-/// - Launches flush immediately; other events batch every 30s or at 20 events.
-/// - Every request carries `anon_id` (a stable per-install UUID owned by
-///   `IdentityService`) and never a bearer token. Name/email identity is
-///   handled separately by `IdentityService.submitIdentity`, which POSTs to
-///   `/api/voqora/identify` and is independent from event flush.
-/// - Always enabled; there is no user-facing opt-out. Collection is
-///   allowlisted counts only, never text, filenames, audio, or API keys.
-/// - Outbox is persisted to UserDefaults across app restarts (cap 200).
-/// - Endpoint: POST /api/voqora/events on himudigonda.me.
 actor MetricsService {
     static let shared = MetricsService()
 
@@ -24,17 +10,11 @@ actor MetricsService {
     private let flushBatchSize = 20
     nonisolated static let flushIntervalSeconds: TimeInterval = 30
 
-    // State now lives inside the actor — no @AppStorage main-thread coupling.
-    // UserDefaults itself is thread-safe per Apple docs; we read it at init
-    // and on the toggle path, which is rare.
     private var userID: String?
     private var enabled: Bool
     private var outbox: [Event] = []
     private var isFlushing = false
 
-    /// Static so `Event.serialized()` doesn't reallocate per call.
-    /// `ISO8601DateFormatter` is documented as thread-safe by Apple but is
-    /// not Sendable; use `nonisolated(unsafe)` to opt out of the audit.
     nonisolated(unsafe) static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -47,12 +27,6 @@ actor MetricsService {
         outbox = Self.loadOutbox()
     }
 
-    // MARK: - Configuration
-
-    /// Local, idempotent privacy erasure. The caller is responsible for any
-    /// separately-authorized remote contact removal; this method never sends
-    /// a final telemetry request while deleting the outbox. `enabled` is
-    /// restored to `true` on next launch — there is no persistent opt-out.
     func eraseLocalData() {
         enabled = false
         userID = nil
@@ -60,8 +34,6 @@ actor MetricsService {
         UserDefaults.standard.removeObject(forKey: outboxKey)
         UserDefaults.standard.removeObject(forKey: "anonymousUserID")
     }
-
-    // MARK: - Public surface (fire-and-forget, call-site compatible with v1)
 
     nonisolated func trackLaunch() {
         Task { await self.enqueue(event: "app_launch", props: [:], flushImmediately: true) }
@@ -98,16 +70,6 @@ actor MetricsService {
         }
     }
 
-    nonisolated func trackGeminiClean(pages: Int, charsOut: Int) {
-        Task {
-            await self.enqueue(event: "gemini_clean",
-                               props: ["pages": pages, "chars_out": charsOut])
-        }
-    }
-
-    /// Installer signals describe the handoff funnel, never a completed app
-    /// installation or a unique person. The DMG still requires an explicit
-    /// Finder drag-and-drop step by the user.
     nonisolated func trackInstallerDownloadStarted() {
         Task { await self.enqueue(event: "installer_download_started", props: [:]) }
     }
@@ -124,12 +86,9 @@ actor MetricsService {
         Task { await self.enqueue(event: "installer_failed", props: [:]) }
     }
 
-    /// Fire-and-forget force-flush. Safe to call from anywhere.
     nonisolated func flush() {
         Task { await self.flushLocked() }
     }
-
-    // MARK: - Core
 
     private func enqueue(
         event: String,
@@ -144,8 +103,6 @@ actor MetricsService {
             return
         }
         let cleanedProps = Props.sanitizedPayload(rawProps)
-        // The identifier is generated before persistence, so a retry after a
-        // lost HTTP response is the same event, not a second launch/action.
         let evt = Event(name: event, props: cleanedProps, timestamp: Date())
         outbox.append(evt)
         if outbox.count > outboxCap {
@@ -187,8 +144,6 @@ actor MetricsService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        // Keep the batch until the server confirms acceptance. The actor guard
-        // prevents concurrent timer/manual flushes from sending duplicates.
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
@@ -209,8 +164,6 @@ actor MetricsService {
             }
         }
     }
-
-    // MARK: - Outbox persistence
 
     private func persistOutbox() {
         let serialized = outbox.map { $0.serialized() }
@@ -238,12 +191,6 @@ actor MetricsService {
     }
 }
 
-// MARK: - Periodic flush driver
-
-///
-/// Lives on @MainActor so the Timer schedules on the main runloop (safe and
-/// matches the original behavior). Each tick spawns a Task that hops into the
-/// MetricsService actor to flush.
 @MainActor
 final class MetricsFlushDriver {
     static let shared = MetricsFlushDriver()
@@ -257,7 +204,6 @@ final class MetricsFlushDriver {
             withTimeInterval: MetricsService.flushIntervalSeconds,
             repeats: true
         ) { _ in
-            // `flush()` is nonisolated and spawns its own Task; no await needed.
             MetricsService.shared.flush()
         }
     }
@@ -267,8 +213,6 @@ final class MetricsFlushDriver {
         timer = nil
     }
 }
-
-// MARK: - Event + Props (testable boundary; UNCHANGED API)
 
 extension MetricsService {
     struct Event {
@@ -314,8 +258,6 @@ extension MetricsService {
             } else {
                 Date()
             }
-            // Pre-idempotency outbox entries remain safe to deliver: assign a
-            // fresh ID once and persist it with the next outbox write.
             let id = raw["event_id"] as? String
             return Event(
                 id: Self.isValidID(id) ? id! : UUID().uuidString,
@@ -332,8 +274,6 @@ extension MetricsService {
     }
 
     enum Props {
-        /// Closed allowlist — see `docs/specs/accounts-analytics.md` §5.2.
-        /// Any key not in this map is dropped.
         nonisolated static let allowedKeys: [String: @Sendable (Any) -> Any?] = [
             "chars": { ($0 as? Int).flatMap { $0 >= 0 ? $0 : nil } },
             "voice": { ($0 as? String) },
@@ -356,8 +296,6 @@ extension MetricsService {
             "seconds_played": { v in (v as? Double).flatMap { $0 >= 0 ? $0 : nil } },
         ]
 
-        /// Strip everything not in `allowedKeys` and validate value shapes.
-        /// This is *defense in depth*; the server enforces the same allowlist.
         nonisolated static func sanitizedPayload(_ raw: [String: Any]) -> [String: Any] {
             var out: [String: Any] = [:]
             for (key, validator) in allowedKeys {
