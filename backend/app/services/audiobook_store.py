@@ -219,6 +219,10 @@ class AudiobookStore:
     def page_audio_path(cls, book_id: str, n: int) -> str:
         return os.path.join(cls.book_dir(book_id), "audio_pages", f"{n:03d}.wav")
 
+    @classmethod
+    def page_timing_path(cls, book_id: str, n: int) -> str:
+        return os.path.join(cls.book_dir(book_id), "audio_pages", f"{n:03d}.json")
+
     # ---------- create ----------
 
     @classmethod

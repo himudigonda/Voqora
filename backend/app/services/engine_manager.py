@@ -56,6 +56,10 @@ class EngineManager:
             yield chunk
 
     @classmethod
+    def split_segments(cls, text: str) -> list[str]:
+        return TTSEngine._split_segments(text)
+
+    @classmethod
     async def prewarm_with_lookahead(cls, text: str, voice: str, speed: float) -> None:
         await TTSEngine.prewarm_with_lookahead(text, voice, speed)
 

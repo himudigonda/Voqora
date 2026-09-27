@@ -19,6 +19,7 @@ import concurrent.futures
 import hashlib
 import json
 import os
+import re
 import struct
 import time
 import uuid
@@ -555,7 +556,10 @@ class AudiobookService:
                 "cleaning_failed",
                 "cost_capped",
             )
-            paths = [AudiobookStore.page_audio_path(book_id, n)]
+            paths = [
+                AudiobookStore.page_audio_path(book_id, n),
+                AudiobookStore.page_timing_path(book_id, n),
+            ]
             if needs_reclean:
                 paths.append(AudiobookStore.page_clean_path(book_id, n))
             for p in paths:
@@ -1398,6 +1402,8 @@ class AudiobookService:
                 continue
 
             clean_path = AudiobookStore.page_clean_path(book_id, n)
+            timing_path = AudiobookStore.page_timing_path(book_id, n)
+            cls._remove_quietly(timing_path)
             if not os.path.exists(clean_path):
                 # Skip pages with no cleaned text — but still fall through to
                 # the phase_progress/page_done bookkeeping below. Previously
@@ -1414,9 +1420,10 @@ class AudiobookService:
                     cls._write_silence_wav(out_path, 0.3)
                 else:
                     try:
-                        samples = await cls._generate_full_page(
+                        samples, lines = await cls._generate_full_page(
                             book_id, text, voice, speed
                         )
+                        cls._write_json_atomic(timing_path, {"lines": lines})
                         cls._write_wav_from_samples(out_path, samples)
                     except AudiobookCancelled:
                         # A cancel raised mid-page (inside _generate_full_page's
@@ -1452,6 +1459,7 @@ class AudiobookService:
                             error="Narration could not generate this page.",
                             error_code="tts_failed",
                         )
+                        cls._remove_quietly(timing_path)
                         cls._write_silence_wav(out_path, 0.5)
 
             EngineManager.touch()
@@ -1466,8 +1474,8 @@ class AudiobookService:
     @classmethod
     async def _generate_full_page(
         cls, book_id: str, text: str, voice: str, speed: float
-    ) -> np.ndarray:
-        """Drain the EngineManager.generate async generator into one float32 array.
+    ) -> tuple[np.ndarray, list[dict[str, Any]]]:
+        """Synthesize a page into one float32 array plus per-sentence timings.
 
         Paced with a short yield between segments (AUDIOBOOK_TTS_SEGMENT_PACING_S)
         so audiobook synthesis doesn't monopolize the CPU — applies to every
@@ -1483,13 +1491,20 @@ class AudiobookService:
         waiting for the whole (possibly multi-segment) page to finish.
         """
         chunks: list[np.ndarray] = []
-        async for chunk in EngineManager.generate(text, voice, speed):
-            cls._check_cancel(book_id)
-            chunks.append(chunk)
-            await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
+        timings: list[tuple[int, str, int, int]] = []
+        cursor = 0
+        for paragraph, unit in _speech_units(text):
+            for segment in EngineManager.split_segments(unit):
+                start = cursor
+                async for chunk in EngineManager.generate(segment, voice, speed):
+                    cls._check_cancel(book_id)
+                    chunks.append(chunk)
+                    cursor += len(chunk)
+                    await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
+                timings.append((paragraph, segment, start, cursor))
         if not chunks:
-            return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32)
-        return np.concatenate(chunks)
+            return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32), []
+        return np.concatenate(chunks), _sentence_lines(timings)
 
     # ---------- phase: concat ----------
 
@@ -1589,6 +1604,9 @@ class AudiobookService:
                 "total_audio_seconds": total_seconds,
                 "pages": page_texts,
                 "page_status": page_status,
+                "lines": cls._timed_lines(
+                    book_id, page_count, page_to_time, page_status
+                ),
             }
             tpath = AudiobookStore.transcript_path(book_id)
             tmp = tpath + ".tmp"
@@ -1649,6 +1667,59 @@ class AudiobookService:
         }
         cls._emit(book_id, "phase_finished", phase="concatenating")
         return actual
+
+    @classmethod
+    def _timed_lines(
+        cls,
+        book_id: str,
+        page_count: int,
+        page_to_time: dict[str, float],
+        page_status: dict[str, str],
+    ) -> dict[str, list[dict[str, Any]]]:
+        lines: dict[str, list[dict[str, Any]]] = {}
+        for n in range(1, page_count + 1):
+            key = str(n)
+            if key in page_status:
+                continue
+            path = AudiobookStore.page_timing_path(book_id, n)
+            try:
+                with open(path, encoding="utf-8") as f:
+                    page_lines = json.load(f).get("lines") or []
+            except (OSError, ValueError):
+                continue
+            offset = page_to_time.get(key, 0.0)
+            lines[key] = [
+                {
+                    "paragraph": int(line["paragraph"]),
+                    "text": str(line["text"]),
+                    "start": round(offset + float(line["start"]), 3),
+                    "end": round(offset + float(line["end"]), 3),
+                }
+                for line in page_lines
+                if isinstance(line, dict) and line.get("text")
+            ]
+        return lines
+
+    @staticmethod
+    def _remove_quietly(path: str) -> None:
+        try:
+            os.remove(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            log.warning(
+                "audiobook.remove_failed",
+                extra={"failure_code": "file_remove_failed"},
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _write_json_atomic(path: str, payload: dict[str, Any]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, path)
 
     # ---------- WAV helpers ----------
 
@@ -1727,3 +1798,59 @@ def _wav_header(pcm_data_size: int) -> bytes:
     )
     struct.pack_into("<4sI", header, 36, b"data", pcm_data_size)
     return bytes(header)
+
+
+_LINE_ENDERS = frozenset(".!?:;\"')]”’")
+_SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*$")
+_MIN_SENTENCE_WORDS = 3
+
+
+def _speech_units(text: str) -> list[tuple[int, str]]:
+    units: list[tuple[int, str]] = []
+    paragraph = -1
+    for block in re.split(r"\n[ \t]*\n", text):
+        lines = [line.strip() for line in block.split("\n") if line.strip()]
+        if not lines:
+            continue
+        paragraph += 1
+        joined: list[str] = []
+        for line in lines:
+            if joined and joined[-1][-1] not in _LINE_ENDERS:
+                joined[-1] = f"{joined[-1]} {line}"
+            else:
+                joined.append(line)
+        units.extend((paragraph, unit) for unit in joined)
+    return units
+
+
+def _sentence_lines(
+    segments: list[tuple[int, str, int, int]],
+) -> list[dict[str, Any]]:
+    lines: list[dict[str, Any]] = []
+    pending: list[tuple[int, str, int, int]] = []
+
+    def flush() -> None:
+        if not pending:
+            return
+        lines.append(
+            {
+                "paragraph": pending[0][0],
+                "text": " ".join(part[1] for part in pending),
+                "start": round(pending[0][2] / SAMPLE_RATE, 3),
+                "end": round(pending[-1][3] / SAMPLE_RATE, 3),
+            }
+        )
+        pending.clear()
+
+    for index, segment in enumerate(segments):
+        if pending and pending[0][0] != segment[0]:
+            flush()
+        pending.append(segment)
+        next_segment = segments[index + 1] if index + 1 < len(segments) else None
+        words = sum(len(part[1].split()) for part in pending)
+        ends_sentence = bool(_SENTENCE_END.search(segment[1]))
+        continues_paragraph = next_segment is not None and next_segment[0] == segment[0]
+        if ends_sentence and (words >= _MIN_SENTENCE_WORDS or not continues_paragraph):
+            flush()
+    flush()
+    return lines

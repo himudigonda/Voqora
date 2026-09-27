@@ -388,10 +388,18 @@ async def test_generate_full_page_paces_between_segments():
         ),
         patch("app.services.audiobook_service.asyncio.sleep", new=sleep_mock),
     ):
-        samples = await AudiobookService._generate_full_page(
+        samples, lines = await AudiobookService._generate_full_page(
             "test-book", "hello", "af_bella", 1.0
         )
 
+    assert lines == [
+        {
+            "paragraph": 0,
+            "text": "hello",
+            "start": 0.0,
+            "end": round(300 / SAMPLE_RATE, 3),
+        }
+    ]
     assert sleep_mock.call_count == 3
     for call in sleep_mock.call_args_list:
         assert call.args[0] == settings.AUDIOBOOK_TTS_SEGMENT_PACING_S
@@ -491,6 +499,54 @@ async def test_tts_phase_writes_per_page_wavs(monkeypatch):
 
     for n in (1, 2):
         assert os.path.exists(AudiobookStore.page_audio_path(bid, n))
+
+
+@pytest.mark.asyncio
+async def test_transcript_publishes_exact_sentence_times_from_synthesis():
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    for n, text in (
+        (1, "Intro\n\nFirst sentence here. Second one now."),
+        (2, "Last page line."),
+    ):
+        path = AudiobookStore.page_clean_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+    async def one_second_per_segment(*args, **kwargs):
+        yield np.zeros(SAMPLE_RATE, dtype=np.float32)
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=one_second_per_segment,
+        ),
+        patch("app.services.audiobook_service.asyncio.sleep", new=AsyncMock()),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+    await AudiobookService._phase_concat(bid, AudiobookStore.read_meta(bid))
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        transcript = json.load(f)
+
+    assert transcript["page_to_time"] == {"1": 0.0, "2": 3.0}
+    assert transcript["lines"] == {
+        "1": [
+            {"paragraph": 0, "text": "Intro", "start": 0.0, "end": 1.0},
+            {"paragraph": 1, "text": "First sentence here.", "start": 1.0, "end": 2.0},
+            {"paragraph": 1, "text": "Second one now.", "start": 2.0, "end": 3.0},
+        ],
+        "2": [{"paragraph": 0, "text": "Last page line.", "start": 3.0, "end": 4.0}],
+    }
 
 
 # ---------- TTS progress stall for missing-clean-text pages (T-2) ----------
@@ -2411,60 +2467,112 @@ def test_read_text_accepts_real_text_with_a_few_unencodable_chars(tmp_path):
 # ---------- PDF extraction opens the PDF once, not once per page ----------
 
 
-class _FakePage:
-    def __init__(self, text: str):
-        self._text = text
-
-    def extract_text(self):
-        return self._text
-
-
-class _FakePDF:
-    def __init__(self, pages: list[str]):
-        self.pages = [_FakePage(t) for t in pages]
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
-
-
 def test_extract_one_opens_pdf_only_once_for_the_whole_book(monkeypatch, tmp_path):
     """Regression: extract_one previously reopened/reparsed the entire PDF
-    for every single page (N pages -> N pdfplumber.open calls on a
-    single-threaded executor). It now extracts and writes every page on the
-    first call, mirroring TextExtractor.extract_one's already-established
-    pattern, so a 1000-page book opens the PDF once instead of 1000 times."""
+    for every single page. It now extracts and writes every page on the
+    first call, so a 1000-page book opens the PDF once instead of 1000 times."""
     from app.services.pdf_extractor import PDFExtractor
 
     page_texts = [f"Page {i} content." for i in range(1, 11)]
     open_calls: list[str] = []
 
-    def fake_open(path):
+    def fake_read(cls, path, indices=None):
         open_calls.append(path)
-        return _FakePDF(page_texts)
+        return page_texts
 
-    monkeypatch.setattr("app.services.pdf_extractor.pdfplumber.open", fake_open)
+    monkeypatch.setattr(PDFExtractor, "read_page_texts", classmethod(fake_read))
 
     bid = AudiobookStore.create_book("Test.pdf")
-    # extract_one resolves the source path via AudiobookStore.pdf_path, which
-    # just needs the book dir to exist (create_book already makes it) — no
-    # real PDF bytes are read since pdfplumber.open is mocked above.
-
-    # Mirrors _phase_extract's sequential loop: call extract_one for every
-    # page in order, the same way the real pipeline does.
     for n in range(1, 11):
         PDFExtractor.extract_one(bid, n)
 
-    assert (
-        len(open_calls) == 1
-    ), f"expected 1 pdfplumber.open call, got {len(open_calls)}"
+    assert len(open_calls) == 1, f"expected 1 PDF read, got {len(open_calls)}"
     for n in range(1, 11):
         path = AudiobookStore.page_raw_path(bid, n)
         assert os.path.exists(path)
         with open(path, encoding="utf-8") as f:
             assert f.read() == f"Page {n} content."
+
+
+def test_sampling_reads_only_the_first_middle_and_last_pages(monkeypatch):
+    from app.services import pdf_extractor
+    from app.services.pdf_extractor import PDFExtractor
+
+    requested: list[list[int]] = []
+
+    class FakeDoc:
+        def __init__(self, path):
+            pass
+
+        def __len__(self):
+            return 400
+
+        def close(self):
+            pass
+
+    def fake_read(cls, path, indices=None):
+        requested.append(list(indices))
+        return ["one two three"] * len(requested[-1])
+
+    monkeypatch.setattr(pdf_extractor.pdfium, "PdfDocument", FakeDoc)
+    monkeypatch.setattr(PDFExtractor, "read_page_texts", classmethod(fake_read))
+
+    assert PDFExtractor.sample_word_count("book.pdf") == 3
+    assert requested == [[0, 200, 399]]
+
+
+def test_resolve_line_hyphens_joins_split_words_and_keeps_real_compounds():
+    from app.services.pdf_extractor import resolve_line_hyphens
+
+    pages = [
+        "Recurrent and convolu\ufffetional networks.",
+        "English\ufffeto-German translation with convolutional layers.",
+    ]
+    assert resolve_line_hyphens(pages) == [
+        "Recurrent and convolutional networks.",
+        "English-to-German translation with convolutional layers.",
+    ]
+
+
+def test_speech_units_split_paragraphs_and_keep_deliberate_line_breaks():
+    from app.services.audiobook_service import _speech_units
+
+    text = "Heading\n\nThis line wraps\nonto the next.\nA second sentence.\n\nItem one:\nfirst detail."
+    assert _speech_units(text) == [
+        (0, "Heading"),
+        (1, "This line wraps onto the next."),
+        (1, "A second sentence."),
+        (2, "Item one:"),
+        (2, "first detail."),
+    ]
+
+
+def test_sentence_lines_group_segments_into_sentences_with_exact_times():
+    from app.services.audiobook_service import _sentence_lines
+
+    second = SAMPLE_RATE
+    segments = [
+        (0, "Heading", 0, second),
+        (1, "The model uses attention,", second, 3 * second),
+        (1, "and it is fast.", 3 * second, 4 * second),
+        (1, "Dr.", 4 * second, 5 * second),
+        (1, "Smith agrees with this.", 5 * second, 7 * second),
+    ]
+    assert _sentence_lines(segments) == [
+        {"paragraph": 0, "text": "Heading", "start": 0.0, "end": 1.0},
+        {
+            "paragraph": 1,
+            "text": "The model uses attention, and it is fast.",
+            "start": 1.0,
+            "end": 4.0,
+        },
+        {
+            "paragraph": 1,
+            "text": "Dr. Smith agrees with this.",
+            "start": 4.0,
+            "end": 7.0,
+        },
+    ]
 
 
 # ---------- Gemini timeout → raw text fallback ----------

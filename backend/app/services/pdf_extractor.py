@@ -1,4 +1,4 @@
-"""PDFExtractor — pdfplumber wrapper for text extraction, cover render, image-only detection.
+"""PDFExtractor — pdfium text extraction plus pdfplumber cover render and page geometry.
 
 All file-system writes are atomic (tmp+rename). All operations are sync;
 callers wrap in run_in_executor when invoked from async code.
@@ -6,8 +6,11 @@ callers wrap in run_in_executor when invoked from async code.
 
 import io
 import os
+import re
+from collections.abc import Iterable
 
 import pdfplumber
+import pypdfium2 as pdfium
 from PIL import Image
 
 from app.core.config import settings
@@ -38,43 +41,60 @@ class PDFExtractor:
     @classmethod
     def is_image_only(cls, pdf_path: str) -> bool:
         """Return True if no extractable text. Sample first 5 pages for speed."""
-        total_chars = 0
-        with pdfplumber.open(pdf_path) as pdf:
-            sample = pdf.pages[: min(5, len(pdf.pages))]
-            for page in sample:
-                text = page.extract_text() or ""
-                total_chars += len(text)
-                if total_chars >= cls._IMAGE_ONLY_CHAR_THRESHOLD:
-                    return False
+        texts = cls.read_page_texts(pdf_path, indices=range(5))
+        total_chars = sum(len(text) for text in texts)
         return total_chars < cls._IMAGE_ONLY_CHAR_THRESHOLD
 
     @classmethod
     def sample_word_count(cls, pdf_path: str) -> int:
         """Average word count across pages 1, mid, last for accurate estimation."""
-        with pdfplumber.open(pdf_path) as pdf:
-            n = len(pdf.pages)
-            if n == 0:
-                return 0
-            indices = sorted({0, n // 2, n - 1})
-            samples: list[int] = []
-            for i in indices:
-                text = pdf.pages[i].extract_text() or ""
-                samples.append(len(text.split()))
-            return sum(samples) // len(samples)
+        samples = cls._sample_texts(pdf_path)
+        return sum(len(t.split()) for t in samples) // len(samples) if samples else 0
 
     @classmethod
     def sample_char_count(cls, pdf_path: str) -> int:
         """Average char count across pages 1, mid, last (for token estimation)."""
-        with pdfplumber.open(pdf_path) as pdf:
-            n = len(pdf.pages)
-            if n == 0:
-                return 0
-            indices = sorted({0, n // 2, n - 1})
-            samples: list[int] = []
-            for i in indices:
-                text = pdf.pages[i].extract_text() or ""
-                samples.append(len(text))
-            return sum(samples) // len(samples)
+        samples = cls._sample_texts(pdf_path)
+        return sum(len(t) for t in samples) // len(samples) if samples else 0
+
+    @classmethod
+    def _sample_texts(cls, pdf_path: str) -> list[str]:
+        doc = pdfium.PdfDocument(pdf_path)
+        try:
+            n = len(doc)
+        finally:
+            doc.close()
+        return (
+            cls.read_page_texts(pdf_path, indices=sorted({0, n // 2, n - 1}))
+            if n
+            else []
+        )
+
+    @classmethod
+    def read_page_texts(
+        cls, pdf_path: str, indices: Iterable[int] | None = None
+    ) -> list[str]:
+        """Text of the requested pages (all by default) in content order, with
+        pdfium's line-end hyphen markers resolved against their vocabulary."""
+        doc = pdfium.PdfDocument(pdf_path)
+        try:
+            wanted = (
+                range(len(doc))
+                if indices is None
+                else [i for i in indices if 0 <= i < len(doc)]
+            )
+            raw: list[str] = []
+            for index in wanted:
+                textpage = doc[index].get_textpage()
+                try:
+                    raw.append(textpage.get_text_range())
+                finally:
+                    textpage.close()
+        finally:
+            doc.close()
+        return resolve_line_hyphens(
+            [text.replace("\r\n", "\n").replace("\r", "\n") for text in raw]
+        )
 
     # ---------- extraction ----------
 
@@ -94,12 +114,10 @@ class PDFExtractor:
         if os.path.exists(out):
             return
         pdf_path = AudiobookStore.pdf_path(book_id)
-        with pdfplumber.open(pdf_path) as pdf:
-            for i, page in enumerate(pdf.pages, start=1):
-                p = AudiobookStore.page_raw_path(book_id, i)
-                if not os.path.exists(p):
-                    text = page.extract_text() or ""
-                    cls._atomic_write(p, text)
+        for i, text in enumerate(cls.read_page_texts(pdf_path), start=1):
+            p = AudiobookStore.page_raw_path(book_id, i)
+            if not os.path.exists(p):
+                cls._atomic_write(p, text)
 
     # ---------- cover ----------
 
@@ -202,3 +220,23 @@ class PDFExtractor:
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, path)
+
+
+_SOFT_HYPHEN = "\ufffe"
+_HYPHENATED = re.compile(r"(\w+)\ufffe\s*(\w+)")
+_WORD = re.compile(r"\w+")
+
+
+def resolve_line_hyphens(pages: list[str]) -> list[str]:
+    vocabulary = {
+        word.lower()
+        for page in pages
+        for word in _WORD.findall(page.replace(_SOFT_HYPHEN, " "))
+    }
+
+    def join(match: re.Match[str]) -> str:
+        head, tail = match.group(1), match.group(2)
+        merged = head + tail
+        return merged if merged.lower() in vocabulary else f"{head}-{tail}"
+
+    return [_HYPHENATED.sub(join, page).replace(_SOFT_HYPHEN, "-") for page in pages]
