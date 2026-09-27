@@ -390,10 +390,10 @@ final class DashboardViewModelTests: XCTestCase {
     func test_currentVoiceDisplay_humanizes_voice_id() {
         let vm = makeVM()
         vm.selectedVoice = "af_bella"
-        XCTAssertEqual(vm.currentVoiceDisplay, "Af Bella")
+        XCTAssertEqual(vm.currentVoiceDisplay, "Bella")
 
         vm.selectedVoice = "bm_george"
-        XCTAssertEqual(vm.currentVoiceDisplay, "Bm George")
+        XCTAssertEqual(vm.currentVoiceDisplay, "George")
     }
 
     func test_selectedVoice_startsBellaThenPersistsAnIntentionalChoice() {

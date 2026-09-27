@@ -103,18 +103,22 @@ final class AudiobookViewModel: ObservableObject {
     /// Polling for library refresh.
     private var pollTask: Task<Void, Never>?
 
-    // Transcript for the currently-playing book (for live highlighting).
     @Published var currentTranscript: AudiobookService.Transcript?
+    @Published private(set) var transcriptState: TranscriptState = .idle
+    let follower: TranscriptFollower
     private var transcriptTask: Task<Void, Never>?
 
-    /// Set by sidebar / NowPlayingBar when the user wants to navigate into
-    /// the player. The library view observes this and pushes onto its
-    /// NavigationStack, then clears it. Avoids each entry-point needing a
-    /// reference to the path binding.
-    @Published var pendingDeepLink: String? = nil
+    enum TranscriptState: Equatable {
+        case idle
+        case loading
+        case loaded
+        case unavailable
+    }
+
+    @Published var libraryPath: [AudiobookRoute] = []
 
     func openPlayer(for bookID: String) {
-        pendingDeepLink = bookID
+        libraryPath = [.player(bookID)]
     }
 
     /// The player view owns this visibility signal. It is deliberately
@@ -134,6 +138,7 @@ final class AudiobookViewModel: ObservableObject {
     private var sleepTimerTask: Task<Void, Never>?
 
     private var completionObserver: AnyCancellable?
+    private var resumePointSaver: AnyCancellable?
 
     /// Test seam mirroring `localAudioURL`: lets tests simulate SSE events
     /// through a controlled `AsyncStream` instead of opening a real
@@ -159,6 +164,7 @@ final class AudiobookViewModel: ObservableObject {
         }
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.listBooks = listBooks ?? { try await resolvedService.list() }
+        follower = TranscriptFollower(audio: audio)
         // NOT a synchronous `KeychainService.has`/`get` call here, and NOT
         // `Task.detached` either — this runs inside `VoqoraApp.init()`,
         // before any window exists. `SecItemCopyMatching` can block waiting
@@ -200,10 +206,19 @@ final class AudiobookViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self, let bookID = self.audio.completedSessionID else { return }
                 UserDefaults.standard.removeObject(forKey: "bookPos_\(bookID)")
+                if sleepUntilEndOfBook {
+                    cancelSleepTimer()
+                }
                 MetricsService.shared.trackAudiobookPlay(
                     bookIDHash: sha256Hex(bookID),
                     secondsPlayed: self.audio.duration
                 )
+            }
+        resumePointSaver = audio.$currentTime
+            .throttle(for: .seconds(5), scheduler: RunLoop.main, latest: true)
+            .sink { [weak self] _ in
+                guard let self, audio.isPlaying else { return }
+                saveResumePoint()
             }
     }
 
@@ -302,7 +317,7 @@ final class AudiobookViewModel: ObservableObject {
         if pendingDocument != nil || uploadInProgress {
             // A modal is already up — queue this drop for later.
             uploadQueue.append(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine))
-            showToast("Queued '\(document.lastPathComponent)'", kind: .info)
+            showToast("Queued \(AudiobookImportStaging.strippingSupportedExtension(from: document.lastPathComponent))", kind: .info)
             return
         }
         pendingDocument = document
@@ -423,6 +438,9 @@ final class AudiobookViewModel: ObservableObject {
             showToast("Set a Gemini API key in Preferences first.", kind: .error)
             return
         }
+        if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
+            stopPlayback()
+        }
         Task {
             do {
                 let count = try await service.retry(book.bookID, apiKey: key)
@@ -535,8 +553,8 @@ final class AudiobookViewModel: ObservableObject {
         guard generation == completionGeneration else { return }
         completionSummary = book
         PermissionsService.shared.scheduleNotification(
-            title: "Audiobook ready",
-            body: "\"\(book.title)\" is ready to listen."
+            title: "Audiobook Ready",
+            body: book.displayTitle
         )
     }
 
@@ -611,7 +629,7 @@ final class AudiobookViewModel: ObservableObject {
         }
 
         isLoadingAudio = true
-        currentTranscript = nil
+        clearTranscript()
         playbackGeneration &+= 1
         let generation = playbackGeneration
         pendingPlaybackBookID = book.bookID
@@ -626,30 +644,17 @@ final class AudiobookViewModel: ObservableObject {
             do {
                 audio.stop()
                 let url = try await localAudioURL(book.bookID)
-                // The user may have stopped, deleted, or selected another
-                // book while the file request was in flight.
                 guard generation == playbackGeneration else { return }
-                try audio.loadAndPlayWAV(at: url, sessionID: book.bookID)
-                // stop() (called just above) resets the live rate to 1.0 —
-                // reapply this book's chosen speed now that it's actually playing.
+                let savedTime = UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
+                try audio.loadAndPlayWAV(
+                    at: url,
+                    sessionID: book.bookID,
+                    startingAt: savedTime > 2.0 ? savedTime : 0
+                )
                 audio.setPlaybackRate(Float(defaultBookSpeed))
-                // Only commit user-visible playback state after loading
-                // succeeded. A corrupted local audio file must not leave a
-                // misleading "now playing" book with nothing loaded.
                 nowPlaying = book
                 lastPlayedBookID = book.bookID
-                // Restore saved position (skip trivially short seeks < 2 s)
-                let savedTime = UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
-                if savedTime > 2.0 {
-                    audio.seekAudiobook(toSeconds: savedTime)
-                }
-                transcriptTask?.cancel()
-                transcriptTask = Task { [weak self] in
-                    guard let self else { return }
-                    let result = try? await service.transcript(for: book.bookID)
-                    guard !Task.isCancelled else { return }
-                    currentTranscript = result
-                }
+                loadTranscript(for: book.bookID)
             } catch {
                 guard generation == playbackGeneration else { return }
                 showToast("Could not load audio: \(error.localizedDescription)", kind: .error)
@@ -676,10 +681,51 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func togglePlayback() {
-        if audio.isPlaying, let book = nowPlaying, audio.currentTime > 1.0 {
-            UserDefaults.standard.set(audio.currentTime, forKey: "bookPos_\(book.bookID)")
+        if audio.isPlaying {
+            saveResumePoint()
+            audio.pause()
+        } else {
+            audio.resume()
         }
-        audio.togglePause()
+    }
+
+    func loadTranscript(for bookID: String) {
+        transcriptTask?.cancel()
+        transcriptState = .loading
+        transcriptTask = Task { [weak self, service] in
+            let transcript = try? await service.transcript(for: bookID)
+            let document = await Task.detached(priority: .userInitiated) {
+                transcript.map(TranscriptDocument.init(transcript:))
+            }.value
+            guard let self, !Task.isCancelled, nowPlaying?.bookID == bookID else { return }
+            currentTranscript = transcript
+            if let document, !document.isEmpty {
+                follower.load(document)
+                transcriptState = .loaded
+            } else {
+                follower.clear()
+                transcriptState = .unavailable
+            }
+        }
+    }
+
+    private func clearTranscript() {
+        transcriptTask?.cancel()
+        transcriptTask = nil
+        currentTranscript = nil
+        transcriptState = .idle
+        follower.clear()
+    }
+
+    private func saveResumePoint() {
+        guard let book = nowPlaying else { return }
+        let key = "bookPos_\(book.bookID)"
+        let nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 5.0
+        if audio.playbackCompleted || nearEnd {
+            UserDefaults.standard.removeObject(forKey: key)
+        } else if audio.currentTime > 1.0 {
+            UserDefaults.standard.set(audio.currentTime, forKey: key)
+        }
     }
 
     /// - Parameter fadeOverSeconds: when set, fades output out over this
@@ -700,10 +746,7 @@ final class AudiobookViewModel: ObservableObject {
         playbackGeneration &+= 1
         pendingPlaybackBookID = nil
         isLoadingAudio = false
-        let nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 5.0
-        if let book = nowPlaying, audio.currentTime > 1.0, !audio.playbackCompleted, !nearEnd {
-            UserDefaults.standard.set(audio.currentTime, forKey: "bookPos_\(book.bookID)")
-        }
+        saveResumePoint()
         // Emit audiobook_play on manual stop too (natural completion is handled
         // in the playbackCompleted observer). Only counts non-trivial sessions.
         if let book = nowPlaying, audio.currentTime > 5.0, !audio.playbackCompleted {
@@ -712,40 +755,49 @@ final class AudiobookViewModel: ObservableObject {
                 secondsPlayed: audio.currentTime
             )
         }
-        transcriptTask?.cancel()
-        transcriptTask = nil
+        clearTranscript()
         if let fadeOverSeconds {
             audio.fadeOutAndStop(over: fadeOverSeconds)
         } else {
             audio.stop()
         }
         nowPlaying = nil
-        currentTranscript = nil
         cancelSleepTimer()
     }
 
     func seek(percentage: Double) {
-        guard audio.duration > 0 else { return }
-        audio.seekAudiobook(toSeconds: percentage * audio.duration)
+        audio.seek(to: percentage)
+        saveResumePoint()
     }
 
     func seek(toSeconds seconds: Double) {
-        audio.seekAudiobook(toSeconds: seconds)
+        audio.seek(toSeconds: seconds)
+        saveResumePoint()
     }
 
     func skip(by seconds: Double) {
-        guard audio.duration > 0 else { return }
-        let target = max(0, min(audio.duration, audio.currentTime + seconds))
-        audio.seekAudiobook(toSeconds: target)
+        audio.skip(by: seconds)
+        saveResumePoint()
+    }
+
+    func play(fromLine line: TranscriptLine) {
+        audio.seek(toSeconds: line.start)
+        if !audio.isPlaying {
+            audio.resume()
+        }
+        saveResumePoint()
     }
 
     // MARK: - Section navigation
 
     func currentSection(in book: Audiobook) -> AudiobookSection? {
-        let t = audio.currentTime
-        return book.sections
-            .sorted { $0.startTime < $1.startTime }
-            .last(where: { $0.startTime <= t })
+        book.section(at: audio.currentTime)
+    }
+
+    func setSpeed(_ speed: Double) {
+        let clamped = min(2.0, max(0.75, (speed * 100).rounded() / 100))
+        defaultBookSpeed = clamped
+        audio.setPlaybackRate(Float(clamped))
     }
 
     func jumpToNextSection(in book: Audiobook) {
@@ -784,6 +836,17 @@ final class AudiobookViewModel: ObservableObject {
 
         var id: String {
             rawValue
+        }
+
+        var menuTitle: String {
+            switch self {
+            case .fiveMinutes: "5 Minutes"
+            case .fifteenMinutes: "15 Minutes"
+            case .thirtyMinutes: "30 Minutes"
+            case .sixtyMinutes: "1 Hour"
+            case .endOfSection: "End of Section"
+            case .endOfBook: "End of Book"
+            }
         }
 
         var seconds: TimeInterval? {
@@ -951,7 +1014,7 @@ final class AudiobookViewModel: ObservableObject {
             try await service.deleteAll()
             books = []
             completionSummary = nil
-            pendingDeepLink = nil
+            libraryPath = []
             lastPlayedBookID = ""
             if showSuccess {
                 showToast("Deleted all local audiobooks and their source files.", kind: .success)

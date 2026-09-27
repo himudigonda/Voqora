@@ -4,8 +4,6 @@ import UniformTypeIdentifiers
 
 struct VoqoraWindow: View {
     @EnvironmentObject var vm: DashboardViewModel
-    @EnvironmentObject var audio: AudioService
-    @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var launchManager: LaunchManager
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var onboarding: OnboardingCoordinator
@@ -127,57 +125,21 @@ struct VoqoraWindow: View {
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
 
                 // Global drop overlay shown across any non-Audiobooks tab when a supported document is hovering.
-                if globalDropHovering && vm.selectedTab != "books" {
+                if globalDropHovering, vm.selectedTab != "books" {
                     globalDropOverlay
                         .transition(.opacity)
                 }
 
-                // FLOATING MINI PLAYER (Global) - Hide when on main dashboard to avoid duplicate bars.
-                // `vm.status` is driven by `audio.$isPlaying` on the single
-                // `AudioService` shared between dashboard TTS and audiobook
-                // playback (see VoqoraApp.swift's "Audiobook VM uses the same
-                // shared AudioService" comment), so it reads `.speaking`/`.paused`
-                // for an audiobook exactly as it does for a TTS clip — it is
-                // NOT stale or TTS-specific, it is genuinely ambiguous about
-                // which one is playing. `bookVM.nowPlaying` is the disambiguator:
-                // it's set the instant a book starts (in `play()`) and cleared
-                // the instant one stops (in `stopPlayback()`), independent of
-                // `isPlayerViewActive`/`isNowPlayingBarVisible` — so gating on
-                // it here, rather than on `!bookVM.isNowPlayingBarVisible`,
-                // makes this branch and `NowPlayingBar`'s below mutually
-                // exclusive BY CONSTRUCTION (bookVM.nowPlaying == nil vs.
-                // != nil can never both hold) instead of merely usually
-                // agreeing. Without this, the `.id(vm.selectedTab)`
-                // re-identification below could rebuild this ZStack for a tab
-                // switch made from inside the full audiobook player before
-                // `isPlayerViewActive` (set in AudiobookPlayerView.onDisappear)
-                // had flipped to false — a one-frame window where `vm.status`
-                // already read `.speaking` but `isNowPlayingBarVisible` had not
-                // yet caught up, flashing this dashboard-TTS HUD (with stale
-                // history text) under an actively-playing audiobook.
-                if vm.status == .speaking || vm.status == .paused, vm.selectedTab != "home", bookVM.nowPlaying == nil {
-                    miniPlayerHUD
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-
-                // A full player and a compact player bar must never compete
-                // for the same audiobook. The view lifecycle, rather than
-                // `nowPlaying` alone, tells us whether the full player is up.
-                // Also hidden on "home" for the same reason as `miniPlayerHUD`
-                // above: that tab IS a full now-playing surface (the TTS
-                // reader's own circular visualizer and scrubber), so stacking
-                // this bar underneath it produced two independent
-                // scrubber/"now playing" UIs on screen at once — the TTS
-                // view's scrub track and glow circle with the audiobook bar's
-                // progress line and controls floating over the bottom of it.
-                if bookVM.isNowPlayingBarVisible, vm.selectedTab != "home", let playing = bookVM.nowPlaying {
-                    NowPlayingBar(onTap: {
-                        vm.selectedTab = "books"
-                        bookVM.openPlayer(for: playing.bookID)
-                    })
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .environmentObject(vm)
-                    .environmentObject(bookVM)
+                if vm.selectedTab != "home" {
+                    if let playing = bookVM.nowPlaying {
+                        if !bookVM.isPlayerViewActive {
+                            NowPlayingBar(book: playing)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
+                    } else if vm.spokenText != nil, vm.status == .speaking || vm.status == .paused || vm.status == .thinking {
+                        SpeechNowPlayingBar()
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
 
                 // Toast / banner — top of detail pane.
@@ -190,7 +152,8 @@ struct VoqoraWindow: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: bookVM.toast?.id)
             }
             .background(adaptiveBackdrop)
-            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: bookVM.isNowPlayingBarVisible)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: bookVM.isNowPlayingBarVisible)
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.status)
             // Once the audiobook tab pushes its player via
             // `.navigationDestination`, `NavigationSplitView`'s detail
             // column ties its internal navigation-stack identity to the
@@ -322,7 +285,7 @@ struct VoqoraWindow: View {
                         } else {
                             ProgressView()
                                 .tint(accentColor)
-                            Text("Initializing Voqora...")
+                            Text("Starting Voqora…")
                                 .font(vm.font(.rowTitle))
                                 .foregroundStyle(Palette.textSecondary)
                         }
@@ -382,7 +345,13 @@ private extension VoqoraWindow {
     }
 
     private func sidebarLink(_ title: String, icon: String, value: String) -> some View {
-        PaneRow(isSelected: vm.selectedTab == value, action: { vm.selectedTab = value }) {
+        PaneRow(isSelected: vm.selectedTab == value, action: {
+            if value == "books" {
+                vm.showLibrary()
+            } else {
+                vm.selectedTab = value
+            }
+        }) {
             Image(systemName: icon)
                 .font(vm.font(.rowTitle))
                 .frame(width: 20)
@@ -402,9 +371,10 @@ private extension VoqoraWindow {
 
     private func continueListeningButton(for book: Audiobook) -> some View {
         Button {
-            vm.selectedTab = "books"
-            bookVM.play(book)
-            bookVM.openPlayer(for: book.bookID)
+            if bookVM.nowPlaying?.bookID == book.bookID, !bookVM.audio.isPlaying {
+                bookVM.togglePlayback()
+            }
+            vm.openAudiobook(book.bookID)
         } label: {
             HStack(spacing: DesignTokens.Layout.rowIconGap) {
                 Image(systemName: "play.circle")
@@ -430,47 +400,6 @@ private extension VoqoraWindow {
         .foregroundStyle(Palette.textPrimary)
         .accessibilityLabel("Continue Listening: \(book.displayTitle)")
         .accessibilityHint("Resumes this audiobook and opens the player")
-    }
-
-    private var miniPlayerHUD: some View {
-        HStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(vm.status == .speaking ? "SPEAKING" : "PAUSED")
-                    .font(vm.font(.sectionHeader))
-                    .kerning(0.6)
-                    .foregroundStyle(accentColor)
-                Text(history.history.first?.text ?? "Reading...")
-                    .font(vm.appFont(size: 11, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
-                    .lineLimit(1)
-            }
-            .frame(width: 250, alignment: .leading)
-
-            ProgressView(value: audio.progress)
-                .tint(accentColor)
-                .scaleEffect(x: 1, y: 0.5)
-
-            HStack(spacing: 12) {
-                Button { vm.togglePlayback() } label: {
-                    Image(systemName: audio.isPlaying ? "pause.fill" : "play.fill")
-                }
-                .accessibilityLabel(audio.isPlaying ? "Pause" : "Play")
-                .help(audio.isPlaying ? "Pause" : "Play")
-                Button { vm.stopPlayback() } label: {
-                    Image(systemName: "stop.fill")
-                }
-                .accessibilityLabel("Stop")
-                .help("Stop")
-            }
-            .buttonStyle(.plain)
-            .font(.title3)
-            .foregroundStyle(Palette.textPrimary)
-        }
-        .padding(.horizontal, 25)
-        .padding(.vertical, 15)
-        .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-        .padding(20)
-        .animation(.spring(), value: audio.progress)
     }
 
     private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
@@ -514,7 +443,7 @@ private extension VoqoraWindow {
 
     private var globalDropOverlay: some View {
         DocumentDropOverlay(
-            subtitle: "\(AudiobookImportStaging.supportedFormatsDescription) files will switch to Audiobooks and start an estimate.",
+            subtitle: "PDF, Word, text, or Markdown",
             appFont: vm.appFont
         )
         .animation(.easeInOut(duration: 0.2), value: globalDropHovering)

@@ -24,9 +24,8 @@ struct CompletionSummaryModal: View {
                 .padding(.top, 12)
 
             VStack(spacing: 4) {
-                Text("YOUR AUDIOBOOK IS READY")
+                Text("Ready to Listen")
                     .font(vm.font(.sectionHeader))
-                    .kerning(0.6)
                     .foregroundStyle(accentColor)
                 Text(prettyTitle)
                     .font(vm.appFont(size: 20, weight: .bold))
@@ -46,7 +45,7 @@ struct CompletionSummaryModal: View {
 
             HStack(spacing: 12) {
                 Button { dismiss() } label: {
-                    Text("Listen Later")
+                    Text("Later")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                 }
@@ -91,10 +90,10 @@ struct CompletionSummaryModal: View {
                 .foregroundStyle(Palette.warning)
                 .font(.system(size: 14))
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble")
+                Text("\(book.failedPages.count) \(book.failedPages.count == 1 ? "page" : "pages") didn't process fully")
                     .font(vm.appFont(size: 12, weight: .bold))
                     .foregroundStyle(Palette.textPrimary)
-                Text("Cleaning or narration failed for some pages — check the transcript to see which ones.")
+                Text("Right-click the book in your library to retry.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.textSecondary)
             }
@@ -112,13 +111,13 @@ struct CompletionSummaryModal: View {
 
     private var statsGrid: some View {
         VStack(spacing: 10) {
-            statRow("PAGES", "\(book.pageCount)", "doc.text")
-            statRow("WORDS", numberFormat(book.actual?.words ?? 0), "textformat")
-            statRow("AUDIO", DurationFormatter.short(book.totalAudioSeconds), "waveform")
-            statRow("PROCESSING", DurationFormatter.short(book.actual?.processingSeconds ?? 0), "clock")
-            statRow("SECTIONS", "\(book.sections.count)", "list.bullet.rectangle")
+            statRow("Pages", "\(book.pageCount)", "doc.text")
+            statRow("Words", numberFormat(book.actual?.words ?? 0), "textformat")
+            statRow("Length", DurationFormatter.short(book.totalAudioSeconds), "waveform")
+            statRow("Processing", DurationFormatter.short(book.actual?.processingSeconds ?? 0), "clock")
+            statRow("Sections", "\(book.sections.count)", "list.bullet.rectangle")
             if let cost = book.actual?.costUsd, cost > 0 {
-                statRow("COST", String(format: "$%.2f", cost), "dollarsign.circle")
+                statRow("Cost", String(format: "$%.2f", cost), "dollarsign.circle")
             }
         }
         .padding(16)
@@ -130,7 +129,6 @@ struct CompletionSummaryModal: View {
             Image(systemName: icon).foregroundStyle(accentColor).font(.system(size: 11)).frame(width: 18)
             Text(label)
                 .font(vm.font(.chip))
-                .kerning(0.6)
                 .foregroundStyle(Palette.textSecondary)
             Spacer()
             Text(value)

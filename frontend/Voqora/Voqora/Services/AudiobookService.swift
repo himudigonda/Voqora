@@ -93,7 +93,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return try JSONDecoder().decode(Transcript.self, from: data)
     }
 
-    struct Transcript: Codable {
+    nonisolated struct Transcript: Codable, Sendable {
         let bookID: String
         let sections: [AudiobookSection]
         let pageToTime: [String: Double]
@@ -106,6 +106,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         /// cost). Absent for a normally-narrated page. Additive — older
         /// books simply have no entries here. See jira-audiobook-quality.md T-1.
         let pageStatus: [String: String]?
+        let lines: [String: [TranscriptDocument.TimedLine]]?
 
         enum CodingKeys: String, CodingKey {
             case bookID = "book_id"
@@ -114,6 +115,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             case totalAudioSeconds = "total_audio_seconds"
             case pages
             case pageStatus = "page_status"
+            case lines
         }
     }
 
@@ -231,6 +233,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw AudiobookServiceError.uploadFailed("Retry failed")
         }
+        try? FileManager.default.removeItem(at: cacheDir.appendingPathComponent("\(id).wav"))
         let obj = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         return (obj["retried_pages"] as? Int) ?? 0
     }

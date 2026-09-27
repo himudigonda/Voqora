@@ -189,6 +189,9 @@ struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
     let placeholder: () -> Placeholder
 
     @State private var image: NSImage?
+    private static var cache: NSCache<NSString, NSImage> {
+        BackendImageCache.shared
+    }
 
     init(
         path: String,
@@ -198,6 +201,7 @@ struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
         self.path = path
         self.content = content
         self.placeholder = placeholder
+        _image = State(initialValue: Self.cache.object(forKey: path as NSString))
     }
 
     var body: some View {
@@ -209,6 +213,10 @@ struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
             }
         }
         .task(id: path) {
+            if let cached = Self.cache.object(forKey: path as NSString) {
+                image = cached
+                return
+            }
             image = nil
             guard let request = try? BackendConnection.shared.request(path: path),
                   let (data, response) = try? await URLSession.shared.data(for: request),
@@ -216,7 +224,16 @@ struct AuthenticatedBackendImage<Content: View, Placeholder: View>: View {
                   (200 ..< 300).contains(http.statusCode),
                   let decoded = NSImage(data: data)
             else { return }
+            Self.cache.setObject(decoded, forKey: path as NSString)
             image = decoded
         }
     }
+}
+
+enum BackendImageCache {
+    static let shared: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 200
+        return cache
+    }()
 }

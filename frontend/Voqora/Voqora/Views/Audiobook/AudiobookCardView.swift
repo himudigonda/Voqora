@@ -100,6 +100,12 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
+            if status.isReady, !book.failedPages.isEmpty {
+                Button { bookVM.retry(book) } label: {
+                    Label("Retry \(book.failedPages.count) \(book.failedPages.count == 1 ? "Page" : "Pages")", systemImage: "arrow.clockwise")
+                }
+                Divider()
+            }
             Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -282,55 +288,49 @@ struct AudiobookCardView: View {
     private var caption: some View {
         switch status {
         case .ready:
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Text("\(DurationFormatter.listing(book.totalAudioSeconds)) · \(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")")
+                    .foregroundStyle(Palette.textSecondary)
                 if !book.failedPages.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 8))
                         .foregroundStyle(Palette.warning)
+                        .help(retryLabel)
+                        .accessibilityLabel(retryLabel)
                 }
-                Text("\(DurationFormatter.short(book.totalAudioSeconds))  •  \(book.pageCount) PAGES")
-                    .font(vm.font(.chip).monospaced())
-                    .kerning(0.6)
-                    .foregroundStyle(Palette.textSecondary)
-                    .lineLimit(1)
             }
-            .help(book.failedPages.isEmpty ? "" : "\(book.failedPages.count) page\(book.failedPages.count == 1 ? "" : "s") had trouble during cleaning or narration")
-        case .failed:
-            Text(status.caption)
-                .font(vm.font(.chip))
-                .kerning(0.6)
-                .foregroundStyle(Palette.danger)
-                .lineLimit(1)
-        case .cancelled:
-            Text(status.caption)
-                .font(vm.font(.chip))
-                .kerning(0.6)
-                .foregroundStyle(Palette.textSecondary)
-                .lineLimit(1)
-        case .needsKey:
-            Text(status.caption)
-                .font(vm.font(.chip))
-                .kerning(0.6)
-                .foregroundStyle(Palette.warning)
-                .lineLimit(1)
+            .font(vm.appFont(size: 11))
+            .lineLimit(1)
         case let .needsCostApproval(requiredCap):
             Button {
                 showCostApproval = true
             } label: {
-                Text(requiredCap.map { "APPROVE $\(String(format: "%.2f", $0)) OR FINISH LOCALLY" } ?? status.caption)
-                    .font(vm.font(.chip))
-                    .kerning(0.6)
+                Text(requiredCap.map { "Approve $\(String(format: "%.2f", $0)) or finish locally" } ?? status.caption)
+                    .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.warning)
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
         default:
             Text(status.caption)
-                .font(vm.font(.chip).monospaced())
-                .kerning(0.6)
-                .foregroundStyle(accentColor)
+                .font(vm.appFont(size: 11))
+                .monospacedDigit()
+                .foregroundStyle(captionColor)
                 .contentTransition(.numericText())
                 .lineLimit(1)
         }
+    }
+
+    private var captionColor: Color {
+        switch status {
+        case .failed: Palette.danger
+        case .needsKey: Palette.warning
+        case .cancelled: Palette.textSecondary
+        default: accentColor
+        }
+    }
+
+    private var retryLabel: String {
+        let count = book.failedPages.count
+        return "\(count) \(count == 1 ? "page" : "pages") didn't process fully. Right-click to retry."
     }
 }

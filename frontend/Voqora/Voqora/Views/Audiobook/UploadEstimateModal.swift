@@ -59,9 +59,8 @@ struct UploadEstimateModal: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("NEW AUDIOBOOK")
+                Text("New Audiobook")
                     .font(vm.font(.sectionHeader))
-                    .kerning(0.6)
                     .foregroundStyle(accentColor)
                 Text(prettyTitle)
                     .font(vm.appFont(size: 18, weight: .bold))
@@ -110,12 +109,12 @@ struct UploadEstimateModal: View {
     private func statsGrid(for est: AudiobookEstimateResponse) -> some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                StatTile(label: "PAGES", value: "\(est.pageCount)", icon: "doc.text", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "Pages", value: "\(est.pageCount)", icon: "doc.text", appFont: vm.appFont, accentColor: accentColor)
                 StatTile(label: "WORDS", value: numberFormat(est.wordCountEstimate), icon: "textformat", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
-                StatTile(label: "PROCESSING", value: "~\(DurationFormatter.short(est.estimatedProcessingSeconds))", icon: "clock", appFont: vm.appFont, accentColor: accentColor)
-                StatTile(label: "AUDIO", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "Processing", value: "~\(DurationFormatter.short(est.estimatedProcessingSeconds))", icon: "clock", appFont: vm.appFont, accentColor: accentColor)
+                StatTile(label: "Length", value: "~\(DurationFormatter.short(est.estimatedAudioSeconds))", icon: "waveform", appFont: vm.appFont, accentColor: accentColor)
             }
             HStack(spacing: 12) {
                 StatTile(
@@ -155,10 +154,10 @@ struct UploadEstimateModal: View {
             }
             Toggle(isOn: $useGeminiCleanup) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Use Gemini cleanup for this book")
+                    Text("Clean Up with Gemini")
                         .font(vm.appFont(size: 11, weight: .medium))
                         .foregroundStyle(Palette.textPrimary)
-                    Text("Optional for text documents. When enabled, page text and scanned-PDF images are sent transiently to Google Gemini for cleanup or OCR.")
+                    Text("Sends page text and scanned pages to Google Gemini.")
                         .font(vm.appFont(size: 10))
                         .foregroundStyle(Palette.textSecondary)
                         .lineLimit(3)
@@ -171,7 +170,7 @@ struct UploadEstimateModal: View {
             if est.isImageOnly, !useGeminiCleanup {
                 HStack(spacing: 8) {
                     Image(systemName: "doc.viewfinder").foregroundStyle(Palette.warning)
-                    Text("This scanned PDF needs Gemini OCR. Turn on cleanup to continue.")
+                    Text("This scanned PDF needs Gemini to read its text.")
                         .font(vm.appFont(size: 11))
                         .foregroundStyle(Palette.textSecondary)
                 }
@@ -184,7 +183,7 @@ struct UploadEstimateModal: View {
                 // of warning in this same modal.
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
-                    Text("Set a Gemini API key in Preferences first.")
+                    Text("Add a Gemini API key in Preferences.")
                         .font(vm.appFont(size: 11))
                         .foregroundStyle(Palette.textSecondary)
                 }
@@ -236,7 +235,7 @@ struct UploadEstimateModal: View {
                     .padding(.vertical, 8)
                     .font(vm.appFont(size: 13, weight: .bold))
                 } else {
-                    Label("Start Processing", systemImage: "play.fill")
+                    Label("Create Audiobook", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .font(vm.appFont(size: 13, weight: .bold))
@@ -287,7 +286,7 @@ struct UploadEstimateModal: View {
     private var loadingState: some View {
         VStack(spacing: 16) {
             ProgressView().tint(accentColor)
-            Text("Reading your file...")
+            Text("Reading File…")
                 .font(vm.appFont(size: 13))
                 .foregroundStyle(Palette.textSecondary)
         }
@@ -344,7 +343,6 @@ private struct StatTile: View {
                 Image(systemName: icon).foregroundStyle(accentColor).font(.system(size: 11))
                 Text(label)
                     .font(appFont(9, .medium))
-                    .kerning(0.6)
                     .foregroundStyle(Palette.textSecondary)
             }
             Text(value)

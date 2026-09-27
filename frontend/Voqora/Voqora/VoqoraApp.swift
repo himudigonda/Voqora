@@ -336,8 +336,7 @@ struct VoqoraApp: App {
 
             if let book = audiobookVM.continueListeningBook {
                 Button {
-                    audiobookVM.openPlayer(for: book.bookID)
-                    dashboardVM.selectedTab = "books"
+                    dashboardVM.openAudiobook(book.bookID)
                     NSApp.activate(ignoringOtherApps: true)
                 } label: {
                     Label("Continue: \(book.displayTitle)", systemImage: "book.fill")
@@ -345,7 +344,7 @@ struct VoqoraApp: App {
             }
 
             Button {
-                dashboardVM.selectedTab = "books"
+                dashboardVM.showLibrary()
                 NSApp.activate(ignoringOtherApps: true)
             } label: {
                 Label("Open Audiobooks", systemImage: "books.vertical")

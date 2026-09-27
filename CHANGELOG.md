@@ -1,5 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Player and transcript
+
+- New transcript view: the line being read is highlighted and kept in view,
+  lines fade and blur with distance, and clicking any line plays from there.
+  Scrolling pauses follow mode; it resumes after a few seconds or from
+  Current Line.
+- New audiobooks record exact per-sentence timings during narration, and the
+  current line fills word by word. Existing audiobooks use estimated timings.
+- The player shows artwork and controls beside the transcript, and stacks
+  them in narrow windows. Scrubbing previews the transcript position.
+- Now Playing shows the audiobook player whenever an audiobook is active,
+  and shows the spoken text for selected-text speech.
+
+### Fixed
+
+- Pausing and resuming doubled the elapsed time, so the position, the saved
+  resume point, and the transcript highlight all drifted.
+- Scrubbing and skipping from Now Playing did nothing during audiobooks.
+- Clicking the mini player did not open the playing audiobook.
+- After a seek, the transcript highlight and auto-scroll could stop updating.
+- Playing again after a book or clip finished was silent.
+- The resume point is saved every few seconds instead of only on pause or stop.
+- Retrying a finished book kept playing the old cached audio.
+- PDF text extraction dropped spaces between words on many papers.
+- The selected-text mini player showed the previous clip's text.
+
 ## [1.2.3] - 2026-09-20
 
 ### Onboarding

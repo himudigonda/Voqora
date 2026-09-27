@@ -43,6 +43,26 @@ struct Audiobook: Identifiable, Codable, Hashable {
         AudiobookImportStaging.strippingSupportedExtension(from: title)
     }
 
+    var narratorName: String {
+        DashboardViewModel.voiceName(for: voice)
+    }
+
+    var sortedSections: [AudiobookSection] {
+        sections.sorted { $0.startTime < $1.startTime }
+    }
+
+    func section(at time: TimeInterval) -> AudiobookSection? {
+        sortedSections.last { $0.startTime <= time }
+    }
+
+    func subtitle(at time: TimeInterval) -> String {
+        guard sections.count > 1, let section = section(at: time) else {
+            return "Narrated by \(narratorName)"
+        }
+        let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
+        return title.caseInsensitiveCompare(displayTitle) == .orderedSame ? "Narrated by \(narratorName)" : title
+    }
+
     var progressFraction: Double {
         let total = Double(phaseProgress.pageTotal)
         guard total > 0 else { return 0 }
@@ -133,7 +153,7 @@ struct PhaseProgress: Codable, Hashable {
     }
 }
 
-struct AudiobookSection: Identifiable, Codable, Hashable {
+nonisolated struct AudiobookSection: Identifiable, Codable, Hashable, Sendable {
     var id: String {
         "\(startPage)-\(endPage)"
     }
@@ -255,16 +275,16 @@ enum ProcessingStatus: Hashable {
 
     var caption: String {
         switch self {
-        case .queued: "QUEUED"
-        case let .extracting(p, t): "EXTRACTING \(p)/\(t)"
-        case let .cleaning(p, t): "CLEANING \(p)/\(t)"
-        case let .sectioning(p, t): "SECTIONING \(p)/\(t)"
-        case let .generating(p, t): "GENERATING \(p)/\(t)"
-        case .ready: "READY"
-        case .needsKey: "NEEDS KEY — RESUME"
-        case .needsCostApproval: "COST APPROVAL REQUIRED"
-        case .failed: "FAILED — TAP TO RETRY"
-        case .cancelled: "CANCELLED — CLICK TO RESTART"
+        case .queued: "Waiting…"
+        case let .extracting(p, t): "Reading page \(p) of \(t)"
+        case let .cleaning(p, t): "Cleaning page \(p) of \(t)"
+        case .sectioning: "Finding chapters…"
+        case let .generating(p, t): "Narrating page \(p) of \(t)"
+        case .ready: "Ready"
+        case .needsKey: "Needs Gemini API key"
+        case .needsCostApproval: "Needs approval"
+        case .failed: "Failed. Click to retry."
+        case .cancelled: "Stopped. Click to restart."
         }
     }
 }
@@ -283,6 +303,15 @@ enum DurationFormatter {
             return "\(m)m \(s)s"
         }
         return "\(s)s"
+    }
+
+    static func listing(_ seconds: Double) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        if minutes >= 60 {
+            let remainder = minutes % 60
+            return remainder == 0 ? "\(minutes / 60) hr" : "\(minutes / 60) hr \(remainder) min"
+        }
+        return minutes > 0 ? "\(minutes) min" : "\(Int(seconds.rounded())) sec"
     }
 
     static func clock(_ seconds: Double) -> String {

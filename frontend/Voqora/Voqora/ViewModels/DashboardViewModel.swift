@@ -78,6 +78,9 @@ class DashboardViewModel: ObservableObject {
     /// Set after init by VoqoraApp so the TTS speak path can stop any audiobook playback.
     weak var audiobookVM: AudiobookViewModel?
 
+    @Published private(set) var spokenText: String?
+    let speechFollower: TranscriptFollower
+
     /// Explicit persistence keeps the visible player voice deterministic. The
     /// former `@AppStorage` wrapper could restore a stale cached value after a
     /// migration, so only an actual user selection writes this preference.
@@ -172,9 +175,31 @@ class DashboardViewModel: ObservableObject {
         Self.availableVoices
     }
 
-    /// Computed property for display
     var currentVoiceDisplay: String {
-        selectedVoice.replacingOccurrences(of: "_", with: " ").capitalized
+        Self.voiceName(for: selectedVoice)
+    }
+
+    static func voiceName(for id: String) -> String {
+        let name = id.split(separator: "_").last.map(String.init) ?? id
+        return name.prefix(1).uppercased() + name.dropFirst()
+    }
+
+    func showLibrary() {
+        audiobookVM?.libraryPath = []
+        selectedTab = "books"
+    }
+
+    func openAudiobook(_ bookID: String) {
+        audiobookVM?.openPlayer(for: bookID)
+        selectedTab = "books"
+    }
+
+    func openNowPlaying() {
+        if let book = audiobookVM?.nowPlaying {
+            openAudiobook(book.bookID)
+        } else {
+            selectedTab = "home"
+        }
     }
 
     /// Computed property for online status
@@ -218,6 +243,7 @@ class DashboardViewModel: ObservableObject {
         self.system = system
         self.audio = audio
         self.history = history
+        speechFollower = TranscriptFollower(audio: audio)
 
         setupBindings()
         if startsBackgroundWork {
@@ -240,6 +266,10 @@ class DashboardViewModel: ObservableObject {
         audio.$isPlaying
             .sink { [weak self] isPlaying in
                 guard let self else { return }
+                if isPlaying, let audiobookVM, audiobookVM.nowPlaying != nil || audiobookVM.isPreparingPlayback {
+                    spokenText = nil
+                    speechFollower.clear()
+                }
                 if isPlaying {
                     status = .speaking
                     if enableDucking {
@@ -368,6 +398,7 @@ class DashboardViewModel: ObservableObject {
             status = .thinking
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
+            spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
             // This resets the AudioService buffers. Must run BEFORE
             // setEstimatedDuration: it unconditionally zeroes `duration`, so
@@ -376,6 +407,7 @@ class DashboardViewModel: ObservableObject {
             // "thinking" phase instead of an immediate estimate.
             audio.prepareForStream()
             audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
+            speechFollower.follow(spokenText: spokenText)
 
             do {
                 let stream = backend.streamAudio(
@@ -441,6 +473,13 @@ class DashboardViewModel: ObservableObject {
             return "Voqora did not receive playable audio. Try the selection again."
         default:
             return "Voqora could not reach the local speech engine. Try again."
+        }
+    }
+
+    func playSpokenText(from line: TranscriptLine) {
+        audio.seek(toSeconds: line.start * audio.duration)
+        if !audio.isPlaying {
+            audio.resume()
         }
     }
 

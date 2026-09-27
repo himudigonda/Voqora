@@ -31,7 +31,6 @@ struct AudiobookLibraryView: View {
     @State private var showImporter = false
     @State private var searchText = ""
     @State private var sort: SortMode = .recent
-    @State private var path: [AudiobookRoute] = []
     @State private var showDeleteAllConfirmation = false
 
     /// The app's accent, resolved once per body pass — matches
@@ -48,17 +47,9 @@ struct AudiobookLibraryView: View {
 
         var label: String {
             switch self {
-            case .recent: "Recent"
-            case .alpha: "A→Z"
-            case .duration: "Duration"
-            }
-        }
-
-        var icon: String {
-            switch self {
-            case .recent: "clock"
-            case .alpha: "textformat"
-            case .duration: "timer"
+            case .recent: "Date Added"
+            case .alpha: "Title"
+            case .duration: "Length"
             }
         }
     }
@@ -78,7 +69,7 @@ struct AudiobookLibraryView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        NavigationStack(path: $bookVM.libraryPath) {
             ZStack {
                 content
                 if hoveringDrop {
@@ -126,9 +117,10 @@ struct AudiobookLibraryView: View {
                             .environmentObject(vm)
                             .environmentObject(bookVM)
                             .navigationBarBackButtonHidden(false)
+                    } else if bookVM.hasLoadedOnce {
+                        Color.clear.onAppear { bookVM.libraryPath = [] }
                     } else {
-                        // Book vanished underneath us (deletion race). Pop back.
-                        Color.clear.onAppear { path.removeLast() }
+                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
             }
@@ -137,36 +129,11 @@ struct AudiobookLibraryView: View {
                 bookVM.startPolling()
             }
             .onDisappear { bookVM.stopPolling() }
-            .onChange(of: bookVM.pendingDeepLink) { _, newValue in
-                guard let bookID = newValue else { return }
-                if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
-                    if !path.contains(.player(bookID)) {
-                        path.append(.player(book.bookID))
-                    }
-                }
-                bookVM.pendingDeepLink = nil
-            }
-            // Belt-and-suspenders alongside `VoqoraWindow`'s own
-            // `.id(vm.selectedTab)` on the detail column's outer view:
-            // measured empirically that the `.id()` fix ALONE was not
-            // reliably enough to keep this view's pushed player from
-            // resurfacing on the very next tab switch — removing this
-            // explicit reset (assuming it was made redundant by that
-            // `.id()`) reintroduced the stuck-player bug in testing.
-            // Keeping both until the actual interaction between
-            // `NavigationSplitView`'s detail-column identity and this
-            // `NavigationStack`'s own path is understood well enough to
-            // justify relying on just one.
-            .onChange(of: vm.selectedTab) { _, newValue in
-                if newValue != "books" {
-                    path = []
-                }
-            }
-            .alert("Delete all audiobooks?", isPresented: $showDeleteAllConfirmation) {
+            .alert("Delete All Audiobooks?", isPresented: $showDeleteAllConfirmation) {
                 Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("This permanently deletes every local audiobook, original source document, transcript, and generated audio. It cannot be undone.")
+                Text("This deletes every audiobook and its source file. You can't undo this action.")
             }
         }
     }
@@ -198,7 +165,7 @@ struct AudiobookLibraryView: View {
     }
 
     private func openPlayer(_ book: Audiobook) {
-        path.append(.player(book.bookID))
+        bookVM.openPlayer(for: book.bookID)
     }
 
     @ViewBuilder
@@ -281,16 +248,22 @@ struct AudiobookLibraryView: View {
             // T-20: an empty title left this control unlabeled for
             // VoiceOver. `.menu` style still shows only the selected value's
             // icon, so the title change is accessibility-only.
-            Picker("Sort audiobooks", selection: $sort) {
-                ForEach(SortMode.allCases) { mode in
-                    Label(mode.label, systemImage: mode.icon).tag(mode)
+            Menu {
+                Picker("Sort By", selection: $sort) {
+                    ForEach(SortMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
                 }
+                .pickerStyle(.inline)
+            } label: {
+                Label("Sort By", systemImage: "arrow.up.arrow.down")
             }
-            .pickerStyle(.menu)
+            .help("Sort By")
+            .accessibilityLabel("Sort Audiobooks")
 
             if !bookVM.books.isEmpty {
                 Button(role: .destructive) { showDeleteAllConfirmation = true } label: {
-                    Label("Delete all audiobooks", systemImage: "trash")
+                    Label("Delete All", systemImage: "trash")
                 }
                 .disabled(bookVM.deletingAllBooks)
                 // macOS collapses a toolbar `Label` to its icon, so name both
@@ -380,7 +353,7 @@ struct AudiobookLibraryView: View {
 
     private var dropOverlay: some View {
         DocumentDropOverlay(
-            subtitle: "PDF, TXT, DOCX, or Markdown — up to 1,000 pages",
+            subtitle: "PDF, Word, text, or Markdown",
             appFont: vm.appFont
         )
         .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
@@ -397,16 +370,15 @@ struct AudiobookLibraryView: View {
                 // Heavy black-weight kerned all-caps was the old techy
                 // aesthetic; a semibold sectionTitle with a light kern reads
                 // much closer to GRiT's tone for a headline this size.
-                Text("YOUR SHELF IS EMPTY")
+                Text("No Audiobooks")
                     .font(vm.font(.sectionTitle))
-                    .kerning(0.6)
                     .foregroundStyle(Palette.textSecondary)
-                Text("Drop a PDF, TXT, DOCX, or Markdown file anywhere on this window to begin.")
+                Text("Add a PDF, Word, text, or Markdown file.")
                     .font(vm.font(.rowTitle))
                     .foregroundStyle(Palette.textSecondary)
             }
             Button { showImporter = true } label: {
-                Label("Choose a File", systemImage: "plus")
+                Label("Add File…", systemImage: "plus")
             }
             .buttonStyle(.voqoraPrimary)
         }
@@ -421,11 +393,10 @@ struct AudiobookLibraryView: View {
                 .font(.system(size: 96, weight: .ultraLight))
                 .foregroundStyle(Palette.danger.opacity(0.6))
             VStack(spacing: 6) {
-                Text("COULDN'T LOAD YOUR LIBRARY")
+                Text("Couldn't Load Library")
                     .font(vm.font(.sectionTitle))
-                    .kerning(0.6)
                     .foregroundStyle(Palette.textSecondary)
-                Text("Voqora couldn't reach the backend. Check that it's running and try again.")
+                Text("The speech engine isn't responding.")
                     .font(vm.font(.rowTitle))
                     .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
@@ -447,11 +418,10 @@ struct AudiobookLibraryView: View {
                 .font(.system(size: 96, weight: .ultraLight))
                 .foregroundStyle(Palette.textTertiary.opacity(0.4))
             VStack(spacing: 6) {
-                Text("NO MATCHES")
+                Text("No Results")
                     .font(vm.font(.sectionTitle))
-                    .kerning(0.6)
                     .foregroundStyle(Palette.textSecondary)
-                Text("No audiobooks match “\(searchText)”. Try a different search.")
+                Text("No audiobooks match “\(searchText)”.")
                     .font(vm.font(.rowTitle))
                     .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)

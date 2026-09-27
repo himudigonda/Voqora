@@ -90,14 +90,7 @@ struct PaneRow<Leading: View, Label: View>: View {
         .background(background, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         .animation(DesignTokens.Animation.quick, value: isSelected)
         .animation(DesignTokens.Animation.quick, value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
+        .onHover { isHovering = $0 }
     }
 
     private var background: Color {

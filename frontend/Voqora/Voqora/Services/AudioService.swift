@@ -23,91 +23,16 @@ class AudioService: NSObject, ObservableObject {
     @Published var currentTime: TimeInterval = 0
     @Published var duration: TimeInterval = 0
     @Published var isDragging = false
-    /// True when the current clip played to its natural end (not manually paused/stopped).
     @Published var playbackCompleted = false
-    /// The caller-supplied session identity (see `loadAndPlayWAV`) for the
-    /// session that most recently completed naturally. Set immediately
-    /// before `playbackCompleted` publishes true (T-10), so an observer can
-    /// attribute a completion signal to the exact session that produced it
-    /// instead of trusting its own possibly-stale "currently playing" state
-    /// at the moment it reacts to the signal. See
-    /// AudiobookViewModel.completionObserver.
     @Published var completedSessionID: String?
-
-    /// 0...1.5 (matches existing speechVolume range used elsewhere for TTS).
-    /// Mirrors `playerNode.volume`. Use `setVolume(_:)` to change it; the
-    /// setter ramps for ~50ms to avoid pops.
     @Published private(set) var volume: Float = 1.0
-
-    /// Fade volume to zero over `seconds`, then stop. Used when TTS hotkey
-    /// preempts audiobook playback so we don't get an abrupt click (P11).
-    func fadeOutAndStop(over seconds: TimeInterval = 0.15) {
-        guard isPlaying else { stop(); return }
-        let originalVolume = volume
-        let steps = max(3, Int(seconds / 0.02))
-        let stepDuration = seconds / Double(steps)
-        let delta = originalVolume / Float(steps)
-        var step = 0
-        volumeRampTimer?.invalidate()
-        volumeRampTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
-            DispatchQueue.main.async {
-                guard let self else { timer.invalidate(); return }
-                step += 1
-                let v = max(0, originalVolume - delta * Float(step))
-                self.playerNode.volume = v
-                if step >= steps {
-                    timer.invalidate()
-                    self.volumeRampTimer = nil
-                    self.stop()
-                    self.volume = originalVolume // restore for next play
-                    self.playerNode.volume = originalVolume
-                }
-            }
-        }
-    }
-
-    func setVolume(_ newValue: Float) {
-        let clamped = max(0, min(1.5, newValue))
-        volume = clamped
-        if abs(playerNode.volume - clamped) > 0.01 {
-            rampVolume(to: clamped)
-        } else {
-            playerNode.volume = clamped
-        }
-    }
+    @Published private(set) var playbackRate: Float = 1.0
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
-    /// Sits between `playerNode` and the mixer so audiobook speed changes
-    /// actually change how fast audio plays, instead of only relabeling a
-    /// picker that never reached the engine.
     private let timePitch = AVAudioUnitTimePitch()
-
-    /// AVAudioEngine drops the output-chain connections on a hardware
-    /// configuration change, so the explicit 24 kHz mono wiring must be remade.
-    private var lastOutputFormat: AVAudioFormat?
-    /// AVAudioUnitTimePitch is a real Audio Unit and only accepts the
-    /// engine's canonical Float32 format — connecting it with the Int16
-    /// format this class used before crashes at `engine.connect(...)` with
-    /// kAudioUnitErr_FormatNotSupported. PCM byte accounting elsewhere
-    /// (`lastAudioData`, export, seek) still treats network audio as Int16;
-    /// only buffer construction converts to Float32 for the engine.
     private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
-
-    /// Live playback rate applied to `timePitch`. Reset to 1.0 by `stop()` so
-    /// an audiobook's chosen speed never bleeds into an unrelated hotkey TTS
-    /// clip (TTS speed is instead baked in server-side at generation time).
-    @Published private(set) var playbackRate: Float = 1.0
-
-    func setPlaybackRate(_ rate: Float) {
-        let clamped = max(0.5, min(2.5, rate))
-        playbackRate = clamped
-        timePitch.rate = clamped
-    }
-
-    /// Test-only instances deliberately skip Core Audio setup. Keep every
-    /// playback entry point aware of that rather than letting one helper try
-    /// to start an unconfigured graph.
+    private var lastOutputFormat: AVAudioFormat?
     private var engineConfigured = false
 
     private var lastAudioData = Data()
@@ -116,49 +41,42 @@ class AudioService: NSObject, ObservableObject {
     private var hasStrippedHeader = false
     private var isStreamActive = false
     private var hasStartedPlayback = false
-    private var scheduledBufferCount = 0
+    private var estimatedDuration: TimeInterval = 0
 
-    /// Only streamed selected-text speech retains PCM for the generic clip
-    /// export. Audiobooks are intentionally file-backed to avoid holding an
-    /// entire book in memory, so presenting the same Save action for them
-    /// would promise an export that must fail.
+    private var currentAudioFile: AVAudioFile?
+    private var audiobookFrameOffset: AVAudioFramePosition = 0
+    private var audiobookTotalFrames: AVAudioFramePosition = 0
+    private var audiobookSampleRate: Double = 24000
+    private static let audiobookChunkSeconds: Double = 30
+    private static let audiobookChunkLookahead = 2
+    private var activeSessionID: String?
+
+    private var generation = 0
+    private var scheduledBufferCount = 0
+    private var nodePrimed = false
+    // AVAudioPlayerNode.stop() resets its sample clock; pause() does not.
+    private var timelineOrigin: TimeInterval = 0
+    private var timer: AnyCancellable?
+    private var volumeRampTimer: Timer?
+    private var volumeRampToken: UUID?
+
     var canExportLastClip: Bool {
         !lastAudioData.isEmpty
     }
 
-    // Timer for progress
-    private var timer: AnyCancellable?
-    private var pausedTime: TimeInterval = 0
-
-    /// For duration estimation
-    private var estimatedDuration: TimeInterval = 0
-
-    /// Volume ramping support
-    private var volumeRampTimer: Timer?
-    /// Token issued per `rampVolume` call. The deferred `volumeRampTimer = nil`
-    /// inside the timer closure only fires if it still owns this slot — prevents
-    /// a finished ramp from clobbering a successor ramp that was queued up
-    /// between the timer firing and the DispatchQueue.main.async block running.
-    /// See HARD-020.
-    private var volumeRampToken: UUID?
+    var hasMedia: Bool {
+        currentAudioFile != nil || !lastAudioData.isEmpty
+    }
 
     init(startingEngine: Bool = !RuntimeEnvironment.isRunningTests) {
         super.init()
-        // XCTest hosts the app target. Starting Core Audio there can leave an
-        // orphaned audio process after pure logic tests have finished. Unit
-        // tests do not exercise playback hardware, so keep that dependency
-        // explicit and leave the production default unchanged.
         if startingEngine {
             setupEngine()
         }
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(
-            self,
-            name: .AVAudioEngineConfigurationChange,
-            object: nil
-        )
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: nil)
     }
 
     private func setupEngine() {
@@ -192,11 +110,9 @@ class AudioService: NSObject, ObservableObject {
         let current = engine.outputNode.outputFormat(forBus: 0)
         let previous = lastOutputFormat
         lastOutputFormat = current
-
         let formatChanged = previous == nil
             || previous?.sampleRate != current.sampleRate
             || previous?.channelCount != current.channelCount
-
         let wasPlaying = isPlaying
         if formatChanged {
             engine.connect(playerNode, to: timePitch, format: format)
@@ -207,126 +123,38 @@ class AudioService: NSObject, ObservableObject {
                 "wasPlaying": "\(wasPlaying)",
             ])
         }
-
         guard formatChanged || wasPlaying else { return }
         do {
             try engine.start()
-            if wasPlaying {
-                playerNode.play()
-            }
         } catch {
             VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
             if wasPlaying {
-                stop()
+                pause()
             }
-        }
-    }
-
-    func setEstimatedDuration(textLength: Int, speed: Double) {
-        let rawSeconds = Double(textLength) / 12.0
-        // Clamped like setPlaybackRate. Swift's Double division doesn't trap on
-        // zero — it yields +inf — so a speed of 0 silently made `duration`
-        // infinite for the whole streaming phase, which the scrub bar then
-        // rendered against.
-        estimatedDuration = max(1.0, rawSeconds / max(0.1, speed))
-        duration = estimatedDuration
-    }
-
-    func playChunk(_ data: Data, volume: Float) {
-        var dataToProcess = data
-
-        // 1. Strip Header
-        if !hasStrippedHeader {
-            headerAccumulator.append(dataToProcess)
-            if headerAccumulator.count >= 44 {
-                dataToProcess = headerAccumulator.suffix(from: 44)
-                hasStrippedHeader = true
-                headerAccumulator = Data()
-                VoqoraLog.debug("AudioService", "WAV header stripped, PCM accumulation started")
-            } else {
-                return
-            }
-        }
-
-        if dataToProcess.isEmpty {
             return
         }
-
-        // 2. PCM Accumulation with Alignment Fix
-        pcmAccumulator.append(dataToProcess)
-
-        // --- FIX: Only process full 2-byte samples ---
-        let totalAvailable = pcmAccumulator.count
-        let bytesToProcess = (totalAvailable / 2) * 2 // Force even number
-
-        guard bytesToProcess > 0 else { return }
-
-        let chunkToBuffer = pcmAccumulator.prefix(bytesToProcess)
-        pcmAccumulator.removeFirst(bytesToProcess) // Keep the leftover byte if it was odd
-
-        // 3. Scheduling
-        lastAudioData.append(chunkToBuffer)
-        let actualDataDuration = Double(lastAudioData.count / 2) / 24000.0
-        duration = max(estimatedDuration, actualDataDuration)
-
-        if !isDragging {
-            guard let buffer = dataToBuffer(chunkToBuffer) else { return }
-            // Ramp volume smoothly if it changed (prevents audio pops)
-            if abs(playerNode.volume - volume) > 0.02 {
-                rampVolume(to: volume)
-            } else {
-                playerNode.volume = volume
-            }
-
-            scheduledBufferCount += 1
-            // `gen`/the `audiobookGeneration` guard below: every OTHER place
-            // in this file that calls `playerNode.stop()` mid-session
-            // (`seek`, `seekAudiobook`, the `stop()` method itself) bumps
-            // `audiobookGeneration` first specifically because
-            // `AVAudioPlayerNode.stop()` fires the completion handlers of
-            // buffers that were still queued, not just ones that actually
-            // finished playing. This handler was the one place that never
-            // captured/checked it: `seek(to:)` calling `playerNode.stop()`
-            // flushed whatever TTS buffers this handler had scheduled and
-            // hadn't yet played, each firing here with `scheduledBufferCount`
-            // ticking down — and since `seek(to:)` sets `isPlaying = true`
-            // synchronously right after, the stale handler that happened to
-            // bring the count to zero satisfied every condition below and
-            // force-stopped the playback the user had just resumed/skipped
-            // to, immediately after starting it.
-            let gen = audiobookGeneration
-            playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, gen == audiobookGeneration else { return }
-                    scheduledBufferCount -= 1
-                    if !isStreamActive, scheduledBufferCount == 0, isPlaying {
-                        playbackCompleted = true
-                        stop()
-                    }
-                }
-            })
-
-            // Start playback after minimal safety buffer (10ms = 480 bytes at 24kHz 16-bit mono)
-            if !hasStartedPlayback, lastAudioData.count > 480 {
-                startPlayback()
-            }
+        guard wasPlaying else { return }
+        if currentAudioFile != nil {
+            refreshPosition()
+            reposition(to: currentTime, play: true)
+        } else {
+            playerNode.play()
         }
     }
 
-    private func startPlayback() {
-        guard !hasStartedPlayback else { return }
+    private func startNode() {
         guard engineConfigured else { return }
         do {
             if !engine.isRunning {
                 try engine.start()
             }
-            playerNode.play()
-            isPlaying = true
-            hasStartedPlayback = true
-            startTimer()
         } catch {
             VoqoraLog.error("AudioService", "Start error", ["failureCode": "playback_start_failed"])
+            return
         }
+        playerNode.play()
+        isPlaying = true
+        startTimer()
     }
 
     private func startTimer() {
@@ -334,146 +162,158 @@ class AudioService: NSObject, ObservableObject {
         timer = Timer.publish(every: 0.1, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self, isPlaying else { return }
-
-                // 🔊 HARDWARE SYNC: Only count time that physically left the speakers
-                if let nodeTime = playerNode.lastRenderTime,
-                   let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
-                {
-                    let elapsedSamples = Double(playerTime.sampleTime)
-                    // sampleTime can briefly be negative during engine startup
-                    if elapsedSamples > 0 {
-                        let elapsedSeconds = elapsedSamples / format.sampleRate
-                        currentTime = pausedTime + elapsedSeconds
-                    }
-                }
-
-                if !isDragging {
-                    progress = duration > 0 ? min(1.0, currentTime / duration) : 0
-                }
-
-                // SAFETY NET: the only other path that ever calls `stop()` is
-                // the buffer-completion-handler chain in `playChunk`/
-                // `finishStream` reaching `scheduledBufferCount == 0`. That
-                // chain depends on `AVAudioPlayerNode.scheduleBuffer`'s
-                // completion handler firing for every buffer — which it does
-                // not reliably do across an engine reconfiguration.
-                // `handleEngineConfigChange` above restarts the engine on
-                // any audio-device change (Bluetooth connect/disconnect, a
-                // screen share starting, AirPods switching) and replays
-                // `playerNode.play()`, but buffers scheduled before that
-                // restart can be silently orphaned — their completion
-                // handlers never fire, `scheduledBufferCount` never reaches
-                // zero, and `isPlaying` is stuck true forever while this
-                // render-clock-driven `currentTime` keeps climbing well past
-                // the real duration with nothing actually audible. Once the
-                // stream is done supplying new audio AND playback has run
-                // comfortably past the exact rendered length `finishStream`
-                // corrected `duration` to, there is nothing left to wait
-                // for — end it here regardless of whether that handler chain
-                // ever completes.
-                if !isStreamActive, duration > 0, currentTime >= duration + 0.75 {
-                    playbackCompleted = true
-                    stop()
-                }
+                self?.tick()
             }
+    }
+
+    private func tick() {
+        guard isPlaying else { return }
+        refreshPosition()
+        publishProgress()
+        if currentAudioFile == nil, !isStreamActive, duration > 0, currentTime >= duration + 0.75 {
+            finishStreamPlayback()
+        }
+    }
+
+    private func refreshPosition() {
+        guard isPlaying,
+              let nodeTime = playerNode.lastRenderTime,
+              let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
+              playerTime.sampleTime > 0
+        else { return }
+        let position = timelineOrigin + Double(playerTime.sampleTime) / playerTime.sampleRate
+        currentTime = duration > 0 ? min(position, duration) : position
+    }
+
+    private func publishProgress() {
+        guard !isDragging else { return }
+        progress = duration > 0 ? min(1.0, max(0, currentTime / duration)) : 0
     }
 
     func togglePause() {
-        // 🔒 FIX: Refuse to play if memory is completely empty
-        guard duration > 0 else { return }
-
-        if playerNode.isPlaying {
-            // Save accumulated hardware time before pausing
-            if let nodeTime = playerNode.lastRenderTime,
-               let playerTime = playerNode.playerTime(forNodeTime: nodeTime)
-            {
-                let elapsedSamples = Double(playerTime.sampleTime)
-                if elapsedSamples > 0 {
-                    pausedTime += elapsedSamples / format.sampleRate
-                }
-            }
-            playerNode.pause()
-            engine.pause()
-            isPlaying = false
+        if isPlaying {
+            pause()
         } else {
-            if playbackCompleted {
-                pausedTime = 0
-                currentTime = 0
-                progress = 0
-            }
-            playbackCompleted = false
-            if engineConfigured {
-                try? engine.start()
-            }
-            playerNode.play()
-            isPlaying = true
-            startTimer()
+            resume()
         }
     }
 
+    func pause() {
+        guard isPlaying else { return }
+        refreshPosition()
+        playerNode.pause()
+        if engineConfigured {
+            engine.pause()
+        }
+        timer?.cancel()
+        isPlaying = false
+        publishProgress()
+    }
+
+    func resume() {
+        guard hasMedia, duration > 0 else { return }
+        if playbackCompleted || !nodePrimed {
+            reposition(to: playbackCompleted ? 0 : currentTime, play: true)
+            return
+        }
+        startNode()
+    }
+
+    func seek(toSeconds seconds: TimeInterval) {
+        guard hasMedia else { return }
+        reposition(to: seconds, play: isPlaying)
+    }
+
     func seek(to percentage: Double) {
-        guard !lastAudioData.isEmpty else { return }
-        audiobookGeneration += 1 // invalidate stale handlers before stop fires them — see playChunk's own comment
+        guard duration > 0 else { return }
+        seek(toSeconds: max(0, min(1, percentage)) * duration)
+    }
+
+    func seekAudiobook(toSeconds seconds: TimeInterval) {
+        seek(toSeconds: seconds)
+    }
+
+    func skip(by seconds: TimeInterval) {
+        guard duration > 0 else { return }
+        seek(toSeconds: max(0, min(duration, currentTime + seconds)))
+    }
+
+    private func reposition(to seconds: TimeInterval, play: Bool) {
+        generation += 1
         playerNode.stop()
         scheduledBufferCount = 0
-
-        let targetTime = percentage * duration
-        let targetSample = Int(targetTime * 24000)
-        var targetByte = targetSample * 2
-
-        if targetByte >= lastAudioData.count {
-            targetByte = lastAudioData.count - 2
+        playbackCompleted = false
+        if currentAudioFile != nil {
+            repositionFile(to: seconds, play: play)
+        } else if !lastAudioData.isEmpty {
+            repositionStream(to: seconds, play: play)
         }
-        if targetByte < 0 {
-            targetByte = 0
-        }
-        if targetByte % 2 != 0 {
-            targetByte -= 1
-        }
+    }
 
-        let remainingData = lastAudioData.advanced(by: targetByte)
-        if let buffer = dataToBuffer(remainingData) {
-            scheduledBufferCount += 1
-            let gen = audiobookGeneration
-            playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self, gen == audiobookGeneration else { return }
-                    scheduledBufferCount -= 1
-                }
-            })
-
-            pausedTime = targetTime
-            currentTime = targetTime
-
-            if !engine.isRunning {
-                try? engine.start()
-            }
-            playerNode.play()
-            isPlaying = true
-            startTimer()
+    private func repositionFile(to seconds: TimeInterval, play: Bool) {
+        let target = max(0, min(audiobookTotalFrames, AVAudioFramePosition(seconds * audiobookSampleRate)))
+        audiobookFrameOffset = target
+        timelineOrigin = Double(target) / audiobookSampleRate
+        currentTime = timelineOrigin
+        publishProgress()
+        guard target < audiobookTotalFrames else {
+            finishFilePlayback(sessionID: activeSessionID)
+            return
         }
+        for _ in 0 ..< Self.audiobookChunkLookahead {
+            scheduleNextFileChunk()
+        }
+        nodePrimed = true
+        if play {
+            startNode()
+        } else {
+            timer?.cancel()
+            isPlaying = false
+        }
+    }
+
+    private func repositionStream(to seconds: TimeInterval, play: Bool) {
+        let totalFrames = lastAudioData.count / 2
+        let lastFrame = isStreamActive ? max(0, totalFrames - 1) : totalFrames
+        let frame = max(0, min(lastFrame, Int(seconds * format.sampleRate)))
+        timelineOrigin = Double(frame) / format.sampleRate
+        currentTime = timelineOrigin
+        publishProgress()
+        if frame >= totalFrames, !isStreamActive {
+            finishStreamPlayback()
+            return
+        }
+        if let buffer = dataToBuffer(lastAudioData.subdata(in: frame * 2 ..< totalFrames * 2)) {
+            scheduleStreamBuffer(buffer)
+        }
+        nodePrimed = true
+        hasStartedPlayback = true
+        if play {
+            startNode()
+        } else {
+            timer?.cancel()
+            isPlaying = false
+        }
+    }
+
+    func setEstimatedDuration(textLength: Int, speed: Double) {
+        let rawSeconds = Double(textLength) / 12.0
+        estimatedDuration = max(1.0, rawSeconds / max(0.1, speed))
+        duration = estimatedDuration
     }
 
     func prepareForStream() {
         stop()
-        // Reset playback-position state for the new session (stop() no longer clears these).
         progress = 0
         currentTime = 0
-        pausedTime = 0
+        timelineOrigin = 0
         duration = 0
         playbackCompleted = false
-        // `stop()` deliberately preserves the last completed clip so it can be
-        // exported. A new speech request is the point at which that clip must
-        // be discarded.
         lastAudioData = Data()
         pcmAccumulator = Data()
         headerAccumulator = Data()
         estimatedDuration = 0
         isStreamActive = true
-        // Pre-warm the engine, but do not claim playback has started until a
-        // real buffer has been scheduled. Otherwise a slow or failed request
-        // makes the product show “Speaking 0:00” while nothing is audible.
         if engineConfigured, !engine.isRunning {
             try? engine.start()
         }
@@ -481,103 +321,246 @@ class AudioService: NSObject, ObservableObject {
         isPlaying = false
     }
 
+    func playChunk(_ data: Data, volume: Float) {
+        var incoming = data
+        if !hasStrippedHeader {
+            headerAccumulator.append(incoming)
+            guard headerAccumulator.count >= 44 else { return }
+            incoming = headerAccumulator.suffix(from: 44)
+            hasStrippedHeader = true
+            headerAccumulator = Data()
+        }
+        guard !incoming.isEmpty else { return }
+
+        pcmAccumulator.append(incoming)
+        let evenBytes = (pcmAccumulator.count / 2) * 2
+        guard evenBytes > 0 else { return }
+        let chunk = pcmAccumulator.prefix(evenBytes)
+        pcmAccumulator.removeFirst(evenBytes)
+
+        lastAudioData.append(chunk)
+        duration = max(estimatedDuration, Double(lastAudioData.count / 2) / format.sampleRate)
+
+        guard !isDragging, let buffer = dataToBuffer(Data(chunk)) else { return }
+        if abs(playerNode.volume - volume) > 0.02 {
+            rampVolume(to: volume)
+        } else {
+            playerNode.volume = volume
+        }
+        scheduleStreamBuffer(buffer)
+        nodePrimed = true
+        if !hasStartedPlayback, lastAudioData.count > 480 {
+            hasStartedPlayback = true
+            startNode()
+        }
+    }
+
     func finishStream() {
         isStreamActive = false
-        // Final flush of any leftover partial PCM byte
         if !pcmAccumulator.isEmpty {
             playChunk(Data(), volume: playerNode.volume)
         }
-        // BUG FIX: correct duration to exact actual length now that all data has arrived.
-        // Estimated duration (text-length / 12 / speed) often overshoots — without this
-        // correction the scrub bar never reaches 100%.
         if !lastAudioData.isEmpty {
             duration = Double(lastAudioData.count / 2) / format.sampleRate
+            if !hasStartedPlayback {
+                hasStartedPlayback = true
+                startNode()
+            }
         }
         if scheduledBufferCount == 0, isPlaying {
-            stop()
+            finishStreamPlayback()
         }
+    }
+
+    private func scheduleStreamBuffer(_ buffer: AVAudioPCMBuffer) {
+        guard engineConfigured else { return }
+        scheduledBufferCount += 1
+        let gen = generation
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, gen == generation else { return }
+                scheduledBufferCount -= 1
+                if !isStreamActive, scheduledBufferCount == 0, isPlaying {
+                    finishStreamPlayback()
+                }
+            }
+        }
+    }
+
+    private func finishStreamPlayback() {
+        generation += 1
+        timer?.cancel()
+        playerNode.stop()
+        scheduledBufferCount = 0
+        nodePrimed = false
+        currentTime = duration
+        timelineOrigin = duration
+        progress = duration > 0 ? 1 : 0
+        completedSessionID = nil
+        playbackCompleted = true
+        isPlaying = false
+        setPlaybackRate(1.0)
+    }
+
+    func loadAndPlayWAV(at url: URL, sessionID: String? = nil, startingAt seconds: TimeInterval = 0) throws {
+        stop()
+        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        currentAudioFile = file
+        audiobookSampleRate = file.processingFormat.sampleRate
+        audiobookTotalFrames = file.length
+        duration = Double(file.length) / audiobookSampleRate
+        lastAudioData = Data()
+        activeSessionID = sessionID
+        hasStrippedHeader = true
+        if engineConfigured, !engine.isRunning {
+            try engine.start()
+        }
+        playerNode.volume = volume
+        reposition(to: seconds, play: true)
+    }
+
+    private func scheduleNextFileChunk() {
+        guard engineConfigured, let file = currentAudioFile, audiobookFrameOffset < audiobookTotalFrames else { return }
+        let chunkFrames = AVAudioFrameCount(
+            min(
+                AVAudioFramePosition(Self.audiobookChunkSeconds * audiobookSampleRate),
+                audiobookTotalFrames - audiobookFrameOffset
+            )
+        )
+        guard chunkFrames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: chunkFrames)
+        else { return }
+        do {
+            file.framePosition = audiobookFrameOffset
+            try file.read(into: buffer, frameCount: chunkFrames)
+        } catch {
+            VoqoraLog.error("AudioService", "Audiobook chunk read error", ["failureCode": "audiobook_chunk_read_failed"])
+            return
+        }
+        audiobookFrameOffset += AVAudioFramePosition(buffer.frameLength)
+        scheduledBufferCount += 1
+        let gen = generation
+        let sessionID = activeSessionID
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, gen == generation else { return }
+                scheduledBufferCount -= 1
+                if audiobookFrameOffset < audiobookTotalFrames {
+                    scheduleNextFileChunk()
+                } else if scheduledBufferCount == 0, isPlaying {
+                    finishFilePlayback(sessionID: sessionID)
+                }
+            }
+        }
+    }
+
+    private func finishFilePlayback(sessionID: String?) {
+        generation += 1
+        timer?.cancel()
+        playerNode.stop()
+        scheduledBufferCount = 0
+        nodePrimed = false
+        audiobookFrameOffset = audiobookTotalFrames
+        currentTime = duration
+        timelineOrigin = duration
+        progress = duration > 0 ? 1 : 0
+        completedSessionID = sessionID
+        playbackCompleted = true
+        isPlaying = false
     }
 
     func stop() {
         volumeRampTimer?.invalidate()
         volumeRampTimer = nil
-        audiobookGeneration += 1 // invalidate any in-flight completion handlers
+        generation += 1
         setPlaybackRate(1.0)
         playerNode.stop()
         timer?.cancel()
+        let wasFileBacked = currentAudioFile != nil
         isPlaying = false
-        // BUG FIX: do NOT reset progress / currentTime / pausedTime / duration here.
-        // Those values are cleared in prepareForStream() when a new session begins.
-        // Keeping them lets the scrub bar stay visible and accurate after playback ends,
-        // and preserves the Save button so the user can export the last clip.
         hasStartedPlayback = false
         isStreamActive = false
         hasStrippedHeader = false
         scheduledBufferCount = 0
+        nodePrimed = false
         pcmAccumulator = Data()
         headerAccumulator = Data()
         estimatedDuration = 0
         currentAudioFile = nil
         audiobookFrameOffset = 0
         audiobookTotalFrames = 0
-        // T-10: no future completion handler should be able to credit a
-        // stopped session's identity (defense-in-depth alongside the
-        // audiobookGeneration guard above).
         activeSessionID = nil
+        completedSessionID = nil
+        if wasFileBacked {
+            currentTime = 0
+            timelineOrigin = 0
+            duration = 0
+            progress = 0
+        }
     }
 
-    /// `data` holds raw little-endian Int16 PCM (the wire/export format).
-    /// The engine connection format is Float32, so each sample is converted
-    /// on the way into the buffer. Reads bytes rather than binding to Int16
-    /// directly since `data` is a slice and isn't guaranteed 2-byte aligned.
-    private func dataToBuffer(_ data: Data) -> AVAudioPCMBuffer? {
-        let frameCount = UInt32(data.count) / 2
-        guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
-        buffer.frameLength = frameCount
-        guard let channel = buffer.floatChannelData?[0] else { return nil }
-        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-            for i in 0 ..< Int(frameCount) {
-                let lo = UInt16(raw[i * 2])
-                let hi = UInt16(raw[i * 2 + 1])
-                let sample = Int16(bitPattern: lo | (hi << 8))
-                channel[i] = Float(sample) / 32768.0
+    func fadeOutAndStop(over seconds: TimeInterval = 0.15) {
+        guard isPlaying else { stop(); return }
+        let originalVolume = volume
+        let steps = max(3, Int(seconds / 0.02))
+        let stepDuration = seconds / Double(steps)
+        let delta = originalVolume / Float(steps)
+        var step = 0
+        volumeRampTimer?.invalidate()
+        volumeRampTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+            DispatchQueue.main.async {
+                guard let self else { timer.invalidate(); return }
+                step += 1
+                self.playerNode.volume = max(0, originalVolume - delta * Float(step))
+                if step >= steps {
+                    timer.invalidate()
+                    self.volumeRampTimer = nil
+                    self.stop()
+                    self.volume = originalVolume
+                    self.playerNode.volume = originalVolume
+                }
             }
         }
-        return buffer
     }
 
-    /// Smoothly ramp volume to target over 50ms (5 steps of 10ms each) to avoid pops
+    func setVolume(_ newValue: Float) {
+        let clamped = max(0, min(1.5, newValue))
+        volume = clamped
+        if abs(playerNode.volume - clamped) > 0.01 {
+            rampVolume(to: clamped)
+        } else {
+            playerNode.volume = clamped
+        }
+    }
+
+    func setPlaybackRate(_ rate: Float) {
+        let clamped = max(0.5, min(2.5, rate))
+        playbackRate = clamped
+        timePitch.rate = clamped
+    }
+
     private func rampVolume(to targetVolume: Float) {
         volumeRampTimer?.invalidate()
-
         let initialVolume = playerNode.volume
         guard abs(initialVolume - targetVolume) > 0.01 else {
             playerNode.volume = targetVolume
             return
         }
-
         let steps = 5
-        let stepDuration = 0.01 // 10ms per step
         let delta = (targetVolume - initialVolume) / Float(steps)
         var step = 0
-
         let token = UUID()
         volumeRampToken = token
-        volumeRampTimer = Timer.scheduledTimer(withTimeInterval: stepDuration, repeats: true) { [weak self] timer in
+        volumeRampTimer = Timer.scheduledTimer(withTimeInterval: 0.01, repeats: true) { [weak self] timer in
             guard let self else { timer.invalidate(); return }
             step += 1
             let newVolume = initialVolume + delta * Float(step)
-            // playerNode.volume is safe to set from any thread per AVFoundation,
-            // so the DispatchQueue.main.async hop is mostly to serialize with
-            // the @MainActor class. We keep it for consistency.
             DispatchQueue.main.async {
                 self.playerNode.volume = newVolume
             }
             if step >= steps {
                 DispatchQueue.main.async {
                     self.playerNode.volume = targetVolume
-                    // Only clear the slot if we still own it — a successor
-                    // ramp may have replaced us already.
                     if self.volumeRampToken == token {
                         self.volumeRampTimer = nil
                         self.volumeRampToken = nil
@@ -588,175 +571,21 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Audiobook playback (chunked, file-backed)
-
-    //
-    // Audiobooks can be hours long (≥300 MB on disk). The original
-    // implementation read the entire WAV into one PCM buffer — for a 2 h book
-    // that's ~680 MB resident, which OOM-killed the app on real content
-    // (C9). We now stream from the file in 30 s chunks, refilling as
-    // playback advances.
-
-    /// Currently-playing audiobook file (kept for chunked refills + seek).
-    private var currentAudioFile: AVAudioFile?
-    private var audiobookFrameOffset: AVAudioFramePosition = 0
-    private var audiobookTotalFrames: AVAudioFramePosition = 0
-    private var audiobookSampleRate: Double = 24000
-    private static let audiobookChunkSeconds: Double = 30
-    /// Number of pre-scheduled chunks ahead of the current play head.
-    private static let audiobookChunkLookahead: Int = 2
-    /// Incremented on every seek/stop to invalidate stale completion handlers.
-    private var audiobookGeneration: Int = 0
-    /// Caller-supplied identity for the current audiobook playback session
-    /// (e.g. a book ID). Captured here — at the point playback actually
-    /// starts — rather than trusting a caller's mutable "now playing" state
-    /// read later, when a natural-completion signal is finally observed. T-10.
-    private var activeSessionID: String?
-
-    /// Open a local WAV file and start chunked playback from frame 0.
-    /// `sessionID` is echoed back via `completedSessionID` if/when this
-    /// session completes naturally (T-10) — pass the identity of whatever
-    /// is being played so a completion observer doesn't have to guess it
-    /// from its own state at sink-execution time.
-    func loadAndPlayWAV(at url: URL, sessionID: String? = nil) throws {
-        stop()
-        progress = 0
-        currentTime = 0
-        pausedTime = 0
-        playbackCompleted = false
-        activeSessionID = sessionID
-        isStreamActive = false
-        hasStrippedHeader = true
-
-        // AVAudioFile(forReading:) sets processingFormat to Float32 regardless
-        // of the file's on-disk format, which now matches the engine's
-        // connection format directly (see `format` above) — no conversion
-        // needed between the file read and the scheduled buffer.
-        let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
-        currentAudioFile = file
-        audiobookSampleRate = file.processingFormat.sampleRate
-        audiobookTotalFrames = file.length
-        audiobookFrameOffset = 0
-        duration = Double(file.length) / audiobookSampleRate
-        // Used by exportToDesktop() and seek()'s legacy code path: we only
-        // populate `lastAudioData` lazily in `seek()` if needed for backward
-        // compat, otherwise leave it empty to avoid the RAM blowup.
-        lastAudioData = Data()
-
-        if !engine.isRunning {
-            try engine.start()
-        }
-        playerNode.volume = volume
-
-        // Schedule the first N chunks ahead. As each completes we schedule
-        // the next one to keep the lookahead full.
-        for _ in 0 ..< Self.audiobookChunkLookahead {
-            scheduleNextAudiobookChunk()
-        }
-        playerNode.play()
-        isPlaying = true
-        hasStartedPlayback = true
-        startTimer()
-    }
-
-    /// Pull the next chunk from `currentAudioFile` starting at
-    /// `audiobookFrameOffset`, schedule it on the player node, and advance
-    /// the offset. When the file is exhausted, mark `playbackCompleted` and
-    /// stop on the last buffer drain.
-    private func scheduleNextAudiobookChunk() {
-        guard let file = currentAudioFile else { return }
-        if audiobookFrameOffset >= audiobookTotalFrames {
-            return
-        }
-        let chunkFrames = AVAudioFrameCount(
-            min(
-                AVAudioFramePosition(Self.audiobookChunkSeconds * audiobookSampleRate),
-                audiobookTotalFrames - audiobookFrameOffset
-            )
-        )
-        guard chunkFrames > 0,
-              let buffer = AVAudioPCMBuffer(
-                  pcmFormat: file.processingFormat,
-                  frameCapacity: chunkFrames
-              )
-        else { return }
-        do {
-            file.framePosition = audiobookFrameOffset
-            try file.read(into: buffer, frameCount: chunkFrames)
-        } catch {
-            VoqoraLog.error("AudioService", "Audiobook chunk read error", ["failureCode": "audiobook_chunk_read_failed"])
-            return
-        }
-        audiobookFrameOffset += AVAudioFramePosition(buffer.frameLength)
-
-        scheduledBufferCount += 1
-        let gen = audiobookGeneration // capture before the async hop
-        // T-10: capture the session identity *now*, at schedule time, not
-        // later when a completion observer reacts to `playbackCompleted` —
-        // by then the caller's own "now playing" state may have moved on.
-        let sessionID = activeSessionID
-        playerNode.scheduleBuffer(buffer, at: nil, options: [], completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, gen == audiobookGeneration else { return }
-                scheduledBufferCount -= 1
-                // Refill: keep the lookahead window full as long as we have file left.
-                if currentAudioFile != nil, audiobookFrameOffset < audiobookTotalFrames {
-                    scheduleNextAudiobookChunk()
-                }
-                // End-of-file: when the last buffer drains, mark complete.
-                if scheduledBufferCount == 0, isPlaying,
-                   audiobookFrameOffset >= audiobookTotalFrames
-                {
-                    completedSessionID = sessionID
-                    playbackCompleted = true
-                    stop()
-                }
+    private func dataToBuffer(_ data: Data) -> AVAudioPCMBuffer? {
+        let frameCount = UInt32(data.count) / 2
+        guard frameCount > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { return nil }
+        buffer.frameLength = frameCount
+        guard let channel = buffer.floatChannelData?[0] else { return nil }
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            for i in 0 ..< Int(frameCount) {
+                let lo = UInt16(raw[i * 2])
+                let hi = UInt16(raw[i * 2 + 1])
+                channel[i] = Float(Int16(bitPattern: lo | (hi << 8))) / 32768.0
             }
-        })
+        }
+        return buffer
     }
 
-    /// Seek for chunked audiobook playback. Resets the file head and schedules
-    /// fresh chunks at the target frame.
-    func seekAudiobook(toSeconds seconds: TimeInterval) {
-        guard currentAudioFile != nil else {
-            seek(to: max(0, min(1, seconds / max(0.01, duration))))
-            return
-        }
-        let wasPlaying = isPlaying
-        audiobookGeneration += 1 // invalidate stale handlers before stop fires them
-        playerNode.stop()
-        scheduledBufferCount = 0
-        let target = max(0, min(audiobookTotalFrames, AVAudioFramePosition(seconds * audiobookSampleRate)))
-        audiobookFrameOffset = target
-        currentTime = Double(target) / audiobookSampleRate
-        pausedTime = currentTime
-        // `progress` (what the scrubber thumb/fill and the transcript's
-        // auto-scroll anchor actually read) is otherwise only refreshed by
-        // the periodic tick `startTimer()` schedules — which only runs while
-        // playing. Seeking while paused updated `currentTime` correctly (so
-        // resuming played from the right spot) but left `progress` stale, so
-        // the thumb visually snapped back to its pre-seek position the
-        // instant the drag ended and `dragging` flipped back to false.
-        progress = duration > 0 ? min(1.0, currentTime / duration) : 0
-        for _ in 0 ..< Self.audiobookChunkLookahead {
-            scheduleNextAudiobookChunk()
-        }
-        if !engine.isRunning {
-            try? engine.start()
-        }
-        if wasPlaying {
-            playerNode.play()
-            isPlaying = true
-            startTimer()
-        } else {
-            isPlaying = false
-        }
-    }
-
-    /// Total rendered audio length of the *current* TTS session, derived
-    /// from accumulated PCM frames. Source of truth for the
-    /// `audio_seconds` metric (see spec §10). Returns 0 when no session
-    /// has rendered any audio yet.
     var renderedAudioSeconds: Double {
         if audiobookTotalFrames > 0 {
             return Double(audiobookTotalFrames) / max(1, audiobookSampleRate)
@@ -768,12 +597,7 @@ class AudioService: NSObject, ObservableObject {
         let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
         let timestamp = Int(Date().timeIntervalSince1970)
         do {
-            let exportedURL = try Self.writeWAV(
-                pcmData: lastAudioData,
-                to: desktop,
-                timestamp: timestamp
-            )
-            // Record an export only after the atomic file write has succeeded.
+            let exportedURL = try Self.writeWAV(pcmData: lastAudioData, to: desktop, timestamp: timestamp)
             MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
             return exportedURL
         } catch let error as ExportError {
@@ -783,9 +607,6 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
-    /// Writes a complete WAV for a rendered PCM stream. Kept deterministic so
-    /// the app can test export bytes and name collisions without touching a
-    /// person's Desktop or needing an audio device.
     static func writeWAV(
         pcmData: Data,
         to directory: URL,
@@ -809,29 +630,19 @@ class AudioService: NSObject, ObservableObject {
         header.append("data".data(using: .ascii)!)
         header.append(contentsOf: withUnsafeBytes(of: UInt32(pcmData.count)) { Data($0) })
 
-        let wavData = header + pcmData
-        let exportURL = uniqueWAVExportURL(
-            in: directory,
-            timestamp: timestamp,
-            fileManager: fileManager
-        )
+        let exportURL = uniqueWAVExportURL(in: directory, timestamp: timestamp, fileManager: fileManager)
         do {
-            try wavData.write(to: exportURL, options: .atomic)
+            try (header + pcmData).write(to: exportURL, options: .atomic)
         } catch {
             throw ExportError.couldNotSave
         }
         return exportURL
     }
 
-    private static func uniqueWAVExportURL(
-        in directory: URL,
-        timestamp: Int,
-        fileManager: FileManager
-    ) -> URL {
+    private static func uniqueWAVExportURL(in directory: URL, timestamp: Int, fileManager: FileManager) -> URL {
         let stem = "Voqora_\(timestamp)"
         var suffix = 1
         var url = directory.appendingPathComponent("\(stem).wav")
-
         while fileManager.fileExists(atPath: url.path) {
             suffix += 1
             url = directory.appendingPathComponent("\(stem)_\(suffix).wav")

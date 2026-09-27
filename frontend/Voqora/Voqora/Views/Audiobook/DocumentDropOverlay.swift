@@ -26,9 +26,8 @@ struct DocumentDropOverlay: View {
             Palette.textPrimary.opacity(0.18).ignoresSafeArea()
             VStack(spacing: 24) {
                 dropIcon
-                Text("DROP TO ADD AUDIOBOOK")
+                Text("Drop to Create Audiobook")
                     .font(.system(size: 14, weight: .semibold))
-                    .kerning(1.5)
                     .foregroundStyle(accentColor)
                 Text(subtitle)
                     .font(appFont(11, .regular))
