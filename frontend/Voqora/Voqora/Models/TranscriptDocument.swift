@@ -85,6 +85,11 @@ nonisolated extension TranscriptDocument {
         self.init(lines: builder.lines)
     }
 
+    init(spokenText: String, duration: TimeInterval, pauses: [AudioPause], speed: Double) {
+        let estimated = TranscriptDocument(spokenText: spokenText, duration: duration)
+        self.init(lines: PauseAligner.align(estimated.lines, duration: duration, pauses: pauses, speed: speed))
+    }
+
     private struct Piece {
         let text: String
         let block: Int
@@ -163,6 +168,118 @@ nonisolated extension TranscriptDocument {
         private func isSoleLine(of line: TimedLine, in timed: [TimedLine]) -> Bool {
             timed.lazy.filter { $0.paragraph == line.paragraph }.prefix(2).count == 1
         }
+    }
+}
+
+nonisolated struct AudioPause: Equatable, Sendable {
+    let end: TimeInterval
+    let length: TimeInterval
+
+    static func detect(inPCM16 data: Data, sampleRate: Double, minimumSeconds: Double = 0.03) -> [AudioPause] {
+        let minimum = Int(minimumSeconds * sampleRate)
+        let count = data.count / 2
+        var pauses: [AudioPause] = []
+        data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+            var runStart: Int?
+            for index in 0 ..< count {
+                if raw[index * 2] == 0, raw[index * 2 + 1] == 0 {
+                    if runStart == nil {
+                        runStart = index
+                    }
+                } else if let start = runStart {
+                    if index - start >= minimum {
+                        pauses.append(AudioPause(end: Double(index) / sampleRate, length: Double(index - start) / sampleRate))
+                    }
+                    runStart = nil
+                }
+            }
+        }
+        return pauses
+    }
+}
+
+nonisolated enum PauseAligner {
+    static let skipCost = 12.0
+    static let pauseWeight = 60.0
+    static let defaultPause = 0.1
+    static let segmentPauses: [Character: Double] = [".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12]
+    private static let maximumCells = 4_000_000
+
+    static func align(_ lines: [TranscriptLine], duration: TimeInterval, pauses: [AudioPause], speed: Double) -> [TranscriptLine] {
+        guard lines.count > 1, !pauses.isEmpty, (lines.count - 1) * pauses.count <= maximumCells else { return lines }
+        let estimates = lines.dropFirst().map(\.start)
+        let expected = lines.dropLast().map { (segmentPauses[$0.text.last ?? " "] ?? defaultPause) / max(0.1, speed) }
+        var anchors: [Int: TimeInterval] = [0: 0, lines.count: duration]
+        for (offset, match) in match(estimates: estimates, expected: expected, pauses: pauses).enumerated() {
+            if let match {
+                anchors[offset + 1] = pauses[match].end
+            }
+        }
+        let weights = lines.map { Double($0.text.count) + TranscriptText.pauseWeight }
+        var starts = Array(repeating: 0.0, count: lines.count + 1)
+        let known = anchors.keys.sorted()
+        for (left, right) in zip(known, known.dropFirst()) {
+            let from = anchors[left, default: 0]
+            let to = anchors[right, default: duration]
+            let span = max(1, weights[left ..< right].reduce(0, +))
+            var covered = 0.0
+            for index in left ... right {
+                starts[index] = from + (to - from) * covered / span
+                if index < right {
+                    covered += weights[index]
+                }
+            }
+        }
+        return lines.enumerated().map { index, line in
+            TranscriptLine(
+                id: line.id,
+                text: line.text,
+                start: starts[index],
+                end: max(starts[index], starts[index + 1]),
+                page: line.page,
+                block: line.block,
+                isHeading: line.isHeading,
+                isNarrated: line.isNarrated,
+                isExactlyTimed: anchors[index] != nil && anchors[index + 1] != nil
+            )
+        }
+    }
+
+    static func match(estimates: [Double], expected: [Double], pauses: [AudioPause]) -> [Int?] {
+        let n = estimates.count
+        let m = pauses.count
+        var cost = Array(repeating: Array(repeating: 0.0, count: m + 1), count: n + 1)
+        var step = Array(repeating: Array(repeating: 0, count: m + 1), count: n + 1)
+        for i in stride(from: 1, through: n, by: 1) {
+            cost[i][0] = Double(i) * skipCost
+            step[i][0] = 1
+            for j in stride(from: 1, through: m, by: 1) {
+                let pause = pauses[j - 1]
+                let options = [
+                    cost[i][j - 1],
+                    cost[i - 1][j] + skipCost,
+                    cost[i - 1][j - 1] + abs(estimates[i - 1] - pause.end) + pauseWeight * abs(pause.length - expected[i - 1]),
+                ]
+                let best = options.indices.min { options[$0] < options[$1] } ?? 0
+                step[i][j] = best
+                cost[i][j] = options[best]
+            }
+        }
+        var matches = [Int?](repeating: nil, count: n)
+        var i = n
+        var j = m
+        while i > 0 {
+            if j > 0, step[i][j] == 0 {
+                j -= 1
+            } else if j == 0 || step[i][j] == 1 {
+                i -= 1
+            } else {
+                matches[i - 1] = j - 1
+                i -= 1
+                j -= 1
+            }
+        }
+        return matches
     }
 }
 

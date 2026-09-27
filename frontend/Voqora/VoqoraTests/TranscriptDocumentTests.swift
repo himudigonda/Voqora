@@ -231,6 +231,41 @@ final class TranscriptFollowerTests: XCTestCase {
         XCTAssertEqual(follower.activeIndex, 0, "a longer real duration moves the same clock earlier in the text")
         XCTAssertEqual(follower.revision, revision, "duration changes must not rebuild the document")
     }
+
+    func test_spokenSentencesStartWhereTheirPauseInTheAudioEnds() {
+        let text = "A much longer opening sentence that runs on for a while. This one, however, is short. Final words."
+        let pauses = [
+            AudioPause(end: 5.35, length: 0.35),
+            AudioPause(end: 6.12, length: 0.12),
+            AudioPause(end: 7.35, length: 0.35),
+        ]
+
+        let document = TranscriptDocument(spokenText: text, duration: 9, pauses: pauses, speed: 1)
+
+        XCTAssertEqual(document.lines.map(\.start), [0, 5.35, 7.35])
+        XCTAssertEqual(document.lines.last?.end, 9)
+        XCTAssertTrue(document.lines.allSatisfy(\.isExactlyTimed))
+    }
+
+    func test_spokenSentencesKeepEstimatesWhenTheAudioHasNoPauses() {
+        let text = "First sentence here. Second sentence here."
+        let estimated = TranscriptDocument(spokenText: text, duration: 4)
+        let aligned = TranscriptDocument(spokenText: text, duration: 4, pauses: [], speed: 1)
+
+        XCTAssertEqual(aligned.lines.map(\.start), estimated.lines.map(\.start))
+    }
+
+    func test_pausesAreRunsOfDigitalSilenceLongEnoughToBeInserted() {
+        let voiced = { (samples: Int) in Data(repeating: 1, count: samples * 2) }
+        let silent = { (samples: Int) in Data(count: samples * 2) }
+        let pcm = voiced(2400) + silent(8400) + voiced(240) + silent(100) + voiced(240)
+
+        let pauses = AudioPause.detect(inPCM16: pcm, sampleRate: 24000)
+
+        XCTAssertEqual(pauses.count, 1)
+        XCTAssertEqual(pauses[0].end, 0.45, accuracy: 0.0001)
+        XCTAssertEqual(pauses[0].length, 0.35, accuracy: 0.0001)
+    }
 }
 
 extension Audiobook {

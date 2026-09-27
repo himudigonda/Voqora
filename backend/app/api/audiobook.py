@@ -582,6 +582,7 @@ def get_audiobook_transcript(book_id: str):
     path = AudiobookStore.transcript_path(book_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Transcript not ready.")
+    AudiobookService.backfill_transcript_lines(book_id)
     return FileResponse(path, media_type="application/json")
 
 

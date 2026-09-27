@@ -40,6 +40,10 @@ final class TranscriptFollower: ObservableObject {
         scrubTime ?? audio.currentTime
     }
 
+    func startTime(of line: TranscriptLine) -> TimeInterval {
+        isRelative ? line.start * audio.duration : line.start
+    }
+
     func load(_ document: TranscriptDocument) {
         isRelative = false
         replace(with: document)

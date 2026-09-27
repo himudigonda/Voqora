@@ -143,6 +143,27 @@ struct OnboardingView: View {
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(OnboardingCopy.features, id: \.title) { feature in
+                    HStack(alignment: .top, spacing: 14) {
+                        Image(systemName: feature.systemImage)
+                            .font(.system(size: 20, weight: .medium))
+                            .foregroundStyle(accentColor)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(feature.title)
+                                .font(appFont(size: 14, weight: .semibold))
+                                .foregroundStyle(Palette.textPrimary)
+                            Text(feature.body)
+                                .font(appFont(size: 13))
+                                .foregroundStyle(Palette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 420, alignment: .leading)
+            .padding(.top, 6)
         }
     }
 
@@ -330,6 +351,19 @@ struct OnboardingView: View {
             Text(OnboardingCopy.doneTitle)
                 .font(appFont(size: 28, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
+            Text(OnboardingCopy.doneBody)
+                .font(appFont(size: 15))
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button {
+                Task { await vm.speak(text: OnboardingCopy.sampleText) }
+            } label: {
+                Label(OnboardingCopy.doneSampleButton, systemImage: "play.fill")
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!vm.isBackendOnline)
         }
     }
 

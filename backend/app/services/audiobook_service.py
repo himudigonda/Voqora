@@ -46,7 +46,11 @@ from app.services.text_normalizer import (
     has_residual_markup,
     strip_markdown_for_narration,
 )
-from app.services.tts import interactive_tts_lock
+from app.services.tts import (
+    DEFAULT_SEGMENT_PAUSE_SECONDS,
+    SEGMENT_PAUSE_SECONDS,
+    interactive_tts_lock,
+)
 
 log = get_logger(__name__)
 
@@ -1628,7 +1632,11 @@ class AudiobookService:
                 "pages": page_texts,
                 "page_status": page_status,
                 "lines": cls._timed_lines(
-                    book_id, page_count, page_to_time, page_status
+                    book_id,
+                    page_count,
+                    page_to_time,
+                    page_status,
+                    float(current_meta.get("speed") or 1.0),
                 ),
             }
             tpath = AudiobookStore.transcript_path(book_id)
@@ -1698,6 +1706,7 @@ class AudiobookService:
         page_count: int,
         page_to_time: dict[str, float],
         page_status: dict[str, str],
+        speed: float = 1.0,
     ) -> dict[str, list[dict[str, Any]]]:
         lines: dict[str, list[dict[str, Any]]] = {}
         for n in range(1, page_count + 1):
@@ -1708,6 +1717,8 @@ class AudiobookService:
             try:
                 with open(path, encoding="utf-8") as f:
                     page_lines = json.load(f).get("lines") or []
+            except FileNotFoundError:
+                page_lines = cls._align_page_from_audio(book_id, n, speed)
             except (OSError, ValueError):
                 continue
             offset = page_to_time.get(key, 0.0)
@@ -1722,6 +1733,68 @@ class AudiobookService:
                 if isinstance(line, dict) and line.get("text")
             ]
         return lines
+
+    @classmethod
+    def _align_page_from_audio(
+        cls, book_id: str, n: int, speed: float
+    ) -> list[dict[str, Any]]:
+        try:
+            with open(
+                AudiobookStore.page_clean_path(book_id, n), encoding="utf-8"
+            ) as f:
+                text = f.read().strip()
+            with wave.open(AudiobookStore.page_audio_path(book_id, n), "rb") as wf:
+                samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+        except (OSError, EOFError, wave.Error):
+            return []
+        if not text or text == "-" or text.startswith("[blank"):
+            return []
+        page_lines = _aligned_page_lines(text, samples, speed)
+        try:
+            cls._write_json_atomic(
+                AudiobookStore.page_timing_path(book_id, n), {"lines": page_lines}
+            )
+        except OSError:
+            log.warning(
+                "audiobook.timing_write_failed",
+                extra={"book_id": book_id, "page": n},
+                exc_info=True,
+            )
+        return page_lines
+
+    @classmethod
+    def backfill_transcript_lines(cls, book_id: str) -> None:
+        meta = AudiobookStore.read_meta(book_id) or {}
+        if meta.get("status") != "done":
+            return
+        path = AudiobookStore.transcript_path(book_id)
+        try:
+            with open(path, encoding="utf-8") as f:
+                transcript = json.load(f)
+        except (OSError, ValueError):
+            return
+        existing = transcript.get("lines") or {}
+        page_status = transcript.get("page_status") or {}
+        page_to_time = transcript.get("page_to_time") or {}
+        missing = [
+            key
+            for key in page_to_time
+            if key not in existing
+            and page_status.get(key) not in _SILENT_PAGE_STATUSES
+            and not os.path.exists(AudiobookStore.page_timing_path(book_id, int(key)))
+            and os.path.exists(AudiobookStore.page_audio_path(book_id, int(key)))
+        ]
+        if not missing:
+            return
+        transcript["lines"] = cls._timed_lines(
+            book_id,
+            max(int(key) for key in page_to_time),
+            page_to_time,
+            page_status,
+            float(meta.get("speed") or 1.0),
+        )
+        if transcript["lines"] != existing:
+            cls._write_json_atomic(path, transcript)
 
     @staticmethod
     def _remove_quietly(path: str) -> None:
@@ -1827,6 +1900,10 @@ _LINE_ENDERS = frozenset(".!?:;\"')]”’")
 _SENTENCE_END = re.compile(r"[.!?][\"'”’)\]]*$")
 _MIN_SENTENCE_WORDS = 3
 _SILENT_PAGE_STATUSES = frozenset({"tts_failed", "duplicate"})
+_MIN_PAUSE_SECONDS = 0.03
+_ALIGN_SKIP_COST = 12.0
+_ALIGN_PAUSE_WEIGHT = 60.0
+_ALIGN_PAUSE_CHARS = 6
 
 
 def _speech_units(text: str) -> list[tuple[int, str]]:
@@ -1878,3 +1955,96 @@ def _sentence_lines(
             flush()
     flush()
     return lines
+
+
+def _silence_runs(samples: np.ndarray) -> list[tuple[float, float]]:
+    silent = np.concatenate(([0], (samples == 0).astype(np.int8), [0]))
+    edges = np.diff(silent)
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    keep = (ends - starts >= _MIN_PAUSE_SECONDS * SAMPLE_RATE) & (ends < len(samples))
+    return [
+        (int(end) / SAMPLE_RATE, int(end - start) / SAMPLE_RATE)
+        for start, end in zip(starts[keep], ends[keep], strict=True)
+    ]
+
+
+def _match_pauses(
+    estimates: list[float],
+    expected: list[float],
+    runs: list[tuple[float, float]],
+) -> list[int | None]:
+    n, m = len(estimates), len(runs)
+    cost = [[0.0] * (m + 1) for _ in range(n + 1)]
+    step = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(1, n + 1):
+        cost[i][0] = i * _ALIGN_SKIP_COST
+        step[i][0] = 1
+        for j in range(1, m + 1):
+            end, length = runs[j - 1]
+            options = (
+                cost[i][j - 1],
+                cost[i - 1][j] + _ALIGN_SKIP_COST,
+                cost[i - 1][j - 1]
+                + abs(estimates[i - 1] - end)
+                + _ALIGN_PAUSE_WEIGHT * abs(length - expected[i - 1]),
+            )
+            step[i][j] = min(range(3), key=options.__getitem__)
+            cost[i][j] = options[step[i][j]]
+    matches: list[int | None] = [None] * n
+    i, j = n, m
+    while i > 0:
+        if j > 0 and step[i][j] == 0:
+            j -= 1
+        elif j == 0 or step[i][j] == 1:
+            i -= 1
+        else:
+            matches[i - 1] = j - 1
+            i -= 1
+            j -= 1
+    return matches
+
+
+def _aligned_page_lines(
+    text: str, samples: np.ndarray, speed: float
+) -> list[dict[str, Any]]:
+    lines = _sentence_lines(
+        [
+            (paragraph, segment, 0, 0)
+            for paragraph, unit in _speech_units(text)
+            for segment in EngineManager.split_segments(unit)
+        ]
+    )
+    if not lines:
+        return []
+    duration = len(samples) / SAMPLE_RATE
+    weights = [len(line["text"]) + _ALIGN_PAUSE_CHARS for line in lines]
+    total = sum(weights)
+    cumulative = np.cumsum(weights)
+    estimates = [duration * float(c) / total for c in cumulative[:-1]]
+    expected = [
+        SEGMENT_PAUSE_SECONDS.get(line["text"][-1], DEFAULT_SEGMENT_PAUSE_SECONDS)
+        / max(0.1, speed)
+        for line in lines[:-1]
+    ]
+    runs = _silence_runs(samples)
+    anchors: dict[int, float] = {0: 0.0, len(lines): duration}
+    for boundary, run in enumerate(_match_pauses(estimates, expected, runs), start=1):
+        if run is not None:
+            anchors[boundary] = runs[run][0]
+    starts = [0.0] * (len(lines) + 1)
+    known = sorted(anchors)
+    for left, right in zip(known, known[1:], strict=False):
+        span = float(sum(weights[left:right])) or 1.0
+        for index in range(left, right + 1):
+            share = float(sum(weights[left:index])) / span
+            starts[index] = anchors[left] + (anchors[right] - anchors[left]) * share
+    return [
+        {
+            "paragraph": line["paragraph"],
+            "text": line["text"],
+            "start": round(starts[index], 3),
+            "end": round(starts[index + 1], 3),
+        }
+        for index, line in enumerate(lines)
+    ]

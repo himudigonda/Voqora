@@ -88,7 +88,11 @@ struct VoqoraWindow: View {
                 detailContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
-                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering, perform: handleGlobalDocumentDrop)
+                    .onDrop(of: [.fileURL], isTargeted: $globalDropHovering) { providers in
+                        guard bookVM.importDroppedDocument(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed) else { return false }
+                        vm.showLibrary()
+                        return true
+                    }
 
                 if globalDropHovering, vm.selectedTab != "books" {
                     globalDropOverlay
@@ -108,6 +112,15 @@ struct VoqoraWindow: View {
             .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.status)
         }
         .frame(minWidth: 800, minHeight: 600)
+        .fileImporter(isPresented: $bookVM.isImporterPresented, allowedContentTypes: AudiobookImportStaging.documentTypes) { result in
+            switch result {
+            case let .success(url):
+                vm.showLibrary()
+                bookVM.importDocument(url, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
+            case let .failure(error):
+                bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
+            }
+        }
         .tint(accentColor)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
@@ -302,41 +315,9 @@ private extension VoqoraWindow {
         .accessibilityHint("Resumes this audiobook and opens the player")
     }
 
-    private func handleGlobalDocumentDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            var url: URL?
-            if let data = item as? Data {
-                url = URL(dataRepresentation: data, relativeTo: nil)
-            } else if let u = item as? URL {
-                url = u
-            }
-            guard let url else {
-                Task { @MainActor in
-                    bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
-                }
-                return
-            }
-            Task { @MainActor in
-                guard AudiobookImportStaging.supports(url) else {
-                    bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
-                    return
-                }
-                do {
-                    let stagedURL = try AudiobookImportStaging.stageDocument(from: url)
-                    vm.showLibrary()
-                    bookVM.presentEstimate(for: stagedURL, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
-                } catch {
-                    bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
-                }
-            }
-        }
-        return true
-    }
-
     private var globalDropOverlay: some View {
         DocumentDropOverlay(
-            subtitle: "PDF, Word, text, or Markdown",
+            subtitle: AudiobookImportStaging.supportedFormatsDescription,
             appFont: vm.appFont
         )
         .animation(.easeInOut(duration: 0.2), value: globalDropHovering)

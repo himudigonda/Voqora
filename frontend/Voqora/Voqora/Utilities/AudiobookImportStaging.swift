@@ -1,10 +1,25 @@
 import Foundation
+import UniformTypeIdentifiers
 
 enum AudiobookImportStaging {
     static let directoryPrefix = "VoqoraImport-"
 
     nonisolated static let supportedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
-    nonisolated static let supportedFormatsDescription = "PDF, TXT, DOCX, and Markdown"
+    nonisolated static let supportedFormatsDescription = "PDF, Word, text, and Markdown"
+
+    static var documentTypes: [UTType] {
+        [.pdf, .plainText, UTType(importedAs: "org.openxmlformats.wordprocessingml.document")]
+            + [UTType(filenameExtension: "md")].compactMap(\.self)
+    }
+
+    static func fileURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url = (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) } ?? (item as? URL)
+                continuation.resume(returning: url)
+            }
+        }
+    }
 
     enum StagingError: LocalizedError {
         case unsupportedFile

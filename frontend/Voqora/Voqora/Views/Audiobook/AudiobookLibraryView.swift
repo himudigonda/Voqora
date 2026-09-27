@@ -22,7 +22,6 @@ struct AudiobookLibraryView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
 
     @State private var hoveringDrop = false
-    @State private var showImporter = false
     @State private var searchText = ""
     @AppStorage("librarySortMode") private var sort: SortMode = .recent
     @State private var showDeleteAllConfirmation = false
@@ -44,18 +43,6 @@ struct AudiobookLibraryView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 28)]
 
-    private var supportedDocumentTypes: [UTType] {
-        var types: [UTType] = [
-            .pdf,
-            .plainText,
-            .init(importedAs: "org.openxmlformats.wordprocessingml.document"),
-        ]
-        if let markdown = UTType(filenameExtension: "md") {
-            types.append(markdown)
-        }
-        return types
-    }
-
     var body: some View {
         ZStack {
             switch bookVM.libraryPath.last {
@@ -68,14 +55,6 @@ struct AudiobookLibraryView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: bookVM.libraryPath)
-        .fileImporter(isPresented: $showImporter, allowedContentTypes: supportedDocumentTypes) { result in
-            switch result {
-            case let .success(url):
-                stageAndPresentDocument(url)
-            case let .failure(error):
-                bookVM.showToast("Could not open that document: \(error.localizedDescription)", kind: .error)
-            }
-        }
         .sheet(item: librarySheetBinding) { sheet in
             switch sheet {
             case let .upload(url):
@@ -102,7 +81,9 @@ struct AudiobookLibraryView: View {
         .navigationTitle("Audiobooks")
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search Audiobooks")
         .toolbar { toolbarContent }
-        .onDrop(of: [.fileURL], isTargeted: $hoveringDrop, perform: handleDrop)
+        .onDrop(of: [.fileURL], isTargeted: $hoveringDrop) { providers in
+            bookVM.importDroppedDocument(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
+        }
         .alert("Delete All Audiobooks?", isPresented: $showDeleteAllConfirmation) {
             Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }
             Button("Cancel", role: .cancel) {}
@@ -220,7 +201,7 @@ struct AudiobookLibraryView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Button { showImporter = true } label: {
+            Button { bookVM.isImporterPresented = true } label: {
                 Label("Add Book", systemImage: "plus")
             }
             .keyboardShortcut("o", modifiers: .command)
@@ -252,36 +233,8 @@ struct AudiobookLibraryView: View {
         }
     }
 
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        guard let provider = providers.first else { return false }
-        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-            let url = (item as? Data).flatMap { URL(dataRepresentation: $0, relativeTo: nil) } ?? (item as? URL)
-            Task { @MainActor in
-                guard let url else {
-                    bookVM.showToast("Voqora could not read that dropped file.", kind: .error)
-                    return
-                }
-                guard AudiobookImportStaging.supports(url) else {
-                    bookVM.showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
-                    return
-                }
-                stageAndPresentDocument(url)
-            }
-        }
-        return true
-    }
-
-    private func stageAndPresentDocument(_ sourceURL: URL) {
-        do {
-            let stagedURL = try AudiobookImportStaging.stageDocument(from: sourceURL)
-            bookVM.presentEstimate(for: stagedURL, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
-        } catch {
-            bookVM.showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
-        }
-    }
-
     private var dropOverlay: some View {
-        DocumentDropOverlay(subtitle: "PDF, Word, text, or Markdown", appFont: vm.appFont)
+        DocumentDropOverlay(subtitle: AudiobookImportStaging.supportedFormatsDescription, appFont: vm.appFont)
             .animation(.easeInOut(duration: 0.25), value: hoveringDrop)
     }
 
@@ -289,10 +242,10 @@ struct AudiobookLibraryView: View {
         LibraryPlaceholder(
             systemImage: "books.vertical",
             title: "No Audiobooks",
-            message: "Add a PDF, Word, text, or Markdown file, or drop one here."
+            message: "Turn a PDF, Word, text, or Markdown file into an audiobook you can follow line by line. Drop one here to begin."
         ) {
-            Button { showImporter = true } label: {
-                Label("Add File…", systemImage: "plus")
+            Button { bookVM.isImporterPresented = true } label: {
+                Label("Add a Document…", systemImage: "plus")
             }
             .buttonStyle(.voqoraPrimary)
         }

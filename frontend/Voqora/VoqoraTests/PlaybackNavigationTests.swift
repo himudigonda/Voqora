@@ -112,6 +112,22 @@ final class PlaybackNavigationTests: XCTestCase {
         XCTAssertEqual(Double(audio.playbackRate), 1.75, accuracy: 0.001)
     }
 
+    func test_changingSpeechSpeedMidClipRetimesItAndCarriesToTheNextClip() {
+        let audio = AudioService(startingEngine: false)
+        let dashboard = makeDashboard(audio: audio)
+        let original = dashboard.speechSpeed
+        defer { dashboard.speechSpeed = original }
+        dashboard.speechSpeed = 1
+        audio.prepareForStream()
+        audio.playChunk(wav(seconds: 2), volume: 1)
+        audio.finishStream()
+
+        dashboard.setSpeechSpeed(1.5)
+
+        XCTAssertEqual(dashboard.speechSpeed, 1.5)
+        XCTAssertEqual(Double(audio.playbackRate), 1.5, accuracy: 0.001)
+    }
+
     func test_seekWithNothingLoadedIsANoOp() {
         let audio = AudioService(startingEngine: false)
         audio.seek(toSeconds: 10)

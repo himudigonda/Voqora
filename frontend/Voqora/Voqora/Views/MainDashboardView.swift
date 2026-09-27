@@ -42,6 +42,8 @@ private struct SpeechPlayerView: View {
                 .onKeyPress(.space) { vm.togglePlayback(); return .handled }
                 .onKeyPress(.leftArrow) { vm.skipSpeech(by: -10); return .handled }
                 .onKeyPress(.rightArrow) { vm.skipSpeech(by: 10); return .handled }
+                .onKeyPress("[") { vm.setSpeechSpeed(vm.speechSpeed - 0.25); return .handled }
+                .onKeyPress("]") { vm.setSpeechSpeed(vm.speechSpeed + 0.25); return .handled }
             } else {
                 IdleState()
             }
@@ -100,12 +102,13 @@ private struct SpeechControls: View {
                 TransportGlyph(systemName: "goforward.10", label: "Forward 10 Seconds") { vm.skipSpeech(by: 10) }
             }
             HStack(spacing: 10) {
-                PlayerCircleButton(systemName: "stop.fill", label: "Stop", isEnabled: audio.hasMedia) {
-                    vm.stopPlayback()
-                }
+                PlayerSpeedMenu(speed: vm.speechSpeed) { vm.setSpeechSpeed($0) }
                 Spacer(minLength: 0)
                 PlayerVolumeControl()
                 Spacer(minLength: 0)
+                PlayerCircleButton(systemName: "stop.fill", label: "Stop", isEnabled: audio.hasMedia) {
+                    vm.stopPlayback()
+                }
                 PlayerCircleButton(
                     systemName: "square.and.arrow.down",
                     label: "Save Clip to Desktop",
@@ -128,18 +131,41 @@ private struct IdleState: View {
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "waveform")
-                .font(.system(size: 44, weight: .light))
-                .foregroundStyle(Palette.textTertiary)
-            VStack(spacing: 6) {
+        VStack(spacing: 28) {
+            VStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundStyle(Palette.textTertiary)
+                    .padding(.bottom, 6)
                 Text("Nothing Playing")
-                    .font(vm.appFont(size: 20, weight: .semibold))
+                    .font(vm.appFont(size: 22, weight: .semibold))
                     .foregroundStyle(Palette.textPrimary)
-                Text("Press \(shortcut) to hear selected text from any app")
+                Text("Voqora reads text aloud with natural voices that run on your Mac.")
                     .font(vm.appFont(size: 13))
                     .foregroundStyle(Palette.textSecondary)
+                    .multilineTextAlignment(.center)
             }
+            HStack(alignment: .top, spacing: 16) {
+                GettingStartedCard(
+                    systemImage: "text.cursor",
+                    title: "Selected Text",
+                    message: "Select text in any app, then press \(shortcut) to hear it.",
+                    actionTitle: "Hear a Sample",
+                    isEnabled: vm.isBackendOnline
+                ) {
+                    Task { await vm.speak(text: OnboardingCopy.sampleText) }
+                }
+                GettingStartedCard(
+                    systemImage: "books.vertical",
+                    title: "Audiobooks",
+                    message: "Turn a PDF, Word, text, or Markdown file into an audiobook.",
+                    actionTitle: "Add a Document…",
+                    isEnabled: true
+                ) {
+                    bookVM.isImporterPresented = true
+                }
+            }
+            .frame(maxWidth: 600)
             if let book = bookVM.continueListeningBook {
                 Button {
                     vm.openAudiobook(book.bookID)
@@ -148,11 +174,45 @@ private struct IdleState: View {
                         .lineLimit(1)
                 }
                 .buttonStyle(.voqoraSecondary)
-                .padding(.top, 6)
             }
         }
         .padding(.horizontal, 40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct GettingStartedCard: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    let systemImage: String
+    let title: String
+    let message: String
+    let actionTitle: String
+    let isEnabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(vm.accentColor(scheme: colorScheme, contrast: contrast))
+                .frame(height: 24)
+            Text(title)
+                .font(vm.appFont(size: 15, weight: .semibold))
+                .foregroundStyle(Palette.textPrimary)
+            Text(message)
+                .font(vm.appFont(size: 13))
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 36, alignment: .topLeading)
+            Button(actionTitle, action: action)
+                .buttonStyle(.voqoraSecondary)
+                .disabled(!isEnabled)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
     }
 }
 

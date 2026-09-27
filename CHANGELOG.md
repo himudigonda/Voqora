@@ -9,7 +9,10 @@
   Scrolling pauses follow mode; it resumes after a few seconds or from
   Current Line.
 - New audiobooks record exact per-sentence timings during narration, and the
-  current line fills word by word. Existing audiobooks use estimated timings.
+  current line fills word by word. Pages narrated before this change are
+  timed from the pauses in their audio the first time the transcript opens.
+- Clicking a sentence in selected-text speech starts at that sentence. Its
+  timing comes from the pauses in the generated audio instead of an estimate.
 - The player shows artwork and controls beside the transcript, and stacks
   them in narrow windows. Scrubbing previews the transcript position.
 - Now Playing shows the audiobook player whenever an audiobook is active,
@@ -53,6 +56,10 @@
 - Delete All Audiobooks moved from the toolbar into the View Options menu.
 - The Vault shows voice names, plays an item on double-click, and uses
   consistent labels.
+- Both players have a speed menu. In selected-text speech it changes the
+  clip that is playing and sets the speed for the next one.
+- Nothing Playing explains both features, with Hear a Sample and Add a
+  Document buttons. Onboarding introduces audiobooks and ends with a sample.
 
 ## [1.2.3] - 2026-09-20
 

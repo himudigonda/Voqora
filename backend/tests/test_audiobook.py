@@ -2697,6 +2697,70 @@ def test_sentence_lines_group_segments_into_sentences_with_exact_times():
     ]
 
 
+def _narration(parts: list[tuple[float, float]]) -> np.ndarray:
+    rng = np.random.default_rng(7)
+    chunks = []
+    for speech, pause in parts:
+        voiced = rng.integers(200, 4000, int(speech * SAMPLE_RATE)).astype(np.int16)
+        chunks += [voiced, np.zeros(int(pause * SAMPLE_RATE), dtype=np.int16)]
+    return np.concatenate(chunks)
+
+
+def test_aligned_page_lines_start_each_sentence_after_its_pause():
+    from app.services.audiobook_service import _aligned_page_lines
+
+    text = (
+        "Introduction\n\n"
+        "A very long opening sentence that keeps going for quite a while here. "
+        "This one is short.\nThe model, which is fast, wins."
+    )
+    samples = _narration(
+        [(1.0, 0.1), (6.0, 0.35), (1.0, 0.35), (1.5, 0.12), (2.0, 0.35)]
+    )
+
+    lines = _aligned_page_lines(text, samples, 1.0)
+
+    assert [line["text"] for line in lines] == [
+        "Introduction",
+        "A very long opening sentence that keeps going for quite a while here.",
+        "This one is short.",
+        "The model, which is fast, wins.",
+    ]
+    assert [line["start"] for line in lines] == [0.0, 1.1, 7.45, 8.8]
+    assert lines[-1]["end"] == round(len(samples) / SAMPLE_RATE, 3)
+
+
+def test_transcript_backfills_timings_for_pages_narrated_before_they_were_recorded():
+    bid = AudiobookStore.create_book("Legacy.pdf")
+    meta = AudiobookStore.initial_meta(bid, "Legacy", 1, "kokoro", "af_bella", 1.0, {})
+    AudiobookStore.write_meta(bid, {**meta, "status": "done"})
+    clean = AudiobookStore.page_clean_path(bid, 1)
+    os.makedirs(os.path.dirname(clean), exist_ok=True)
+    with open(clean, "w", encoding="utf-8") as f:
+        f.write("The first sentence is right here. And the second.")
+    AudiobookService._write_wav_from_samples(
+        AudiobookStore.page_audio_path(bid, 1),
+        _narration([(2.0, 0.35), (1.0, 0.35)]).astype(np.float32) / 32767,
+    )
+    with open(AudiobookStore.transcript_path(bid), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "pages": {"1": "x"},
+                "page_to_time": {"1": 0.0},
+                "page_status": {},
+                "lines": {},
+            },
+            f,
+        )
+
+    AudiobookService.backfill_transcript_lines(bid)
+
+    with open(AudiobookStore.transcript_path(bid), encoding="utf-8") as f:
+        lines = json.load(f)["lines"]["1"]
+    assert [line["start"] for line in lines] == [0.0, 2.35]
+    assert os.path.exists(AudiobookStore.page_timing_path(bid, 1))
+
+
 # ---------- Gemini timeout → raw text fallback ----------
 
 

@@ -218,7 +218,7 @@ private struct PlayerSecondaryControls: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            speedMenu
+            PlayerSpeedMenu(speed: Double(audio.playbackRate)) { bookVM.setSpeed($0) }
             Spacer(minLength: 0)
             PlayerVolumeControl()
             Spacer(minLength: 0)
@@ -230,43 +230,6 @@ private struct PlayerSecondaryControls: View {
                 action: export
             )
         }
-    }
-
-    private var speedMenu: some View {
-        Menu {
-            ForEach([0.75, 1.0, 1.25, 1.5, 1.75, 2.0], id: \.self) { speed in
-                Button {
-                    bookVM.setSpeed(speed)
-                } label: {
-                    if abs(Double(audio.playbackRate) - speed) < 0.01 {
-                        Label(Self.speedLabel(speed), systemImage: "checkmark")
-                    } else {
-                        Text(Self.speedLabel(speed))
-                    }
-                }
-            }
-        } label: {
-            Text(Self.speedLabel(Double(audio.playbackRate)))
-                .font(vm.appFont(size: 12, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(Palette.textPrimary)
-                .frame(minWidth: 44, minHeight: 30)
-                .background(Capsule().fill(Palette.controlFill))
-                .contentShape(Capsule())
-        }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Playback Speed")
-        .accessibilityLabel("Playback Speed")
-    }
-
-    static func speedLabel(_ speed: Double) -> String {
-        let formatted = speed.truncatingRemainder(dividingBy: 1) == 0
-            ? String(format: "%.0f", speed)
-            : String(format: "%g", speed)
-        return formatted + "×"
     }
 
     private var sleepIsArmed: Bool {

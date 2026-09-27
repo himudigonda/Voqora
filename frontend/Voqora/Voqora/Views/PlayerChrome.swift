@@ -188,6 +188,48 @@ struct PlayerCircleButton: View {
     }
 }
 
+struct PlayerSpeedMenu: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    static let options = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    let speed: Double
+    let onSelect: (Double) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(Self.options, id: \.self) { option in
+                Button {
+                    onSelect(option)
+                } label: {
+                    if abs(speed - option) < 0.01 {
+                        Label(Self.label(option), systemImage: "checkmark")
+                    } else {
+                        Text(Self.label(option))
+                    }
+                }
+            }
+        } label: {
+            Text(Self.label(speed))
+                .font(vm.appFont(size: 12, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(Palette.textPrimary)
+                .frame(minWidth: 44, minHeight: 30)
+                .background(Capsule().fill(Palette.controlFill))
+                .contentShape(Capsule())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Playback Speed")
+        .accessibilityLabel("Playback Speed")
+        .accessibilityValue(Self.label(speed))
+    }
+
+    static func label(_ speed: Double) -> String {
+        String(format: "%g", (speed * 100).rounded() / 100) + "×"
+    }
+}
+
 struct PlayerVolumeControl: View {
     @EnvironmentObject var audio: AudioService
 

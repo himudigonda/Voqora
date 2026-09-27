@@ -66,6 +66,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     @AppStorage("speechSpeed") var speechSpeed = 1.0
+    private var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
@@ -304,6 +305,7 @@ class DashboardViewModel: ObservableObject {
             spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
             audio.prepareForStream()
+            clipSpeed = speechSpeed
             audio.setEstimatedDuration(textLength: cleaned.count, speed: speechSpeed)
             speechFollower.follow(spokenText: spokenText)
 
@@ -336,6 +338,14 @@ class DashboardViewModel: ObservableObject {
                 }
 
                 audio.finishStream()
+                if let spokenText {
+                    speechFollower.load(TranscriptDocument(
+                        spokenText: spokenText,
+                        duration: audio.duration,
+                        pauses: audio.streamPauses(),
+                        speed: speechSpeed
+                    ))
+                }
                 history.log(text: cleaned, voice: selectedVoice)
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
@@ -369,7 +379,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     func playSpokenText(from line: TranscriptLine) {
-        audio.seek(toSeconds: line.start * audio.duration)
+        audio.seek(toSeconds: speechFollower.startTime(of: line))
         if !audio.isPlaying {
             audio.resume()
         }
@@ -377,6 +387,13 @@ class DashboardViewModel: ObservableObject {
 
     func skipSpeech(by seconds: TimeInterval) {
         audio.skip(by: seconds)
+    }
+
+    func setSpeechSpeed(_ speed: Double) {
+        speechSpeed = min(2.0, max(0.5, speed))
+        if audiobookVM?.nowPlaying == nil, audio.hasMedia {
+            audio.setPlaybackRate(Float(speechSpeed / clipSpeed))
+        }
     }
 
     func togglePlayback() {

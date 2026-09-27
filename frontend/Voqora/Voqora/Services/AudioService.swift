@@ -395,7 +395,6 @@ class AudioService: NSObject, ObservableObject {
         completedSessionID = nil
         playbackCompleted = true
         isPlaying = false
-        setPlaybackRate(1.0)
     }
 
     func loadAndPlayWAV(at url: URL, sessionID: String? = nil, startingAt seconds: TimeInterval = 0) throws {
@@ -580,6 +579,10 @@ class AudioService: NSObject, ObservableObject {
             }
         }
         return buffer
+    }
+
+    func streamPauses() -> [AudioPause] {
+        AudioPause.detect(inPCM16: lastAudioData, sampleRate: format.sampleRate)
     }
 
     var renderedAudioSeconds: Double {

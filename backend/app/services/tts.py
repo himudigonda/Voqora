@@ -22,6 +22,9 @@ from app.services.audio import AudioService
 
 log = get_logger(__name__)
 
+SEGMENT_PAUSE_SECONDS = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
+DEFAULT_SEGMENT_PAUSE_SECONDS = 0.1
+
 # espeak-ng stores the data directory handed to `espeak_Initialize()` in a
 # fixed 160-byte global (`char path_home[N_PATH_HOME]`). A longer path is NOT
 # reported as an error to the caller: espeak-ng silently discards it and falls
@@ -415,9 +418,6 @@ class TTSEngine:
         if not segments:
             return
 
-        # Pause durations tuned for streaming (shorter = more responsive)
-        pause_map = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
-
         loop = asyncio.get_running_loop()
 
         for i, seg_text in enumerate(segments):
@@ -462,7 +462,10 @@ class TTSEngine:
             # Append inter-segment silence using pre-computed arrays
             # Speed-scaled pause: divide duration by speed so pauses feel proportional
             last_char = seg_text.strip()[-1] if seg_text.strip() else ""
-            silence_sec = pause_map.get(last_char, 0.1) / speed
+            silence_sec = (
+                SEGMENT_PAUSE_SECONDS.get(last_char, DEFAULT_SEGMENT_PAUSE_SECONDS)
+                / speed
+            )
             silence = AudioService.get_silence(silence_sec)
 
             yield np.concatenate([audio, silence])

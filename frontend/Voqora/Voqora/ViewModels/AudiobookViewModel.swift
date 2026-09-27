@@ -21,6 +21,7 @@ final class AudiobookViewModel: ObservableObject {
     @Published var loadFailed: Bool = false
 
     @Published var pendingDocument: URL? = nil
+    @Published var isImporterPresented = false
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
     @Published private(set) var deletingAllBooks = false
@@ -226,13 +227,34 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    func presentEstimate(for document: URL, defaultVoice: String, defaultSpeed: Double) {
-        presentEstimate(
-            for: document,
-            voice: defaultBookVoice.isEmpty ? defaultVoice : defaultBookVoice,
-            speed: defaultBookSpeed > 0 ? defaultBookSpeed : defaultSpeed,
-            engine: "kokoro"
-        )
+    func importDocument(_ url: URL, defaultVoice: String, defaultSpeed: Double) {
+        guard AudiobookImportStaging.supports(url) else {
+            showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
+            return
+        }
+        do {
+            let staged = try AudiobookImportStaging.stageDocument(from: url)
+            presentEstimate(
+                for: staged,
+                voice: defaultBookVoice.isEmpty ? defaultVoice : defaultBookVoice,
+                speed: defaultBookSpeed > 0 ? defaultBookSpeed : defaultSpeed,
+                engine: "kokoro"
+            )
+        } catch {
+            showToast("Could not prepare that document: \(error.localizedDescription)", kind: .error)
+        }
+    }
+
+    func importDroppedDocument(_ providers: [NSItemProvider], defaultVoice: String, defaultSpeed: Double) -> Bool {
+        guard let provider = providers.first else { return false }
+        Task {
+            guard let url = await AudiobookImportStaging.fileURL(from: provider) else {
+                showToast("Voqora could not read that dropped file.", kind: .error)
+                return
+            }
+            importDocument(url, defaultVoice: defaultVoice, defaultSpeed: defaultSpeed)
+        }
+        return true
     }
 
     func cancelUpload() {
