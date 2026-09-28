@@ -28,8 +28,9 @@ class HistoryManager: ObservableObject {
     }
 
     func log(text: String, voice: String) {
-        let entry = HistoryEntry(text: text, voice: voice)
-        history.insert(entry, at: 0)
+        let repeated = history.filter { $0.text == text && $0.voice == voice }
+        history.removeAll { $0.text == text && $0.voice == voice }
+        history.insert(HistoryEntry(text: text, voice: voice, isFavorite: repeated.contains(where: \.isFavorite)), at: 0)
         saveHistory()
     }
 

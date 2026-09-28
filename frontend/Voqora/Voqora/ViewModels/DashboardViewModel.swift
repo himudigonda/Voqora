@@ -346,7 +346,7 @@ class DashboardViewModel: ObservableObject {
                         speed: speechSpeed
                     ))
                 }
-                history.log(text: cleaned, voice: selectedVoice)
+                history.log(text: spokenText ?? cleaned, voice: selectedVoice)
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
                     voice: selectedVoice,
@@ -513,6 +513,7 @@ class DashboardViewModel: ObservableObject {
         heartbeatTask = Task { [weak self] in
             guard let self else { return }
             var wasOnline = false
+            var hasConnected = false
             var consecutiveFailures = 0
 
             while !Task.isCancelled {
@@ -544,6 +545,7 @@ class DashboardViewModel: ObservableObject {
                 wasOnline = isNowOnline
 
                 if isNowOnline {
+                    hasConnected = true
                     isBackendInitializing = false
                     backend.clearLaunchFailure()
                     backendRecoveryMessage = nil
@@ -552,10 +554,10 @@ class DashboardViewModel: ObservableObject {
                         VoqoraLog.error("DashboardViewModel", "Backend unresponsive with a live process handle, forcing restart", ["consecutiveFailures": "\(consecutiveFailures)"])
                         backend.forceRestart()
                     }
-                    let launching = backend.isLaunching
-                    isBackendInitializing = launching
-                    backendRecoveryMessage = backend.lastLaunchFailure
                     backend.start()
+                    let failure = backend.lastLaunchFailure
+                    isBackendInitializing = backend.isLaunching || (!hasConnected && failure == nil)
+                    backendRecoveryMessage = failure
                 }
 
                 let delay = Self.heartbeatDelay(

@@ -50,4 +50,19 @@ final class HistoryManagerTests: XCTestCase {
 
         XCTAssertNoThrow(try history.eraseAll())
     }
+
+    func test_speakingTheSameTextAgainMovesItToTheTopAndKeepsItsStar() {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoqoraHistoryTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let history = HistoryManager(storageURL: folder.appendingPathComponent("history.json"))
+
+        history.log(text: "Repeat me", voice: "af_bella")
+        history.toggleFavorite(entry: history.history[0])
+        history.log(text: "Something else", voice: "af_bella")
+        history.log(text: "Repeat me", voice: "af_bella")
+
+        XCTAssertEqual(history.history.map(\.text), ["Repeat me", "Something else"])
+        XCTAssertTrue(history.history[0].isFavorite)
+    }
 }

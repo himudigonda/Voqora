@@ -42,141 +42,10 @@ struct PreferencesView: View {
                 }
                 .padding(.bottom, 8)
 
-                PreferenceSection(title: "Identity", icon: "person.crop.circle") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(alignment: .center, spacing: 10) {
-                            TextField("Name", text: $nameDraft)
-                                .textFieldStyle(.roundedBorder)
-                                .textContentType(.name)
-                                .font(vm.font(.rowTitle))
-                            TextField("Email", text: $emailDraft)
-                                .textFieldStyle(.roundedBorder)
-                                .textContentType(.emailAddress)
-                                .disableAutocorrection(true)
-                                .font(vm.font(.rowTitle))
-                            Button {
-                                submitIdentity()
-                            } label: {
-                                if identitySubmitting {
-                                    ProgressView().scaleEffect(0.6).frame(width: 96)
-                                } else {
-                                    Text("Save").frame(width: 96)
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(accentColor)
-                            .disabled(!canSaveIdentity || identitySubmitting)
-                        }
-
-                        if let err = identityError {
-                            Text(err).font(vm.font(.rowSubtitle)).foregroundStyle(Palette.danger)
-                        } else if identitySaved {
-                            HStack(spacing: 4) {
-                                Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
-                                Text("Saved").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
-                            }
-                        }
-                    }
-                }
-                .onAppear {
-                    if nameDraft.isEmpty {
-                        nameDraft = identity.name ?? ""
-                    }
-                    if emailDraft.isEmpty {
-                        emailDraft = identity.email ?? ""
-                    }
-                }
-
-                PreferenceSection(title: "Notifications", icon: "bell.badge") {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack {
-                            Label("System Notifications", systemImage: "bell")
-                                .font(vm.font(.rowTitle))
-                            Spacer()
-                            notificationsStatusBadge
-                        }
-
-                        Text("Notifies you when an audiobook finishes converting, when Voqora starts speaking a selection, and when an update is available.")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if permissions.notificationsStatus == .denied {
-                            Button {
-                                permissions.openNotificationSettings()
-                            } label: {
-                                Label("Open Notification Settings", systemImage: "gear")
-                            }
-                            .buttonStyle(.bordered)
-                        } else if permissions.notificationsStatus != .authorized {
-                            Button {
-                                Task { await permissions.requestNotifications() }
-                            } label: {
-                                Label("Enable Notifications", systemImage: "bell.badge")
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .tint(accentColor)
-                        }
-                    }
-                }
-                .onAppear { Task { await permissions.refreshNotifications() } }
-
-                PreferenceSection(title: "Setup", icon: "checklist") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Need to review permissions or the first-use guide?")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
-                        Button {
-                            onboarding.reset()
-                        } label: {
-                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-
-                PreferenceSection(title: "Appearance", icon: "paintpalette") {
-                    VStack(alignment: .leading, spacing: 20) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Accent Color")
-                                .font(vm.font(.sectionTitle))
-                            Text("Colors every highlight, selected row, and primary button across Voqora.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
-
-                            HStack(spacing: 14) {
-                                ForEach(AccentColorOption.allCases, id: \.self) { option in
-                                    AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
-                                        vm.accentColorID = option
-                                    }
-                                }
-                            }
-                        }
-
-                        Divider()
-
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("App Icon")
-                                .font(vm.font(.sectionTitle))
-                            Text("Changes the Dock and Finder icon immediately.")
-                                .font(vm.font(.rowSubtitle))
-                                .foregroundStyle(Palette.textSecondary)
-
-                            HStack(spacing: 16) {
-                                ForEach(AppIconOption.allCases) { option in
-                                    AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
-                                        vm.appIconID = option
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                PreferenceSection(title: "Voice Engine", icon: "cpu") {
+                PreferenceSection(title: "Speech", icon: "waveform") {
                     VStack(spacing: 20) {
                         HStack {
-                            Label("Active Voice", systemImage: "person.wave.2")
+                            Label("Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
                             Spacer()
                             Picker("Voice", selection: $vm.selectedVoice) {
@@ -188,16 +57,17 @@ struct PreferencesView: View {
                             .labelsHidden()
                         }
 
-                        Text("Kokoro delivers high-quality, expressive voices.")
+                        Text("Used when you speak selected text.")
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Label("Speech Speed", systemImage: "gauge.with.needle")
+                                Label("Speed", systemImage: "gauge.with.needle")
                                     .font(vm.font(.rowTitle))
                                 Spacer()
-                                Text("\(String(format: "%.2f", vm.speechSpeed))x")
+                                Text(PlayerSpeedMenu.label(vm.speechSpeed))
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(accentColor)
                                     .fontWeight(.bold)
@@ -208,7 +78,7 @@ struct PreferencesView: View {
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Label("Master Volume", systemImage: "speaker.wave.3")
+                                Label("Volume", systemImage: "speaker.wave.3")
                                     .font(vm.font(.rowTitle))
                                 Spacer()
                                 Text("\(Int(vm.speechVolume * 100))%")
@@ -218,6 +88,33 @@ struct PreferencesView: View {
                             }
                             Slider(value: $vm.speechVolume, in: 0.0 ... 1.5, step: 0.05)
                                 .tint(accentColor)
+                        }
+                    }
+                }
+
+                PreferenceSection(title: "Shortcuts", icon: "keyboard") {
+                    VStack(spacing: 0) {
+                        ShortcutRow(title: "Speak Selection", name: .playText)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Pause / Resume", name: .togglePause)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Stop Playback", name: .stopText)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Export to Desktop", name: .exportAudio)
+
+                        Divider().padding(.vertical, 16)
+
+                        HStack {
+                            Text("Shortcuts are global and work from any app.")
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
+                            Spacer()
+                            Button("Reset to Defaults") {
+                                resetShortcuts()
+                            }
+                            .buttonStyle(.borderless)
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(accentColor)
                         }
                     }
                 }
@@ -286,7 +183,7 @@ struct PreferencesView: View {
                             .labelsHidden()
                         }
 
-                        Text("Audiobook generation uses this voice. Clipboard TTS continues to use the live 'Active Voice' above.")
+                        Text("New audiobooks are narrated with this voice.")
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
 
@@ -297,7 +194,7 @@ struct PreferencesView: View {
                                 Label("Narration Speed", systemImage: "gauge.with.needle")
                                     .font(vm.font(.rowTitle))
                                 Spacer()
-                                Text(String(format: "%.2fx", bookVM.defaultBookSpeed))
+                                Text(PlayerSpeedMenu.label(bookVM.defaultBookSpeed))
                                     .font(vm.appFont(size: 14, weight: .bold).monospaced())
                                     .foregroundStyle(accentColor)
                             }
@@ -342,35 +239,44 @@ struct PreferencesView: View {
                     }
                 }
 
-                PreferenceSection(title: "Shortcuts", icon: "keyboard") {
-                    VStack(spacing: 0) {
-                        ShortcutRow(title: "Speak Selection", name: .playText)
-                        Divider().padding(.vertical, 8)
-                        ShortcutRow(title: "Pause / Resume", name: .togglePause)
-                        Divider().padding(.vertical, 8)
-                        ShortcutRow(title: "Stop Playback", name: .stopText)
-                        Divider().padding(.vertical, 8)
-                        ShortcutRow(title: "Export to Desktop", name: .exportAudio)
-
-                        Divider().padding(.vertical, 16)
-
-                        HStack {
-                            Text("Shortcuts are global and work from any app.")
+                PreferenceSection(title: "Appearance", icon: "paintpalette") {
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Accent Color")
+                                .font(vm.font(.sectionTitle))
+                            Text("Colors every highlight, selected row, and primary button across Voqora.")
                                 .font(vm.font(.rowSubtitle))
                                 .foregroundStyle(Palette.textSecondary)
-                            Spacer()
-                            Button("Reset to Defaults") {
-                                resetShortcuts()
-                            }
-                            .buttonStyle(.borderless)
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(accentColor)
-                        }
-                    }
-                }
 
-                PreferenceSection(title: "Application", icon: "window.badge.magnifyingglass") {
-                    VStack(alignment: .leading, spacing: 16) {
+                            HStack(spacing: 14) {
+                                ForEach(AccentColorOption.allCases, id: \.self) { option in
+                                    AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
+                                        vm.accentColorID = option
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("App Icon")
+                                .font(vm.font(.sectionTitle))
+                            Text("Changes the Dock and Finder icon immediately.")
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(Palette.textSecondary)
+
+                            HStack(spacing: 16) {
+                                ForEach(AppIconOption.allCases) { option in
+                                    AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
+                                        vm.appIconID = option
+                                    }
+                                }
+                            }
+                        }
+
+                        Divider()
+
                         HStack {
                             Text("Theme")
                                 .font(vm.font(.rowTitle))
@@ -419,9 +325,11 @@ struct PreferencesView: View {
                                 .buttonStyle(.plain)
                             }
                         }
+                    }
+                }
 
-                        Divider()
-
+                PreferenceSection(title: "General", icon: "gearshape") {
+                    VStack(alignment: .leading, spacing: 16) {
                         Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {
                             Text("Start at Login")
                                 .font(vm.font(.rowTitle))
@@ -435,37 +343,45 @@ struct PreferencesView: View {
                                 .font(vm.font(.rowTitle))
                         }
                         .toggleStyle(.switch)
+                    }
+                }
 
-                        Divider()
+                PreferenceSection(title: "Notifications", icon: "bell.badge") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack {
+                            Label("System Notifications", systemImage: "bell")
+                                .font(vm.font(.rowTitle))
+                            Spacer()
+                            notificationsStatusBadge
+                        }
 
-                        VStack(alignment: .leading, spacing: 10) {
-                            Text("Erase all local Voqora data")
-                                .font(vm.font(.sectionTitle))
-                            Text(
-                                "Permanently removes every audiobook and source document, generated audio, history, caches, " +
-                                    "settings, your name and email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
-                                    "from this Mac. Voqora will quit when complete."
-                            )
+                        Text("Notifies you when an audiobook finishes converting, when Voqora starts speaking a selection, and when an update is available.")
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
-                            Button(role: .destructive) {
-                                showEraseConfirmation = true
+
+                        if permissions.notificationsStatus == .denied {
+                            Button {
+                                permissions.openNotificationSettings()
                             } label: {
-                                Label(erasingLocalData ? "Erasing local data…" : "Erase all local data", systemImage: "trash.fill")
-                                    .font(vm.font(.button))
+                                Label("Open Notification Settings", systemImage: "gear")
                             }
                             .buttonStyle(.bordered)
-                            .disabled(erasingLocalData || bookVM.deletingAllBooks)
-                            if let eraseError {
-                                Text(eraseError)
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.danger)
+                        } else if permissions.notificationsStatus != .authorized {
+                            Button {
+                                Task { await permissions.requestNotifications() }
+                            } label: {
+                                Label("Enable Notifications", systemImage: "bell.badge")
                             }
+                            .buttonStyle(.borderedProminent)
+                            .tint(accentColor)
                         }
+                    }
+                }
+                .onAppear { Task { await permissions.refreshNotifications() } }
 
-                        Divider()
-
+                PreferenceSection(title: "Updates", icon: "arrow.down.circle") {
+                    VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 9) {
                             if let latest = updater.latestGitHubVersion {
                                 HStack(spacing: 6) {
@@ -481,14 +397,14 @@ struct PreferencesView: View {
                                 Button {
                                     installer.downloadAndOpenLatest()
                                 } label: {
-                                    Label(installer.state.isBusy ? "Preparing installer…" : "Download latest installer", systemImage: "arrow.down.circle")
+                                    Label(installer.state.isBusy ? "Preparing Installer…" : "Download Latest Version", systemImage: "arrow.down.circle")
                                         .font(vm.font(.button))
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(accentColor)
                                 .disabled(installer.state.isBusy)
 
-                                Link("View releases on GitHub", destination: GuidedInstallerService.releasePageURL)
+                                Link("Release Notes", destination: GuidedInstallerService.releasePageURL)
                                     .font(vm.font(.rowSubtitle))
 
                                 Spacer()
@@ -512,9 +428,70 @@ struct PreferencesView: View {
                                     .buttonStyle(.bordered)
                             }
                         }
+                    }
+                }
 
-                        Divider()
+                PreferenceSection(title: "Identity", icon: "person.crop.circle") {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .center, spacing: 10) {
+                            TextField("Name", text: $nameDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .textContentType(.name)
+                                .font(vm.font(.rowTitle))
+                            TextField("Email", text: $emailDraft)
+                                .textFieldStyle(.roundedBorder)
+                                .textContentType(.emailAddress)
+                                .disableAutocorrection(true)
+                                .font(vm.font(.rowTitle))
+                            Button {
+                                submitIdentity()
+                            } label: {
+                                if identitySubmitting {
+                                    ProgressView().scaleEffect(0.6).frame(width: 96)
+                                } else {
+                                    Text("Save").frame(width: 96)
+                                }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(accentColor)
+                            .disabled(!canSaveIdentity || identitySubmitting)
+                        }
 
+                        if let err = identityError {
+                            Text(err).font(vm.font(.rowSubtitle)).foregroundStyle(Palette.danger)
+                        } else if identitySaved {
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark.seal.fill").foregroundStyle(Palette.success)
+                                Text("Saved").font(vm.font(.rowSubtitle)).foregroundStyle(Palette.success)
+                            }
+                        }
+                    }
+                }
+                .onAppear {
+                    if nameDraft.isEmpty {
+                        nameDraft = identity.name ?? ""
+                    }
+                    if emailDraft.isEmpty {
+                        emailDraft = identity.email ?? ""
+                    }
+                }
+
+                PreferenceSection(title: "Setup", icon: "checklist") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Need to review permissions or the first-use guide?")
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
+                        Button {
+                            onboarding.reset()
+                        } label: {
+                            Label("Run onboarding again", systemImage: "arrow.counterclockwise")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+
+                PreferenceSection(title: "Data", icon: "externaldrive") {
+                    VStack(alignment: .leading, spacing: 16) {
                         Button {
                             vm.exportLastClip()
                         } label: {
@@ -540,6 +517,34 @@ struct PreferencesView: View {
                         }
                         .buttonStyle(.bordered)
                         .help("Save backend usage logs to Desktop for troubleshooting.")
+
+                        Divider()
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Erase All Local Data")
+                                .font(vm.font(.sectionTitle))
+                            Text(
+                                "Permanently removes every audiobook and source document, generated audio, history, caches, " +
+                                    "settings, your name and email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
+                                    "from this Mac. Voqora will quit when complete."
+                            )
+                            .font(vm.font(.rowSubtitle))
+                            .foregroundStyle(Palette.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            Button(role: .destructive) {
+                                showEraseConfirmation = true
+                            } label: {
+                                Label(erasingLocalData ? "Erasing…" : "Erase All Local Data…", systemImage: "trash.fill")
+                                    .font(vm.font(.button))
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(erasingLocalData || bookVM.deletingAllBooks)
+                            if let eraseError {
+                                Text(eraseError)
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.danger)
+                            }
+                        }
                     }
                 }
             }
@@ -599,8 +604,10 @@ struct PreferencesView: View {
     }
 
     private var canSaveIdentity: Bool {
-        IdentityService.looksLikeName(nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)) &&
-            IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+        let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let changed = name != (identity.name ?? "") || email != (identity.email ?? "")
+        return changed && IdentityService.looksLikeName(name) && IdentityService.looksLikeEmail(email)
     }
 
     private func resetShortcuts() {

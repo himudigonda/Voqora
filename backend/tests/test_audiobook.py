@@ -2643,6 +2643,29 @@ def test_strip_layout_noise_keeps_short_dialogue():
     assert strip_layout_noise("\n".join(dialogue)).split() == dialogue
 
 
+def test_strip_layout_noise_drops_figure_labels_and_keeps_the_heading_and_caption():
+    from app.services.pdf_extractor import strip_layout_noise
+
+    words = (
+        "the law will never be perfect , but its application should be just .".split()
+    )
+    page = "\n".join(
+        [
+            "Attention Visualizations",
+            "Input-Input Layer5 The Law will never beperfect",
+            *words,
+            "<EOS>",
+            "Figure 4: Two attention heads in layer 5 of 6. Note how sharp they are.",
+            "13",
+        ]
+    )
+
+    assert strip_layout_noise(page) == (
+        "Attention Visualizations\n\n"
+        "Figure 4: Two attention heads in layer 5 of 6. Note how sharp they are."
+    )
+
+
 def test_resolve_line_hyphens_joins_split_words_and_keeps_real_compounds():
     from app.services.pdf_extractor import resolve_line_hyphens
 

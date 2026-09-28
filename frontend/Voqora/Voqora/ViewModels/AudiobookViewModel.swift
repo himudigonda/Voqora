@@ -534,6 +534,14 @@ final class AudiobookViewModel: ObservableObject {
         return try await localAudioURL(book.bookID)
     }
 
+    func listenedFraction(for book: Audiobook) -> Double {
+        guard book.totalAudioSeconds > 0 else { return 0 }
+        let seconds = nowPlaying?.bookID == book.bookID
+            ? audio.currentTime
+            : UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
+        return min(1, max(0, seconds / book.totalAudioSeconds))
+    }
+
     var continueListeningBook: Audiobook? {
         guard !lastPlayedBookID.isEmpty else { return nil }
         return books.first(where: { $0.bookID == lastPlayedBookID && $0.status == "done" })

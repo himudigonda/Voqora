@@ -28,6 +28,7 @@ struct AudiobookPlayerView: View {
                 PlaybackScrubber(
                     markers: bookVM.chapters(for: book).map(\.startTime),
                     isEnabled: isCurrentBook,
+                    chapterTitle: chapterTitle(at:),
                     onScrub: { bookVM.follower.scrub(to: $0) },
                     onCommit: { bookVM.seek(toSeconds: $0) }
                 )
@@ -78,6 +79,12 @@ struct AudiobookPlayerView: View {
 
     private var isCurrentBook: Bool {
         bookVM.nowPlaying?.bookID == book.bookID
+    }
+
+    private func chapterTitle(at time: TimeInterval) -> String? {
+        let chapters = bookVM.chapters(for: book)
+        guard chapters.count > 1, let section = chapters.section(at: time) else { return nil }
+        return AudiobookImportStaging.strippingSupportedExtension(from: section.title)
     }
 
     @ViewBuilder
@@ -300,18 +307,27 @@ private struct PlayerSectionsList: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
-    @State private var hoveredID: AudiobookSection.ID?
 
     var body: some View {
         let sections = bookVM.chapters(for: book)
-        let currentID = bookVM.nowPlaying?.bookID == book.bookID ? sections.section(at: audio.currentTime)?.id : nil
+        let isCurrentBook = bookVM.nowPlaying?.bookID == book.bookID
+        let currentID = isCurrentBook ? sections.section(at: audio.currentTime)?.id : nil
         ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                    row(section, number: index + 1, isCurrent: section.id == currentID)
+                    PlayerSectionRow(
+                        section: section,
+                        number: index + 1,
+                        isCurrent: section.id == currentID,
+                        isPlaying: audio.isPlaying
+                    ) {
+                        guard isCurrentBook else { return }
+                        bookVM.seek(toSeconds: section.startTime)
+                        if !audio.isPlaying {
+                            audio.resume()
+                        }
+                    }
                 }
             }
             .frame(maxWidth: 640)
@@ -327,20 +343,26 @@ private struct PlayerSectionsList: View {
             }
         }
     }
+}
 
-    private func row(_ section: AudiobookSection, number: Int, isCurrent: Bool) -> some View {
+private struct PlayerSectionRow: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    let section: AudiobookSection
+    let number: Int
+    let isCurrent: Bool
+    let isPlaying: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
         let accent = vm.accentColor(scheme: colorScheme, contrast: contrast)
         let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
-        return Button {
-            guard bookVM.nowPlaying?.bookID == book.bookID else { return }
-            bookVM.seek(toSeconds: section.startTime)
-            if !audio.isPlaying {
-                audio.resume()
-            }
-        } label: {
+        Button(action: action) {
             HStack(spacing: 14) {
                 Group {
-                    if isCurrent, audio.isPlaying {
+                    if isCurrent, isPlaying {
                         Image(systemName: "waveform")
                             .symbolEffect(.variableColor.iterative, isActive: true)
                             .foregroundStyle(accent)
@@ -367,12 +389,12 @@ private struct PlayerSectionsList: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(hoveredID == section.id ? Palette.controlFill : Color.clear)
+                    .fill(isHovered ? Palette.controlFill : Color.clear)
             )
             .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         }
         .buttonStyle(.plain)
-        .onHover { hoveredID = $0 ? section.id : (hoveredID == section.id ? nil : hoveredID) }
+        .onHover { isHovered = $0 }
         .accessibilityLabel("\(title), \(DurationFormatter.clock(section.startTime))")
         .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
     }

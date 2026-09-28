@@ -154,6 +154,7 @@ struct AudiobookCardView: View {
                 )
                 .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
                 .overlay(stateOverlay)
+                .overlay(alignment: .bottom) { listeningProgress }
 
             if hovering, status.isReady {
                 Circle()
@@ -168,6 +169,22 @@ struct AudiobookCardView: View {
                     .padding(14)
                     .transition(.scale.combined(with: .opacity))
             }
+        }
+    }
+
+    @ViewBuilder
+    private var listeningProgress: some View {
+        let fraction = status.isReady ? bookVM.listenedFraction(for: book) : 0
+        if fraction > 0.005 {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.black.opacity(0.35))
+                    Capsule().fill(accentColor).frame(width: geometry.size.width * fraction)
+                }
+            }
+            .frame(height: 4)
+            .padding(10)
+            .accessibilityLabel("\(Int(fraction * 100)) percent listened")
         }
     }
 
@@ -270,14 +287,13 @@ struct AudiobookCardView: View {
     private var caption: some View {
         switch status {
         case .ready:
-            HStack(spacing: 5) {
-                Text("\(DurationFormatter.listing(book.totalAudioSeconds)) · \(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(readyCaption)
                     .foregroundStyle(Palette.textSecondary)
                 if !book.failedPages.isEmpty {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Label(incompleteLabel, systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(Palette.warning)
-                        .help(retryLabel)
-                        .accessibilityLabel(retryLabel)
+                        .help("Right-click the book and choose Retry to process these pages again.")
                 }
             }
             .font(vm.appFont(size: 11))
@@ -311,8 +327,17 @@ struct AudiobookCardView: View {
         }
     }
 
-    private var retryLabel: String {
+    private var readyCaption: String {
+        let pages = "\(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")"
+        let listened = bookVM.listenedFraction(for: book)
+        guard listened > 0.005 else {
+            return "\(DurationFormatter.listing(book.totalAudioSeconds)) · \(pages)"
+        }
+        return "\(DurationFormatter.listing(book.totalAudioSeconds * (1 - listened))) left · \(pages)"
+    }
+
+    private var incompleteLabel: String {
         let count = book.failedPages.count
-        return "\(count) \(count == 1 ? "page" : "pages") didn't process fully. Right-click to retry."
+        return "\(count) \(count == 1 ? "page needs" : "pages need") a retry"
     }
 }

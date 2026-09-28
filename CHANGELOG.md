@@ -43,6 +43,14 @@
 - Stopping selected-text speech and pressing Play resumed mid-clip.
 - A Gemini capacity rejection kept its budget reservation, so later pages hit
   the cost cap early.
+- Opening the player near the end of a paper could freeze the app with the
+  CPU pinned, while the transcript scrolled to the current line.
+- Local cleanup read figure axis labels aloud before captions, such as
+  "Input-Input Layer5".
+- Right after launch, Now Playing said the speech engine was unavailable
+  while it was still starting.
+- The Vault saved the cleaned-up text (numbers spelled out, lines joined)
+  instead of what you selected, and repeated clips piled up as duplicates.
 
 ### Player and library
 
@@ -60,6 +68,13 @@
   clip that is playing and sets the speed for the next one.
 - Nothing Playing explains both features, with Hear a Sample and Add a
   Document buttons. Onboarding introduces audiobooks and ends with a sample.
+- Hovering or dragging the scrubber previews the time and chapter under the
+  pointer. While selected text is still being generated, the scrubber shows
+  how much is ready and doesn't seek past it.
+- Library cards show listening progress, time left, and how many pages need
+  a retry.
+- Preferences start with Speech and Shortcuts; theme and fonts moved into
+  Appearance, and updates and data each have their own section.
 
 ## [1.2.3] - 2026-09-20
 

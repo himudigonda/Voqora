@@ -251,6 +251,7 @@ _REFERENCE_ENTRY = re.compile(r"\[\d{1,3}\]\s+\S")
 _REFERENCES_HEADING = re.compile(
     r"(\d+(\.\d+)*\.?\s+)?(references|bibliography|works cited)", re.IGNORECASE
 )
+_CAPTION = re.compile(r"(figure|fig\.|table)\s*\d+[:.]", re.IGNORECASE)
 _ARXIV_STAMP = re.compile(r"arXiv:\d{4}\.\d{4,5}", re.IGNORECASE)
 _NUMBERED_HEADING = re.compile(
     r"(\d+(\.\d+)*\.?|[A-Z]\.\d*|[IVX]+\.)\s+[A-Z][^.!?;]{1,80}"
@@ -286,7 +287,18 @@ def _is_table_row(line: str) -> bool:
     return numeric >= 0.3 or ends_in_number or len(tokens) <= 3
 
 
-def _drop_runs(lines: list[str], matches, minimum: int, header_rows: int) -> list[str]:
+def _is_figure_label(line: str) -> bool:
+    tokens = line.split()
+    if _ends_sentence(line) or _is_heading(line) or len(tokens) > 12:
+        return False
+    return any(char.isdigit() for char in line) or any(
+        token[0].islower() for token in tokens[1:]
+    )
+
+
+def _drop_runs(
+    lines: list[str], matches, minimum: int, header_rows: int, label=None
+) -> list[str]:
     keep = [True] * len(lines)
     i = 0
     while i < len(lines):
@@ -306,6 +318,8 @@ def _drop_runs(lines: list[str], matches, minimum: int, header_rows: int) -> lis
                 and not _ends_sentence(lines[start - 1])
                 and len(lines[start - 1].split()) < 10
             ):
+                start -= 1
+            while label and start > 0 and label(lines[start - 1]):
                 start -= 1
             for j in range(start, end):
                 keep[j] = False
@@ -328,7 +342,9 @@ def strip_layout_noise(text: str) -> str:
         if cut > 0 and _REFERENCES_HEADING.fullmatch(lines[cut - 1]):
             cut -= 1
         lines = lines[:cut]
-    lines = _drop_runs(lines, _is_figure_token, _MIN_WORD_LIST_ROWS, 0)
+    lines = _drop_runs(
+        lines, _is_figure_token, _MIN_WORD_LIST_ROWS, 0, label=_is_figure_label
+    )
     lines = _drop_runs(lines, _is_table_row, _MIN_TABLE_ROWS, _MAX_TABLE_HEADER_ROWS)
     lines = [line for line in lines if not _is_numeric_line(line)]
     return "\n".join(_mark_structure(lines))
@@ -352,6 +368,8 @@ def _mark_structure(lines: list[str]) -> list[str]:
                 out.append("")
             out.extend([line, ""])
             continue
+        if _CAPTION.match(line) and out and out[-1]:
+            out.append("")
         out.append(line)
         if (
             line.rstrip(_CLOSERS).endswith((".", "!", "?"))

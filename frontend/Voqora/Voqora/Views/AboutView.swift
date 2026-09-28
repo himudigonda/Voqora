@@ -140,8 +140,10 @@ struct AboutView: View {
             HStack(spacing: 24) {
                 Link(destination: URL(string: "https://github.com/himudigonda")!) {
                     Image("github")
+                        .renderingMode(.template)
                         .resizable()
                         .scaledToFit()
+                        .foregroundStyle(Palette.textPrimary)
                         .frame(width: 30, height: 30)
                 }
                 .help("GitHub")

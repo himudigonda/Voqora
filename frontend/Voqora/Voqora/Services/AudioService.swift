@@ -68,6 +68,10 @@ class AudioService: NSObject, ObservableObject {
         currentAudioFile != nil || !lastAudioData.isEmpty
     }
 
+    var availableDuration: TimeInterval {
+        currentAudioFile != nil || !isStreamActive ? duration : renderedAudioSeconds
+    }
+
     init(startingEngine: Bool = !RuntimeEnvironment.isRunningTests) {
         super.init()
         if startingEngine {
