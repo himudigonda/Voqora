@@ -1662,14 +1662,11 @@ class AudiobookService:
 
         # Build actual stats.
         words_actual = 0
-        chars_actual = 0
         for n in range(1, page_count + 1):
             cp = AudiobookStore.page_clean_path(book_id, n)
             if os.path.exists(cp):
                 with open(cp, encoding="utf-8") as f:
-                    text = f.read()
-                    words_actual += len(text.split())
-                    chars_actual += len(text)
+                    words_actual += len(f.read().split())
 
         created_at = meta.get("created_at", _now_iso())
         try:
@@ -1678,15 +1675,15 @@ class AudiobookService:
         except Exception:
             processing_seconds = 0.0
 
-        # tokens_used: input tokens (one Gemini call per page sent the raw text)
-        # plus output tokens (the cleaned text we have on disk now). Strict-preserve
-        # means input ≈ output length; we approximate input from cleaned chars too
-        # since raw and cleaned char counts are close after stripping headers.
-        tokens_used = GeminiCleaner.estimate_tokens(chars_actual) * 2  # input + output
-        # P10: derive cost from actual char count rather than the (potentially
-        # missing) estimated.cost_usd in meta, so resumed books still get a
-        # correct cost in the completion modal.
-        cost_actual = GeminiCleaner.estimate_cost_usd(chars_actual)
+        budget = cls._budget_summary(dict(current_meta.get("budget") or {}))
+        ledger = budget.get("ledger") or []
+        tokens_used = sum(
+            int(entry.get("input_tokens") or 0) + int(entry.get("output_tokens") or 0)
+            for entry in ledger
+        )
+        cost_actual = float(budget.get("actual_usd") or 0.0) + float(
+            budget.get("reserved_usd") or 0.0
+        )
         actual = {
             "pages": page_count,
             "words": words_actual,

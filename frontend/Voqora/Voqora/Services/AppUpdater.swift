@@ -41,7 +41,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
 
     func checkGitHubReleaseForUpdate() async {
         guard NSClassFromString("XCTestCase") == nil else { return }
-        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String else { return }
+        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+              !isCheckingForUpdates
+        else { return }
+        isCheckingForUpdates = true
+        updateStatusMessage = nil
+        defer { isCheckingForUpdates = false }
         var request = URLRequest(url: Self.latestReleaseAPIURL)
         request.timeoutInterval = 12
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -49,7 +54,10 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode),
               let release = try? JSONDecoder().decode(GitHubReleaseTag.self, from: data)
-        else { return }
+        else {
+            updateStatusMessage = Self.checkFailedMessage
+            return
+        }
         lastGitHubCheck = Date()
 
         let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
@@ -114,11 +122,13 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         ]
     }
 
+    static let checkFailedMessage = "Couldn't check for updates. Your current Voqora still works. Try again later."
+
     static func statusMessage(forUpdateCheckError error: NSError) -> String {
         guard error.domain == SUSparkleErrorDomain,
               error.code == noUpdateErrorCode
         else {
-            return "Couldn't check for updates. Your current Voqora still works. Try again later."
+            return checkFailedMessage
         }
         return "Voqora is up to date."
     }

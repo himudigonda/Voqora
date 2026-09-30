@@ -499,7 +499,15 @@ class AudioService: NSObject, ObservableObject {
     }
 
     func fadeOutAndStop(over seconds: TimeInterval = 0.15) {
-        guard isPlaying else { stop(); return }
+        fadeOut(over: seconds) { $0.stop() }
+    }
+
+    func fadeOutAndPause(over seconds: TimeInterval) {
+        fadeOut(over: seconds) { $0.pause() }
+    }
+
+    private func fadeOut(over seconds: TimeInterval, then finish: @escaping (AudioService) -> Void) {
+        guard isPlaying else { finish(self); return }
         let originalVolume = volume
         let steps = max(3, Int(seconds / 0.02))
         let stepDuration = seconds / Double(steps)
@@ -514,7 +522,7 @@ class AudioService: NSObject, ObservableObject {
                 if step >= steps {
                     timer.invalidate()
                     self.volumeRampTimer = nil
-                    self.stop()
+                    finish(self)
                     self.volume = originalVolume
                     self.playerNode.volume = originalVolume
                 }

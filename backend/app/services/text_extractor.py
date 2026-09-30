@@ -11,7 +11,7 @@ import io
 import os
 import re
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from app.services.audiobook_store import AudiobookStore
 from app.services.text_normalizer import strip_markdown_for_narration
@@ -267,31 +267,85 @@ class TextExtractor:
 
     @classmethod
     def render_cover(cls, book_id: str) -> None:
-        """Generate a minimal placeholder cover JPEG. Skip if already exists."""
+        """Render the first page as a cover, matching how PDF covers look. Skip if already exists."""
         out = AudiobookStore.cover_path(book_id)
         if os.path.exists(out):
             return
 
         meta = AudiobookStore.read_meta(book_id) or {}
-        file_ext = (meta.get("file_ext") or "txt").upper()
+        ext = (meta.get("file_ext") or "txt").lstrip(".")
+        title = (meta.get("title") or "").strip()
+        if title.lower().endswith(f".{ext.lower()}"):
+            title = title[: -len(ext) - 1]
+        title = title or "Untitled"
+        source_path = AudiobookStore.source_file_path(book_id, ext)
+        try:
+            body = strip_markdown_for_narration(cls.read_text(source_path)[:4000])
+        except Exception:
+            body = ""
 
-        img = Image.new("RGB", (600, 840), color=(18, 26, 38))
+        width, height, margin = 600, 840, 56
+        img = Image.new("RGB", (width, height), color=(250, 248, 244))
         draw = ImageDraw.Draw(img)
+        title_font = cls._cover_font(40)
+        body_font = cls._cover_font(18)
+        label_font = cls._cover_font(15)
 
-        # Cyan accent bar
-        draw.rectangle([0, 0, 600, 10], fill=(0, 210, 230))
+        y = margin + 8
+        for line in cls._wrap(draw, title, title_font, width - 2 * margin)[:4]:
+            draw.text((margin, y), line, font=title_font, fill=(28, 24, 22))
+            y += 50
+        y += 14
+        draw.rectangle([margin, y, margin + 64, y + 4], fill=(204, 120, 92))
+        y += 32
 
-        # File-type badge (bottom-right)
-        badge_text = f".{file_ext}"
-        badge_x, badge_y = 470, 760
-        draw.rectangle(
-            [badge_x - 10, badge_y - 6, badge_x + 100, badge_y + 26], fill=(0, 180, 200)
+        for paragraph in body.split("\n"):
+            paragraph = paragraph.strip()
+            if not paragraph or paragraph == title:
+                continue
+            for line in cls._wrap(draw, paragraph, body_font, width - 2 * margin):
+                if y > height - margin - 60:
+                    break
+                draw.text((margin, y), line, font=body_font, fill=(110, 104, 98))
+                y += 27
+            y += 12
+            if y > height - margin - 60:
+                break
+
+        label = f".{ext.upper()}"
+        label_width = draw.textlength(label, font=label_font)
+        draw.text(
+            (width - margin - label_width, height - margin - 10),
+            label,
+            font=label_font,
+            fill=(160, 152, 144),
         )
-        draw.text((badge_x, badge_y), badge_text, fill=(255, 255, 255))
 
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=85, optimize=True)
+        img.save(buf, format="JPEG", quality=88, optimize=True)
         cls._atomic_write_bytes(out, buf.getvalue())
+
+    @staticmethod
+    def _cover_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+        try:
+            return ImageFont.load_default(size=size)
+        except Exception:
+            return ImageFont.load_default()
+
+    @staticmethod
+    def _wrap(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> list[str]:
+        lines: list[str] = []
+        current = ""
+        for word in text.split():
+            candidate = f"{current} {word}".strip()
+            if current and draw.textlength(candidate, font=font) > max_width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        return lines
 
     # ---------- atomic helpers ----------
 

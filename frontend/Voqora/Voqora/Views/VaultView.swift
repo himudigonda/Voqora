@@ -137,35 +137,40 @@ struct VaultEntryRow: View {
     let entry: HistoryEntry
     @Binding var selectedEntry: HistoryEntry?
     @State private var hovering = false
+    @State private var playHovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    Text(entry.timestamp, style: .time)
-                    Text("·")
-                    Text(DashboardViewModel.voiceName(for: entry.voice))
-                    if entry.isFavorite {
-                        Image(systemName: "star.fill")
-                            .foregroundStyle(Palette.warning)
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Text(entry.timestamp, style: .time)
+                        Text("·")
+                        Text(DashboardViewModel.voiceName(for: entry.voice))
+                        if entry.isFavorite {
+                            Image(systemName: "star.fill")
+                                .foregroundStyle(Palette.warning)
+                        }
                     }
+                    .font(dashboardVM.font(.caption))
+                    .foregroundStyle(Palette.textSecondary)
+                    Text(entry.text)
+                        .lineLimit(3)
+                        .font(dashboardVM.appFont(size: 15, weight: .medium))
+                        .foregroundStyle(Palette.textPrimary)
                 }
-                .font(dashboardVM.font(.caption))
-                .foregroundStyle(Palette.textSecondary)
-                Text(entry.text)
-                    .lineLimit(3)
-                    .font(dashboardVM.appFont(size: 15, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) { play() }
+            .onTapGesture { selectedEntry = entry }
             PlayerCircleButton(systemName: "play.fill", label: "Play") { play() }
-                .opacity(hovering ? 1 : 0)
+                .onHover { playHovering = $0 }
+                .opacity(hovering || playHovering ? 1 : 0.35)
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { play() }
-        .onTapGesture { selectedEntry = entry }
         .contextMenu {
             Button("Play") { play() }
             Button(entry.isFavorite ? "Unstar" : "Star") { history.toggleFavorite(entry: entry) }

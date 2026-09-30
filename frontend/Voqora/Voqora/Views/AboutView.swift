@@ -90,6 +90,10 @@ struct AboutView: View {
                     if updater.isCheckingForUpdates {
                         ProgressView().scaleEffect(0.7)
                         Text("Checking for updates…")
+                    } else if let message = updater.updateStatusMessage {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(Palette.warning)
+                        Text(message)
                     } else {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(Palette.success)

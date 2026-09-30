@@ -358,6 +358,49 @@ async def test_concat_phase_builds_correct_wav_and_page_to_time():
     assert actual["audio_seconds"] == new_meta["total_audio_seconds"]
 
 
+@pytest.mark.asyncio
+async def test_concat_reports_gemini_cost_from_the_ledger_not_an_estimate():
+    local = AudiobookStore.create_book("Local.md")
+    meta = AudiobookStore.initial_meta(
+        local, "Local.md", 1, "kokoro", "af_bella", 1.0, {}
+    )
+    AudiobookStore.write_meta(local, meta)
+    _write_pcm_wav(AudiobookStore.page_audio_path(local, 1), 2400)
+    with open(AudiobookStore.page_clean_path(local, 1), "w", encoding="utf-8") as f:
+        f.write("Plenty of cleaned words that were never sent to Gemini. " * 40)
+
+    actual = await AudiobookService._phase_concat(
+        local, AudiobookStore.read_meta(local)
+    )
+    assert actual["cost_usd"] == 0.0
+    assert actual["tokens_used"] == 0
+
+    cleaned = AudiobookStore.create_book("Cleaned.pdf")
+    meta = AudiobookStore.initial_meta(
+        cleaned, "Cleaned.pdf", 1, "kokoro", "af_bella", 1.0, {}
+    )
+    meta["budget"] = {
+        "cap_usd": 1.0,
+        "ledger": [
+            {
+                "id": "a",
+                "state": "reconciled",
+                "actual_usd": 0.0123,
+                "input_tokens": 900,
+                "output_tokens": 800,
+            },
+        ],
+    }
+    AudiobookStore.write_meta(cleaned, meta)
+    _write_pcm_wav(AudiobookStore.page_audio_path(cleaned, 1), 2400)
+
+    actual = await AudiobookService._phase_concat(
+        cleaned, AudiobookStore.read_meta(cleaned)
+    )
+    assert actual["cost_usd"] == pytest.approx(0.0123)
+    assert actual["tokens_used"] == 1700
+
+
 def test_wav_header_format():
     body_size = 1000
     h = _wav_header(body_size)

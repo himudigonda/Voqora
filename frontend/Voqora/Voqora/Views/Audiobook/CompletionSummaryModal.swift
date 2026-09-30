@@ -41,8 +41,6 @@ struct CompletionSummaryModal: View {
 
             statsGrid
 
-            Spacer(minLength: 0)
-
             HStack(spacing: 12) {
                 Button { dismiss() } label: {
                     Text("Later")
@@ -69,7 +67,8 @@ struct CompletionSummaryModal: View {
             }
         }
         .padding(28)
-        .frame(width: 520, height: 640)
+        .frame(width: 520)
+        .fixedSize(horizontal: false, vertical: true)
         .voqoraSurface(.floating, in: Rectangle())
         .onAppear { bouncing.toggle() }
     }
@@ -105,9 +104,11 @@ struct CompletionSummaryModal: View {
             statRow("Words", numberFormat(book.actual?.words ?? 0), "textformat")
             statRow("Length", DurationFormatter.short(book.totalAudioSeconds), "waveform")
             statRow("Processing", DurationFormatter.short(book.actual?.processingSeconds ?? 0), "clock")
-            statRow("Sections", "\(book.sections.count)", "list.bullet.rectangle")
+            if book.sections.count > 1 {
+                statRow("Sections", "\(book.sections.count)", "list.bullet.rectangle")
+            }
             if let cost = book.actual?.costUsd, cost > 0 {
-                statRow("Cost", String(format: "$%.2f", cost), "dollarsign.circle")
+                statRow("Cost", cost < 0.01 ? "Under $0.01" : String(format: "$%.2f", cost), "dollarsign.circle")
             }
         }
         .padding(16)

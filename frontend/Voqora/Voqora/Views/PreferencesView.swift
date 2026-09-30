@@ -279,14 +279,15 @@ struct PreferencesView: View {
 
                         HStack {
                             Text("Theme")
-                                .font(vm.font(.rowTitle))
+                                .font(vm.font(.sectionTitle))
                             Spacer()
-                            Picker("Appearance", selection: $vm.appTheme) {
+                            Picker("Theme", selection: $vm.appTheme) {
                                 Text("System").tag("system")
                                 Text("Light").tag("light")
                                 Text("Dark").tag("dark")
                             }
                             .pickerStyle(.segmented)
+                            .labelsHidden()
                             .frame(width: 200)
                         }
 
@@ -383,26 +384,44 @@ struct PreferencesView: View {
                 PreferenceSection(title: "Updates", icon: "arrow.down.circle") {
                     VStack(alignment: .leading, spacing: 16) {
                         VStack(alignment: .leading, spacing: 9) {
-                            if let latest = updater.latestGitHubVersion {
-                                HStack(spacing: 6) {
+                            HStack(spacing: 6) {
+                                if let latest = updater.latestGitHubVersion {
                                     Image(systemName: "arrow.up.circle.fill").foregroundStyle(accentColor)
                                     Text("Voqora \(latest) is available.")
-                                        .font(vm.appFont(size: 12, weight: .semibold))
-                                    Link("Open the releases page", destination: GuidedInstallerService.releasePageURL)
-                                        .font(vm.font(.rowSubtitle))
+                                } else if updater.isCheckingForUpdates {
+                                    ProgressView().controlSize(.small)
+                                    Text("Checking for updates…")
+                                } else if let message = updater.updateStatusMessage {
+                                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+                                    Text(message)
+                                } else {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
+                                    Text("You're on the latest version.")
                                 }
                             }
+                            .font(vm.appFont(size: 12, weight: .semibold))
 
                             HStack {
-                                Button {
-                                    installer.downloadAndOpenLatest()
-                                } label: {
-                                    Label(installer.state.isBusy ? "Preparing Installer…" : "Download Latest Version", systemImage: "arrow.down.circle")
-                                        .font(vm.font(.button))
+                                if updater.latestGitHubVersion != nil {
+                                    Button {
+                                        installer.downloadAndOpenLatest()
+                                    } label: {
+                                        Label(installer.state.isBusy ? "Preparing Installer…" : "Download Latest Version", systemImage: "arrow.down.circle")
+                                            .font(vm.font(.button))
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(accentColor)
+                                    .disabled(installer.state.isBusy)
+                                } else {
+                                    Button {
+                                        Task { await updater.checkGitHubReleaseForUpdate() }
+                                    } label: {
+                                        Label("Check for Updates", systemImage: "arrow.clockwise")
+                                            .font(vm.font(.button))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .disabled(updater.isCheckingForUpdates)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(accentColor)
-                                .disabled(installer.state.isBusy)
 
                                 Link("Release Notes", destination: GuidedInstallerService.releasePageURL)
                                     .font(vm.font(.rowSubtitle))
@@ -414,14 +433,16 @@ struct PreferencesView: View {
                                     .foregroundStyle(Palette.textTertiary)
                             }
 
-                            Text(
-                                installer.state.message ??
-                                    "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to " +
-                                    "Applications. It never replaces the app automatically."
-                            )
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(installer.state.isFailure ? Palette.danger : Palette.textSecondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            if updater.latestGitHubVersion != nil || installer.state.message != nil {
+                                Text(
+                                    installer.state.message ??
+                                        "Early access downloads a verified DMG, opens it in Finder, and lets you drag Voqora to " +
+                                        "Applications. It never replaces the app automatically."
+                                )
+                                .font(vm.font(.rowSubtitle))
+                                .foregroundStyle(installer.state.isFailure ? Palette.danger : Palette.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            }
 
                             if case .failed = installer.state {
                                 Button("Try Again") { installer.reset(); installer.downloadAndOpenLatest() }

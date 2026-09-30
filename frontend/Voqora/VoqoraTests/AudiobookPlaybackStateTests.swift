@@ -140,6 +140,50 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertEqual(viewModel.transcriptState, .idle)
     }
 
+    func test_continueListening_fallsBackToABookWithSavedProgress() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let fresh = makeBook(bookID: "fresh-book")
+        let started = makeBook(bookID: "started-book")
+        viewModel.books = [fresh, started]
+        let previousLastPlayed = viewModel.lastPlayedBookID
+        viewModel.lastPlayedBookID = "deleted-book"
+        UserDefaults.standard.set(42.0, forKey: "bookPos_started-book")
+        defer {
+            UserDefaults.standard.removeObject(forKey: "bookPos_started-book")
+            viewModel.lastPlayedBookID = previousLastPlayed
+        }
+
+        XCTAssertEqual(viewModel.continueListeningBook?.bookID, "started-book")
+    }
+
+    func test_endOfSectionSleep_followsPlaybackPositionNotWallClock() {
+        let audio = AudioService(startingEngine: false)
+        let viewModel = AudiobookViewModel(audio: audio)
+        let book = makeBook(
+            bookID: "b1",
+            sections: [
+                AudiobookSection(title: "One", startPage: 1, endPage: 1, startTime: 0),
+                AudiobookSection(title: "Two", startPage: 2, endPage: 2, startTime: 100),
+            ],
+            totalAudioSeconds: 200
+        )
+        viewModel.nowPlaying = book
+        audio.currentTime = 40
+
+        viewModel.startSleepTimer(.endOfSection, currentBook: book)
+
+        XCTAssertTrue(viewModel.sleepAtEndOfSection)
+        XCTAssertNil(viewModel.sleepTimerEndsAt, "a wall-clock deadline drifts while paused or at any speed but 1x")
+        XCTAssertEqual(viewModel.sectionEnd(in: book), 100)
+
+        audio.currentTime = 99.5
+        XCTAssertNotNil(viewModel.nowPlaying, "a paused player must not be stopped by the section timer")
+        XCTAssertTrue(viewModel.sleepAtEndOfSection)
+
+        audio.currentTime = 150
+        XCTAssertEqual(viewModel.sectionEnd(in: book), 200, "after a seek the timer follows the new section")
+    }
+
     func test_stopPlayback_defaultParameter_behavesExactlyAsBefore() {
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         viewModel.nowPlaying = makeBook(bookID: "b1")
@@ -447,7 +491,9 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         status: String = "done",
         pageDone: Int = 1,
         pageTotal: Int = 1,
-        budget: GeminiBudget? = nil
+        budget: GeminiBudget? = nil,
+        sections: [AudiobookSection] = [],
+        totalAudioSeconds: Double = 0
     ) -> Audiobook {
         Audiobook(
             bookID: bookID,
@@ -456,9 +502,9 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             pageCount: 1,
             status: status,
             phaseProgress: PhaseProgress(pageDone: pageDone, pageTotal: pageTotal),
-            sections: [],
+            sections: sections,
             pageToTime: [:],
-            totalAudioSeconds: 0,
+            totalAudioSeconds: totalAudioSeconds,
             failedPages: [],
             estimated: nil,
             actual: nil,

@@ -13,6 +13,7 @@ from app.services.gemini_cleaner import (
     GeminiBadResponseError,
     GeminiCapacityError,
     GeminiCleaner,
+    GeminiIncompleteError,
     GeminiRateLimitError,
 )
 from app.services.gemini_cleaner import types as gemini_types
@@ -118,6 +119,50 @@ def test_with_retry_never_falls_back_below_flex_fallback_threshold(monkeypatch) 
     assert result == "ok"
     # A single Flex 503 is below the fallback threshold — retry stays on Flex.
     assert seen_tiers == [gemini_types.ServiceTier.FLEX, gemini_types.ServiceTier.FLEX]
+
+
+def _response(reason, text: str = "partial page"):
+    class Candidate:
+        finish_reason = reason
+
+    class Response:
+        candidates = [Candidate()]
+        usage_metadata = None
+
+    Response.text = text
+    return Response()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        gemini_types.FinishReason.MAX_TOKENS,
+        gemini_types.FinishReason.RECITATION,
+        gemini_types.FinishReason.SAFETY,
+    ],
+)
+def test_truncated_page_is_rejected_instead_of_narrated(reason) -> None:
+    with pytest.raises(GeminiIncompleteError):
+        GeminiCleaner._require_complete(_response(reason))
+
+
+def test_finished_or_unreported_page_is_accepted() -> None:
+    GeminiCleaner._require_complete(_response(gemini_types.FinishReason.STOP))
+    GeminiCleaner._require_complete(_response(None))
+
+
+def test_with_retry_does_not_pay_again_for_a_deterministic_cutoff(monkeypatch) -> None:
+    monkeypatch.setattr(GeminiCleaner, "_BACKOFF_BASE", 0.0)
+    calls = 0
+
+    async def cut_off(tier):
+        nonlocal calls
+        calls += 1
+        raise GeminiIncompleteError("Gemini stopped early: RECITATION")
+
+    with pytest.raises(GeminiIncompleteError):
+        asyncio.run(GeminiCleaner._with_retry("test", cut_off))
+    assert calls == 1
 
 
 # ---------- cost / token estimation ----------

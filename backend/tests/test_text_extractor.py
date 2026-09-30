@@ -91,3 +91,43 @@ def test_txt_and_md_read_verbatim():
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             assert TextExtractor.read_text(path) == content
+
+
+def test_text_cover_renders_title_and_first_page_on_paper(monkeypatch, tmp_path):
+    from PIL import Image
+
+    from app.services.audiobook_store import AudiobookStore
+
+    monkeypatch.setattr(
+        AudiobookStore, "root_dir", classmethod(lambda cls: str(tmp_path))
+    )
+    os.makedirs(tmp_path / "b1")
+    with open(AudiobookStore.source_file_path("b1", "md"), "w", encoding="utf-8") as f:
+        f.write("# Notes\n\nThe opening paragraph of the document.")
+    AudiobookStore.write_meta(
+        "b1", {"book_id": "b1", "title": "Notes.md", "file_ext": "md"}
+    )
+
+    TextExtractor.render_cover("b1")
+
+    with Image.open(AudiobookStore.cover_path("b1")) as cover:
+        assert cover.size == (600, 840)
+        assert min(cover.getpixel((5, 5))) > 230
+        band = cover.crop((56, 60, 544, 120))
+        dark_pixels = sum(
+            1
+            for x in range(band.width)
+            for y in range(band.height)
+            if max(band.getpixel((x, y))) < 80
+        )
+        assert dark_pixels > 200, "the title must be drawn at a readable size"
+        body = cover.crop((56, 150, 544, 260))
+        text_pixels = sum(
+            1
+            for x in range(body.width)
+            for y in range(body.height)
+            if max(body.getpixel((x, y))) < 200
+        )
+        assert (
+            text_pixels > 100
+        ), "the opening text comes from the source before pages exist"

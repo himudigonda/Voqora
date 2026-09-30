@@ -90,10 +90,12 @@ final class AudiobookViewModel: ObservableObject {
 
     @Published var sleepTimerEndsAt: Date? = nil
     @Published var sleepUntilEndOfBook: Bool = false
+    @Published var sleepAtEndOfSection: Bool = false
     private var sleepTimerTask: Task<Void, Never>?
 
     private var completionObserver: AnyCancellable?
     private var resumePointSaver: AnyCancellable?
+    private var sectionSleepObserver: AnyCancellable?
 
     private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
     private let listBooks: @MainActor () async throws -> [Audiobook]
@@ -143,6 +145,13 @@ final class AudiobookViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self, audio.isPlaying else { return }
                 saveResumePoint()
+            }
+        sectionSleepObserver = audio.$currentTime
+            .sink { [weak self] time in
+                guard let self, sleepAtEndOfSection, audio.isPlaying,
+                      let book = nowPlaying, let end = sectionEnd(in: book), time >= end - 1
+                else { return }
+                pauseForSleep(fadeOverSeconds: 1)
             }
     }
 
@@ -543,8 +552,11 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     var continueListeningBook: Audiobook? {
-        guard !lastPlayedBookID.isEmpty else { return nil }
-        return books.first(where: { $0.bookID == lastPlayedBookID && $0.status == "done" })
+        let ready = books.filter { $0.status == "done" }
+        if let last = ready.first(where: { $0.bookID == lastPlayedBookID }) {
+            return last
+        }
+        return ready.first { UserDefaults.standard.double(forKey: "bookPos_\($0.bookID)") > 0 }
     }
 
     func togglePlayback() {
@@ -736,14 +748,8 @@ final class AudiobookViewModel: ObservableObject {
             sleepTimerEndsAt = Date().addingTimeInterval(secs)
             scheduleSleepTask(after: secs)
         } else if option == .endOfSection {
-            guard let book = currentBook,
-                  let section = currentSection(in: book) else { return }
-            let nextStart = chapters(for: book)
-                .first(where: { $0.startTime > section.startTime })?
-                .startTime ?? book.totalAudioSeconds
-            let remaining = max(0, nextStart - audio.currentTime)
-            sleepTimerEndsAt = Date().addingTimeInterval(remaining)
-            scheduleSleepTask(after: remaining)
+            guard let book = currentBook, sectionEnd(in: book) != nil else { return }
+            sleepAtEndOfSection = true
         } else if option == .endOfBook {
             sleepUntilEndOfBook = true
         }
@@ -754,16 +760,27 @@ final class AudiobookViewModel: ObservableObject {
         sleepTimerTask = nil
         sleepTimerEndsAt = nil
         sleepUntilEndOfBook = false
+        sleepAtEndOfSection = false
+    }
+
+    func sectionEnd(in book: Audiobook) -> TimeInterval? {
+        guard let section = currentSection(in: book) else { return nil }
+        return chapters(for: book).first(where: { $0.startTime > section.startTime })?.startTime ?? book.totalAudioSeconds
     }
 
     private func scheduleSleepTask(after seconds: TimeInterval) {
         sleepTimerTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
             guard let self, !Task.isCancelled else { return }
-            stopPlayback(fadeOverSeconds: 1.5)
-            sleepTimerEndsAt = nil
             sleepTimerTask = nil
+            pauseForSleep(fadeOverSeconds: 1.5)
         }
+    }
+
+    private func pauseForSleep(fadeOverSeconds: TimeInterval) {
+        cancelSleepTimer()
+        saveResumePoint()
+        audio.fadeOutAndPause(over: fadeOverSeconds)
     }
 
     func cancel(_ book: Audiobook) {

@@ -186,39 +186,46 @@ private struct TranscriptLineRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        Button(action: onSelect) {
-            Group {
-                if isActive, let progress {
-                    SpokenLineText(text: line.text, progress: progress)
-                } else {
-                    Text(line.text)
-                }
+        Group {
+            if isActive, let progress {
+                SpokenLineText(text: line.text, progress: progress)
+            } else {
+                Text(line.text)
             }
-            .font(font)
-            .lineSpacing(3)
-            .italic(!line.isNarrated)
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(Palette.textPrimary)
-            .opacity(opacity)
-            .blur(radius: blur)
-            .padding(.vertical, 6)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(isHovered && !isActive ? Palette.controlFill : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .font(font)
+        .lineSpacing(3)
+        .italic(!line.isNarrated)
+        .multilineTextAlignment(.leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .foregroundStyle(Palette.textPrimary)
+        .opacity(opacity)
+        .blur(radius: blur)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                .fill(isHovered && !isActive ? Palette.controlFill : Color.clear)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onEnded { value in
+                    if hypot(value.translation.width, value.translation.height) < 6 {
+                        onSelect()
+                    }
+                }
+        )
         .onHover { isHovered = $0 }
         .padding(.horizontal, -10)
         .animation(animation, value: isActive)
         .animation(animation, value: blur)
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel(line.text)
         .accessibilityHint("Plays from this line")
-        .accessibilityAddTraits(isActive ? [.isSelected] : [])
+        .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { onSelect() }
         .contextMenu {
             Button("Copy") {
                 NSPasteboard.general.clearContents()

@@ -51,7 +51,6 @@ PBXPROJ = REPO / "frontend/Voqora/Voqora.xcodeproj/project.pbxproj"
 LAUNCH_MANAGER = REPO / "frontend/Voqora/Voqora/Services/LaunchManager.swift"
 BACKEND_SERVICE = REPO / "frontend/Voqora/Voqora/Services/BackendService.swift"
 BACKEND_CONNECTION = REPO / "frontend/Voqora/Voqora/Services/BackendConnection.swift"
-VOQORA_WINDOW = REPO / "frontend/Voqora/Voqora/Views/VoqoraWindow.swift"
 BACKEND_MAIN = REPO / "backend/app/main.py"
 
 FAILURES: list[str] = []
@@ -182,24 +181,21 @@ def test_listener_descriptor_is_handed_over_through_standard_input() -> None:
 # --- Bug 4: the detail column is re-identified on every tab change -----------
 
 
-def test_detail_column_is_reidentified_per_tab() -> None:
-    source = read(VOQORA_WINDOW)
-    if not source:
-        return
-
+def test_player_is_not_a_navigation_push() -> None:
+    views = REPO / "frontend/Voqora/Voqora/Views"
+    offenders = [
+        path.relative_to(REPO).as_posix()
+        for path in sorted(views.rglob("*.swift"))
+        if re.search(r"\bNavigationStack\b|\.navigationDestination\(|\bNavigationLink\b", path.read_text(encoding="utf-8"))
+    ]
     check(
-        ".id(vm.selectedTab)" in source,
-        "VoqoraWindow's NavigationSplitView detail column must carry .id(vm.selectedTab); "
-        "without it a pushed audiobook player keeps rendering on every other tab",
+        not offenders,
+        "The audiobook player must stay view-model driven; a NavigationSplitView detail push keeps rendering "
+        f"on every other tab: {', '.join(offenders)}",
     )
-
-    # It has to be on the detail column, not somewhere incidental. The detail
-    # closure is the last thing before the split view's own modifiers.
-    detail_index = source.find("} detail: {")
-    id_index = source.find(".id(vm.selectedTab)")
     check(
-        detail_index != -1 and id_index > detail_index,
-        ".id(vm.selectedTab) must appear inside the NavigationSplitView `detail:` closure",
+        "AudiobookPlayerView(book:" in read(REPO / "frontend/Voqora/Voqora/Views/Audiobook/AudiobookLibraryView.swift"),
+        "AudiobookLibraryView must host the player itself",
     )
 
 
@@ -208,7 +204,7 @@ def main() -> int:
         test_hardened_runtime_disables_library_validation,
         test_integrity_validator_excludes_its_own_marker,
         test_listener_descriptor_is_handed_over_through_standard_input,
-        test_detail_column_is_reidentified_per_tab,
+        test_player_is_not_a_navigation_push,
     ):
         before = len(FAILURES)
         test()

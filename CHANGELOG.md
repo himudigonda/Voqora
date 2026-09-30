@@ -51,6 +51,25 @@
   while it was still starting.
 - The Vault saved the cleaned-up text (numbers spelled out, lines joined)
   instead of what you selected, and repeated clips piled up as duplicates.
+- About one in four clicks on a transcript line was ignored while the
+  transcript was scrolling to the current line.
+- The Play button on a Vault entry opened the entry instead of playing it.
+- The End of Section sleep timer counted down while paused and drifted at
+  any speed other than 1x. It now follows the playback position, and every
+  sleep timer fades out and pauses instead of closing the book.
+- A page that Gemini stopped partway through (token limit or recitation
+  filter) was narrated with the rest of the page missing. The page now falls
+  back to local cleanup and is marked for retry.
+- Books narrated without Gemini reported a Gemini cost when they finished.
+- Preferences always offered to download the latest release, even when this
+  build was newer. It now shows Check for Updates unless an update exists,
+  and says so when the check fails. The menu bar's Check for Updates no
+  longer stays disabled.
+- Text, Markdown, and Word documents get a cover that shows their title and
+  opening text instead of a blank placeholder.
+- Deleting the last-played book hid Continue Listening even when another
+  book had saved progress.
+- A finished book read "0 sec left" in the library; it now reads Finished.
 
 ### Player and library
 

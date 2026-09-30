@@ -197,6 +197,10 @@ class GeminiBadResponseError(Exception):
     """Gemini returned an unexpected response."""
 
 
+class GeminiIncompleteError(Exception):
+    """Gemini stopped before the end of the page (token cap, recitation, or safety)."""
+
+
 class GeminiCapacityError(Exception):
     """Flex tier at capacity (503/UNAVAILABLE) — recoverable by falling back to Standard."""
 
@@ -222,7 +226,7 @@ class GeminiCleaner:
         Standard request has a different cost envelope and is only created by
         an explicit, separately-approved job transition.
 
-        - GeminiAuthError → re-raised immediately (won't recover on retry).
+        - GeminiAuthError / GeminiIncompleteError → re-raised immediately (won't recover on retry).
         - GeminiCapacityError / GeminiRateLimitError / GeminiBadResponseError /
           generic Exception → sleep _BACKOFF_BASE * 2^attempt and retry.
         - All attempts exhausted → re-raise the last seen exception, or a
@@ -235,7 +239,7 @@ class GeminiCleaner:
         for attempt in range(cls._MAX_RETRIES):
             try:
                 return await coro_factory(tier)
-            except GeminiAuthError:
+            except (GeminiAuthError, GeminiIncompleteError):
                 raise
             except GeminiCapacityError as e:
                 last_exc = e
@@ -338,10 +342,20 @@ class GeminiCleaner:
             )
         except Exception as e:
             cls._reraise_typed(e)
+        cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
             text if text else "-", cls._usage_from_response(resp, tier)
         )
+
+    @staticmethod
+    def _require_complete(resp: Any) -> None:
+        candidates = getattr(resp, "candidates", None) or []
+        reason = getattr(candidates[0], "finish_reason", None) if candidates else None
+        if reason is not None and reason != types.FinishReason.STOP:
+            raise GeminiIncompleteError(
+                f"Gemini stopped early: {getattr(reason, 'name', reason)}"
+            )
 
     # ---------- OCR (image pages) ----------
 
@@ -386,6 +400,7 @@ class GeminiCleaner:
             )
         except Exception as e:
             cls._reraise_typed(e)
+        cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
             text if text else "-", cls._usage_from_response(resp, tier)

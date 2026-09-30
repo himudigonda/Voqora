@@ -333,7 +333,9 @@ struct AudiobookCardView: View {
         guard listened > 0.005 else {
             return "\(DurationFormatter.listing(book.totalAudioSeconds)) · \(pages)"
         }
-        return "\(DurationFormatter.listing(book.totalAudioSeconds * (1 - listened))) left · \(pages)"
+        let remaining = book.totalAudioSeconds * (1 - listened)
+        guard remaining >= 1 else { return "Finished · \(pages)" }
+        return "\(DurationFormatter.listing(remaining)) left · \(pages)"
     }
 
     private var incompleteLabel: String {

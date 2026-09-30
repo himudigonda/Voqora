@@ -130,7 +130,7 @@ struct VoqoraApp: App {
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
             Task { @MainActor in
-                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                guard Self.shortcutAllowed("playText") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "playText triggered")
                 await vm.speakSelection()
             }
@@ -138,7 +138,7 @@ struct VoqoraApp: App {
 
         KeyboardShortcuts.onKeyUp(for: .togglePause) {
             Task { @MainActor in
-                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                guard Self.shortcutAllowed("togglePause") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "togglePause triggered")
                 vm.togglePlayback()
             }
@@ -146,7 +146,7 @@ struct VoqoraApp: App {
 
         KeyboardShortcuts.onKeyUp(for: .stopText) {
             Task { @MainActor in
-                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                guard Self.shortcutAllowed("stopText") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "stopText triggered")
                 vm.stopPlayback()
             }
@@ -154,13 +154,20 @@ struct VoqoraApp: App {
 
         KeyboardShortcuts.onKeyUp(for: .exportAudio) {
             Task { @MainActor in
-                guard !Self.focusedTextInputOwnsShortcut() else { return }
+                guard Self.shortcutAllowed("exportAudio") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
                 vm.exportLastClip()
             }
         }
 
         VoqoraLog.info("KeyboardShortcuts", "All shortcuts registered")
+    }
+
+    @MainActor
+    private static func shortcutAllowed(_ name: String) -> Bool {
+        guard focusedTextInputOwnsShortcut() else { return true }
+        VoqoraLog.info("KeyboardShortcuts", "\(name) left to the focused text field")
+        return false
     }
 
     @MainActor
@@ -303,14 +310,16 @@ struct VoqoraApp: App {
             }
 
             Button {
-                updater.checkForUpdates()
+                dashboardVM.selectedTab = "about"
+                NSApp.activate(ignoringOtherApps: true)
+                Task { await updater.checkGitHubReleaseForUpdate() }
             } label: {
                 Label(
                     updater.isCheckingForUpdates ? "Checking for Updates…" : "Check for Updates…",
                     systemImage: "arrow.triangle.2.circlepath"
                 )
             }
-            .disabled(!updater.canCheckForUpdates || updater.isCheckingForUpdates)
+            .disabled(updater.isCheckingForUpdates)
 
             Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {
                 Label("Launch at Login", systemImage: "power")

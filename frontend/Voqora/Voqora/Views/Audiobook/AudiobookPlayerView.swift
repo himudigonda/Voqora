@@ -130,6 +130,17 @@ private struct AudiobookTitle: View {
     }
 }
 
+private struct SectionSleepCountdown: View {
+    @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var audio: AudioService
+    let book: Audiobook
+
+    var body: some View {
+        let remaining = bookVM.sectionEnd(in: book).map { max(0, $0 - audio.currentTime) } ?? 0
+        Text(DurationFormatter.clock(remaining))
+    }
+}
+
 private struct PlayerArtwork: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
@@ -240,7 +251,7 @@ private struct PlayerSecondaryControls: View {
     }
 
     private var sleepIsArmed: Bool {
-        bookVM.sleepTimerEndsAt != nil || bookVM.sleepUntilEndOfBook
+        bookVM.sleepTimerEndsAt != nil || bookVM.sleepUntilEndOfBook || bookVM.sleepAtEndOfSection
     }
 
     private var sleepMenu: some View {
@@ -258,6 +269,10 @@ private struct PlayerSecondaryControls: View {
                     .font(.system(size: 13, weight: .medium))
                 if let endsAt = bookVM.sleepTimerEndsAt {
                     Text(timerInterval: Date() ... max(Date(), endsAt), countsDown: true)
+                        .font(vm.appFont(size: 11, weight: .semibold))
+                        .monospacedDigit()
+                } else if bookVM.sleepAtEndOfSection {
+                    SectionSleepCountdown(book: book)
                         .font(vm.appFont(size: 11, weight: .semibold))
                         .monospacedDigit()
                 } else if bookVM.sleepUntilEndOfBook {
