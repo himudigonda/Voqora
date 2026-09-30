@@ -70,6 +70,9 @@
 - Deleting the last-played book hid Continue Listening even when another
   book had saved progress.
 - A finished book read "0 sec left" in the library; it now reads Finished.
+- The Clean Up with Gemini option was scrolled out of sight in the New
+  Audiobook sheet. It is now a switch pinned above Create Audiobook, with an
+  Add Key button when no Gemini key is saved.
 
 ### Player and library
 

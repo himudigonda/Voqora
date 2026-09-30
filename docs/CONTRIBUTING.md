@@ -1,7 +1,9 @@
 # Contributing to Voqora
 
-Thanks for improving Voqora. Keep changes small, product-led, and easy to
-verify.
+Thanks for improving Voqora. It is in early release, so bug reports, feature
+ideas, and pull requests all help. Start with an
+[issue](https://github.com/himudigonda/Voqora/issues) if you are unsure whether
+a change fits. Keep changes small, product-led, and easy to verify.
 
 ## Local setup
 

@@ -25,12 +25,13 @@ struct UploadEstimateModal: View {
                     VStack(spacing: 18) {
                         cover
                         statsGrid(for: est)
-                        processingOptions(for: est)
+                        notices(for: est)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 1)
                 }
                 .frame(maxHeight: .infinity)
+                geminiOption
                 actions
             } else if bookVM.uploadInProgress {
                 loadingState
@@ -121,67 +122,69 @@ struct UploadEstimateModal: View {
         }
     }
 
-    private func processingOptions(for est: AudiobookEstimateResponse) -> some View {
+    private func notices(for est: AudiobookEstimateResponse) -> some View {
         VStack(spacing: 10) {
             if useGeminiCleanup, est.costWarning {
-                HStack(spacing: 8) {
-                    Image(systemName: "dollarsign.circle.fill").foregroundStyle(Palette.warning)
-                    Text(
-                        "Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). " +
-                            "The shown estimate may be lower; Voqora will not silently switch to a more expensive tier."
-                    )
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(Palette.textSecondary)
-                    .lineLimit(2)
-                }
-                .padding(10)
-                .background(Palette.warning.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                notice(
+                    "dollarsign.circle.fill",
+                    "Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). " +
+                        "The shown estimate may be lower; Voqora will not silently switch to a more expensive tier."
+                )
             }
-            Toggle(isOn: $useGeminiCleanup) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Clean Up with Gemini")
-                        .font(vm.appFont(size: 11, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
-                    Text("Sends page text and scanned pages to Google Gemini.")
-                        .font(vm.appFont(size: 10))
-                        .foregroundStyle(Palette.textSecondary)
-                        .lineLimit(3)
-                }
-            }
-            .toggleStyle(.checkbox)
-            .padding(10)
-            .background(accentColor.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             if est.isImageOnly, !useGeminiCleanup {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.viewfinder").foregroundStyle(Palette.warning)
-                    Text("This scanned PDF needs Gemini to read its text.")
-                        .font(vm.appFont(size: 11))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                .padding(.bottom, 4)
+                notice("doc.viewfinder", "This scanned PDF needs Gemini to read its text.")
             }
-            if useGeminiCleanup, !bookVM.hasStoredKey {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
-                    Text("Add a Gemini API key in Preferences.")
-                        .font(vm.appFont(size: 11))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                .padding(.bottom, 4)
-            }
-            if let duplicateTitle = bookVM.pendingEstimate?.duplicateOfTitle {
-                HStack(spacing: 8) {
-                    Image(systemName: "doc.on.doc.fill").foregroundStyle(Palette.warning)
-                    Text("You already imported this exact file as \"\(duplicateTitle)\".")
-                        .font(vm.appFont(size: 11))
-                        .foregroundStyle(Palette.textSecondary)
-                        .lineLimit(2)
-                }
-                .padding(.bottom, 4)
+            if let duplicateTitle = est.duplicateOfTitle {
+                notice("doc.on.doc.fill", "You already imported this exact file as \"\(duplicateTitle)\".")
             }
         }
+    }
+
+    private func notice(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon).foregroundStyle(Palette.warning)
+            Text(text)
+                .font(vm.appFont(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(Palette.warning.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var geminiOption: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Clean Up with Gemini")
+                    .font(vm.appFont(size: 12, weight: .semibold))
+                    .foregroundStyle(Palette.textPrimary)
+                Text(bookVM.hasStoredKey
+                    ? "Sends page text and scanned pages to Google Gemini."
+                    : "Add a Gemini API key in Preferences to use this.")
+                    .font(vm.appFont(size: 11))
+                    .foregroundStyle(Palette.textSecondary)
+            }
+            Spacer(minLength: 8)
+            if bookVM.hasStoredKey {
+                Toggle("Clean Up with Gemini", isOn: $useGeminiCleanup)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .tint(accentColor)
+            } else {
+                Button("Add Key…") {
+                    cancel()
+                    vm.selectedTab = "preferences"
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(12)
+        .background(accentColor.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var actions: some View {

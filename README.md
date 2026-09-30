@@ -19,8 +19,16 @@ Voqora as it exists today.
 </p>
 
 <p align="center">
-  <img src="assets/voqora-hero.png" alt="Voqora playing selected text with the Bella voice" width="900">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/voqora-dark.png">
+    <source media="(prefers-color-scheme: light)" srcset="assets/voqora-light.png">
+    <img src="assets/voqora-dark.png" alt="Voqora reading selected text aloud, with the current sentence highlighted" width="900">
+  </picture>
 </p>
+
+> **Early access.** Voqora is in early release and changing quickly. Feedback,
+> [issues](https://github.com/himudigonda/Voqora/issues), and pull requests are
+> all welcome; see [Contributing](docs/CONTRIBUTING.md).
 
 ## Start here
 
@@ -35,9 +43,9 @@ Voqora as it exists today.
 3. Select text in a browser, PDF reader, IDE, Notes, or another app.
 4. Press `Command + Shift + .`.
 
-For a long document, open **Audiobooks**, add a PDF, TXT, DOCX, or Markdown
-file, and come back to it when
-you are walking, commuting, or simply done looking at a screen.
+For a long document, open **Library**, add a PDF, TXT, DOCX, or Markdown file,
+and come back to it when you are walking, commuting, or simply done looking at
+a screen.
 
 ## What Voqora does
 
@@ -46,7 +54,9 @@ you are walking, commuting, or simply done looking at a screen.
 | Listen to an article, document, or code review | A global shortcut that speaks selected text. |
 | Control speech without changing apps | Global pause, stop, and export shortcuts. |
 | Make long reading portable | A resumable document-to-audiobook workflow. |
-| Tune the experience | Voice, speed, volume, local history, and WAV export. |
+| Follow along | A transcript that highlights the sentence being read. Click any sentence to jump there. |
+| Find your place in a long book | Sections, scrub previews with the chapter name, and a sleep timer that stops at the end of a section. |
+| Tune the experience | Voice, speed, volume, The Vault (local history), and WAV export. |
 | Keep the core speech path on your Mac | A bundled local speech engine for Apple silicon. |
 
 ### Shortcuts

@@ -1,5 +1,9 @@
 # Voqora user guide
 
+Voqora is in early release. If something is confusing or broken, please
+[open an issue](https://github.com/himudigonda/Voqora/issues); feedback and pull
+requests are welcome.
+
 ## What you need
 
 Voqora targets Apple-silicon Macs running macOS 14 or newer. Download
@@ -34,7 +38,9 @@ accent color and app icon.
 1. Select text in the app you are already reading in: a browser, PDF reader,
    IDE, Notes, or another native Mac app.
 2. Press `Command + Shift + .`.
-3. Voqora reads the selection with your current voice and speed.
+3. Voqora reads the selection with your current voice and speed. Now Playing
+   shows the text and highlights the sentence being read. Click any sentence
+   to hear it from its first word.
 
 | Action | Default shortcut |
 | --- | --- |
@@ -63,11 +69,28 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 
 ## Turn a document into an audiobook
 
-1. Open **Audiobooks**.
-2. Add the PDF, TXT, DOCX, or Markdown file you want to finish.
-3. Review the creation step and start processing.
-4. Return to the book when it is ready, then use its progress and playback
-   controls to continue where you left off.
+1. Open **Library** in the sidebar.
+2. Add the PDF, TXT, DOCX, or Markdown file you want to finish, or drop it on
+   the window.
+3. Review the page count, word count, and expected length, then choose
+   **Create Audiobook**.
+4. When the book is ready, choose **Listen Now**. Later, use **Continue
+   Listening** in the sidebar to pick up where you left off.
+
+### Listening to a book
+
+- The transcript follows along and highlights the sentence being read. Scroll
+  freely; it returns to the current line after a few seconds, or choose
+  **Current Line**.
+- Click any sentence to play from it, or open **Sections** to jump to a
+  heading.
+- Hover over the progress bar to preview a time and its section, then click or
+  drag to go there.
+- Use the speed button to change the playback speed, and the moon button to
+  set a sleep timer. **End of Section** follows your position, so it still
+  stops in the right place if you pause, skip, or change speed.
+- When you leave the player, a mini player stays at the bottom of the window.
+- Export the finished audiobook as a WAV file with the export button.
 
 Voqora stores the source document, extracted text, generated audio, transcript,
 and audiobook state locally until you delete that book. Close the app and return later without
@@ -76,15 +99,32 @@ starting the document from the beginning.
 ### Optional document cleanup
 
 Most text-based documents can be handled locally. If extraction is poor, you
-can choose optional cleanup with a Gemini API key you provide. A scanned PDF
-needs Gemini OCR before it can be narrated. That operation sends the relevant
-document material to Gemini. It is separate from the core selected-text speech
-flow and can be skipped.
+can choose optional cleanup with a Gemini API key you provide:
 
-## History and export
+1. Add your key under **Preferences -> Audiobooks -> Gemini API Key** and
+   choose **Verify**.
+2. When you add a document, turn on **Clean Up with Gemini** at the bottom of
+   the New Audiobook sheet. The Gemini Tokens and Gemini Cost tiles then show
+   the estimate.
 
-Voqora keeps a local history of spoken selections. Use it to revisit a useful
-passage, then use `Command + Shift + M` to save the latest clip as a WAV file.
+A scanned PDF needs Gemini OCR before it can be narrated. That operation sends
+the relevant document material to Gemini. It is separate from the core
+selected-text speech flow and can be skipped. If a page cannot be cleaned, Voqora
+narrates its local text instead and marks it for retry; right-click the book in
+the Library to retry those pages.
+
+## The Vault and export
+
+**The Vault** keeps a local history of spoken selections. Search it, star the
+passages you want to keep, and play any of them again. Use
+`Command + Shift + M` to save the latest clip as a WAV file.
+
+## Updates
+
+Voqora checks its GitHub releases when you open **About**, and you can choose
+**Check for Updates** there or in Preferences. When a newer version exists,
+Voqora downloads the verified DMG and opens it in Finder so you can drag the new
+version to Applications. It never replaces the app on its own.
 
 ## Troubleshooting
 
@@ -108,5 +148,6 @@ document material to Gemini with your own key.
 
 ### Where are the logs?
 
-Voqora can export its frontend and backend logs from the app. The files are
-written to your Desktop so you can attach them to a GitHub issue.
+Choose **Preferences -> Data -> Export Debug Logs**. The files are written to
+your Desktop so you can attach them to a
+[GitHub issue](https://github.com/himudigonda/Voqora/issues).
