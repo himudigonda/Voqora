@@ -156,7 +156,7 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     var hasStoredKey: Bool {
-        KeychainService.has(.geminiAPIKey)
+        keyVerified
     }
 
     func refresh() async {
@@ -453,7 +453,9 @@ final class AudiobookViewModel: ObservableObject {
         case "extracting": .extracting(page: pageDone, total: pageTotal)
         case "cleaning": .cleaning(page: pageDone, total: pageTotal)
         case "sectioning": .sectioning(page: pageDone, total: pageTotal)
-        case "tts", "concatenating": .generating(page: pageDone, total: pageTotal)
+        case "tts": .generating(page: pageDone, total: pageTotal)
+        case "concatenating": .finishing
+        case "ready": .notStarted
         case "done": .ready
         case "needs_key": .needsKey
         case "needs_cost_approval": .needsCostApproval(requiredCap: nil)
@@ -470,7 +472,8 @@ final class AudiobookViewModel: ObservableObject {
         case "extracting": status = .extracting(page: page, total: total)
         case "cleaning": status = .cleaning(page: page, total: total)
         case "sectioning": status = .sectioning(page: page, total: total)
-        case "tts", "concatenating": status = .generating(page: page, total: total)
+        case "tts": status = .generating(page: page, total: total)
+        case "concatenating": status = .finishing
         default: return
         }
         processingState[bookID] = status
@@ -883,8 +886,12 @@ final class AudiobookViewModel: ObservableObject {
             defer { verifyingKey = false }
             let ok = await service.verifyKey(trimmed)
             if ok {
-                KeychainService.set(trimmed, for: .geminiAPIKey)
-                keyVerified = true
+                let saved = KeychainService.set(trimmed, for: .geminiAPIKey)
+                    && KeychainService.get(.geminiAPIKey) == trimmed
+                keyVerified = saved
+                if !saved {
+                    showToast("Gemini accepted the key, but Voqora couldn't save it to your Keychain.", kind: .error)
+                }
             } else {
                 keyVerified = false
                 showToast("Could not verify that key. Double-check and retry.", kind: .error)

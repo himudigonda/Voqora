@@ -73,6 +73,11 @@
 - The Clean Up with Gemini option was scrolled out of sight in the New
   Audiobook sheet. It is now a switch pinned above Create Audiobook, with an
   Add Key button when no Gemini key is saved.
+- Preferences could show a Gemini key as verified even when saving it to the
+  Keychain failed, leaving Gemini cleanup unavailable. Saving is now checked.
+- A book that is finishing up read "Narrating page 11 of 11" at 100%; it now
+  reads "Finishing up…". An uploaded book that was never started reads "Not
+  started" instead of "Waiting…" and no longer polls for progress.
 
 ### Player and library
 

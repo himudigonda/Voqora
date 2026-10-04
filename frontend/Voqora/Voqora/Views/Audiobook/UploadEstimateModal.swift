@@ -19,7 +19,6 @@ struct UploadEstimateModal: View {
     var body: some View {
         VStack(spacing: 18) {
             header
-            EmptyView().task { bookVM.refreshKeyState() }
             if let est = bookVM.pendingEstimate {
                 ScrollView {
                     VStack(spacing: 18) {
@@ -45,6 +44,7 @@ struct UploadEstimateModal: View {
         .padding(28)
         .frame(width: 520, height: 640)
         .voqoraSurface(.floating, in: Rectangle())
+        .onAppear { bookVM.refreshKeyState() }
     }
 
     private var header: some View {

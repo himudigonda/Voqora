@@ -441,6 +441,24 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertTrue(book.displayStatus.isProcessing)
     }
 
+    func test_uploadedButUnstartedBook_isNotShownAsProcessing() {
+        let book = makeBook(status: "ready", pageDone: 0, pageTotal: 11)
+        XCTAssertEqual(book.displayStatus, .notStarted)
+        XCTAssertFalse(book.displayStatus.isProcessing, "an unstarted upload must not look queued or keep polling")
+    }
+
+    func test_concatenating_isFinishing_notStillNarrating() {
+        let book = makeBook(status: "concatenating", pageDone: 11, pageTotal: 11)
+        XCTAssertEqual(book.displayStatus, .finishing)
+        XCTAssertTrue(book.displayStatus.isProcessing)
+
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        viewModel.applyPhase(bookID: "b1", phase: "concatenating", page: 11, total: 11)
+        XCTAssertEqual(viewModel.processingState["b1"], .finishing)
+        viewModel.applyStatus(bookID: "b2", status: "concatenating", pageDone: 11, pageTotal: 11, error: nil)
+        XCTAssertEqual(viewModel.processingState["b2"], .finishing)
+    }
+
     func test_applyStatus_sectioning_setsSectioningState() {
         let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
         viewModel.applyStatus(bookID: "b1", status: "sectioning", pageDone: 2, pageTotal: 5, error: nil)

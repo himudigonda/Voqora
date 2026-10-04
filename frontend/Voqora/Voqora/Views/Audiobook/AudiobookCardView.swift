@@ -35,6 +35,8 @@ struct AudiobookCardView: View {
              let .sectioning(p, t):
             guard t > 0 else { return 0 }
             return Double(p) / Double(t)
+        case .finishing:
+            return 1
         default:
             return book.progressFraction
         }
@@ -216,7 +218,7 @@ struct AudiobookCardView: View {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.4))
                 ProgressView().tint(accentColor).scaleEffect(0.8)
             }
-        case .extracting, .cleaning, .generating, .sectioning:
+        case .extracting, .cleaning, .generating, .sectioning, .finishing:
             ZStack {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.35))
                 progressRing
@@ -230,7 +232,7 @@ struct AudiobookCardView: View {
             cornerBadge(systemName: "dollarsign.circle.fill", color: Palette.warning)
         case .failed:
             cornerBadge(systemName: "exclamationmark.triangle.fill", color: Palette.danger)
-        case .cancelled:
+        case .cancelled, .notStarted:
             cornerBadge(systemName: "stop.circle.fill", color: Palette.textSecondary)
         case .ready:
             EmptyView()
@@ -322,7 +324,7 @@ struct AudiobookCardView: View {
         switch status {
         case .failed: Palette.danger
         case .needsKey: Palette.warning
-        case .cancelled: Palette.textSecondary
+        case .cancelled, .notStarted: Palette.textSecondary
         default: accentColor
         }
     }

@@ -8,7 +8,8 @@ enum KeychainKey: String, CaseIterable {
 }
 
 enum KeychainService {
-    static func set(_ value: String, for key: KeychainKey) {
+    @discardableResult
+    static func set(_ value: String, for key: KeychainKey) -> Bool {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -19,7 +20,7 @@ enum KeychainService {
         var addQuery = query
         addQuery[kSecValueData as String] = data
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(addQuery as CFDictionary, nil)
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     static func get(_ key: KeychainKey) -> String? {

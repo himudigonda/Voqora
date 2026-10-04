@@ -57,7 +57,8 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var displayStatus: ProcessingStatus {
         switch status {
-        case "ready", "queued": .queued
+        case "ready": .notStarted
+        case "queued": .queued
         case "extracting":
             .extracting(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "cleaning":
@@ -67,7 +68,7 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case "tts":
             .generating(page: phaseProgress.pageDone, total: phaseProgress.pageTotal)
         case "concatenating":
-            .generating(page: phaseProgress.pageTotal, total: phaseProgress.pageTotal)
+            .finishing
         case "done":
             .ready
         case "needs_key":
@@ -227,11 +228,13 @@ struct AudiobookEstimateResponse: Codable, Hashable {
 }
 
 enum ProcessingStatus: Hashable {
+    case notStarted
     case queued
     case extracting(page: Int, total: Int)
     case cleaning(page: Int, total: Int)
     case sectioning(page: Int, total: Int)
     case generating(page: Int, total: Int)
+    case finishing
     case ready
     case needsKey
     case needsCostApproval(requiredCap: Double?)
@@ -240,7 +243,7 @@ enum ProcessingStatus: Hashable {
 
     var isProcessing: Bool {
         switch self {
-        case .extracting, .cleaning, .sectioning, .generating, .queued: true
+        case .extracting, .cleaning, .sectioning, .generating, .finishing, .queued: true
         default: false
         }
     }
@@ -254,11 +257,13 @@ enum ProcessingStatus: Hashable {
 
     var caption: String {
         switch self {
+        case .notStarted: "Not started"
         case .queued: "Waiting…"
         case let .extracting(p, t): "Reading page \(p) of \(t)"
         case let .cleaning(p, t): "Cleaning page \(p) of \(t)"
         case .sectioning: "Finding chapters…"
         case let .generating(p, t): "Narrating page \(p) of \(t)"
+        case .finishing: "Finishing up…"
         case .ready: "Ready"
         case .needsKey: "Needs Gemini API key"
         case .needsCostApproval: "Needs approval"
