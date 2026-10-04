@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.4] - 2026-10-04
 
 ### Player and transcript
 
@@ -78,6 +78,9 @@
 - A book that is finishing up read "Narrating page 11 of 11" at 100%; it now
   reads "Finishing up…". An uploaded book that was never started reads "Not
   started" instead of "Waiting…" and no longer polls for progress.
+- After an update, the Clean Up with Gemini switch could stay hidden until
+  macOS granted the new build access to the saved key. Voqora now checks
+  that a key is saved without reading it, and reads it only when needed.
 
 ### Player and library
 
