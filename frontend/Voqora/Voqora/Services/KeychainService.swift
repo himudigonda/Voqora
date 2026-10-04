@@ -47,6 +47,12 @@ enum KeychainService {
     }
 
     static func has(_ key: KeychainKey) -> Bool {
-        get(key) != nil
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: key.rawValue,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
     }
 }

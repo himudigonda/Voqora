@@ -118,10 +118,11 @@ final class AudiobookViewModel: ObservableObject {
         follower = TranscriptFollower(audio: audio)
         keyVerified = false
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let exists = KeychainService.has(.geminiAPIKey)
             let stored = KeychainService.get(.geminiAPIKey)
             DispatchQueue.main.async {
                 guard let self else { return }
-                self.keyVerified = stored != nil
+                self.keyVerified = exists
                 if let stored {
                     self.draftKey = stored
                 }
