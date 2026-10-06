@@ -35,10 +35,10 @@ not launch a Mac app host.
 
 | Path | Responsibility |
 | --- | --- |
-| `Voqora/Views/` | Reading, audiobook, onboarding, and Preferences UI. |
-| `Voqora/Services/` | Local-server lifecycle, streaming audio, history, telemetry, and system integration. |
-| `Voqora/Utilities/Shortcuts.swift` | Default global shortcuts and their registrations. |
+| `Voqora/Voqora/Views/` | Reading, audiobook, onboarding, and Preferences UI. |
+| `Voqora/Voqora/Services/` | Local-server lifecycle, streaming audio, history, telemetry, and system integration. |
+| `Voqora/Voqora/Utilities/Shortcuts.swift` | Default global shortcuts and their registrations. |
 | `VoqoraTests/` | Native unit and service behavior. |
 
 Read the repository [architecture guide](../docs/architecture.md) before
-changing the local-server boundary or a public data-handling claim.
+changing the local-server boundary.

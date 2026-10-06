@@ -7,6 +7,13 @@ turning long documents into resumable audiobooks. It is built for the moment whe
 you still need to get through the material, but do not want to keep staring at
 it.
 
+- **Private, on-device speech.** Your text is turned into speech on your Mac,
+  never on a server, and it works offline.
+- **Unlimited.** No character quotas, no credits, no subscription.
+- **Smarter audiobooks with Gemini.** Bring your own Gemini API key to clean up
+  messy PDFs and scans before narration.
+- **Free.**
+
 Previously published as SuperSay. Its archival product history lives in the
 [legacy post](https://himudigonda.me/blog/supersay); this repository documents
 Voqora as it exists today.
@@ -57,7 +64,7 @@ a screen.
 | Follow along | A transcript that highlights the sentence being read. Click any sentence to jump there. |
 | Find your place in a long book | Sections, scrub previews with the chapter name, and a sleep timer that stops at the end of a section. |
 | Tune the experience | Voice, speed, volume, The Vault (local history), and WAV export. |
-| Keep the core speech path on your Mac | A bundled local speech engine for Apple silicon. |
+| Listen as much as you want | An on-device speech engine for Apple silicon, with no usage limits. |
 
 ### Shortcuts
 
@@ -80,24 +87,9 @@ flowchart LR
     E["Optional document cleanup with your Gemini key"] -. only when chosen .-> B
 ```
 
-The speech engine runs locally. Optional document cleanup is separate: if you
-provide a Gemini API key and choose that flow, the relevant document material
-is sent to Gemini for that operation. See [PRIVACY.md](PRIVACY.md) for the
-complete product boundary.
-
-## Product boundary, plainly stated
-
-| What you do | What Voqora does | What it does not do by default |
-| --- | --- | --- |
-| Speak selected text | Sends it to the bundled local speech service on your Mac. | Upload it to a hosted text-to-speech API. |
-| Add a PDF, TXT, DOCX, or Markdown file | Extracts, narrates, and stores audiobook progress locally. | Send the document to Voqora's servers. |
-| Clean a difficult document | Uses Gemini only after you provide a key and explicitly choose that operation. | Send document material to Gemini in the background. |
-| Use Voqora | Collects a name and email once during onboarding and sends a tightly limited set of product metrics. | Send selected text, file contents, audio, filenames, or API keys. |
-| Get the latest build | Opens a SHA-256-verified DMG from Voqora's official GitHub release in Finder. | Replace the app automatically, alter Gatekeeper settings, or upload your reading activity or personal files. |
-
-Installations, download clicks, product events, and identified contacts are
-measured as different things, because a useful product dashboard should
-describe reality rather than manufacture a flattering audience number.
+Speech runs entirely on your Mac, so it is private, unlimited, and works
+offline. Audiobooks work out of the box; add your own Gemini API key for
+cleaner text from messy PDFs and scanned pages.
 
 ## Built as a native Mac utility
 
@@ -115,7 +107,7 @@ explains the decisions behind them.
 
 ## Measured on the launch machine
 
-On an Apple M2 Pro with 16 GB memory, a fresh local benchmark run on 2026-07-30
+On an Apple M2 Pro with 16 GB memory, a local benchmark run on 2026-07-30
 measured **458 ms** to first audio for a mixed passage and **2.7x real-time**
 generation. Medium-passage scenarios measured **2.8–2.9x real time**. These
 are engine measurements after normal warm-up, not a universal
@@ -145,7 +137,7 @@ installed copy of Voqora. Do not use it on software you do not trust.
 
 ## Build from source
 
-Requirements: macOS 14+, Xcode, Python 3.11+, and
+Requirements: macOS 14+, Xcode 26, SwiftLint, SwiftFormat, Python 3.11+, and
 [uv](https://docs.astral.sh/uv/).
 
 ```bash
@@ -162,7 +154,7 @@ to the repository.
 ```bash
 make verify       # lint + fast backend tests; does not launch a macOS test host
 make test-swift   # explicit, single serial macOS test host
-make test-ci      # backend + the explicit serial macOS test target
+make test-ci      # backend + release-script guards + the serial macOS test target
 ```
 
 ## Documentation
@@ -173,7 +165,7 @@ make test-ci      # backend + the explicit serial macOS test target
 - [Contributing](docs/CONTRIBUTING.md)
 - [Release process](docs/release.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Data handling](PRIVACY.md)
+- [Privacy policy](PRIVACY.md)
 - [Commercial licensing](COMMERCIAL-LICENSE.md)
 
 ## Release integrity

@@ -13,6 +13,5 @@ requests are welcome.
 | [Release process](release.md) | Build, inspect, publish, and verify a versioned DMG. |
 | [Roadmap](ROADMAP.md) | See what has shipped and what comes next. |
 
-The source of truth for external data handling is [PRIVACY.md](../PRIVACY.md).
 The source of truth for distribution terms is [LICENSE](../LICENSE) and
 [COMMERCIAL-LICENSE.md](../COMMERCIAL-LICENSE.md).

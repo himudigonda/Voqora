@@ -9,10 +9,10 @@ multiple app hosts and consume a lot of CPU. Voqora makes that cost explicit.
 | Change | Command | What it does |
 | --- | --- | --- |
 | Python or API change | `make test` | Fast backend tests only. No Mac app host. |
-| Formatting or static checks | `make lint` | Ruff, Black, and SwiftLint when installed. |
+| Formatting or static checks | `make lint` | Ruff, Black, SwiftLint, and SwiftFormat. Fails if the Swift tools are not installed. |
 | Routine pre-commit check | `make verify` | Lint plus fast backend tests. No Mac app host. |
 | Swift UI or service change | `make test-swift` | One serial macOS test host. |
-| Deliberate full local proof | `make test-ci` | Backend tests, then one serial macOS test host. |
+| Deliberate full local proof | `make test-ci` | Backend tests, release-script guards, then one serial macOS test host. |
 
 ## Why the Swift target is explicit
 
@@ -44,7 +44,7 @@ machine is intentionally reserved for a faster build.
 
 ## Current validation baseline
 
-The current local baseline is 184 backend tests and 84 Swift tests. The Swift
+The current local baseline is 380 backend tests and 272 Swift tests. The Swift
 receipt came from one serial host with four Xcode build jobs, after the
 first-use, backend-lifecycle, updater, audiobook-layout, and telemetry
 regressions were added. Re-run only the smallest relevant command while

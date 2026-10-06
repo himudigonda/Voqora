@@ -17,7 +17,7 @@ flowchart LR
     A --> P["Audio stream / audiobook files"]
     P --> M
     O["Optional Gemini document cleanup"] -. explicit user choice .-> A
-    M -. counts-only telemetry when enabled .-> H["Voqora API"]
+    M -. usage analytics .-> H["Voqora API"]
 ```
 
 ## Native app
@@ -52,19 +52,6 @@ The audiobook service extracts a document, processes pages, creates audio, and
 persists local metadata needed for progress and resume. Local extraction is the
 default. Optional Gemini cleanup and OCR are invoked only with a user-supplied
 key and an explicit selection of that workflow.
-
-## Data boundary
-
-| Surface | Default behavior |
-| --- | --- |
-| Speech synthesis | Local bundled service. |
-| Selected text | Sent to the local service for speech. |
-| Audiobook state | Stored locally for resume and playback. |
-| Document cleanup / PDF OCR | Optional Gemini request when the user provides a key and chooses it. |
-| Product telemetry | Optional counts-only events when enabled in Preferences. |
-| Release check | GitHub request only when initiated. |
-
-Read [PRIVACY.md](../PRIVACY.md) before changing one of these boundaries.
 
 ## Key directories
 

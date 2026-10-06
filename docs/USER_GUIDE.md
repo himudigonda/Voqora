@@ -12,9 +12,7 @@ drag Voqora to Applications, and open it.
 
 The current build is not Apple-notarized. If macOS blocks the first launch,
 open **System Settings -> Privacy & Security**, choose **Open Anyway** for
-Voqora, then open it again. The DMG also includes an
-scoped recovery-command fallback that only targets the installed
-`/Applications/Voqora.app`. If macOS does not show that option or repeats the
+Voqora, then open it again. If macOS does not show that option or repeats the
 warning, and you downloaded Voqora from the official release page, run this
 once in Terminal:
 
@@ -117,14 +115,15 @@ the Library to retry those pages.
 
 **The Vault** keeps a local history of spoken selections. Search it, star the
 passages you want to keep, and play any of them again. Use
-`Command + Shift + M` to save the latest clip as a WAV file.
+`Command + Shift + M` to save the latest clip to your Desktop as a WAV file.
 
 ## Updates
 
-Voqora checks its GitHub releases when you open **About**, and you can choose
-**Check for Updates** there or in Preferences. When a newer version exists,
-Voqora downloads the verified DMG and opens it in Finder so you can drag the new
-version to Applications. It never replaces the app on its own.
+Voqora checks for a new release when it launches and notifies you when one is
+available. You can also choose **Check for Updates** in About or Preferences.
+Choose **Download Latest Version** to download the verified DMG and open it in
+Finder, then drag the new version to Applications. Voqora never replaces itself
+automatically.
 
 ## Troubleshooting
 
@@ -132,7 +131,7 @@ version to Applications. It never replaces the app on its own.
 
 The native app starts a bundled local speech service on first launch. Give it a
 moment, then reopen Voqora if it remains unavailable. If you are building from
-source, run `make backend` before `make run` so the bundled server zip exists.
+source, `make run` builds the bundled server before the app.
 
 ### The shortcut does nothing
 

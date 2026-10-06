@@ -36,7 +36,7 @@ Before building:
 - Run `make backend` after any backend/version change. It creates
   `VoqoraServer.zip` plus its deterministic detached manifest; the manifest
   must verify the exact archive in both the source tree and mounted DMG.
-- Confirm `README.md`, `PRIVACY.md`, and the changelog agree about the release.
+- Confirm `README.md` and the changelog agree about the release.
 - Ensure the working tree is clean and `gh auth status` succeeds.
 - Run `scripts/validate_release.sh X.Y.Z` before any archive. It verifies the
   Xcode marketing/build versions and both backend version declarations, so a
@@ -109,7 +109,7 @@ that ordered publish completes.
 
 ## 6. Publish
 
-### Manual early-access channel (the 1.2.3 release path)
+### Manual early-access channel
 
 Do **not** run `make appcast` for an unsigned early-access build. Its explicit
 manual channel refuses to ship if the versioned DMG is already named in the
@@ -148,8 +148,8 @@ come from the matching changelog section.
 - Open the GitHub release page in a logged-out browser session and confirm the
   exact DMG asset can be downloaded before checking the appcast.
 - Download the DMG and confirm its SHA-256 matches the build receipt.
-- In the early-access channel, choose **Preferences → Download latest
-  installer**. Confirm it opens only a digest-verified DMG in Finder and that
+- In the early-access channel, choose **Preferences → Download Latest
+  Version**. Confirm it opens only a digest-verified DMG in Finder and that
   no app is replaced automatically.
 - In the notarized Sparkle channel, separately install an older build and
   verify the signed appcast offers the newer release.
@@ -162,7 +162,7 @@ come from the matching changelog section.
 
 ### Reviewed third-party test-warning exceptions
 
-The backend test configuration treats warnings as errors. Version 1.2.3 has
+The backend test configuration treats warnings as errors. The current release has
 only these narrowly scoped dependency exceptions, both owned by the release
 maintainer and required to be removed when the named upstream dependency ships
 the compatible fix:

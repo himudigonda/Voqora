@@ -7,7 +7,8 @@ a change fits. Keep changes small, product-led, and easy to verify.
 
 ## Local setup
 
-You need an Apple-silicon Mac on macOS 14+, Xcode, Python 3.11+, and `uv`.
+You need an Apple-silicon Mac on macOS 14+, Xcode 26, Python 3.11+, `uv`, and
+`brew install swiftlint swiftformat`.
 
 ```bash
 git clone https://github.com/himudigonda/Voqora.git
@@ -28,7 +29,7 @@ checksums. Those assets are intentionally ignored by Git.
 | Deterministic Python behavior | `backend/tests/` |
 | Swift services or view models | `frontend/Voqora/VoqoraTests/` |
 | DMG, backend packaging, or shipping | `scripts/` and `docs/release.md` |
-| Public claims | `README.md`, `PRIVACY.md`, `CHANGELOG.md`, and relevant docs together |
+| Public claims | `README.md`, `CHANGELOG.md`, and relevant docs together |
 
 ## Before a pull request
 
@@ -37,7 +38,7 @@ checksums. Those assets are intentionally ignored by Git.
 3. Run `make verify` for normal work.
 4. Run `make test-swift` only when your change affects Swift behavior. It
    launches one serial macOS test host by design.
-5. Update documentation when install behavior, a shortcut, data handling, or a
+5. Update documentation when install behavior, a shortcut, or a
    release contract changes.
 
 Do not commit model files, generated backend zips, DMGs, archives, logs, local

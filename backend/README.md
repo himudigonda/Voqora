@@ -1,7 +1,7 @@
 # Voqora local speech engine
 
 This is the FastAPI service bundled inside the Voqora Mac app. It owns local
-speech synthesis, progressive audio streaming, and PDF-to-audiobook work. It is
+speech synthesis, progressive audio streaming, and document-to-audiobook work. It is
 not a hosted Voqora API.
 
 ## Responsibilities
@@ -10,7 +10,7 @@ not a hosted Voqora API.
 - Load Kokoro ONNX and its voice data on the Mac.
 - Stream generated audio back to the native client.
 - Extract and persist audiobook work so long documents can resume.
-- Use Gemini only for the optional PDF cleanup and OCR flow.
+- Use Gemini only for optional document cleanup and scanned-PDF OCR.
 
 ## Local development
 
