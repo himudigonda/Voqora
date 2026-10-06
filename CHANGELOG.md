@@ -1,5 +1,50 @@
 # Changelog
 
+## [1.2.5] - 2026-10-06
+
+### New
+
+- Share Usage Analytics switch in Preferences -> General.
+- Privacy Policy link in setup and About.
+
+### Fixed
+
+- Adding a PDF while another book was being narrated could reject a valid
+  PDF as unreadable, or fail the book in progress.
+- A plain text file with no blank lines became a single huge page, which
+  could stall narration for hours and use many gigabytes of memory. Long
+  paragraphs are now split into normal pages.
+- Text with many unmatched square brackets could freeze the speech engine,
+  and the frozen book resumed and froze it again after every restart.
+- Restarting Voqora during narration of a Gemini-cleaned book replaced its
+  chapters with a single section.
+- Speech volume was applied twice, so 50% sounded like 25%.
+- The "Voqora is speaking" notification showed the selected text.
+- Closing the window during first launch left the shortcut unable to speak
+  until the window was reopened.
+- Books longer than the 24-hour limit failed only after narration finished;
+  narration now stops with a clear message, and also stops before the disk
+  fills up.
+- Deleting a book while its chapters were being detected could leave its
+  files behind.
+- Voqora checks GitHub for updates at most every six hours at launch, and
+  backs off when the analytics server is unavailable.
+- Downloaded audiobook audio is cached for the two most recent books instead
+  of every book ever played.
+- The Vault keeps your starred entries plus the 500 most recent, and a damaged
+  history file is set aside instead of being overwritten.
+- A failed text grab no longer leaves the selection on your clipboard when
+  the app copies late.
+- Error messages show your current Speak Selection shortcut.
+
+### Security
+
+- The in-app installer only accepts DMGs from Voqora's own GitHub releases.
+- Stricter limits on Word documents and upload sizes, checked before the file
+  is read.
+- The bundled speech engine's integrity cache detects files rewritten in
+  place, and a stuck engine is force-stopped on restart.
+
 ## [1.2.4] - 2026-10-04
 
 ### Player and transcript
@@ -609,6 +654,12 @@ newer.
 - Use a clear, manual DMG installation and update flow while the project is
   validating product-market fit without Apple notarization.
 
+[1.2.5]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.5
+[1.2.4]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.4
+[1.2.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.3
+[1.2.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.2
+[1.2.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.1
+[1.2.0]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.0
 [1.1.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.3
 [1.1.2]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.2
 [1.1.1]: https://github.com/himudigonda/Voqora/releases/tag/v1.1.1
