@@ -74,12 +74,12 @@ _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 # as an accidental side effect of the HTML-tag rule.
 _AUTOLINK_RE = re.compile(r"<(?:https?://|mailto:)[^<>\s]*>")
 
-_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
-_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_REF_LINK_RE = re.compile(r"\[([^\]]+)\]\[[^\]]*\]")
+_IMAGE_RE = re.compile(r"!\[([^\[\]]*)\]\((?:[^()]|\([^()]*\))*\)")
+_LINK_RE = re.compile(r"\[([^\[\]]*)\]\((?:[^()]|\([^()]*\))*\)")
+_REF_LINK_RE = re.compile(r"\[([^\[\]]+)\]\[[^\[\]]*\]")
 _LINK_DEF_LINE_RE = re.compile(r"^ {0,3}\[[^\]^]+\]:\s*\S+.*$")
 _FOOTNOTE_DEF_LINE_RE = re.compile(r"^ {0,3}\[\^[^\]]+\]:\s*(.*)$")
-_FOOTNOTE_REF_RE = re.compile(r"\[\^[^\]]+\]")
+_FOOTNOTE_REF_RE = re.compile(r"\[\^[^\[\]]+\]")
 
 # Trailing "#"s are valid CommonMark ATX closing syntax. "\s*" (not "\s+")
 # after the opening run so "#NoSpaceHeading" — which a phonemizer would read

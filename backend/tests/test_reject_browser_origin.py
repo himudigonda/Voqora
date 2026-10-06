@@ -84,3 +84,24 @@ def test_post_speak_with_origin_header_is_rejected_before_reaching_the_route(
         headers={"Origin": "https://evil.example.com"},
     )
     assert response.status_code == 403
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_non_ascii_ipc_token_is_rejected_not_crashed(mock_ensure) -> None:
+    response = TestClient(app).get(
+        "/health", headers={"X-Voqora-IPC-Token": "tökén".encode("latin-1")}
+    )
+    assert response.status_code == 401
+
+
+def test_oversized_declared_body_is_rejected_before_parsing() -> None:
+    limit = (settings.MAX_AUDIOBOOK_UPLOAD_MB + 1) * 1024 * 1024
+    response = _client().post(
+        "/audiobook",
+        content=b"x",
+        headers={
+            "Content-Length": str(limit + 1),
+            "Content-Type": "multipart/form-data; boundary=x",
+        },
+    )
+    assert response.status_code == 413

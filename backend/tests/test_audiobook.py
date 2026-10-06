@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pytest
 
+from app.core.config import settings
 from app.services.audiobook_service import (
     SAMPLE_RATE,
     WAV_HEADER_SIZE,
@@ -3229,3 +3230,171 @@ async def test_no_clean_branch_ever_writes_raw_markdown(branch, monkeypatch):
         assert "The one line I have to know cold" in result
         assert "fleet manager" in result
         assert "Front matter that must not be narrated" not in result
+
+
+@pytest.mark.parametrize("cap", ["NaN", "Infinity", -1, 10_001])
+def test_cost_approval_route_rejects_non_finite_or_out_of_range_caps(cap):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    bid = AudiobookStore.create_book("Cap.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Cap.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["status"] = "needs_cost_approval"
+    meta["budget"] = AudiobookService._new_budget(0.10)
+    AudiobookStore.write_meta(bid, meta)
+    response = TestClient(app).post(
+        f"/audiobook/{bid}/cost-approval",
+        content=f'{{"approve": true, "new_cap_usd": {cap if not isinstance(cap, str) else cap}}}',
+        headers={"Content-Type": "application/json", "X-Gemini-Api-Key": "k"},
+    )
+    assert response.status_code == 422
+    assert AudiobookStore.read_meta(bid)["budget"]["cap_usd"] == 0.10
+
+
+@pytest.mark.asyncio
+async def test_restarting_a_book_keeps_its_gemini_spend(monkeypatch):
+    bid = AudiobookStore.create_book("Spent.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Spent.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    budget = AudiobookService._new_budget(5.0)
+    budget["ledger"] = [{"id": "r1", "state": "reconciled", "actual_usd": 4.5}]
+    meta["budget"] = AudiobookService._budget_summary(budget)
+    AudiobookStore.write_meta(bid, meta)
+    AudiobookService.initialize()
+    monkeypatch.setattr(AudiobookService._queue, "put", lambda _b: asyncio.sleep(0))
+    try:
+        assert await AudiobookService.start(bid, "", uses_gemini_cleanup=False)
+    finally:
+        AudiobookService._scheduled_book_ids.discard(bid)
+    after = AudiobookStore.read_meta(bid)["budget"]
+    assert after["actual_usd"] == 4.5
+    assert after["available_usd"] == 0.5
+
+
+@pytest.mark.asyncio
+async def test_resumed_book_keeps_detected_chapters_and_never_calls_gemini_keyless(
+    monkeypatch,
+):
+    from app.services import gemini_cleaner as _gc
+
+    detect = AsyncMock(return_value=[])
+    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect)
+
+    bid = AudiobookStore.create_book("Kept.md")
+    meta = AudiobookStore.initial_meta(
+        bid, "Kept.md", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    meta["uses_gemini_cleanup"] = True
+    chapters = [
+        {"title": "One", "start_page": 1, "end_page": 1, "start_time": 0.0},
+        {"title": "Two", "start_page": 2, "end_page": 3, "start_time": 0.0},
+    ]
+    meta["sections"] = chapters
+    AudiobookStore.write_meta(bid, meta)
+
+    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+    assert AudiobookStore.read_meta(bid)["sections"] == chapters
+
+    fresh = AudiobookStore.create_book("Fresh.md")
+    fresh_meta = AudiobookStore.initial_meta(
+        fresh, "Fresh.md", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    fresh_meta["file_ext"] = "md"
+    fresh_meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(fresh, fresh_meta)
+    await AudiobookService._phase_section(fresh, "", AudiobookStore.read_meta(fresh))
+    detect.assert_not_called()
+    assert len(AudiobookStore.read_meta(fresh)["sections"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_of_the_running_book_keeps_its_cancel_flag(monkeypatch):
+    bid = AudiobookStore.create_book("Busy.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Busy.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    monkeypatch.setattr(AudiobookService, "_current_book_id", bid)
+    monkeypatch.setattr(
+        AudiobookService, "is_processing", classmethod(lambda c, b: True)
+    )
+    monkeypatch.setattr(asyncio, "sleep", AsyncMock())
+    try:
+        assert await AudiobookService.request_delete(bid)
+        with pytest.raises(AudiobookCancelled):
+            AudiobookService._check_cancel(bid)
+    finally:
+        AudiobookService._cancel_flags.pop(bid, None)
+
+
+def test_narration_limits_stop_before_the_wav_header_overflows(monkeypatch):
+    from app.services.audiobook_service import AudiobookLimitError, _safe_failure
+
+    monkeypatch.setattr(settings, "MAX_AUDIOBOOK_DURATION_SECONDS", 10**9)
+    with pytest.raises(AudiobookLimitError) as too_long:
+        AudiobookService._enforce_narration_limits(0xFFFFFFFF)
+    assert _safe_failure(too_long.value)[0] == "duration_limit"
+
+    monkeypatch.setattr(settings, "MIN_FREE_DISK_BYTES", 1 << 62)
+    with pytest.raises(AudiobookLimitError) as full:
+        AudiobookService._enforce_narration_limits(0)
+    assert _safe_failure(full.value)[0] == "storage_full"
+
+
+@pytest.mark.asyncio
+async def test_fallback_chapters_are_redetected_once_a_key_is_available(monkeypatch):
+    from app.services import gemini_cleaner as _gc
+
+    monkeypatch.setattr(
+        _gc.GeminiCleaner,
+        "detect_sections",
+        AsyncMock(return_value=[{"title": "Real", "start_page": 1, "end_page": 2}]),
+    )
+    bid = AudiobookStore.create_book("Later.md")
+    meta = AudiobookStore.initial_meta(
+        bid, "Later.md", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "md"
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+
+    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+    assert AudiobookStore.read_meta(bid)["sections_source"] == "fallback"
+
+    await AudiobookService._phase_section(bid, "key", AudiobookStore.read_meta(bid))
+    after = AudiobookStore.read_meta(bid)
+    assert after["sections_source"] == "detected"
+    assert [s["title"] for s in after["sections"]] == ["Real"]
+
+
+@pytest.mark.asyncio
+async def test_rerun_of_an_imported_text_book_keeps_its_original_pages(monkeypatch):
+    from app.services.text_extractor import TextExtractor
+
+    bid = AudiobookStore.create_book("Old.txt")
+    meta = AudiobookStore.initial_meta(
+        bid, "Old.txt", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["file_ext"] = "txt"
+    AudiobookStore.write_meta(bid, meta)
+    source = AudiobookStore.source_file_path(bid, "txt")
+    os.makedirs(os.path.dirname(source), exist_ok=True)
+    with open(source, "w", encoding="utf-8") as f:
+        f.write("\n".join(["word " * 20] * 200))
+    raw = AudiobookStore.page_raw_path(bid, 1)
+    os.makedirs(os.path.dirname(raw), exist_ok=True)
+    with open(raw, "w", encoding="utf-8") as f:
+        f.write("the whole old page")
+    monkeypatch.setattr(TextExtractor, "render_cover", classmethod(lambda c, b: None))
+
+    await AudiobookService._phase_extract(bid)
+
+    assert AudiobookStore.read_meta(bid)["page_count"] == 1
+    assert not os.path.exists(AudiobookStore.page_raw_path(bid, 2))

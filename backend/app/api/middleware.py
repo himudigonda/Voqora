@@ -12,7 +12,7 @@ import time
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import JSONResponse, PlainTextResponse
 
 from app.core.config import settings
 from app.core.logging import get_logger, set_correlation_id
@@ -41,9 +41,29 @@ class IPCAuthenticationMiddleware(BaseHTTPMiddleware):
             return PlainTextResponse("Local backend unavailable.", status_code=503)
 
         provided = request.headers.get(self._HEADER, "")
-        if not provided or not hmac.compare_digest(provided, expected):
+        if not provided or not hmac.compare_digest(
+            provided.encode(), expected.encode()
+        ):
             return PlainTextResponse("Unauthorized local client.", status_code=401)
+        if self._declared_length(request) > self._max_body_bytes():
+            return JSONResponse(
+                {
+                    "detail": f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit."
+                },
+                status_code=413,
+            )
         return await call_next(request)
+
+    @staticmethod
+    def _max_body_bytes() -> int:
+        return (settings.MAX_AUDIOBOOK_UPLOAD_MB + 1) * 1024 * 1024
+
+    @staticmethod
+    def _declared_length(request: Request) -> int:
+        try:
+            return int(request.headers.get("content-length", "0"))
+        except ValueError:
+            return 0
 
 
 class RejectBrowserOriginMiddleware(BaseHTTPMiddleware):

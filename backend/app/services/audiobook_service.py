@@ -18,8 +18,10 @@ import calendar
 import concurrent.futures
 import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import struct
 import time
 import uuid
@@ -90,8 +92,20 @@ class GeminiCostApprovalRequired(Exception):
         super().__init__("Gemini Standard-tier approval is required.")
 
 
+class AudiobookLimitError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+_MAX_WAV_PCM_BYTES = 0xFFFFFFFF - 36
+
+
 def _safe_failure(error: Exception) -> tuple[str, str]:
     """Map internal failures to stable, non-content-bearing UI state."""
+    if isinstance(error, AudiobookLimitError):
+        return error.code, error.message
     if isinstance(error, GeminiAuthError):
         return (
             "gemini_auth_failed",
@@ -321,7 +335,11 @@ class AudiobookService:
         approval = dict((meta.get("budget") or {}).get("cost_approval") or {})
         required = float(approval.get("required_cap_usd") or 0.0)
         if approve:
-            if new_cap_usd is None or new_cap_usd + 1e-9 < required:
+            if (
+                new_cap_usd is None
+                or not math.isfinite(new_cap_usd)
+                or new_cap_usd + 1e-9 < required
+            ):
                 raise ValueError(
                     "The approved cap must cover the displayed Standard request."
                 )
@@ -413,6 +431,7 @@ class AudiobookService:
                     )
             finally:
                 cls._current_book_id = None
+                cls._cancel_flags.pop(book_id, None)
                 cls._job_keys.pop(book_id, None)
                 cls._scheduled_book_ids.discard(book_id)
                 cls._queue.task_done()
@@ -460,12 +479,17 @@ class AudiobookService:
         cls._job_keys[book_id] = api_key
         cls._cancel_flags.pop(book_id, None)
         try:
+            existing_budget = (AudiobookStore.read_meta(book_id) or {}).get("budget")
             updated = await AudiobookStore.update_meta(
                 book_id,
                 uses_gemini_cleanup=uses_gemini_cleanup,
                 status="queued",
                 error=None,
-                budget=cls._new_budget(_settings.MAX_GEMINI_COST_USD_PER_BOOK),
+                budget=(
+                    cls._budget_summary(dict(existing_budget))
+                    if existing_budget
+                    else cls._new_budget(_settings.MAX_GEMINI_COST_USD_PER_BOOK)
+                ),
             )
             if not updated:
                 cls._scheduled_book_ids.discard(book_id)
@@ -520,7 +544,8 @@ class AudiobookService:
                     break
                 await asyncio.sleep(0.1)
         AudiobookStore.delete_book(book_id)
-        cls._cancel_flags.pop(book_id, None)
+        if cls._current_book_id != book_id:
+            cls._cancel_flags.pop(book_id, None)
         cls._job_keys.pop(book_id, None)
         return True
 
@@ -728,9 +753,10 @@ class AudiobookService:
                 failed_pages=final_meta.get("failed_pages") or [],
             )
         except AudiobookCancelled:
-            await AudiobookStore.update_meta(
-                book_id, status="cancelled", error="Cancelled by user."
-            )
+            if AudiobookStore.read_meta(book_id) is not None:
+                await AudiobookStore.update_meta(
+                    book_id, status="cancelled", error="Cancelled by user."
+                )
             cls._emit(book_id, "cancelled", error="Cancelled by user.")
             log.info("audiobook.cancelled", extra={"book_id": book_id})
         except GeminiAuthError:
@@ -808,9 +834,17 @@ class AudiobookService:
                 cls._executor, PDFExtractor.render_cover, book_id
             )
         else:
-            page_count = await loop.run_in_executor(
-                cls._executor, TextExtractor.page_count, source_path
+            stored_count = int(
+                (AudiobookStore.read_meta(book_id) or {}).get("page_count") or 0
             )
+            if stored_count and os.path.exists(
+                AudiobookStore.page_raw_path(book_id, 1)
+            ):
+                page_count = stored_count
+            else:
+                page_count = await loop.run_in_executor(
+                    cls._executor, TextExtractor.page_count, source_path
+                )
             await loop.run_in_executor(
                 cls._executor, TextExtractor.render_cover, book_id
             )
@@ -892,6 +926,9 @@ class AudiobookService:
     async def _phase_section(
         cls, book_id: str, api_key: str, meta: dict[str, Any]
     ) -> None:
+        if meta.get("sections") and meta.get("sections_source") != "fallback":
+            cls._emit(book_id, "phase_finished", phase="sectioning")
+            return
         await AudiobookStore.update_meta(book_id, status="sectioning")
         cls._emit(book_id, "phase_started", phase="sectioning")
 
@@ -949,7 +986,7 @@ class AudiobookService:
                 source_path,
                 page_count,
             )
-        elif bool(meta.get("uses_gemini_cleanup", True)):
+        elif bool(meta.get("uses_gemini_cleanup", True)) and api_key:
             # Path C: ask Gemini.
             cleaned_pages: list[str] = []
             for n in range(1, page_count + 1):
@@ -1026,7 +1063,9 @@ class AudiobookService:
                 )
                 sections = []
 
+        sections_source = "detected"
         if not sections:
+            sections_source = "fallback"
             sections = [
                 {
                     "title": meta.get("title") or "Audiobook",
@@ -1050,6 +1089,7 @@ class AudiobookService:
         # was rendered literally, asterisks and all, in the Sections tab.
         await AudiobookStore.update_meta(
             book_id,
+            sections_source=sections_source,
             sections=[
                 {
                     **s,
@@ -1417,6 +1457,15 @@ class AudiobookService:
 
         await EngineManager.ensure_loaded()
 
+        produced = sum(
+            os.path.getsize(path)
+            for path in (
+                AudiobookStore.page_audio_path(book_id, n)
+                for n in range(1, page_count + 1)
+            )
+            if os.path.exists(path)
+        )
+
         for n in range(1, page_count + 1):
             cls._check_cancel(book_id)
             # Wait for any interactive /speak to finish before grabbing the engine.
@@ -1452,7 +1501,9 @@ class AudiobookService:
                         )
                         cls._write_json_atomic(timing_path, {"lines": lines})
                         cls._write_wav_from_samples(out_path, samples)
-                    except AudiobookCancelled:
+                        produced += os.path.getsize(out_path)
+                        cls._enforce_narration_limits(produced)
+                    except (AudiobookCancelled, AudiobookLimitError):
                         # A cancel raised mid-page (inside _generate_full_page's
                         # segment loop) must propagate as a real cancellation,
                         # not get swallowed as a per-page TTS failure below.
@@ -1536,6 +1587,24 @@ class AudiobookService:
     # ---------- phase: concat ----------
 
     @classmethod
+    def _enforce_narration_limits(cls, produced_bytes: int) -> None:
+        max_bytes = min(
+            _MAX_WAV_PCM_BYTES,
+            _settings.MAX_AUDIOBOOK_DURATION_SECONDS * SAMPLE_RATE * BYTES_PER_SAMPLE,
+        )
+        if produced_bytes > max_bytes:
+            raise AudiobookLimitError(
+                "duration_limit",
+                "This book is longer than Voqora's 24-hour narration limit.",
+            )
+        root = AudiobookStore.root_dir()
+        if shutil.disk_usage(root).free < _settings.MIN_FREE_DISK_BYTES:
+            raise AudiobookLimitError(
+                "storage_full",
+                "Your Mac is almost out of disk space. Free some space, then retry.",
+            )
+
+    @classmethod
     async def _phase_concat(cls, book_id: str, meta: dict[str, Any]) -> dict[str, Any]:
         await AudiobookStore.update_meta(book_id, status="concatenating")
         cls._emit(book_id, "phase_started", phase="concatenating")
@@ -1561,6 +1630,11 @@ class AudiobookService:
             page_to_time[str(n)] = cumulative / (SAMPLE_RATE * BYTES_PER_SAMPLE)
             cumulative += sz
         total_seconds = total_pcm_bytes / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+        if total_pcm_bytes > _MAX_WAV_PCM_BYTES:
+            raise AudiobookLimitError(
+                "duration_limit",
+                "This book is longer than Voqora's 24-hour narration limit.",
+            )
 
         # Write final WAV: header + concatenated PCM bodies.
         with open(tmp_path, "wb") as out:

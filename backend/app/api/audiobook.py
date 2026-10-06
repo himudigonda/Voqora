@@ -33,6 +33,7 @@ from app.services.gemini_cleaner import GeminiCleaner
 from app.services.import_limits import (
     ImportLimitError,
     ensure_storage_capacity,
+    estimated_pcm_bytes,
     validate_docx_archive,
     validate_magic,
 )
@@ -78,8 +79,35 @@ class CostApprovalRequest(BaseModel):
     new_cap_usd: float | None = None
 
 
+_PENDING_STATUSES = frozenset(
+    {
+        "queued",
+        "extracting",
+        "cleaning",
+        "sectioning",
+        "tts",
+        "concatenating",
+        "needs_key",
+    }
+)
+
+
+def _pending_audio_bytes(*, exclude: str | None) -> int:
+    pending = 0
+    for meta in AudiobookStore.list_books():
+        if (
+            meta.get("book_id") == exclude
+            or meta.get("status") not in _PENDING_STATUSES
+        ):
+            continue
+        seconds = float((meta.get("estimated") or {}).get("audio_seconds") or 0)
+        pending += estimated_pcm_bytes(seconds) * 2
+    return pending
+
+
 # Configurable cost-cap threshold; warn (don't block) above this estimated USD.
 COST_WARNING_THRESHOLD_USD = 1.00
+_MAX_APPROVED_CAP_USD = 10_000.0
 
 # File types accepted at upload.
 _ALLOWED_EXTENSIONS = {"pdf", "txt", "docx", "md"}
@@ -344,6 +372,7 @@ async def upload_audiobook(
                 total,
                 estimate["audio_seconds"],
                 library_root=AudiobookStore.root_dir(),
+                reserved_bytes=_pending_audio_bytes(exclude=book_id),
             )
         except ImportLimitError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -629,6 +658,11 @@ async def resolve_cost_approval(
         )
     if body.approve and not x_gemini_api_key:
         raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    if body.new_cap_usd is not None and not (
+        math.isfinite(body.new_cap_usd)
+        and 0 <= body.new_cap_usd <= _MAX_APPROVED_CAP_USD
+    ):
+        raise HTTPException(status_code=422, detail="The approved cap is not valid.")
     try:
         accepted = await AudiobookService.resolve_cost_approval(
             book_id,

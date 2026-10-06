@@ -54,10 +54,22 @@ def validate_docx_archive(path: str) -> None:
                 compressed += member.compress_size
                 if expanded > settings.MAX_DOCX_EXPANDED_BYTES:
                     raise ImportLimitError(
-                        "This DOCX expands beyond Voqora's 1 GB safety limit."
+                        "This DOCX expands beyond Voqora's safety limit."
+                    )
+                if (
+                    member.file_size >= settings.DOCX_RATIO_CHECK_MIN_BYTES
+                    and member.file_size
+                    > max(member.compress_size, 1) * settings.MAX_DOCX_COMPRESSION_RATIO
+                ):
+                    raise ImportLimitError(
+                        "This DOCX is compressed too aggressively to open safely."
                     )
                 if member.filename == "word/document.xml":
                     has_document_xml = True
+                    if member.file_size > settings.MAX_DOCX_DOCUMENT_XML_BYTES:
+                        raise ImportLimitError(
+                            "This DOCX has more text than Voqora can open safely."
+                        )
 
             if not has_document_xml:
                 raise ImportLimitError("This file is not a readable DOCX document.")
@@ -85,6 +97,7 @@ def ensure_storage_capacity(
     estimated_audio_seconds: float,
     *,
     library_root: str | None = None,
+    reserved_bytes: int = 0,
 ) -> None:
     """Ensure both library quota and free-space reserve before processing."""
     root = library_root or settings.AUDIOBOOKS_DIR
@@ -98,7 +111,7 @@ def ensure_storage_capacity(
 
     pcm = estimated_pcm_bytes(estimated_audio_seconds)
     # Source + extracted/cleaned text allowance + page WAVs + final WAV.
-    peak_increment = source_bytes * 3 + pcm * 2
+    peak_increment = source_bytes * 3 + pcm * 2 + max(0, reserved_bytes)
     if used + peak_increment > settings.MAX_AUDIOBOOK_LIBRARY_BYTES:
         raise ImportLimitError(
             "Your Voqora library is full. Delete books before importing another one."

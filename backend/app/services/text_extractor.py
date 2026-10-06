@@ -100,12 +100,15 @@ class TextExtractor:
     @classmethod
     def _split_blocks(cls, text: str) -> list[str]:
         """Split on blank lines, but never inside a fenced code block."""
+        lines = text.split("\n")
         blocks: list[str] = []
         current: list[str] = []
         in_fence = False
-        for line in text.split("\n"):
+        fence_at = -1
+        for i, line in enumerate(lines):
             if cls._FENCE_RE.match(line):
                 in_fence = not in_fence
+                fence_at = i
                 current.append(line)
                 continue
             if not line.strip() and not in_fence:
@@ -114,9 +117,43 @@ class TextExtractor:
                     current = []
                 continue
             current.append(line)
+        if in_fence:
+            return cls._split_blocks(
+                "\n".join(lines[:fence_at] + lines[fence_at + 1 :])
+            )
         if current:
             blocks.append("\n".join(current))
         return blocks
+
+    _SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+    @classmethod
+    def _chunk_oversized(cls, para: str) -> list[str]:
+        """Break a paragraph longer than a page at line, then sentence, then
+        word boundaries so no single page outgrows _WORDS_PER_PAGE."""
+        units: list[str] = []
+        for line in para.split("\n"):
+            if len(line.split()) <= _WORDS_PER_PAGE:
+                units.append(line)
+                continue
+            for sentence in cls._SENTENCE_END_RE.split(line):
+                words = sentence.split()
+                for start in range(0, len(words), _WORDS_PER_PAGE):
+                    units.append(" ".join(words[start : start + _WORDS_PER_PAGE]))
+
+        chunks: list[str] = []
+        current: list[str] = []
+        current_words = 0
+        for unit in units:
+            wc = len(unit.split())
+            if current_words + wc > _WORDS_PER_PAGE and current:
+                chunks.append("\n".join(current))
+                current, current_words = [], 0
+            current.append(unit)
+            current_words += wc
+        if current:
+            chunks.append("\n".join(current))
+        return chunks
 
     @classmethod
     def split_pages(cls, text: str) -> list[str]:
@@ -124,7 +161,14 @@ class TextExtractor:
         # Normalise line endings, then split on blank lines (fence-aware).
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         raw_paras = cls._split_blocks(text)
-        paragraphs = [p.strip() for p in raw_paras if p.strip()]
+        paragraphs: list[str] = []
+        for para in (p.strip() for p in raw_paras):
+            if not para:
+                continue
+            if len(para.split()) > _WORDS_PER_PAGE and not cls._FENCE_RE.match(para):
+                paragraphs.extend(c for c in cls._chunk_oversized(para) if c.strip())
+            else:
+                paragraphs.append(para)
 
         pages: list[str] = []
         current: list[str] = []

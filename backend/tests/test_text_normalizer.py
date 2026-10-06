@@ -343,3 +343,29 @@ def test_structured_output_survives_a_second_pass():
     src = "## Title\n\n- alpha\n- beta\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"
     once = strip_markdown_for_narration(src)
     assert strip_markdown_for_narration(once) == once
+
+
+@pytest.mark.parametrize("unit", ["[", "![", "[^", "[a]("])
+def test_unclosed_brackets_strip_in_linear_time(unit):
+    import time
+
+    text = unit * (60000 // len(unit))
+    start = time.perf_counter()
+    strip_markdown_for_narration(text)
+    assert time.perf_counter() - start < 1.0
+
+
+def test_link_label_with_nested_bracket_keeps_inner_link():
+    assert (
+        strip_markdown_for_narration("see [the [docs](u)] now") == "see [the docs] now"
+    )
+
+
+def test_link_url_with_parentheses_is_stripped():
+    text = (
+        "See [Python](https://en.wikipedia.org/wiki/Python_(programming_language)) now."
+    )
+    assert strip_markdown_for_narration(text) == "See Python now."
+    assert (
+        strip_markdown_for_narration("![diagram (v2)](img/a_(1).png)") == "diagram (v2)"
+    )

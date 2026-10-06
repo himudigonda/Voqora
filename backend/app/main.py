@@ -134,6 +134,7 @@ if __name__ == "__main__":
         "loop": "asyncio",
         "log_config": None,
         "access_log": False,
+        "timeout_graceful_shutdown": 3,
     }
     if settings.IPC_LISTENER_FD is not None:
         uvicorn.run(app, fd=settings.IPC_LISTENER_FD, **server_options)

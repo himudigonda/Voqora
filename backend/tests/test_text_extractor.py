@@ -131,3 +131,35 @@ def test_text_cover_renders_title_and_first_page_on_paper(monkeypatch, tmp_path)
         assert (
             text_pixels > 100
         ), "the opening text comes from the source before pages exist"
+
+
+def test_hard_wrapped_text_without_blank_lines_is_paged():
+    from app.services.text_extractor import _WORDS_PER_PAGE
+
+    text = "\n".join("one two three four five six seven eight." for _ in range(5000))
+    pages = TextExtractor.split_pages(text)
+    assert len(pages) > 1
+    assert max(len(p.split()) for p in pages) <= _WORDS_PER_PAGE
+    assert sum(len(p.split()) for p in pages) == 40000
+
+
+def test_single_unpunctuated_line_is_paged_by_words():
+    from app.services.text_extractor import _WORDS_PER_PAGE
+
+    pages = TextExtractor.split_pages(" ".join(["word"] * 3000))
+    assert max(len(p.split()) for p in pages) <= _WORDS_PER_PAGE
+    assert sum(len(p.split()) for p in pages) == 3000
+
+
+def test_unterminated_fence_does_not_swallow_the_document():
+    text = "Intro.\n\n```\n" + "\n\n".join(["Real prose follows here."] * 200)
+    pages = TextExtractor.split_pages(text)
+    assert len(pages) > 1
+    assert not any("```" in p for p in pages)
+
+
+def test_terminated_fence_with_blank_lines_stays_on_one_page():
+    text = "Before.\n\n```\nline one\n\nline two\n```\n\nAfter."
+    assert TextExtractor.split_pages(text) == [
+        "Before.\n\n```\nline one\n\nline two\n```\n\nAfter."
+    ]

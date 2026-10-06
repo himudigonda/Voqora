@@ -40,8 +40,10 @@ class Settings(BaseSettings):
     # disproportionate amount of XML, pixels, or generated PCM.
     MAX_AUDIOBOOK_PAGES: int = 1000
     MAX_DOCX_MEMBERS: int = 1000
-    MAX_DOCX_EXPANDED_BYTES: int = 1024 * 1024 * 1024
+    MAX_DOCX_EXPANDED_BYTES: int = 300 * 1024 * 1024
+    MAX_DOCX_DOCUMENT_XML_BYTES: int = 64 * 1024 * 1024
     MAX_DOCX_COMPRESSION_RATIO: int = 100
+    DOCX_RATIO_CHECK_MIN_BYTES: int = 1024 * 1024
     MAX_PDF_RASTER_PIXELS: int = 16_000_000
     MAX_AUDIOBOOK_DURATION_SECONDS: int = 24 * 60 * 60
     MAX_AUDIOBOOK_LIBRARY_BYTES: int = 20 * 1024 * 1024 * 1024

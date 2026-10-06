@@ -7,6 +7,7 @@ callers wrap in run_in_executor when invoked from async code.
 import io
 import os
 import re
+import threading
 from collections.abc import Iterable
 
 import pdfplumber
@@ -18,6 +19,10 @@ from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore
 
 log = get_logger(__name__)
+
+
+# PDFium is not thread-safe; every pdfium/pdfplumber render call must hold this.
+_PDFIUM_LOCK = threading.RLock()
 
 
 class PDFExtractor:
@@ -59,11 +64,12 @@ class PDFExtractor:
 
     @classmethod
     def _sample_texts(cls, pdf_path: str) -> list[str]:
-        doc = pdfium.PdfDocument(pdf_path)
-        try:
-            n = len(doc)
-        finally:
-            doc.close()
+        with _PDFIUM_LOCK:
+            doc = pdfium.PdfDocument(pdf_path)
+            try:
+                n = len(doc)
+            finally:
+                doc.close()
         return (
             cls.read_page_texts(pdf_path, indices=sorted({0, n // 2, n - 1}))
             if n
@@ -76,22 +82,23 @@ class PDFExtractor:
     ) -> list[str]:
         """Text of the requested pages (all by default) in content order, with
         pdfium's line-end hyphen markers resolved against their vocabulary."""
-        doc = pdfium.PdfDocument(pdf_path)
-        try:
-            wanted = (
-                range(len(doc))
-                if indices is None
-                else [i for i in indices if 0 <= i < len(doc)]
-            )
-            raw: list[str] = []
-            for index in wanted:
-                textpage = doc[index].get_textpage()
-                try:
-                    raw.append(textpage.get_text_range())
-                finally:
-                    textpage.close()
-        finally:
-            doc.close()
+        with _PDFIUM_LOCK:
+            doc = pdfium.PdfDocument(pdf_path)
+            try:
+                wanted = (
+                    range(len(doc))
+                    if indices is None
+                    else [i for i in indices if 0 <= i < len(doc)]
+                )
+                raw: list[str] = []
+                for index in wanted:
+                    textpage = doc[index].get_textpage()
+                    try:
+                        raw.append(textpage.get_text_range())
+                    finally:
+                        textpage.close()
+            finally:
+                doc.close()
         return resolve_line_hyphens(
             [text.replace("\r\n", "\n").replace("\r", "\n") for text in raw]
         )
@@ -129,27 +136,26 @@ class PDFExtractor:
         has no outline (so the caller falls back to LLM-based section detection).
         """
         try:
-            import pypdfium2 as pdfium
-
-            doc = pdfium.PdfDocument(pdf_path)
-            try:
-                # Walk top-level bookmarks (outline). Children are flattened.
-                outline = list(doc.get_toc())
-                if not outline:
-                    return None
-                page_count = len(doc)
-                sections: list[dict] = []
-                for entry in outline:
-                    title = (entry.title or "").strip()
-                    if not title:
-                        continue
-                    page_idx = entry.page_index
-                    if page_idx is None or page_idx < 0 or page_idx >= page_count:
-                        continue
-                    sections.append({"title": title, "start_page": page_idx + 1})
-                return sections or None
-            finally:
-                doc.close()
+            with _PDFIUM_LOCK:
+                doc = pdfium.PdfDocument(pdf_path)
+                try:
+                    # Walk top-level bookmarks (outline). Children are flattened.
+                    outline = list(doc.get_toc())
+                    if not outline:
+                        return None
+                    page_count = len(doc)
+                    sections: list[dict] = []
+                    for entry in outline:
+                        title = (entry.title or "").strip()
+                        if not title:
+                            continue
+                        page_idx = entry.page_index
+                        if page_idx is None or page_idx < 0 or page_idx >= page_count:
+                            continue
+                        sections.append({"title": title, "start_page": page_idx + 1})
+                    return sections or None
+                finally:
+                    doc.close()
         except Exception:
             log.warning(
                 "pdf.outline_read_failed",
@@ -165,7 +171,7 @@ class PDFExtractor:
         if os.path.exists(out):
             return
         pdf_path = AudiobookStore.pdf_path(book_id)
-        with pdfplumber.open(pdf_path) as pdf:
+        with _PDFIUM_LOCK, pdfplumber.open(pdf_path) as pdf:
             if len(pdf.pages) == 0:
                 return
             # resolution=120 → ~1000px wide page; we resize to max_width.
@@ -189,7 +195,7 @@ class PDFExtractor:
         cls, pdf_path: str, page_num: int, resolution: int = 200
     ) -> bytes:
         """Render a single page (1-indexed) to JPEG bytes for Gemini OCR."""
-        with pdfplumber.open(pdf_path) as pdf:
+        with _PDFIUM_LOCK, pdfplumber.open(pdf_path) as pdf:
             page = pdf.pages[page_num - 1]
             pixels = int(page.width * resolution / 72) * int(
                 page.height * resolution / 72

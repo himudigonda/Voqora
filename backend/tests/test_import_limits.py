@@ -53,6 +53,30 @@ def test_docx_validator_rejects_excessive_compression():
             validate_docx_archive(path)
 
 
+def test_docx_validator_rejects_one_bomb_entry_hidden_by_stored_padding():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "padded.docx")
+        _docx(path, {"word/media/bomb.xml": b"a" * 20_000_000})
+        with zipfile.ZipFile(path, "a", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("word/media/padding.bin", os.urandom(4_000_000))
+        with zipfile.ZipFile(path) as archive:
+            total = sum(i.file_size for i in archive.infolist())
+            packed = sum(i.compress_size for i in archive.infolist())
+        assert total / packed < settings.MAX_DOCX_COMPRESSION_RATIO
+        with pytest.raises(ImportLimitError, match="compressed"):
+            validate_docx_archive(path)
+
+
+def test_docx_validator_rejects_oversized_document_xml(monkeypatch):
+    monkeypatch.setattr(settings, "MAX_DOCX_DOCUMENT_XML_BYTES", 1000)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "huge.docx")
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("word/document.xml", os.urandom(2000))
+        with pytest.raises(ImportLimitError, match="more text"):
+            validate_docx_archive(path)
+
+
 def test_magic_validator_rejects_renamed_pdf_and_docx():
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "not-a-document")
@@ -131,3 +155,14 @@ def test_ensure_storage_capacity_ignores_unreadable_and_broken_entries(
     )
     # Must not raise OSError -- the broken symlink contributes 0 bytes.
     ensure_storage_capacity(1_000, 10.0, library_root=str(tmp_path))
+
+
+def test_ensure_storage_capacity_counts_reserved_bytes(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setattr(settings, "MAX_AUDIOBOOK_LIBRARY_BYTES", 10_000)
+        monkeypatch.setattr(
+            shutil, "disk_usage", lambda _p: _DiskUsage(1 << 40, 0, 1 << 40)
+        )
+        ensure_storage_capacity(100, 0, library_root=tmp)
+        with pytest.raises(ImportLimitError, match="full"):
+            ensure_storage_capacity(100, 0, library_root=tmp, reserved_bytes=10_000)
