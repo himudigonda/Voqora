@@ -9,11 +9,22 @@ actor MetricsService {
     private let outboxCap = 200
     private let flushBatchSize = 20
     nonisolated static let flushIntervalSeconds: TimeInterval = 30
+    nonisolated static let analyticsEnabledKey = "analyticsEnabled"
 
     private var userID: String?
     private var enabled: Bool
     private var outbox: [Event] = []
     private var isFlushing = false
+    private var consecutiveFailures = 0
+    private var nextFlushAllowed = Date.distantPast
+
+    nonisolated static func userAllowsAnalytics(_ defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: analyticsEnabledKey) as? Bool ?? true
+    }
+
+    private var isActive: Bool {
+        enabled && Self.userAllowsAnalytics()
+    }
 
     nonisolated(unsafe) static let isoFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
@@ -95,7 +106,7 @@ actor MetricsService {
         props rawProps: [String: Any],
         flushImmediately: Bool = false
     ) async {
-        guard enabled else { return }
+        guard isActive else { return }
         guard Event.allowedNames.contains(event) else {
             await MainActor.run {
                 VoqoraLog.warn("MetricsService", "Unknown event dropped", ["event": event])
@@ -115,12 +126,12 @@ actor MetricsService {
     }
 
     private func flushLocked() async {
-        guard enabled else {
+        guard isActive else {
             outbox.removeAll()
             persistOutbox()
             return
         }
-        guard !isFlushing, !outbox.isEmpty else { return }
+        guard !isFlushing, !outbox.isEmpty, Date() >= nextFlushAllowed else { return }
         isFlushing = true
         defer { isFlushing = false }
         let batch = Array(outbox.prefix(flushBatchSize))
@@ -147,22 +158,49 @@ actor MetricsService {
         do {
             let (_, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { return }
-            guard (200 ..< 300).contains(http.statusCode) else {
+            if Self.isPermanentRejection(http.statusCode) {
+                outbox.removeFirst(min(batch.count, outbox.count))
+                persistOutbox()
+                recordFailure()
                 await MainActor.run {
-                    VoqoraLog.warn("MetricsService", "Server rejected batch, retaining it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+                    VoqoraLog.warn("MetricsService", "Server rejected batch, dropping it", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
                 }
                 return
             }
+            guard (200 ..< 300).contains(http.statusCode) else {
+                recordFailure()
+                await MainActor.run {
+                    VoqoraLog.warn("MetricsService", "Server unavailable, retaining batch", ["statusCode": "\(http.statusCode)", "batchSize": "\(batch.count)"])
+                }
+                return
+            }
+            consecutiveFailures = 0
+            nextFlushAllowed = .distantPast
             outbox.removeFirst(min(batch.count, outbox.count))
             persistOutbox()
             await MainActor.run {
                 VoqoraLog.debug("MetricsService", "Flushed batch", ["events": "\(batch.count)", "statusCode": "\(http.statusCode)"])
             }
         } catch {
+            recordFailure()
             await MainActor.run {
                 VoqoraLog.error("MetricsService", "Flush failed", ["failureCode": "telemetry_flush_failed"])
             }
         }
+    }
+
+    private func recordFailure() {
+        consecutiveFailures += 1
+        nextFlushAllowed = Date().addingTimeInterval(Self.backoffSeconds(afterFailures: consecutiveFailures))
+    }
+
+    nonisolated static func backoffSeconds(afterFailures failures: Int) -> TimeInterval {
+        guard failures > 0 else { return 0 }
+        return min(30 * 60, flushIntervalSeconds * pow(2, Double(min(failures, 10) - 1)))
+    }
+
+    nonisolated static func isPermanentRejection(_ statusCode: Int) -> Bool {
+        (400 ..< 500).contains(statusCode) && statusCode != 408 && statusCode != 429
     }
 
     private func persistOutbox() {
@@ -172,8 +210,9 @@ actor MetricsService {
     }
 
     private func anonymousID() -> String {
-        if let userID, !userID.isEmpty {
-            return userID
+        if let existing = UserDefaults.standard.string(forKey: "anonymousUserID"), !existing.isEmpty {
+            userID = existing
+            return existing
         }
         let fresh = UUID().uuidString
         userID = fresh

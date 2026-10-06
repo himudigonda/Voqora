@@ -21,8 +21,9 @@ final class IdentityService: ObservableObject {
 
     private var storedAnonID: String?
     var anonID: String {
-        if let storedAnonID, !storedAnonID.isEmpty {
-            return storedAnonID
+        if let existing = defaults.string(forKey: Self.anonKey), !existing.isEmpty {
+            storedAnonID = existing
+            return existing
         }
         let fresh = UUID().uuidString
         defaults.set(fresh, forKey: Self.anonKey)

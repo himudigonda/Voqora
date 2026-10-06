@@ -41,5 +41,28 @@ final class GuidedInstallerServiceTests: XCTestCase {
 
         let wrongSize = GuidedInstallerService.ReleaseArtifact(version: "1.0.0", name: "Voqora.dmg", downloadURL: GuidedInstallerService.releasePageURL, byteCount: 7, sha256: good)
         XCTAssertThrowsError(try GuidedInstallerService.verify(file, matches: wrongSize))
+
+        let wrongDigest = GuidedInstallerService.ReleaseArtifact(version: "1.0.0", name: "Voqora.dmg", downloadURL: GuidedInstallerService.releasePageURL, byteCount: 6, sha256: String(repeating: "0", count: 64))
+        XCTAssertThrowsError(try GuidedInstallerService.verify(file, matches: wrongDigest)) { error in
+            XCTAssertEqual(error as? GuidedInstallerService.InstallerError, .checksumMismatch)
+        }
+    }
+
+    func testRejectsAssetsOutsideTheOfficialReleaseOrWithUnsafeNames() {
+        let hash = String(repeating: "a", count: 64)
+        func payload(name: String, url: String, digest: String = "sha256:\(String(repeating: "a", count: 64))") -> Data {
+            """
+            {"tag_name":"v1.0.0","assets":[{"name":"\(name)","browser_download_url":"\(url)","size":3,"digest":"\(digest)"}]}
+            """.data(using: .utf8)!
+        }
+        let official = "https://github.com/himudigonda/Voqora/releases/download/v1.0.0/"
+        XCTAssertNoThrow(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: official + "Voqora-1.0.0.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: "http://github.com/himudigonda/Voqora/releases/download/v1.0.0/Voqora-1.0.0.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: "https://evil.example/himudigonda/Voqora/releases/download/v1.0.0/Voqora-1.0.0.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: "https://github.com/someone/Voqora/releases/download/v1.0.0/Voqora-1.0.0.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "../evil.dmg", url: official + "evil.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: ".hidden.dmg", url: official + ".hidden.dmg")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: official + "Voqora-1.0.0.dmg", digest: "md5:\(hash)")))
+        XCTAssertThrowsError(try GuidedInstallerService.artifact(from: payload(name: "Voqora-1.0.0.dmg", url: official + "Voqora-1.0.0.dmg", digest: "sha256:abc")))
     }
 }

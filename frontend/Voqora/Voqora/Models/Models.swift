@@ -32,4 +32,13 @@ struct HistoryEntry: Codable, Identifiable, Equatable {
         self.voice = voice
         self.isFavorite = isFavorite
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        text = try container.decode(String.self, forKey: .text)
+        timestamp = try container.decodeIfPresent(Date.self, forKey: .timestamp) ?? Date()
+        voice = try container.decodeIfPresent(String.self, forKey: .voice) ?? ""
+        isFavorite = try container.decodeIfPresent(Bool.self, forKey: .isFavorite) ?? false
+    }
 }

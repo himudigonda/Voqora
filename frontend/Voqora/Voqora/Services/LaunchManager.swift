@@ -241,8 +241,10 @@ class LaunchManager: ObservableObject {
             let type = status.st_mode & S_IFMT
             let mode = status.st_mode & 0o7777
             let modified = status.st_mtimespec
+            let changed = status.st_ctimespec
             lines.append(
-                "\(relative)|\(type)|\(status.st_size)|\(mode)|\(modified.tv_sec).\(modified.tv_nsec)"
+                "\(relative)|\(type)|\(status.st_size)|\(mode)|\(modified.tv_sec).\(modified.tv_nsec)|" +
+                    "\(changed.tv_sec).\(changed.tv_nsec)|\(status.st_dev)|\(status.st_ino)"
             )
         }
         guard !lines.isEmpty else { return nil }

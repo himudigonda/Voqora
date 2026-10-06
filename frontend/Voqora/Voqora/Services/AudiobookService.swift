@@ -302,6 +302,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         if FileManager.default.fileExists(atPath: local.path),
            Self.isValidWAVHeader(at: local)
         {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: local.path)
             return local
         }
         try? FileManager.default.removeItem(at: local)
@@ -333,7 +334,26 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             throw AudiobookServiceError.audioNotReady
         }
         try FileManager.default.moveItem(at: downloadedURL, to: local)
+        Self.pruneCache(in: cacheDir, keeping: Self.cachedBookLimit)
         return local
+    }
+
+    static let cachedBookLimit = 2
+
+    static func pruneCache(in directory: URL, keeping limit: Int) {
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: keys
+        ) else { return }
+        let wavs = files.filter { $0.pathExtension == "wav" }.sorted { lhs, rhs in
+            let l = (try? lhs.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+            let r = (try? rhs.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+            return l > r
+        }
+        for stale in wavs.dropFirst(limit) {
+            try? FileManager.default.removeItem(at: stale)
+        }
     }
 
     private static func isValidWAVHeader(at url: URL) -> Bool {

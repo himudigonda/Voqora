@@ -13,7 +13,6 @@ struct VoqoraWindow: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
-    @State private var launchTask: Task<Void, Never>?
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -124,9 +123,8 @@ struct VoqoraWindow: View {
         .tint(accentColor)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
-            launchTask = Task {
+            Task {
                 await launchManager.prepare()
-                guard !Task.isCancelled else { return }
                 if launchManager.isReady {
                     vm.startBackgroundWork()
                 }
@@ -147,10 +145,6 @@ struct VoqoraWindow: View {
             if !currentVersion.isEmpty {
                 vm.lastSeenAppVersion = currentVersion
             }
-        }
-        .onDisappear {
-            launchTask?.cancel()
-            launchTask = nil
         }
         .task(id: vm.isBackendOnline) {
             if vm.isBackendOnline, !bookVM.hasLoadedOnce || bookVM.loadFailed {

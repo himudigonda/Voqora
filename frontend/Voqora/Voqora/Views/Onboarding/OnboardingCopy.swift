@@ -35,6 +35,8 @@ enum OnboardingCopy {
     static let identityTitle = "About You"
     static let identityNamePlaceholder = "Name"
     static let identityPlaceholder = "Email"
+    static let privacyPolicyTitle = "Privacy Policy"
+    static let privacyPolicyURL = URL(string: "https://github.com/himudigonda/Voqora/blob/main/PRIVACY.md")!
 
     static let customizeTitle = "Personalize"
     static let customizeAccentLabel = "Accent Color"

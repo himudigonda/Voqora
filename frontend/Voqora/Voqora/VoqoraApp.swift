@@ -102,7 +102,7 @@ struct VoqoraApp: App {
             }
             Task { await identityInstance.retryPendingRemoval() }
             Task { await identityInstance.retryPendingSubmission() }
-            Task { await updaterInstance.checkGitHubReleaseForUpdate() }
+            Task { await updaterInstance.checkGitHubReleaseAtLaunch() }
             checkRunningLocation()
         }
     }

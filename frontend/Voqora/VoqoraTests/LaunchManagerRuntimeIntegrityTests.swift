@@ -339,9 +339,30 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
             ("VoqoraServer", "original", 0o755),
             ("_internal/lib.so", "so", 0o644),
         ])
+        let fingerprintBefore = LaunchManager.runtimeStateFingerprint(
+            at: runtime.serverURL,
+            manifest: runtime.manifest
+        )
+        try LaunchManager.verifyInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest)
+
+        XCTAssertEqual(
+            LaunchManager.runtimeStateFingerprint(at: runtime.serverURL, manifest: runtime.manifest),
+            fingerprintBefore
+        )
+        XCTAssertNoThrow(
+            try LaunchManager.verifyInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest),
+            "A cache hit must not re-read 578 MB to re-derive an answer nothing invalidated"
+        )
+    }
+
+    func test_sameSizeRewriteWithRestoredMtimeStillDefeatsTheCache() throws {
+        LaunchManager.invalidateRuntimeValidation()
+        let runtime = try buildRuntime([
+            ("VoqoraServer", "original", 0o755),
+            ("_internal/lib.so", "so", 0o644),
+        ])
         let pinned = Date(timeIntervalSince1970: 1_600_000_000)
         try pinModificationDates(pinned, under: runtime.serverURL)
-
         let fingerprintBefore = LaunchManager.runtimeStateFingerprint(
             at: runtime.serverURL,
             manifest: runtime.manifest
@@ -352,18 +373,13 @@ final class LaunchManagerRuntimeIntegrityTests: XCTestCase {
         try Data("tampered".utf8).write(to: target)
         try pinModificationDates(pinned, under: runtime.serverURL)
 
-        XCTAssertEqual(
+        XCTAssertNotEqual(
             LaunchManager.runtimeStateFingerprint(at: runtime.serverURL, manifest: runtime.manifest),
-            fingerprintBefore,
-            "Same size, mode and mtime must fingerprint identically"
-        )
-        XCTAssertNoThrow(
-            try LaunchManager.verifyInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest),
-            "A cache hit must not re-read 578 MB to re-derive an answer nothing invalidated"
+            fingerprintBefore
         )
         try assertIntegrityFailure(
-            LaunchManager.validateInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest),
-            "The uncached validator must still catch the change — the cache is the only thing being skipped"
+            LaunchManager.verifyInstalledRuntime(at: runtime.serverURL, manifest: runtime.manifest),
+            "Restoring size and mtime must not let a rewritten executable reuse the cached verdict"
         )
     }
 

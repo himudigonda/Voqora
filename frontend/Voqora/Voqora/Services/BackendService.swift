@@ -231,7 +231,14 @@ final class BackendService: NSObject, @unchecked Sendable {
             processPipe?.fileHandleForReading.readabilityHandler = nil
             try? logFileHandle?.close()
             logFileHandle = nil
-            process?.terminate()
+            if let running = process {
+                running.terminate()
+                DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
+                    if running.isRunning {
+                        kill(running.processIdentifier, SIGKILL)
+                    }
+                }
+            }
             process = nil
             processPipe = nil
         }

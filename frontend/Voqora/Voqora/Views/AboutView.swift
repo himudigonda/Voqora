@@ -173,6 +173,10 @@ struct AboutView: View {
                 .accessibilityLabel("Personal website")
             }
             .foregroundStyle(accentColor)
+
+            Link(OnboardingCopy.privacyPolicyTitle, destination: OnboardingCopy.privacyPolicyURL)
+                .font(vm.font(.rowSubtitle))
+                .foregroundStyle(Palette.textSecondary)
         }
         .padding(.top, 8)
     }

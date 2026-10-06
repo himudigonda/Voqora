@@ -89,4 +89,32 @@ final class MetricsServiceTests: XCTestCase {
         let payload: [String: Any] = ["event": "definitely_not_allowed", "props": [:]]
         XCTAssertNil(MetricsService.Event.fromSerialized(payload))
     }
+
+    func test_analyticsDefaultsOnAndHonorsOptOut() throws {
+        let suiteName = "MetricsServiceTests.analytics.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        XCTAssertTrue(MetricsService.userAllowsAnalytics(defaults))
+        defaults.set(false, forKey: MetricsService.analyticsEnabledKey)
+        XCTAssertFalse(MetricsService.userAllowsAnalytics(defaults))
+        defaults.set(true, forKey: MetricsService.analyticsEnabledKey)
+        XCTAssertTrue(MetricsService.userAllowsAnalytics(defaults))
+    }
+
+    func test_flushBackoffGrowsAndCaps() {
+        XCTAssertEqual(MetricsService.backoffSeconds(afterFailures: 0), 0)
+        XCTAssertEqual(MetricsService.backoffSeconds(afterFailures: 1), 30)
+        XCTAssertEqual(MetricsService.backoffSeconds(afterFailures: 2), 60)
+        XCTAssertEqual(MetricsService.backoffSeconds(afterFailures: 50), 30 * 60)
+    }
+
+    func test_onlyNonRetryableClientErrorsDropABatch() {
+        XCTAssertTrue(MetricsService.isPermanentRejection(400))
+        XCTAssertTrue(MetricsService.isPermanentRejection(422))
+        XCTAssertFalse(MetricsService.isPermanentRejection(429))
+        XCTAssertFalse(MetricsService.isPermanentRejection(408))
+        XCTAssertFalse(MetricsService.isPermanentRejection(503))
+        XCTAssertFalse(MetricsService.isPermanentRejection(200))
+    }
 }

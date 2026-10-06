@@ -296,6 +296,9 @@ struct OnboardingView: View {
                     .disableAutocorrection(true)
                     .frame(maxWidth: 280)
             }
+            Link(OnboardingCopy.privacyPolicyTitle, destination: OnboardingCopy.privacyPolicyURL)
+                .font(appFont(size: 12, weight: .regular))
+                .foregroundStyle(Palette.textSecondary)
         }
     }
 

@@ -13,6 +13,14 @@ class HistoryManager: ObservableObject {
     }
 
     private let storageURL: URL
+    static let recentEntryLimit = 500
+
+    private struct LossyEntry: Decodable {
+        let entry: HistoryEntry?
+        init(from decoder: Decoder) throws {
+            entry = try? HistoryEntry(from: decoder)
+        }
+    }
 
     init(storageURL: URL? = nil) {
         self.storageURL = storageURL ?? Self.defaultStorageURL()
@@ -31,6 +39,7 @@ class HistoryManager: ObservableObject {
         let repeated = history.filter { $0.text == text && $0.voice == voice }
         history.removeAll { $0.text == text && $0.voice == voice }
         history.insert(HistoryEntry(text: text, voice: voice, isFavorite: repeated.contains(where: \.isFavorite)), at: 0)
+        history = Self.trimmed(history, keepingRecent: Self.recentEntryLimit)
         saveHistory()
     }
 
@@ -72,13 +81,29 @@ class HistoryManager: ObservableObject {
         }
     }
 
+    static func trimmed(_ entries: [HistoryEntry], keepingRecent limit: Int) -> [HistoryEntry] {
+        var recent = 0
+        return entries.filter { entry in
+            if entry.isFavorite {
+                return true
+            }
+            recent += 1
+            return recent <= limit
+        }
+    }
+
     private func loadHistory() {
         guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        guard let data = try? Data(contentsOf: storageURL) else {
+            persistenceError = "Existing history could not be loaded. New speech still works."
+            return
+        }
         do {
-            let data = try Data(contentsOf: storageURL)
-            let decoded = try JSONDecoder().decode([HistoryEntry].self, from: data)
-            history = decoded
+            history = try JSONDecoder().decode([LossyEntry].self, from: data).compactMap(\.entry)
         } catch {
+            let backup = storageURL.deletingPathExtension()
+                .appendingPathExtension("unreadable-\(Int(Date().timeIntervalSince1970)).json")
+            try? FileManager.default.moveItem(at: storageURL, to: backup)
             persistenceError = "Existing history could not be loaded. New speech still works."
         }
     }

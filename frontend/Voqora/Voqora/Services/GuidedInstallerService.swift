@@ -143,6 +143,9 @@ final class GuidedInstallerService: ObservableObject {
               let url = URL(string: asset.browserDownloadURL),
               url.scheme == "https",
               url.host?.lowercased() == "github.com",
+              url.path.hasPrefix("/himudigonda/Voqora/releases/download/"),
+              url.lastPathComponent == asset.name,
+              isSafeAssetName(asset.name),
               asset.size > 0,
               let digest = normalizedSHA256(asset.digest)
         else {
@@ -241,6 +244,11 @@ final class GuidedInstallerService: ObservableObject {
         var mutableDestination = destination
         try mutableDestination.setResourceValues(values)
         return destination
+    }
+
+    private static func isSafeAssetName(_ name: String) -> Bool {
+        !name.hasPrefix(".") && !name.contains("/") && !name.contains("\\") &&
+            name == (name as NSString).lastPathComponent
     }
 
     private static func normalizedSHA256(_ raw: String?) -> String? {

@@ -17,6 +17,7 @@ struct PreferencesView: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
+    @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = true
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
     @State private var identitySubmitting = false
@@ -344,6 +345,19 @@ struct PreferencesView: View {
                                 .font(vm.font(.rowTitle))
                         }
                         .toggleStyle(.switch)
+
+                        Divider()
+
+                        Toggle(isOn: $analyticsEnabled) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Share Usage Analytics")
+                                    .font(vm.font(.rowTitle))
+                                Text("Helps improve Voqora.")
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
                     }
                 }
 
@@ -665,9 +679,14 @@ struct PreferencesView: View {
             let bundleID = Bundle.main.bundleIdentifier ?? "com.himudigonda.Voqora"
             let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent(bundleID, isDirectory: true)
-            let caches = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(bundleID, isDirectory: true)
-            for (name, directory) in [("application support files", appSupport), ("cache files", caches)] {
+            let cachesRoot = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            let caches = cachesRoot.appendingPathComponent(bundleID, isDirectory: true)
+            let installers = cachesRoot.appendingPathComponent("Voqora", isDirectory: true)
+            for (name, directory) in [
+                ("application support files", appSupport),
+                ("cache files", caches),
+                ("downloaded installers", installers),
+            ] {
                 guard fileManager.fileExists(atPath: directory.path) else { continue }
                 do {
                     try fileManager.removeItem(at: directory)

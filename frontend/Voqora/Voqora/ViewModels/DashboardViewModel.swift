@@ -1,6 +1,7 @@
 import ApplicationServices
 import Combine
 import Foundation
+import KeyboardShortcuts
 import SwiftUI
 
 @MainActor
@@ -194,6 +195,10 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
+    static var speakShortcutLabel: String {
+        KeyboardShortcuts.getShortcut(for: .playText).map { "\($0)" } ?? "your Voqora shortcut"
+    }
+
     func startBackgroundWork() {
         guard !backgroundWorkStarted else { return }
         backgroundWorkStarted = true
@@ -255,7 +260,7 @@ class DashboardViewModel: ObservableObject {
                 if failures >= 2 {
                     showTransientError("Voqora couldn't read text from \(frontAppName). Some apps (games, custom-rendered viewers) don't support this.")
                 } else {
-                    showTransientError("Select text in any app, then press Cmd+Shift+.")
+                    showTransientError("Select text in any app, then press \(Self.speakShortcutLabel).")
                 }
             }
             return
@@ -264,7 +269,7 @@ class DashboardViewModel: ObservableObject {
         VoqoraLog.info("DashboardViewModel", "Sending selection to backend", ["chars": "\(text.count)"])
         PermissionsService.shared.scheduleNotification(
             title: "Voqora is speaking",
-            body: String(text.prefix(120))
+            body: "Reading your selection."
         )
         await speak(text: text)
     }
@@ -325,7 +330,7 @@ class DashboardViewModel: ObservableObject {
                     if status == .thinking {
                         status = .speaking
                     }
-                    audio.playChunk(chunk, volume: Float(speechVolume))
+                    audio.playChunk(chunk, volume: audio.volume)
                     receivedAudio = true
                 }
 
@@ -402,7 +407,7 @@ class DashboardViewModel: ObservableObject {
             return
         }
         if audio.duration == 0 {
-            showTransientError("Nothing to play. Select text and press Cmd+Shift+.")
+            showTransientError("Nothing to play. Select text and press \(Self.speakShortcutLabel).")
         } else {
             audio.togglePause()
         }

@@ -29,6 +29,17 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         return now.timeIntervalSince(lastChecked) >= minimumInterval
     }
 
+    private static let lastLaunchCheckKey = "lastGitHubReleaseCheck"
+    nonisolated static let launchCheckMinimumInterval: TimeInterval = 6 * 60 * 60
+
+    func checkGitHubReleaseAtLaunch() async {
+        let last = UserDefaults.standard.object(forKey: Self.lastLaunchCheckKey) as? Date
+        guard Self.shouldCheckGitHubRelease(lastChecked: last, minimumInterval: Self.launchCheckMinimumInterval) else {
+            return
+        }
+        await checkGitHubReleaseForUpdate()
+    }
+
     func checkGitHubReleaseForUpdateIfStale() async {
         guard Self.shouldCheckGitHubRelease(lastChecked: lastGitHubCheck) else { return }
         await checkGitHubReleaseForUpdate()
@@ -59,6 +70,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
             return
         }
         lastGitHubCheck = Date()
+        UserDefaults.standard.set(lastGitHubCheck, forKey: Self.lastLaunchCheckKey)
 
         let latest = release.tagName.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
         guard Self.isVersion(latest, newerThan: current) else { return }
