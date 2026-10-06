@@ -228,7 +228,7 @@ fi
 # receipt only after every byte of the artifact is final. The manual
 # early-access channel uploads this alongside the DMG; the guided installer
 # independently checks GitHub's API digest before opening a download.
-shasum -a 256 "$DMG_PATH" > "$CHECKSUM_PATH"
+(cd "$BUILD_DIR" && shasum -a 256 "${DMG_NAME}.dmg") > "$CHECKSUM_PATH"
 echo "   ✓ SHA-256 receipt: $CHECKSUM_PATH"
 
 echo ""
