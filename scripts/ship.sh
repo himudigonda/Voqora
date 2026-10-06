@@ -79,6 +79,19 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
     exit 1
 fi
 
+if ! git fetch --quiet origin main; then
+    echo "❌ Could not fetch origin/main to confirm this checkout is current." >&2
+    exit 1
+fi
+if ! git merge-base --is-ancestor origin/main HEAD; then
+    echo "❌ origin/main has commits this checkout lacks. Pull, re-validate, then ship." >&2
+    exit 1
+fi
+if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+    echo "❌ Tag ${TAG} already exists on origin. Refusing to replace an existing release." >&2
+    exit 1
+fi
+
 if [ "$RELEASE_CHANNEL" = "notarized" ] && ! grep -F "${APP_NAME}-${VERSION}.dmg" "$APPCAST_PATH" >/dev/null 2>&1; then
     echo "❌ $APPCAST_PATH does not contain ${APP_NAME}-${VERSION}.dmg. Run 'make appcast VERSION=${VERSION}', commit it, then retry." >&2
     exit 1

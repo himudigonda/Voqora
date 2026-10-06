@@ -27,6 +27,9 @@ case "${1:-}" in
     status) exit 0 ;;
     branch) printf 'main\n' ;;
     rev-parse) exit 1 ;;
+    fetch) exit 0 ;;
+    merge-base) exit "${SHIP_TEST_BEHIND:-0}" ;;
+    ls-remote) exit "${SHIP_TEST_REMOTE_TAG:-2}" ;;
     tag | push) printf 'git %s\n' "$*" >> "$SHIP_TEST_LOG" ;;
     *) printf 'unexpected git invocation: %s\n' "$*" >&2; exit 99 ;;
 esac
@@ -97,6 +100,22 @@ run_ship env RELEASE_CHANNEL=notarized APPCAST_PATH="$NOTARIZED_APPCAST" \
     bash scripts/ship.sh 1.2.3
 grep -F "validate-appcast 1.2.3 $DMG_PATH $NOTARIZED_APPCAST" "$LOG_PATH" >/dev/null
 grep -F "gh release create v1.2.3 $DMG_PATH $CHECKSUM_PATH" "$LOG_PATH" >/dev/null
+
+# A checkout behind origin/main, or a tag already on origin, must stop before
+# anything is tagged, uploaded, or pushed.
+printf '<rss><channel></channel></rss>\n' > "$MANUAL_APPCAST"
+for guard in SHIP_TEST_BEHIND=1 SHIP_TEST_REMOTE_TAG=0; do
+    : > "$LOG_PATH"
+    if run_ship env "$guard" RELEASE_CHANNEL=manual ALLOW_UNNOTARIZED_PUBLIC_RELEASE=1 \
+        APPCAST_PATH="$MANUAL_APPCAST" bash scripts/ship.sh 1.2.3 >/dev/null 2>&1; then
+        echo "Ship unexpectedly continued with $guard." >&2
+        exit 1
+    fi
+    if grep -E '^(git tag|git push|gh )' "$LOG_PATH" >/dev/null; then
+        echo "Ship published something despite $guard." >&2
+        exit 1
+    fi
+done
 
 # Unknown values must fail before any upload-capable command runs.
 if run_ship env RELEASE_CHANNEL=unsafe bash scripts/ship.sh 1.2.3 >/dev/null 2>&1; then

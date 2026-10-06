@@ -2,7 +2,7 @@
 <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Voqora updates</title>
-        <description>Updates will appear here after the first signed release.</description>
+        <description>Signed Voqora updates.</description>
         <item>
             <title>1.2.2</title>
             <pubDate>Thu, 10 Sep 2026 21:33:48 -0700</pubDate>

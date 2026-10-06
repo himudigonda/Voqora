@@ -100,7 +100,7 @@ jobs:
           PY
           python3 scripts/generate_backend_manifest.py \
             --archive frontend/Voqora/Voqora/Resources/VoqoraServer.zip \
-            --version 1.2.3 \
+            --version "$(sed -n 's/^version = "\(.*\)"$/\1/p' backend/pyproject.toml)" \
             --output frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json
       - name: Build + test
         run: |
@@ -112,7 +112,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
       - name: Release source preflight
-        run: ./scripts/validate_release.sh 1.2.3
+        run: ./scripts/validate_release.sh "$(sed -n 's/^version = "\(.*\)"$/\1/p' backend/pyproject.toml)"
 
   packaged-backend:
     name: Packaged backend integrity
@@ -132,7 +132,7 @@ jobs:
         run: |
           python3 scripts/generate_backend_manifest.py \
             --archive frontend/Voqora/Voqora/Resources/VoqoraServer.zip \
-            --version 1.2.3 \
+            --version "$(sed -n 's/^version = "\(.*\)"$/\1/p' backend/pyproject.toml)" \
             --verify frontend/Voqora/Voqora/Resources/VoqoraServer.manifest.json
           test -s frontend/Voqora/Voqora/Resources/VoqoraServer.build-id
           test -s frontend/Voqora/Voqora/Resources/VoqoraServer.inputs.sha256
