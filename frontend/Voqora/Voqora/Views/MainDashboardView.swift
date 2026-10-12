@@ -42,8 +42,8 @@ private struct SpeechPlayerView: View {
                 .onKeyPress(.space) { vm.togglePlayback(); return .handled }
                 .onKeyPress(.leftArrow) { vm.skipSpeech(by: -10); return .handled }
                 .onKeyPress(.rightArrow) { vm.skipSpeech(by: 10); return .handled }
-                .onKeyPress("[") { vm.setSpeechSpeed(vm.speechSpeed - 0.25); return .handled }
-                .onKeyPress("]") { vm.setSpeechSpeed(vm.speechSpeed + 0.25); return .handled }
+                .onKeyPress("[") { vm.setSpeechSpeed(vm.effectiveSpeechSpeed - 0.25); return .handled }
+                .onKeyPress("]") { vm.setSpeechSpeed(vm.effectiveSpeechSpeed + 0.25); return .handled }
             } else {
                 IdleState()
             }
@@ -102,7 +102,7 @@ private struct SpeechControls: View {
                 TransportGlyph(systemName: "goforward.10", label: "Forward 10 Seconds") { vm.skipSpeech(by: 10) }
             }
             HStack(spacing: 10) {
-                PlayerSpeedMenu(speed: vm.speechSpeed) { vm.setSpeechSpeed($0) }
+                PlayerSpeedMenu(speed: vm.effectiveSpeechSpeed) { vm.setSpeechSpeed($0) }
                 Spacer(minLength: 0)
                 PlayerVolumeControl()
                 Spacer(minLength: 0)

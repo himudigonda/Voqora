@@ -67,7 +67,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     @AppStorage("speechSpeed") var speechSpeed = 1.0
-    private var clipSpeed = 1.0
+    private(set) var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
@@ -386,6 +386,7 @@ class DashboardViewModel: ObservableObject {
     func playSpokenText(from line: TranscriptLine) {
         audio.seek(toSeconds: speechFollower.startTime(of: line))
         if !audio.isPlaying {
+            applySpeechRate()
             audio.resume()
         }
     }
@@ -397,9 +398,24 @@ class DashboardViewModel: ObservableObject {
     func setSpeechSpeed(_ speed: Double) {
         speechSpeed = min(2.0, max(0.5, speed))
         if audiobookVM?.nowPlaying == nil, audio.hasMedia {
-            audio.setPlaybackRate(Float(speechSpeed / clipSpeed))
+            applySpeechRate()
         }
     }
+
+    var effectiveSpeechSpeed: Double {
+        guard audio.hasMedia else { return speechSpeed }
+        return clipSpeed * Double(AudioService.clampedPlaybackRate(Float(speechSpeed / clipSpeed)))
+    }
+
+    private func applySpeechRate() {
+        audio.setPlaybackRate(Float(speechSpeed / clipSpeed))
+    }
+
+    #if DEBUG
+        func setClipSpeedForTesting(_ speed: Double) {
+            clipSpeed = speed
+        }
+    #endif
 
     func togglePlayback() {
         if let audiobookVM, audiobookVM.nowPlaying != nil {
@@ -409,6 +425,9 @@ class DashboardViewModel: ObservableObject {
         if audio.duration == 0 {
             showTransientError("Nothing to play. Select text and press \(Self.speakShortcutLabel).")
         } else {
+            if !audio.isPlaying {
+                applySpeechRate()
+            }
             audio.togglePause()
         }
     }

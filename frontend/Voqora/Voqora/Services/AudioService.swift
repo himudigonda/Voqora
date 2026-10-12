@@ -31,6 +31,14 @@ class AudioService: NSObject, ObservableObject {
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
     private let timePitch = AVAudioUnitTimePitch()
+    private let gainMixer = AVAudioMixerNode()
+    private let limiter = AVAudioUnitEffect(audioComponentDescription: AudioComponentDescription(
+        componentType: kAudioUnitType_Effect,
+        componentSubType: kAudioUnitSubType_PeakLimiter,
+        componentManufacturer: kAudioUnitManufacturer_Apple,
+        componentFlags: 0,
+        componentFlagsMask: 0
+    ))
     private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24000, channels: 1, interleaved: false)!
     private var lastOutputFormat: AVAudioFormat?
     private var engineConfigured = false
@@ -53,12 +61,16 @@ class AudioService: NSObject, ObservableObject {
 
     private var generation = 0
     private var scheduledBufferCount = 0
+    private var streamScheduledEndFrame: AVAudioFramePosition = 0
     private var nodePrimed = false
     // AVAudioPlayerNode.stop() resets its sample clock; pause() does not.
     private var timelineOrigin: TimeInterval = 0
     private var timer: AnyCancellable?
     private var volumeRampTimer: Timer?
     private var volumeRampToken: UUID?
+    private let offlineRendering: Bool
+    private let engineIdleSuspendDelay: Duration
+    private var engineIdleTask: Task<Void, Never>?
 
     var canExportLastClip: Bool {
         !lastAudioData.isEmpty
@@ -72,9 +84,15 @@ class AudioService: NSObject, ObservableObject {
         currentAudioFile != nil || !isStreamActive ? duration : renderedAudioSeconds
     }
 
-    init(startingEngine: Bool = !RuntimeEnvironment.isRunningTests) {
+    init(
+        startingEngine: Bool = !RuntimeEnvironment.isRunningTests,
+        offlineRendering: Bool = false,
+        engineIdleSuspendDelay: Duration = .seconds(30)
+    ) {
+        self.offlineRendering = offlineRendering
+        self.engineIdleSuspendDelay = engineIdleSuspendDelay
         super.init()
-        if startingEngine {
+        if startingEngine || offlineRendering {
             setupEngine()
         }
     }
@@ -86,8 +104,17 @@ class AudioService: NSObject, ObservableObject {
     private func setupEngine() {
         engine.attach(playerNode)
         engine.attach(timePitch)
-        engine.connect(playerNode, to: timePitch, format: format)
-        engine.connect(timePitch, to: engine.mainMixerNode, format: format)
+        engine.attach(gainMixer)
+        engine.attach(limiter)
+        connectGraph()
+        if offlineRendering {
+            do {
+                try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+            } catch {
+                VoqoraLog.error("AudioService", "Offline rendering unavailable", ["failureCode": "offline_render_failed"])
+                return
+            }
+        }
         engineConfigured = true
         lastOutputFormat = engine.outputNode.outputFormat(forBus: 0)
         NotificationCenter.default.addObserver(
@@ -97,9 +124,29 @@ class AudioService: NSObject, ObservableObject {
             object: engine
         )
         do {
-            try engine.start()
+            try timedEngineCall("engine.start") { try engine.start() }
         } catch {
             VoqoraLog.error("AudioService", "Engine start error", ["failureCode": "engine_start_failed"])
+        }
+    }
+
+    private func connectGraph() {
+        engine.connect(playerNode, to: timePitch, format: format)
+        engine.connect(timePitch, to: gainMixer, format: format)
+        engine.connect(gainMixer, to: limiter, format: format)
+        engine.connect(limiter, to: engine.mainMixerNode, format: format)
+    }
+
+    nonisolated static func isSlowEngineCall(milliseconds: Double) -> Bool {
+        milliseconds > 100
+    }
+
+    private func timedEngineCall(_ name: String, _ body: () throws -> Void) rethrows {
+        let started = DispatchTime.now().uptimeNanoseconds
+        try body()
+        let milliseconds = Double(DispatchTime.now().uptimeNanoseconds - started) / 1_000_000
+        if Self.isSlowEngineCall(milliseconds: milliseconds) {
+            VoqoraLog.warn("AudioService", "Slow engine call", ["call": name, "ms": String(format: "%.0f", milliseconds)])
         }
     }
 
@@ -118,39 +165,40 @@ class AudioService: NSObject, ObservableObject {
             || previous?.sampleRate != current.sampleRate
             || previous?.channelCount != current.channelCount
         let wasPlaying = isPlaying
+        VoqoraLog.info("AudioService", "Audio engine configuration changed", [
+            "previousRate": previous.map { "\($0.sampleRate)" } ?? "unknown",
+            "currentRate": "\(current.sampleRate)",
+            "formatChanged": "\(formatChanged)",
+            "wasPlaying": "\(wasPlaying)",
+        ])
         if formatChanged {
-            engine.connect(playerNode, to: timePitch, format: format)
-            engine.connect(timePitch, to: engine.mainMixerNode, format: format)
-            VoqoraLog.info("AudioService", "Rewired audio graph after output format change", [
-                "previousRate": previous.map { "\($0.sampleRate)" } ?? "unknown",
-                "currentRate": "\(current.sampleRate)",
-                "wasPlaying": "\(wasPlaying)",
-            ])
+            connectGraph()
         }
-        guard formatChanged || wasPlaying else { return }
-        do {
-            try engine.start()
-        } catch {
-            VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
-            if wasPlaying {
-                pause()
+        guard wasPlaying else {
+            if hasMedia {
+                nodePrimed = false
             }
             return
         }
-        guard wasPlaying else { return }
-        if currentAudioFile != nil {
-            refreshPosition()
-            reposition(to: currentTime, play: true)
-        } else {
-            playerNode.play()
+        do {
+            try timedEngineCall("engine.start") { try engine.start() }
+        } catch {
+            VoqoraLog.error("AudioService", "Engine restart after device change failed", ["failureCode": "engine_restart_failed"])
+            nodePrimed = false
+            pause()
+            return
         }
+        refreshPosition()
+        reposition(to: currentTime, play: true)
     }
 
     private func startNode() {
         guard engineConfigured else { return }
+        engineIdleTask?.cancel()
+        engineIdleTask = nil
         do {
             if !engine.isRunning {
-                try engine.start()
+                try timedEngineCall("engine.start") { try engine.start() }
             }
         } catch {
             VoqoraLog.error("AudioService", "Start error", ["failureCode": "playback_start_failed"])
@@ -174,18 +222,35 @@ class AudioService: NSObject, ObservableObject {
         guard isPlaying else { return }
         refreshPosition()
         publishProgress()
-        if currentAudioFile == nil, !isStreamActive, duration > 0, currentTime >= duration + 0.75 {
+        if currentAudioFile == nil, !isStreamActive, duration > 0, let raw = rawPosition(), raw >= duration + 0.75 {
             finishStreamPlayback()
         }
     }
 
-    private func refreshPosition() {
-        guard isPlaying,
+    private func rawPosition() -> TimeInterval? {
+        guard playerNode.isPlaying,
               let nodeTime = playerNode.lastRenderTime,
+              nodeTime.isSampleTimeValid,
               let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
               playerTime.sampleTime > 0
-        else { return }
-        let position = timelineOrigin + Double(playerTime.sampleTime) / playerTime.sampleRate
+        else { return nil }
+        return timelineOrigin + Double(playerTime.sampleTime) / playerTime.sampleRate
+    }
+
+    private var streamScheduledEndSeconds: TimeInterval {
+        Double(streamScheduledEndFrame) / format.sampleRate
+    }
+
+    private func rebaseStarvedStreamClock() {
+        guard currentAudioFile == nil, isPlaying, let raw = rawPosition(), raw > streamScheduledEndSeconds else { return }
+        timelineOrigin -= raw - streamScheduledEndSeconds
+    }
+
+    private func refreshPosition() {
+        guard isPlaying, var position = rawPosition() else { return }
+        if currentAudioFile == nil {
+            position = min(position, streamScheduledEndSeconds)
+        }
         currentTime = duration > 0 ? min(position, duration) : position
     }
 
@@ -205,13 +270,29 @@ class AudioService: NSObject, ObservableObject {
     func pause() {
         guard isPlaying else { return }
         refreshPosition()
+        rebaseStarvedStreamClock()
         playerNode.pause()
-        if engineConfigured {
-            engine.pause()
-        }
         timer?.cancel()
         isPlaying = false
         publishProgress()
+        scheduleEngineIdleSuspend()
+    }
+
+    private func scheduleEngineIdleSuspend() {
+        guard engineConfigured else { return }
+        engineIdleTask?.cancel()
+        engineIdleTask = Task { [weak self, engineIdleSuspendDelay] in
+            try? await Task.sleep(for: engineIdleSuspendDelay)
+            guard !Task.isCancelled, let self, !isPlaying, engine.isRunning else { return }
+            timedEngineCall("engine.pause") { self.engine.pause() }
+        }
+    }
+
+    private func haltPlayer() {
+        timedEngineCall("playerNode.stop") { playerNode.stop() }
+        timePitch.reset()
+        limiter.reset()
+        scheduledBufferCount = 0
     }
 
     func resume() {
@@ -240,8 +321,7 @@ class AudioService: NSObject, ObservableObject {
 
     private func reposition(to seconds: TimeInterval, play: Bool) {
         generation += 1
-        playerNode.stop()
-        scheduledBufferCount = 0
+        haltPlayer()
         playbackCompleted = false
         if currentAudioFile != nil {
             repositionFile(to: seconds, play: play)
@@ -283,6 +363,7 @@ class AudioService: NSObject, ObservableObject {
             finishStreamPlayback()
             return
         }
+        streamScheduledEndFrame = AVAudioFramePosition(frame)
         if let buffer = dataToBuffer(lastAudioData.subdata(in: frame * 2 ..< totalFrames * 2)) {
             scheduleStreamBuffer(buffer)
         }
@@ -315,7 +396,7 @@ class AudioService: NSObject, ObservableObject {
         estimatedDuration = 0
         isStreamActive = true
         if engineConfigured, !engine.isRunning {
-            try? engine.start()
+            try? timedEngineCall("engine.start") { try engine.start() }
         }
         hasStartedPlayback = false
         isPlaying = false
@@ -374,6 +455,8 @@ class AudioService: NSObject, ObservableObject {
 
     private func scheduleStreamBuffer(_ buffer: AVAudioPCMBuffer) {
         guard engineConfigured else { return }
+        rebaseStarvedStreamClock()
+        streamScheduledEndFrame += AVAudioFramePosition(buffer.frameLength)
         scheduledBufferCount += 1
         let gen = generation
         playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
@@ -390,8 +473,7 @@ class AudioService: NSObject, ObservableObject {
     private func finishStreamPlayback() {
         generation += 1
         timer?.cancel()
-        playerNode.stop()
-        scheduledBufferCount = 0
+        haltPlayer()
         nodePrimed = false
         currentTime = duration
         timelineOrigin = duration
@@ -399,6 +481,7 @@ class AudioService: NSObject, ObservableObject {
         completedSessionID = nil
         playbackCompleted = true
         isPlaying = false
+        scheduleEngineIdleSuspend()
     }
 
     func loadAndPlayWAV(at url: URL, sessionID: String? = nil, startingAt seconds: TimeInterval = 0) throws {
@@ -412,7 +495,7 @@ class AudioService: NSObject, ObservableObject {
         activeSessionID = sessionID
         hasStrippedHeader = true
         if engineConfigured, !engine.isRunning {
-            try engine.start()
+            try timedEngineCall("engine.start") { try engine.start() }
         }
         playerNode.volume = volume
         reposition(to: seconds, play: true)
@@ -456,8 +539,7 @@ class AudioService: NSObject, ObservableObject {
     private func finishFilePlayback(sessionID: String?) {
         generation += 1
         timer?.cancel()
-        playerNode.stop()
-        scheduledBufferCount = 0
+        haltPlayer()
         nodePrimed = false
         audiobookFrameOffset = audiobookTotalFrames
         currentTime = duration
@@ -466,6 +548,7 @@ class AudioService: NSObject, ObservableObject {
         completedSessionID = sessionID
         playbackCompleted = true
         isPlaying = false
+        scheduleEngineIdleSuspend()
     }
 
     func stop() {
@@ -473,14 +556,15 @@ class AudioService: NSObject, ObservableObject {
         volumeRampTimer = nil
         generation += 1
         setPlaybackRate(1.0)
-        playerNode.stop()
+        haltPlayer()
         timer?.cancel()
         let wasFileBacked = currentAudioFile != nil
+        let wasStreaming = isStreamActive
         isPlaying = false
         hasStartedPlayback = false
         isStreamActive = false
         hasStrippedHeader = false
-        scheduledBufferCount = 0
+        streamScheduledEndFrame = 0
         nodePrimed = false
         pcmAccumulator = Data()
         headerAccumulator = Data()
@@ -495,7 +579,10 @@ class AudioService: NSObject, ObservableObject {
         progress = 0
         if wasFileBacked {
             duration = 0
+        } else if wasStreaming {
+            duration = Double(lastAudioData.count / 2) / format.sampleRate
         }
+        scheduleEngineIdleSuspend()
     }
 
     func fadeOutAndStop(over seconds: TimeInterval = 0.15) {
@@ -540,8 +627,12 @@ class AudioService: NSObject, ObservableObject {
         }
     }
 
+    nonisolated static func clampedPlaybackRate(_ rate: Float) -> Float {
+        max(0.5, min(2.5, rate))
+    }
+
     func setPlaybackRate(_ rate: Float) {
-        let clamped = max(0.5, min(2.5, rate))
+        let clamped = Self.clampedPlaybackRate(rate)
         playbackRate = clamped
         timePitch.rate = clamped
     }
@@ -661,3 +752,44 @@ class AudioService: NSObject, ObservableObject {
         return url
     }
 }
+
+#if DEBUG
+    extension AudioService {
+        var engineIsRunningForTesting: Bool {
+            engine.isRunning
+        }
+
+        func renderForTesting(seconds: Double) async throws -> [Float] {
+            let blockFrames: AVAudioFrameCount = 1024
+            let blocks = Int((seconds * format.sampleRate / Double(blockFrames)).rounded(.up))
+            guard let output = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: blockFrames) else { return [] }
+            var samples: [Float] = []
+            for _ in 0 ..< blocks {
+                if engine.isRunning {
+                    _ = try engine.renderOffline(blockFrames, to: output)
+                    if let channel = output.floatChannelData?[0] {
+                        samples.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+                    }
+                } else {
+                    samples.append(contentsOf: repeatElement(0, count: Int(blockFrames)))
+                }
+                await Task.yield()
+                tick()
+            }
+            return samples
+        }
+
+        func orphanScheduledBuffersForTesting() {
+            generation += 1
+        }
+
+        func simulateConfigurationChangeForTesting(dropsScheduledBuffers: Bool) {
+            if dropsScheduledBuffers {
+                generation += 1
+                playerNode.stop()
+            }
+            engine.stop()
+            reconcileEngineConfiguration()
+        }
+    }
+#endif

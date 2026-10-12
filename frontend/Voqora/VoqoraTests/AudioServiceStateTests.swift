@@ -38,4 +38,31 @@ final class AudioServiceStateTests: XCTestCase {
         audio.stop()
         XCTAssertEqual(audio.playbackRate, 1.0, "an audiobook's chosen speed must never bleed into the next TTS clip")
     }
+
+    func test_stopMidStream_trimsDurationToRenderedAudio() {
+        let audio = AudioService(startingEngine: false)
+        audio.prepareForStream()
+        audio.setEstimatedDuration(textLength: 1200, speed: 1)
+        audio.playChunk(Data(count: 44) + Data(count: 48000), volume: 1)
+
+        audio.stop()
+
+        XCTAssertEqual(audio.duration, 1.0, accuracy: 0.01)
+    }
+
+    func test_isSlowEngineCall_thresholdIs100ms() {
+        XCTAssertFalse(AudioService.isSlowEngineCall(milliseconds: 99))
+        XCTAssertFalse(AudioService.isSlowEngineCall(milliseconds: 100))
+        XCTAssertTrue(AudioService.isSlowEngineCall(milliseconds: 101))
+    }
+
+    func test_stopBeforeAnyAudio_leavesNothingToPlay() {
+        let audio = AudioService(startingEngine: false)
+        audio.prepareForStream()
+        audio.setEstimatedDuration(textLength: 1200, speed: 1)
+
+        audio.stop()
+
+        XCTAssertEqual(audio.duration, 0)
+    }
 }

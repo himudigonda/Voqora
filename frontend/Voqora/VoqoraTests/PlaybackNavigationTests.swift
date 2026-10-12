@@ -128,6 +128,69 @@ final class PlaybackNavigationTests: XCTestCase {
         XCTAssertEqual(Double(audio.playbackRate), 1.5, accuracy: 0.001)
     }
 
+    func test_stopThenPlay_reappliesTheChosenSpeechSpeed() {
+        let audio = AudioService(startingEngine: false)
+        let dashboard = makeDashboard(audio: audio)
+        let original = dashboard.speechSpeed
+        defer { dashboard.speechSpeed = original }
+        dashboard.speechSpeed = 1
+        audio.prepareForStream()
+        audio.playChunk(wav(seconds: 2), volume: 1)
+        audio.finishStream()
+        dashboard.setSpeechSpeed(1.5)
+
+        dashboard.stopPlayback()
+        dashboard.togglePlayback()
+
+        XCTAssertEqual(Double(audio.playbackRate), 1.5, accuracy: 0.001)
+    }
+
+    func test_effectiveSpeechSpeed_reportsClampedRateHonestly() {
+        let audio = AudioService(startingEngine: false)
+        let dashboard = makeDashboard(audio: audio)
+        let original = dashboard.speechSpeed
+        defer { dashboard.speechSpeed = original }
+        dashboard.speechSpeed = 1
+        dashboard.setClipSpeedForTesting(0.5)
+        audio.prepareForStream()
+        audio.playChunk(wav(seconds: 2), volume: 1)
+        audio.finishStream()
+
+        dashboard.setSpeechSpeed(2.0)
+
+        XCTAssertEqual(dashboard.effectiveSpeechSpeed, 1.25, accuracy: 0.001)
+    }
+
+    func test_effectiveSpeechSpeed_afterStopShowsTheSpeedPlayWillUse() {
+        let audio = AudioService(startingEngine: false)
+        let dashboard = makeDashboard(audio: audio)
+        let original = dashboard.speechSpeed
+        defer { dashboard.speechSpeed = original }
+        dashboard.speechSpeed = 1
+        dashboard.setClipSpeedForTesting(1)
+        audio.prepareForStream()
+        audio.playChunk(wav(seconds: 2), volume: 1)
+        audio.finishStream()
+        dashboard.setSpeechSpeed(1.5)
+
+        audio.stop()
+
+        XCTAssertTrue(audio.hasMedia)
+        XCTAssertEqual(dashboard.effectiveSpeechSpeed, 1.5, accuracy: 0.001)
+    }
+
+    func test_effectiveSpeechSpeed_withNoMediaShowsPreference() {
+        let audio = AudioService(startingEngine: false)
+        let dashboard = makeDashboard(audio: audio)
+        let original = dashboard.speechSpeed
+        defer { dashboard.speechSpeed = original }
+
+        dashboard.setSpeechSpeed(1.75)
+
+        XCTAssertFalse(audio.hasMedia)
+        XCTAssertEqual(dashboard.effectiveSpeechSpeed, 1.75, accuracy: 0.001)
+    }
+
     func test_seekWithNothingLoadedIsANoOp() {
         let audio = AudioService(startingEngine: false)
         audio.seek(toSeconds: 10)
