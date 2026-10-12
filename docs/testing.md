@@ -49,7 +49,7 @@ machine is intentionally reserved for a faster build.
 
 ## Current validation baseline
 
-The current local baseline is 415 backend tests and 303 Swift tests. The Swift
+The current local baseline is 416 backend tests and 303 Swift tests. The Swift
 receipt came from one serial host with four Xcode build jobs, after the
 first-use, backend-lifecycle, updater, audiobook-layout, and telemetry
 regressions were added. Re-run only the smallest relevant command while

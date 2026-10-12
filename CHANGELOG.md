@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.2.6] - 2026-10-12
+
+### Fixed
+
+- Narration no longer pauses or starts a new transcript line after
+  abbreviations such as "Dr." and "Mr.", or splits a sentence that ends in a
+  closing quote or bracket.
+- Text and Markdown books keep their structure when read aloud: bold or
+  all-caps title lines, wrapped list items, definition lists, image captions,
+  line breaks, and Word tables with their headers. Bare links are read as
+  their site name.
+- Covers for text, Markdown, and Word books wrap long titles and use a bold
+  title face. Older covers are redrawn the next time they are shown.
+- Book and section titles show underscores as spaces.
+- Progress captions no longer read "page 0", and narration shows its page
+  count as soon as it starts.
+- Headings in the transcript are larger than the text around them.
+- Seeking, stopping, and changes to the audio output no longer replay earlier
+  audio or cut off the end of a clip, and the playback position no longer runs
+  ahead when audio is still being generated.
+- Volume above 100% no longer clips.
+- The audio engine stops after 30 seconds of being paused, so it uses less
+  energy while idle.
+- The speed menu and the [ and ] keys show and change the speed you hear for
+  selected-text speech.
+- With Music Ducking on and no music app running, Voqora checks for one at
+  most every 10 seconds.
+
 ## [1.2.5] - 2026-10-06
 
 ### New
@@ -151,7 +179,7 @@
 - Preferences start with Speech and Shortcuts; theme and fonts moved into
   Appearance, and updates and data each have their own section.
 
-## [1.2.3] - 2026-09-20
+## [1.2.3] - 2026-09-27
 
 ### Onboarding
 
@@ -383,7 +411,7 @@
   checking your API key in Preferences always uses the reliable tier so it
   stays fast.
 
-## [1.2.0] - 2026-09-08
+## [1.2.0] - 2026-09-09
 
 ### Redesign
 
@@ -654,6 +682,7 @@ newer.
 - Use a clear, manual DMG installation and update flow while the project is
   validating product-market fit without Apple notarization.
 
+[1.2.6]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.6
 [1.2.5]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.5
 [1.2.4]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.4
 [1.2.3]: https://github.com/himudigonda/Voqora/releases/tag/v1.2.3
