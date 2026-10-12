@@ -23,6 +23,6 @@ A clear and concise description of what you expected to happen.
 Please attach any relevant logs from the backend or macOS Console.
 
 **Environment (please complete the following information):**
- - macOS Version: [e.g. Sonoma 14.2]
- - Voqora Version: [e.g. 1.0.0]
- - Python Version: [e.g. 3.11]
+ - macOS Version: [e.g. 15.6]
+ - Voqora Version: [e.g. 1.2.5]
+ - Python Version (only when running from source): [e.g. 3.11]

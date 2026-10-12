@@ -28,8 +28,8 @@ On first launch, Voqora opens a short setup flow before the speech engine is
 ready. It explains the shortcut and takes you to the macOS Accessibility
 setting. Accessibility is required for speaking selected text from other apps,
 but you can continue into Voqora without it and enable it later from the
-dashboard reminder. Setup also asks for your name and email and lets you pick an
-accent color and app icon.
+dashboard reminder. Setup also offers to turn on notifications, asks for your
+name and email, and lets you pick an accent color and app icon.
 
 ## Speak selected text
 
@@ -119,8 +119,8 @@ passages you want to keep, and play any of them again. Use
 
 ## Updates
 
-Voqora checks for a new release when it launches and notifies you when one is
-available. You can also choose **Check for Updates** in About or Preferences.
+Voqora checks for a new release when it launches, at most once every six hours,
+and notifies you when one is available. You can also choose **Check for Updates** in About or Preferences.
 Choose **Download Latest Version** to download the verified DMG and open it in
 Finder, then drag the new version to Applications. Voqora never replaces itself
 automatically.

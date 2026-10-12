@@ -58,7 +58,7 @@ key and an explicit selection of that workflow.
 | Path | Responsibility |
 | --- | --- |
 | `frontend/Voqora/Voqora/` | SwiftUI app, native services, views, and assets. |
-| `backend/app/` | FastAPI routes, local engine, audiobook service, and storage. |
+| `backend/app/` | FastAPI routes and auth middleware, config, local engine, audiobook service, and storage. |
 | `backend/tests/` | Fast backend tests. |
 | `frontend/Voqora/VoqoraTests/` | Swift unit and service tests. |
 | `scripts/` | Backend packaging, DMG creation, release shipping, and benchmarks. |

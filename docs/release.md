@@ -11,8 +11,9 @@ do not publish it until the release is approved.
 
 The current early-access channel uses a verified DMG handoff: the app obtains
 official GitHub release metadata, verifies the DMG's published SHA-256, then
-opens the DMG in Finder for an explicit drag to Applications. It does not use
-Sparkle to replace an unsigned app.
+opens the DMG in Finder for an explicit drag to Applications. Sparkle is linked
+but never started in this channel, and `docs/updates/appcast.xml` stays frozen
+at 1.2.2 on purpose.
 
 Sparkle is reserved for the later Developer ID-signed and notarized channel.
 Every public release still has two identifiers:
@@ -71,10 +72,13 @@ ordinary documentation or packaging edits.
 make release VERSION=X.Y.Z
 ```
 
-This builds the local backend bundle, archives the Release app, includes fonts
-and notices, and creates `build/Voqora-X.Y.Z.dmg` plus the matching
-`build/Voqora-X.Y.Z.dmg.sha256` receipt. The receipt is written after any
-notarization stapling, so it names the final immutable DMG bytes.
+This runs the source preflight in `scripts/validate_release.sh`, launches the
+frozen backend through `make test-frozen-backend`, builds the DMG with
+`scripts/create_dmg.sh`, then validates the finished DMG. The output is
+`build/Voqora-X.Y.Z.dmg` plus the matching `build/Voqora-X.Y.Z.dmg.sha256`
+receipt. The receipt is written after any notarization stapling, so it covers
+the final immutable DMG bytes, and it names the bare filename, so
+`shasum -a 256 -c Voqora-X.Y.Z.dmg.sha256` works next to a download.
 
 Inspect the actual mounted DMG:
 
@@ -120,6 +124,14 @@ version checks, a unique tag, and a successful mounted-DMG validation.
 ```bash
 ALLOW_UNNOTARIZED_PUBLIC_RELEASE=1 RELEASE_CHANNEL=manual make ship VERSION=X.Y.Z
 ```
+
+Without `DEVELOPER_ID_APPLICATION`, `create_dmg.sh` signs with the Apple
+Development identity in `LOCAL_SIGN_IDENTITY` (team `LOCAL_DEVELOPMENT_TEAM`).
+It falls back to ad-hoc only when that identity is missing from the keychain.
+Avoid shipping an ad-hoc build: its designated requirement is a per-build
+cdhash, so every install drops the user's Accessibility and Automation grants.
+The manual channel does not check the signing identity, so confirm the build
+log names the Apple Development identity before shipping.
 
 This is a consciously limited public distribution path: the in-app guided
 installer verifies the GitHub API SHA-256 before opening the DMG, but the user

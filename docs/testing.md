@@ -16,8 +16,8 @@ multiple app hosts and consume a lot of CPU. Voqora makes that cost explicit.
 
 ## Why the Swift target is explicit
 
-`make test-swift` uses a repository lock and refuses to start if another
-Voqora Xcode test process is already active. It also disables parallel testing.
+`make test-swift` uses a repository lock and refuses to start if any
+`xcodebuild` process is already running. It also disables parallel testing.
 This does not make macOS tests free, but it prevents the accidental overlap
 that causes a swarm of test-host processes.
 
@@ -29,8 +29,13 @@ commands; that multiplies the pressure instead of diagnosing the run.
 
 GitHub Actions separates the work:
 
-- Ubuntu: dependency install, Ruff, Black, backend tests, and coverage floor.
-- macOS: one serial `xcodebuild test` job with code signing disabled.
+- Ubuntu: dependency install, Ruff, Black, backend tests, locked-dependency
+  audit, release-channel wiring, and coverage floor.
+- macOS: SwiftLint and SwiftFormat, launch-contract guards, one serial
+  `xcodebuild test` job with code signing disabled, and release source
+  preflight.
+- macOS: a packaged-backend job that builds the frozen server, verifies its
+  sealed archive, and launches it through the inherited listener.
 
 That separation keeps the expensive Mac-host test work off a contributor’s
 normal edit-save-verify loop while still testing it before merge.
@@ -44,7 +49,7 @@ machine is intentionally reserved for a faster build.
 
 ## Current validation baseline
 
-The current local baseline is 380 backend tests and 272 Swift tests. The Swift
+The current local baseline is 415 backend tests and 303 Swift tests. The Swift
 receipt came from one serial host with four Xcode build jobs, after the
 first-use, backend-lifecycle, updater, audiobook-layout, and telemetry
 regressions were added. Re-run only the smallest relevant command while

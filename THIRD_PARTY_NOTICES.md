@@ -4,14 +4,38 @@ Voqora is distributed with third-party software and assets. Those components
 are not relicensed by the PolyForm Noncommercial license for Voqora's own
 source code.
 
+## App
+
 | Component | Role | License / source |
 | --- | --- | --- |
 | KeyboardShortcuts | macOS global shortcut support | [MIT](https://github.com/sindresorhus/KeyboardShortcuts/blob/main/license) |
+| Sparkle | Update framework, linked but not started in the early-access channel | [MIT and bundled notices](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE) |
 | Poppins | Bundled interface typeface | [SIL Open Font License 1.1](https://fonts.google.com/specimen/Poppins/about) |
-| FastAPI and Uvicorn | Bundled local HTTP service | Their upstream package licenses |
-| ONNX Runtime | Local model inference | [MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) |
+
+## Local speech server
+
+| Component | Role | License / source |
+| --- | --- | --- |
 | Kokoro-82M weights | Local speech model | [Apache-2.0](https://huggingface.co/hexgrad/Kokoro-82M) |
-| kokoro-onnx conversion and espeak-ng | ONNX model packaging and phonemization | Their upstream package licenses |
+| kokoro-onnx | ONNX packaging of Kokoro and its model files | [MIT](https://github.com/thewh1teagle/kokoro-onnx) |
+| phonemizer-fork | Text-to-phoneme conversion | [GPL-3.0](https://github.com/bootphon/phonemizer) |
+| espeak-ng (via espeakng-loader) | Phonemization library and data | [GPL-3.0-or-later](https://github.com/espeak-ng/espeak-ng) |
+| ONNX Runtime | Local model inference | [MIT](https://github.com/microsoft/onnxruntime/blob/main/LICENSE) |
+| ONNX | Model format | [Apache-2.0](https://github.com/onnx/onnx) |
+| FastAPI, Pydantic, pydantic-settings | Local HTTP service | MIT |
+| Starlette, Uvicorn | Local HTTP service | BSD-3-Clause |
+| python-multipart, aiofiles | Upload handling | Apache-2.0 |
+| NumPy | Audio processing | BSD-3-Clause and bundled notices |
+| soundfile (libsndfile) | Audio encoding | BSD-3-Clause; libsndfile is LGPL-2.1 |
+| psutil | Resource checks | BSD-3-Clause |
+| pdfplumber, pdfminer.six | PDF text extraction | MIT |
+| pypdfium2 (PDFium) | PDF rendering | BSD-3-Clause, Apache-2.0 |
+| Pillow | Image handling | MIT-CMU and bundled notices |
+| python-docx | DOCX import | MIT |
+| lxml | DOCX parsing | BSD-3-Clause |
+| pypinyin | Chinese pronunciation | MIT |
+| google-genai | Optional Gemini cleanup | Apache-2.0 |
+| huggingface-hub | Model download | Apache-2.0 |
 
 The app bundle also contains this notice, the Voqora license, and the
 commercial-license notice. Before redistributing a modified bundle, review the

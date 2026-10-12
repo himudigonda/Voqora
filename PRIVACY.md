@@ -2,10 +2,12 @@
 
 ## What we collect
 
-- **Name and email**, entered during setup.
-- **Usage analytics**, such as app launches, how much audio is generated, and
-  which features are used. You can turn this off in **Preferences -> General ->
-  Share Usage Analytics**.
+- **Name and email**, entered during setup and sent to himudigonda.me.
+- **Usage analytics**, tied to a random anonymous ID and sent to
+  himudigonda.me: app launches, the voice, speed, and length of generated audio,
+  audiobook uploads (page count and file type), listening time, exports, and
+  update-installer events. Your text and documents are not included. You can
+  turn this off in **Preferences -> General -> Share Usage Analytics**.
 
 We use this information to run and improve Voqora and to contact you about the
 product. We do not sell it.
@@ -19,8 +21,10 @@ use **Preferences -> Data -> Erase All Local Data**.
 ## Third-party services
 
 - **Gemini**: if you add your own Gemini API key and choose document cleanup,
-  the relevant document text is sent to Google under Google's terms.
-- **GitHub**: Voqora checks GitHub for new releases.
+  the relevant page text and images of scanned pages are sent to Google under
+  Google's terms.
+- **GitHub**: Voqora checks GitHub for new releases and downloads updates from
+  GitHub when you choose to.
 
 ## Contact
 
