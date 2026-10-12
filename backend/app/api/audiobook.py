@@ -687,6 +687,18 @@ def get_audiobook_cover(book_id: str):
     path = AudiobookStore.cover_path(book_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Cover not yet rendered.")
+    meta = AudiobookStore.read_meta(book_id) or {}
+    if meta.get("file_ext", "pdf") != "pdf" and not TextExtractor.cover_is_current(
+        path
+    ):
+        try:
+            TextExtractor.render_cover(book_id)
+        except Exception:
+            log.warning(
+                "audiobook.cover_upgrade_failed",
+                extra={"book_id": book_id, "failure_code": "cover_upgrade_failed"},
+                exc_info=True,
+            )
     return FileResponse(path, media_type="image/jpeg")
 
 

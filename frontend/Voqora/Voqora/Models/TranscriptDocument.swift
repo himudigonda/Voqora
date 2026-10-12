@@ -296,9 +296,10 @@ nonisolated enum TranscriptText {
 
     static func isHeadingLike(_ paragraph: String) -> Bool {
         let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 70, !trimmed.contains("\n") else { return false }
-        guard let last = trimmed.last, !".!?,;:".contains(last) else { return false }
-        return trimmed.split(separator: " ").count <= 12
+        guard !trimmed.isEmpty, trimmed.count <= 100, !trimmed.contains("\n") else { return false }
+        let unquoted = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "\"'\u{201D}\u{2019})]"))
+        guard let last = unquoted.last, !".!?,;:".contains(last) else { return false }
+        return trimmed.split(separator: " ").count <= 16
     }
 
     static func isChapterTitle(_ text: String) -> Bool {

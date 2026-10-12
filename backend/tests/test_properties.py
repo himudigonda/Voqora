@@ -243,3 +243,21 @@ def test_get_silence_returns_correct_length() -> None:
     arr = AudioService.get_silence(0.5)
     assert arr.shape == (12000,)
     assert np.all(arr == 0)
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("5. Market order vs. limit order", ["5. Market order vs. limit order"]),
+        ("Dr. Smith said e.g. this works.", ["Dr. Smith said e.g. this works."]),
+        ('He said "go now." Then left.', ['He said "go now."', "Then left."]),
+        ("Costs rose 15. Then fell.", ["Costs rose 15.", "Then fell."]),
+        ("Choose option A. Then continue.", ["Choose option A.", "Then continue."]),
+        ("It leaves at 5 p.m. It is late.", ["It leaves at 5 p.m.", "It is late."]),
+        ("Made in the U.S. Sold abroad.", ["Made in the U.S.", "Sold abroad."]),
+    ],
+)
+def test_split_segments_never_breaks_after_an_abbreviation(text, expected):
+    """Was: each "." was a segment break, so "Dr." was synthesized alone with a
+    full stop and the transcript line split mid-sentence."""
+    assert TTSEngine._split_segments(text) == expected

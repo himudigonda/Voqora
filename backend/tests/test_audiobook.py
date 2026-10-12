@@ -2741,11 +2741,13 @@ def test_sentence_lines_group_segments_into_sentences_with_exact_times():
 
     second = SAMPLE_RATE
     segments = [
-        (0, "Heading", 0, second),
-        (1, "The model uses attention,", second, 3 * second),
-        (1, "and it is fast.", 3 * second, 4 * second),
-        (1, "Dr.", 4 * second, 5 * second),
-        (1, "Smith agrees with this.", 5 * second, 7 * second),
+        (0, "Heading", 0, second, True),
+        (1, "The model uses attention,", second, 3 * second, False),
+        (1, "and it is fast.", 3 * second, 4 * second, True),
+        (1, "Dr.", 4 * second, 5 * second, False),
+        (1, "Smith agrees with this.", 5 * second, 7 * second, True),
+        (2, "First, a.", 7 * second, 8 * second, True),
+        (2, "Second, b.", 8 * second, 9 * second, True),
     ]
     assert _sentence_lines(segments) == [
         {"paragraph": 0, "text": "Heading", "start": 0.0, "end": 1.0},
@@ -2761,6 +2763,8 @@ def test_sentence_lines_group_segments_into_sentences_with_exact_times():
             "start": 4.0,
             "end": 7.0,
         },
+        {"paragraph": 2, "text": "First, a.", "start": 7.0, "end": 8.0},
+        {"paragraph": 2, "text": "Second, b.", "start": 8.0, "end": 9.0},
     ]
 
 

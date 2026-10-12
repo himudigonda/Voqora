@@ -54,4 +54,18 @@ final class AudiobookImportStagingTests: XCTestCase {
         XCTAssertFalse(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.epub")))
         XCTAssertTrue(AudiobookImportStaging.supportedFormatsDescription.contains("Markdown"))
     }
+
+    func test_displayName_turnsFilenamesIntoReadableTitles() {
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "market_mechanics_crash_course.md"), "market mechanics crash course")
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "Deep  Work__notes.pdf"), "Deep Work notes")
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "state-of-the-art.txt"), "state-of-the-art")
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "___"), "___")
+    }
+
+    func test_progressCaption_namesThePageInProgressNotThePagesDone() {
+        XCTAssertEqual(ProcessingStatus.generating(page: 0, total: 7).caption, "Narrating page 1 of 7")
+        XCTAssertEqual(ProcessingStatus.generating(page: 6, total: 7).caption, "Narrating page 7 of 7")
+        XCTAssertEqual(ProcessingStatus.generating(page: 7, total: 7).caption, "Narrating page 7 of 7")
+        XCTAssertEqual(ProcessingStatus.cleaning(page: 0, total: 0).caption, "Cleaning…")
+    }
 }

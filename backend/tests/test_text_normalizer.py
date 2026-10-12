@@ -369,3 +369,65 @@ def test_link_url_with_parentheses_is_stripped():
     assert (
         strip_markdown_for_narration("![diagram (v2)](img/a_(1).png)") == "diagram (v2)"
     )
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        (
+            "**1. Equity / share / stock**\nA legal claim on a company.",
+            "1. Equity / share / stock\n\nA legal claim on a company.",
+        ),
+        ("*Chapter one*\nIt was dark.", "Chapter one\n\nIt was dark."),
+        ("***Intro***\nWelcome.", "Intro\n\nWelcome."),
+        ("__Setup__\nInstall it.", "Setup\n\nInstall it."),
+        ("**Note:**\nRead this.", "Note:\n\nRead this."),
+        ("CHAPTER ONE\nIt began.", "CHAPTER ONE\n\nIt began."),
+        ("Line one\\\nLine two", "Line one\n\nLine two"),
+        ("First<br>Second<br/>Third", "First\n\nSecond\n\nThird"),
+        ("![Revenue chart](a.png)\nRevenue grew.", "Revenue chart.\n\nRevenue grew."),
+        (
+            "- wraps here\n  onto two lines\n- next",
+            "First, wraps here onto two lines.\nSecond, next.",
+        ),
+        ("• apples\n• pears", "First, apples.\nSecond, pears."),
+        ("1. first\n\n2. second", "1. first\n\n2. second"),
+        ("Term\n: The definition.", "Term: The definition."),
+        ("**Term**\n: The definition.", "Term: The definition."),
+        ("– Where are you going?\n– Home.", "– Where are you going?\n– Home."),
+        ("- first<br>second", "first second"),
+        ("1. first<br>second", "1. first second"),
+        ("- a\n- b<br>c\n- d", "First, a.\nSecond, b c.\nThird, d."),
+        ("# Title<br>Sub line", "Title\n\nSub line"),
+        ("Intro sentence.\n\n> WARNING", "Intro sentence.\n\nWARNING"),
+        ("> quoted<br>more", "quoted more"),
+        (
+            "Visit https://www.example.com/a/b?c=1. Then stop.",
+            "Visit example.com. Then stop.",
+        ),
+    ],
+)
+def test_block_structure_survives_into_narration(source, expected):
+    """Was: a bold or caps title line was soft-wrapped into the sentence under
+    it ("1. Equity / share / stock A legal claim..."), <br> fused words, wrapped
+    list items split into separate paragraphs, and bullets and URLs were read
+    aloud."""
+    out = strip_markdown_for_narration(source)
+    assert out == expected
+    assert strip_markdown_for_narration(out) == out
+
+
+def test_emphasis_inside_a_line_is_not_a_heading():
+    out = strip_markdown_for_narration(
+        "**Term.** Its definition.\n**a** and **b** here."
+    )
+    assert out == "Term. Its definition.\na and b here."
+
+
+def test_br_inside_a_table_cell_keeps_the_row_together():
+    out = strip_markdown_for_narration("| A | B |\n| --- | --- |\n| x<br>y | 2 |")
+    assert out.split("\n") == [
+        "The following is a table.",
+        "A is x y, B is 2.",
+        "End of table.",
+    ]

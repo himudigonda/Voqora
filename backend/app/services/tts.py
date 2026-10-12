@@ -25,6 +25,16 @@ log = get_logger(__name__)
 SEGMENT_PAUSE_SECONDS = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
 DEFAULT_SEGMENT_PAUSE_SECONDS = 0.1
 
+# Periods that almost never end a sentence. Each segment is synthesized on its
+# own, so a break after "Dr." spoke it with a full stop and split the transcript
+# line. Words that often do end one ("etc.", "Inc.", "p.m.", "U.S.", a lone
+# capital, years) are left out.
+_NO_BREAK_AFTER_RE = re.compile(
+    r"^\(?\d{1,3}[.)]$|(?:^|\s)"
+    r"(?:[Mm]rs?|[Mm]s|[Dd]r|[Pp]rof|[Ss]r|[Jj]r|[Ss]t|vs|cf|al|fig|approx|e\.g|i\.e)\.$"
+)
+_SEGMENT_SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*$")
+
 # espeak-ng stores the data directory handed to `espeak_Initialize()` in a
 # fixed 160-byte global (`char path_home[N_PATH_HOME]`). A longer path is NOT
 # reported as an error to the caller: espeak-ng silently discards it and falls
@@ -383,11 +393,23 @@ class TTSEngine:
 
         # Split on punctuation to get natural sentence/clause boundaries
         raw_parts = [
-            s.strip() for s in re.split(r"(?<=[.!?|:;,]) +", raw_text) if s.strip()
+            s.strip()
+            for s in re.split(
+                r"(?:(?<=[.!?|:;,])|(?<=[.!?][\"'\u201d\u2019)\]])) +", raw_text
+            )
+            if s.strip()
         ]
 
         if not raw_parts:
             return [raw_text]
+
+        merged: list[str] = []
+        for part in raw_parts:
+            if merged and _NO_BREAK_AFTER_RE.search(merged[-1]):
+                merged[-1] = f"{merged[-1]} {part}"
+            else:
+                merged.append(part)
+        raw_parts = merged
 
         # Group parts until ≥ _NORMAL_SEG_WORDS words OR a sentence ends (.!?)
         segments = []
@@ -395,7 +417,7 @@ class TTSEngine:
         for part in raw_parts:
             temp_seg += (" " + part) if temp_seg else part
             word_count = len(temp_seg.split())
-            ends_sentence = temp_seg[-1] in ".!?" if temp_seg else False
+            ends_sentence = bool(_SEGMENT_SENTENCE_END_RE.search(temp_seg))
 
             if word_count >= cls._NORMAL_SEG_WORDS or ends_sentence:
                 segments.append(temp_seg.strip())
@@ -461,7 +483,8 @@ class TTSEngine:
 
             # Append inter-segment silence using pre-computed arrays
             # Speed-scaled pause: divide duration by speed so pauses feel proportional
-            last_char = seg_text.strip()[-1] if seg_text.strip() else ""
+            stripped = seg_text.strip().rstrip("\"'\u201d\u2019)]")
+            last_char = stripped[-1] if stripped else ""
             silence_sec = (
                 SEGMENT_PAUSE_SECONDS.get(last_char, DEFAULT_SEGMENT_PAUSE_SECONDS)
                 / speed

@@ -74,13 +74,13 @@ struct TranscriptView: View {
                 line: line,
                 isActive: distance == 0,
                 blur: rowBlur(distance: distance),
-                font: vm.appFont(size: line.isHeading ? fontSize * 0.62 : fontSize, weight: .bold),
+                font: vm.appFont(size: line.isHeading ? fontSize * 1.25 : fontSize, weight: line.isHeading ? .heavy : .bold),
                 progress: distance == 0 && line.isExactlyTimed ? follower.lineProgress : nil,
                 animation: reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.9),
                 onSelect: { select(line) }
             )
         }
-        .padding(.top, startsBlock ? (line.isHeading ? 34 : 22) : 2)
+        .padding(.top, startsBlock ? (line.isHeading ? 44 : 22) : 2)
     }
 
     private func rowBlur(distance: Int) -> CGFloat {
@@ -194,7 +194,7 @@ private struct TranscriptLineRow: View {
             }
         }
         .font(font)
-        .lineSpacing(3)
+        .lineSpacing(line.isHeading ? 0 : 3)
         .italic(!line.isNarrated)
         .multilineTextAlignment(.leading)
         .fixedSize(horizontal: false, vertical: true)

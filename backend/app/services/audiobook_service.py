@@ -1445,10 +1445,21 @@ class AudiobookService:
 
     @classmethod
     async def _phase_tts(cls, book_id: str, meta: dict[str, Any]) -> None:
-        await AudiobookStore.update_meta(book_id, status="tts")
-        cls._emit(book_id, "phase_started", phase="tts")
-
         page_count = int(meta.get("page_count") or 0)
+        page_done = 0
+        while page_done < page_count and os.path.exists(
+            AudiobookStore.page_audio_path(book_id, page_done + 1)
+        ):
+            page_done += 1
+        await AudiobookStore.update_meta(
+            book_id,
+            status="tts",
+            phase_progress={"page_done": page_done, "page_total": page_count},
+        )
+        cls._emit(
+            book_id, "phase_started", phase="tts", page=page_done, total=page_count
+        )
+
         voice = meta.get("voice") or "af_bella"
         speed = float(meta.get("speed") or 1.0)
         failed: list[int] = list(
@@ -1569,17 +1580,20 @@ class AudiobookService:
         waiting for the whole (possibly multi-segment) page to finish.
         """
         chunks: list[np.ndarray] = []
-        timings: list[tuple[int, str, int, int]] = []
+        timings: list[tuple[int, str, int, int, bool]] = []
         cursor = 0
         for paragraph, unit in _speech_units(text):
-            for segment in EngineManager.split_segments(unit):
+            segments = EngineManager.split_segments(unit)
+            for index, segment in enumerate(segments):
                 start = cursor
                 async for chunk in EngineManager.generate(segment, voice, speed):
                     cls._check_cancel(book_id)
                     chunks.append(chunk)
                     cursor += len(chunk)
                     await asyncio.sleep(_settings.AUDIOBOOK_TTS_SEGMENT_PACING_S)
-                timings.append((paragraph, segment, start, cursor))
+                timings.append(
+                    (paragraph, segment, start, cursor, index == len(segments) - 1)
+                )
         if not chunks:
             return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32), []
         return np.concatenate(chunks), _sentence_lines(timings)
@@ -1996,10 +2010,10 @@ def _speech_units(text: str) -> list[tuple[int, str]]:
 
 
 def _sentence_lines(
-    segments: list[tuple[int, str, int, int]],
+    segments: list[tuple[int, str, int, int, bool]],
 ) -> list[dict[str, Any]]:
     lines: list[dict[str, Any]] = []
-    pending: list[tuple[int, str, int, int]] = []
+    pending: list[tuple[int, str, int, int, bool]] = []
 
     def flush() -> None:
         if not pending:
@@ -2022,7 +2036,9 @@ def _sentence_lines(
         words = sum(len(part[1].split()) for part in pending)
         ends_sentence = bool(_SENTENCE_END.search(segment[1]))
         continues_paragraph = next_segment is not None and next_segment[0] == segment[0]
-        if ends_sentence and (words >= _MIN_SENTENCE_WORDS or not continues_paragraph):
+        if ends_sentence and (
+            words >= _MIN_SENTENCE_WORDS or segment[4] or not continues_paragraph
+        ):
             flush()
     flush()
     return lines
@@ -2081,9 +2097,10 @@ def _aligned_page_lines(
 ) -> list[dict[str, Any]]:
     lines = _sentence_lines(
         [
-            (paragraph, segment, 0, 0)
+            (paragraph, segment, 0, 0, index == len(segments) - 1)
             for paragraph, unit in _speech_units(text)
-            for segment in EngineManager.split_segments(unit)
+            for segments in [EngineManager.split_segments(unit)]
+            for index, segment in enumerate(segments)
         ]
     )
     if not lines:

@@ -214,7 +214,7 @@ final class AudiobookViewModel: ObservableObject {
     func presentEstimate(for document: URL, voice: String, speed: Double, engine: String) {
         if pendingDocument != nil || uploadInProgress {
             uploadQueue.append(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine))
-            showToast("Queued \(AudiobookImportStaging.strippingSupportedExtension(from: document.lastPathComponent))", kind: .info)
+            showToast("Queued \(AudiobookImportStaging.displayName(from: document.lastPathComponent))", kind: .info)
             return
         }
         pendingDocument = document
@@ -662,7 +662,7 @@ final class AudiobookViewModel: ObservableObject {
 
     static func chapters(for book: Audiobook, document: TranscriptDocument) -> [AudiobookSection] {
         let sections = book.sortedSections
-        let titled = sections.filter { $0.title.caseInsensitiveCompare(book.displayTitle) != .orderedSame }
+        let titled = sections.filter { AudiobookImportStaging.displayName(from: $0.title).caseInsensitiveCompare(book.displayTitle) != .orderedSame }
         if titled.count >= 2 {
             return sections
         }

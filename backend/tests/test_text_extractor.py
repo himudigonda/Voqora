@@ -163,3 +163,51 @@ def test_terminated_fence_with_blank_lines_stays_on_one_page():
     assert TextExtractor.split_pages(text) == [
         "Before.\n\n```\nline one\n\nline two\n```\n\nAfter."
     ]
+
+
+def test_text_cover_wraps_long_titles_and_upgrades_stale_covers(monkeypatch, tmp_path):
+    from PIL import Image
+
+    from app.services.audiobook_store import AudiobookStore
+
+    monkeypatch.setattr(
+        AudiobookStore, "root_dir", classmethod(lambda cls: str(tmp_path))
+    )
+    os.makedirs(tmp_path / "b2")
+    with open(AudiobookStore.source_file_path("b2", "md"), "w", encoding="utf-8") as f:
+        f.write("Markets — equities, derivatives, and volatility.")
+    AudiobookStore.write_meta(
+        "b2",
+        {
+            "book_id": "b2",
+            "title": "market_mechanics_crash_course.md",
+            "file_ext": "md",
+        },
+    )
+    out = AudiobookStore.cover_path("b2")
+    Image.new("RGB", (10, 10)).save(out, format="JPEG")
+    assert not TextExtractor.cover_is_current(out)
+
+    TextExtractor.render_cover("b2")
+
+    assert TextExtractor.cover_is_current(out)
+    with Image.open(out) as cover:
+        assert cover.size == (600, 840)
+        right_margin = cover.crop((560, 0, 600, 200))
+        assert all(
+            max(right_margin.getpixel((x, y))) > 200
+            for x in range(right_margin.width)
+            for y in range(right_margin.height)
+        ), "title text must stay inside the margins"
+
+
+def test_docx_table_is_narrated_with_its_headers():
+    from app.services.text_normalizer import strip_markdown_for_narration
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "with_table.docx")
+        _write_docx(path)
+
+        narration = strip_markdown_for_narration(TextExtractor.read_text(path))
+
+        assert "Name is Ada, Role is Engineer." in narration

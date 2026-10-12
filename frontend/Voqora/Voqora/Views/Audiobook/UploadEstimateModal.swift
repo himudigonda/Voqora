@@ -282,7 +282,7 @@ struct UploadEstimateModal: View {
     }
 
     private var prettyTitle: String {
-        AudiobookImportStaging.strippingSupportedExtension(from: documentURL.lastPathComponent)
+        AudiobookImportStaging.displayName(from: documentURL.lastPathComponent)
     }
 
     private func numberFormat(_ n: Int) -> String {

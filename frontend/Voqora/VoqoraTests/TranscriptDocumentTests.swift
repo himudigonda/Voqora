@@ -171,8 +171,12 @@ final class TranscriptDocumentTests: XCTestCase {
 
     func test_isHeadingLikeIsConservative() {
         XCTAssertTrue(TranscriptText.isHeadingLike("3.2 Scaled Dot-Product Attention"))
+        XCTAssertTrue(TranscriptText.isHeadingLike("Part 0 — Market plumbing (you need this vocabulary before anything else makes sense)"))
+        XCTAssertTrue(TranscriptText.isHeadingLike("1. Equity / share / stock"))
         XCTAssertFalse(TranscriptText.isHeadingLike("This is a sentence."))
         XCTAssertFalse(TranscriptText.isHeadingLike(String(repeating: "word ", count: 20)))
+        XCTAssertFalse(TranscriptText.isHeadingLike("She turned and said \"we should leave before it gets dark.\""))
+        XCTAssertFalse(TranscriptText.isHeadingLike("The results were mixed (see the notes.)"))
     }
 
     private func makeTranscript(

@@ -29,7 +29,7 @@ struct Audiobook: Identifiable, Codable, Hashable {
     }
 
     var displayTitle: String {
-        AudiobookImportStaging.strippingSupportedExtension(from: title)
+        AudiobookImportStaging.displayName(from: title)
     }
 
     var narratorName: String {
@@ -45,7 +45,7 @@ struct Audiobook: Identifiable, Codable, Hashable {
         guard chapters.count > 1, let section = chapters.section(at: time) else {
             return "Narrated by \(narratorName)"
         }
-        let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
+        let title = AudiobookImportStaging.displayName(from: section.title)
         return title.caseInsensitiveCompare(displayTitle) == .orderedSame ? "Narrated by \(narratorName)" : title
     }
 
@@ -259,10 +259,10 @@ enum ProcessingStatus: Hashable {
         switch self {
         case .notStarted: "Not started"
         case .queued: "Waiting…"
-        case let .extracting(p, t): "Reading page \(p) of \(t)"
-        case let .cleaning(p, t): "Cleaning page \(p) of \(t)"
+        case let .extracting(p, t): Self.pageCaption("Reading", done: p, total: t)
+        case let .cleaning(p, t): Self.pageCaption("Cleaning", done: p, total: t)
         case .sectioning: "Finding chapters…"
-        case let .generating(p, t): "Narrating page \(p) of \(t)"
+        case let .generating(p, t): Self.pageCaption("Narrating", done: p, total: t)
         case .finishing: "Finishing up…"
         case .ready: "Ready"
         case .needsKey: "Needs Gemini API key"
@@ -270,6 +270,11 @@ enum ProcessingStatus: Hashable {
         case .failed: "Failed. Click to retry."
         case .cancelled: "Stopped. Click to restart."
         }
+    }
+
+    static func pageCaption(_ verb: String, done: Int, total: Int) -> String {
+        guard total > 0 else { return "\(verb)…" }
+        return "\(verb) page \(min(done + 1, total)) of \(total)"
     }
 }
 

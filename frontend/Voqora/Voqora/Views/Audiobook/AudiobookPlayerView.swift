@@ -84,7 +84,7 @@ struct AudiobookPlayerView: View {
     private func chapterTitle(at time: TimeInterval) -> String? {
         let chapters = bookVM.chapters(for: book)
         guard chapters.count > 1, let section = chapters.section(at: time) else { return nil }
-        return AudiobookImportStaging.strippingSupportedExtension(from: section.title)
+        return AudiobookImportStaging.displayName(from: section.title)
     }
 
     @ViewBuilder
@@ -373,7 +373,7 @@ private struct PlayerSectionRow: View {
 
     var body: some View {
         let accent = vm.accentColor(scheme: colorScheme, contrast: contrast)
-        let title = AudiobookImportStaging.strippingSupportedExtension(from: section.title)
+        let title = AudiobookImportStaging.displayName(from: section.title)
         Button(action: action) {
             HStack(spacing: 14) {
                 Group {

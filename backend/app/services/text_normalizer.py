@@ -96,9 +96,22 @@ _TABLE_RULE_LINE_RE = re.compile(r"^ {0,3}\|[\s:|-]*$|^ {0,3}[\s:-]*\|[\s:|-]*$"
 
 # Leading whitespace is unbounded (was "^ {0,3}") so nested list items are
 # recognized as items rather than left with a literal "-" to be spoken.
-_UNORDERED_ITEM_RE = re.compile(r"^\s*[-*+]\s+(.*)$")
+_UNORDERED_ITEM_RE = re.compile(r"^\s*[-*+•◦▪‣⁃●○■□]\s+(.*)$")
 _ORDERED_ITEM_RE = re.compile(r"^\s*\d+[.)]\s+(.*)$")
 _TASK_BOX_RE = re.compile(r"^\[[ xX]\]\s*")
+
+# A line that is nothing but emphasis is a heading in all but name -- the
+# "**1. Term**" lead-in over a definition. Left inline it was soft-wrapped
+# into the sentence below it.
+_EMPHASIS_LINE_RE = re.compile(
+    r"^ {0,3}(\*\*\*|___|\*\*|__|\*|_)(?=\S)((?:(?!\1).)+?)(?<=\S)\1\s*$"
+)
+_STANDALONE_IMAGE_RE = re.compile(r"^\s*!\[([^\[\]]*)\]\((?:[^()]|\([^()]*\))*\)\s*$")
+_DEFINITION_LINE_RE = re.compile(r"^ {0,3}:\s+(.+)$")
+_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_BARE_URL_RE = re.compile(
+    r"\bhttps?://(?:www\.)?([^\s/<>()\[\]]+)[^\s<>()\[\]]*?(?=[.,;:!?)\]]*(?:\s|$))"
+)
 
 _SEP_CELL_RE = re.compile(r"^:?-{1,}:?$")
 
@@ -255,17 +268,49 @@ def _parse_list_block(
         m = item_re.match(lines[i])
         if not m:
             break
-        item_text = _inline_clean(m.group(1)).strip()
+        item_text = _inline_clean(m.group(1)).strip().rstrip("\\").rstrip()
+        i += 1
+        while i < len(lines) and _is_item_continuation(lines[i]):
+            continuation = _inline_clean(lines[i]).strip().rstrip("\\").rstrip()
+            item_text = f"{item_text} {continuation}".strip()
+            i += 1
         if item_text:
             items.append(item_text)
-        i += 1
     if not items:
         return None, start
     if len(items) == 1:
+        marker = re.match(r"\s*(\d+[.)])\s", lines[start])
+        if item_re is _ORDERED_ITEM_RE and marker:
+            return [f"{marker.group(1)} {items[0]}"], i
         return [items[0]], i
     # One item per line. Joining every bullet into a single sentence is what made
     # a five-item list render as one dense paragraph blob in the transcript.
     return [f"{_ordinal(n)}, {item}." for n, item in enumerate(items)], i
+
+
+def _is_item_continuation(line: str) -> bool:
+    return (
+        line[:1] in (" ", "\t")
+        and bool(line.strip())
+        and not _UNORDERED_ITEM_RE.match(line)
+        and not _ORDERED_ITEM_RE.match(line)
+        and not _CODE_FENCE_LINE_RE.match(line.strip())
+    )
+
+
+def _is_caps_heading(line: str, out: list[str]) -> bool:
+    """An all-caps title line in plain text ("CHAPTER ONE"), which has no
+    markup to announce it and was soft-wrapped into the paragraph below."""
+    text = line.strip()
+    letters = [c for c in text if c.isalpha()]
+    return (
+        len(letters) >= 3
+        and all(c.isupper() for c in letters if c.isupper() or c.islower())
+        and any(c.isupper() for c in letters)
+        and len(text.split()) <= 10
+        and text[-1] not in ".,;!?"
+        and (not out or not out[-1] or out[-1][-1] in _SENTENCE_END)
+    )
 
 
 def _ensure_blank_before(out: list[str]) -> None:
@@ -380,6 +425,19 @@ def strip_markdown_for_narration(text: str) -> str:
 
     unescaped = html.unescape(text)
     unescaped = _HTML_COMMENT_RE.sub("", unescaped)
+    unescaped = "\n".join(
+        _BR_RE.sub(
+            (
+                " "
+                if "|" in line
+                or _UNORDERED_ITEM_RE.match(line)
+                or _ORDERED_ITEM_RE.match(line)
+                else "\\\n"
+            ),
+            line,
+        )
+        for line in unescaped.split("\n")
+    )
     unescaped = _HTML_TAG_RE.sub("", unescaped)
     unescaped = _protect_escapes(unescaped)
     lines = unescaped.replace("\r\n", "\n").replace("\r", "\n").split("\n")
@@ -465,7 +523,7 @@ def strip_markdown_for_narration(text: str) -> str:
 
         header_match = _HEADER_LINE_RE.match(line)
         if header_match:
-            heading = _inline_clean(header_match.group(1)).strip()
+            heading = _inline_clean(header_match.group(1)).strip().rstrip("\\").rstrip()
             if heading:
                 _ensure_blank_before(out)
                 out.append(heading)
@@ -475,9 +533,54 @@ def strip_markdown_for_narration(text: str) -> str:
                 i += 1
             continue
 
+        definition = _DEFINITION_LINE_RE.match(line)
+        if definition and len(out) > 1 and not out[-1] and out[-2]:
+            out.pop()
+        if definition and out and out[-1]:
+            out[-1] = (
+                f"{out[-1].rstrip(' :')}: {_inline_clean(definition.group(1)).strip()}"
+            )
+            i += 1
+            continue
+
+        image = _STANDALONE_IMAGE_RE.match(line)
+        if image:
+            alt = _inline_clean(image.group(1)).strip()
+            if alt:
+                _ensure_blank_before(out)
+                out.append(alt if alt[-1] in _SENTENCE_END else f"{alt}.")
+                _ensure_blank_separator(out, lines, i + 1)
+            i += 1
+            continue
+
+        is_quote = bool(_BLOCKQUOTE_LINE_RE.match(line))
+        if not is_quote and (
+            _EMPHASIS_LINE_RE.match(line) or _is_caps_heading(line, out)
+        ):
+            heading = _inline_clean(line).strip()
+            heading = _ITALIC_RE.sub(_first_group, heading)
+            _ensure_blank_before(out)
+            out.append(heading)
+            i += 1
+            _ensure_blank_separator(out, lines, i)
+            continue
+
+        if (
+            not is_quote
+            and line.rstrip().endswith("\\")
+            and not line.rstrip().endswith("\\\\")
+        ):
+            out.append(_inline_clean(line.rstrip()[:-1]).rstrip())
+            i += 1
+            _ensure_blank_separator(out, lines, i)
+            continue
+
         bq_match = _BLOCKQUOTE_LINE_RE.match(line)
         if bq_match:
-            out.append(_inline_clean(line[bq_match.end() :]).strip())
+            quoted = line[bq_match.end() :].rstrip()
+            if quoted.endswith("\\") and not quoted.endswith("\\\\"):
+                quoted = quoted[:-1]
+            out.append(_inline_clean(quoted).strip())
             i += 1
             continue
 
@@ -491,7 +594,9 @@ def strip_markdown_for_narration(text: str) -> str:
     # Any stray/malformed pipe that wasn't part of a recognized table.
     result = result.replace("|", " ")
     result = _restore_escapes(result)
+    result = _BARE_URL_RE.sub(r"\1", result)
     result = re.sub(r"[ \t]+", " ", result)
+    result = re.sub(r"(?m)^ +| +$", "", result)
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
 

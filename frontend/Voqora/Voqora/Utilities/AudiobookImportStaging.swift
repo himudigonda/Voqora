@@ -43,6 +43,12 @@ enum AudiobookImportStaging {
         return name
     }
 
+    nonisolated static func displayName(from name: String) -> String {
+        let spaced = strippingSupportedExtension(from: name).replacingOccurrences(of: "_", with: " ")
+        let words = spaced.split(whereSeparator: \.isWhitespace)
+        return words.isEmpty ? name : words.joined(separator: " ")
+    }
+
     static func stageDocument(
         from sourceURL: URL,
         in root: URL = FileManager.default.temporaryDirectory,

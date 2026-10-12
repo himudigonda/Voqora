@@ -16,6 +16,12 @@ from PIL import Image, ImageDraw, ImageFont
 from app.services.audiobook_store import AudiobookStore
 from app.services.text_normalizer import strip_markdown_for_narration
 
+COVER_VERSION = b"voqora-text-cover-2"
+COVER_FONTS = (
+    ("/System/Library/Fonts/HelveticaNeue.ttc", 0),
+    ("/System/Library/Fonts/Helvetica.ttc", 0),
+)
+
 # Target words per synthetic page. 400 words ≈ 2-3 minutes of audio.
 _WORDS_PER_PAGE = 400
 
@@ -84,7 +90,9 @@ class TextExtractor:
                     if any(c.text.strip() for c in row.cells)
                 ]
                 if rows:
-                    blocks.append("\n".join(rows))
+                    width = rows[0].count("|") - 1
+                    rule = "|" + " --- |" * width
+                    blocks.append("\n".join([rows[0], rule, *rows[1:]]))
         return "\n\n".join(blocks)
 
     # A fenced code block may legitimately contain blank lines, which the
@@ -313,7 +321,7 @@ class TextExtractor:
     def render_cover(cls, book_id: str) -> None:
         """Render the first page as a cover, matching how PDF covers look. Skip if already exists."""
         out = AudiobookStore.cover_path(book_id)
-        if os.path.exists(out):
+        if cls.cover_is_current(out):
             return
 
         meta = AudiobookStore.read_meta(book_id) or {}
@@ -321,7 +329,7 @@ class TextExtractor:
         title = (meta.get("title") or "").strip()
         if title.lower().endswith(f".{ext.lower()}"):
             title = title[: -len(ext) - 1]
-        title = title or "Untitled"
+        title = " ".join(title.replace("_", " ").split()) or "Untitled"
         source_path = AudiobookStore.source_file_path(book_id, ext)
         try:
             body = strip_markdown_for_narration(cls.read_text(source_path)[:4000])
@@ -331,7 +339,7 @@ class TextExtractor:
         width, height, margin = 600, 840, 56
         img = Image.new("RGB", (width, height), color=(250, 248, 244))
         draw = ImageDraw.Draw(img)
-        title_font = cls._cover_font(40)
+        title_font = cls._cover_font(40, bold=True)
         body_font = cls._cover_font(18)
         label_font = cls._cover_font(15)
 
@@ -366,11 +374,26 @@ class TextExtractor:
         )
 
         buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=88, optimize=True)
+        img.save(buf, format="JPEG", quality=88, optimize=True, comment=COVER_VERSION)
         cls._atomic_write_bytes(out, buf.getvalue())
 
     @staticmethod
-    def _cover_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    def cover_is_current(path: str) -> bool:
+        try:
+            with Image.open(path) as img:
+                return img.info.get("comment") == COVER_VERSION
+        except Exception:
+            return False
+
+    @staticmethod
+    def _cover_font(
+        size: int, bold: bool = False
+    ) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+        for path, index in COVER_FONTS:
+            try:
+                return ImageFont.truetype(path, size, index=index + int(bold))
+            except Exception:
+                continue
         try:
             return ImageFont.load_default(size=size)
         except Exception:
@@ -381,6 +404,15 @@ class TextExtractor:
         lines: list[str] = []
         current = ""
         for word in text.split():
+            while draw.textlength(word, font=font) > max_width and len(word) > 1:
+                cut = len(word) - 1
+                while cut > 1 and draw.textlength(word[:cut], font=font) > max_width:
+                    cut -= 1
+                if current:
+                    lines.append(current)
+                    current = ""
+                lines.append(word[:cut])
+                word = word[cut:]
             candidate = f"{current} {word}".strip()
             if current and draw.textlength(candidate, font=font) > max_width:
                 lines.append(current)
