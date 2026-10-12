@@ -63,3 +63,6 @@ backend/benchmarks/cache_stats.json
 *.env
 *.save
 **/__pycache__/**
+
+# Local agent workspace
+.claude/
