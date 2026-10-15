@@ -63,6 +63,19 @@ struct VoqoraWindow: View {
                         .accessibilityLabel("Preferences")
                         .accessibilityAddTraits(vm.selectedTab == "preferences" ? [.isSelected] : [])
 
+                        PaneRow(isSelected: vm.selectedTab == "feedback", action: {
+                            vm.selectedTab = "feedback"
+                        }) {
+                            Image(systemName: "bubble.left.and.text.bubble.right.fill")
+                                .font(vm.font(.rowTitle))
+                                .frame(width: 20)
+                        } label: {
+                            Text("Feedback")
+                                .font(vm.font(.rowTitle))
+                        }
+                        .accessibilityLabel("Feedback")
+                        .accessibilityAddTraits(vm.selectedTab == "feedback" ? [.isSelected] : [])
+
                         PaneRow(isSelected: vm.selectedTab == "about", action: {
                             vm.selectedTab = "about"
                         }) {
@@ -239,6 +252,7 @@ private extension VoqoraWindow {
         case "books": AudiobookLibraryView()
         case "preferences": PreferencesView()
         case "about": AboutView()
+        case "feedback": FeedbackView()
         default: MainDashboardView()
         }
     }
