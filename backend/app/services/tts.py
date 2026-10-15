@@ -1,7 +1,6 @@
 import asyncio
 import atexit
 import concurrent.futures
-import gc
 import os
 import re
 import shutil
@@ -19,6 +18,7 @@ from kokoro_onnx.config import EspeakConfig
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
+from app.services.languages import DEFAULT_VOICE, espeak_lang_for_voice
 
 log = get_logger(__name__)
 
@@ -221,7 +221,6 @@ class TTSEngine:
             cls._executor.shutdown(wait=False, cancel_futures=True)
             cls._executor = None
         cls._lookahead_cache.clear()
-        gc.collect()
         log.info("tts.model_unloaded")
 
     @classmethod
@@ -397,7 +396,7 @@ class TTSEngine:
         raw_parts = [
             s.strip()
             for s in re.split(
-                r"(?:(?<=[.!?|:;,])|(?<=[.!?][\"'\u201d\u2019)\]])) +"
+                r"(?:(?<=[.!?:;,])|(?<=[.!?][\"'\u201d\u2019)\]])) +"
                 r"|(?<=[\u3002\uff01\uff1f\uff0c\uff1b\uff1a\u0964])\s*",
                 raw_text,
             )
@@ -434,7 +433,12 @@ class TTSEngine:
 
     @classmethod
     async def generate(
-        cls, text: str, voice: str, speed: float, lang: str = "en-us"
+        cls,
+        text: str,
+        voice: str,
+        speed: float,
+        lang: str = "en-us",
+        failed_segments: list[str] | None = None,
     ) -> AsyncGenerator[np.ndarray, None]:
         if not cls._model or not cls._executor:
             raise RuntimeError("Model not initialized. Call initialize() first.")
@@ -443,6 +447,14 @@ class TTSEngine:
 
         if not segments:
             return
+
+        if voice not in cls._model.voices:
+            log.warning(
+                "tts.unknown_voice_fallback",
+                extra={"requested": voice, "fallback": DEFAULT_VOICE},
+            )
+            voice = DEFAULT_VOICE
+            lang = espeak_lang_for_voice(voice)
 
         loop = asyncio.get_running_loop()
 
@@ -480,9 +492,13 @@ class TTSEngine:
                         },
                         exc_info=True,
                     )
+                    if failed_segments is not None:
+                        failed_segments.append(seg_stripped)
                     continue
 
             if audio is None:
+                if failed_segments is not None:
+                    failed_segments.append(seg_stripped)
                 continue
 
             # Append inter-segment silence using pre-computed arrays

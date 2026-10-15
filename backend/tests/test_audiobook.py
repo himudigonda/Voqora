@@ -22,6 +22,7 @@ from app.services.audiobook_service import (
     WAV_HEADER_SIZE,
     AudiobookCancelled,
     AudiobookService,
+    PageSegmentsFailed,
     _wav_header,
 )
 from app.services.audiobook_store import AudiobookStore
@@ -729,7 +730,9 @@ async def test_tts_missing_clean_text_still_advances_progress_and_emits_page_don
 # ---------- TTS/audio desync + page_status marking (T-1) ----------
 
 
-async def _mock_generate_page_2_fails(text, voice, speed):
+async def _mock_generate_page_2_fails(
+    text, voice, speed, lang=None, failed_segments=None
+):
     """Fails TTS for whatever page's clean text is "Page 2 content." —
     used to simulate a single forced per-page TTS failure among several."""
     if text == "Page 2 content.":
@@ -818,6 +821,193 @@ async def test_transcript_reflects_tts_failure_via_page_status(monkeypatch):
     # `pages` keeps existing behavior — still present, unchanged content.
     assert transcript["pages"]["1"] == "Page 1 content."
     assert transcript["pages"]["2"] == "Page 2 content."
+
+
+async def _mock_generate_reporting_failed_segment(
+    text, voice, speed, lang=None, failed_segments=None
+):
+    yield np.ones(2400, dtype=np.float32)
+    if failed_segments is not None:
+        failed_segments.append("Second sentence fails.")
+
+
+def _write_clean_pages(bid, texts):
+    for n, text in enumerate(texts, start=1):
+        path = AudiobookStore.page_clean_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(text)
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_raises_when_a_segment_fails():
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate",
+        side_effect=_mock_generate_reporting_failed_segment,
+    ):
+        with pytest.raises(PageSegmentsFailed) as caught:
+            await AudiobookService._generate_full_page(
+                "book", "First sentence succeeds.", "af_bella", 1.0
+            )
+    assert caught.value.failed_segments == ["Second sentence fails."]
+
+
+@pytest.mark.asyncio
+async def test_generate_full_page_all_segments_fail_raises():
+    async def all_fail(text, voice, speed, lang=None, failed_segments=None):
+        failed_segments.append(text)
+        return
+        yield
+
+    with patch(
+        "app.services.audiobook_service.EngineManager.generate", side_effect=all_fail
+    ):
+        with pytest.raises(PageSegmentsFailed) as caught:
+            await AudiobookService._generate_full_page(
+                "book", "Bad one. Also bad.", "af_bella", 1.0
+            )
+    assert len(caught.value.failed_segments) >= 1
+
+
+@pytest.mark.asyncio
+async def test_tts_phase_flags_partial_segment_failure(monkeypatch):
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    _write_clean_pages(bid, ["Page 1 content.", "Page 2 content."])
+
+    async def fail_page_2_partially(
+        text, voice, speed, lang=None, failed_segments=None
+    ):
+        yield np.ones(2400, dtype=np.float32)
+        if text == "Page 2 content.":
+            failed_segments.append(text)
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=fail_page_2_partially,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    new_meta = AudiobookStore.read_meta(bid)
+    assert new_meta["failed_pages"] == [2]
+    assert new_meta["page_status"]["2"] == "tts_failed"
+    assert "1" not in new_meta.get("page_status", {})
+    assert os.path.exists(AudiobookStore.page_audio_path(bid, 2))
+
+
+@pytest.mark.asyncio
+async def test_phase_tts_ensures_model_loaded_each_page():
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    _write_clean_pages(
+        bid, ["Page 1 has some real content.", "Page 2 has some real content."]
+    )
+
+    ensure = AsyncMock(return_value=None)
+    with (
+        patch("app.services.audiobook_service.EngineManager.ensure_loaded", ensure),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.audiobook_service.EngineManager.generate",
+            side_effect=_mock_generate_yielding,
+        ),
+    ):
+        await AudiobookService._phase_tts(bid, meta)
+
+    assert ensure.await_count == 2
+
+
+def _stub_pipeline_phases(monkeypatch, concat_result):
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        AudiobookService,
+        "_emit",
+        classmethod(lambda cls, b, ev, **kw: events.append((ev, kw))),
+    )
+    for name in ("_phase_extract", "_phase_clean", "_phase_section", "_phase_tts"):
+        monkeypatch.setattr(AudiobookService, name, AsyncMock())
+    monkeypatch.setattr(
+        AudiobookService, "_phase_concat", AsyncMock(return_value=concat_result)
+    )
+    return events
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_surfaces_failed_count_in_done(monkeypatch):
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 3, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    await AudiobookStore.update_meta(bid, failed_pages=[2, 3])
+    events = _stub_pipeline_phases(monkeypatch, {"pages": 3})
+
+    await AudiobookService._run_pipeline(bid)
+
+    actual = [kw for ev, kw in events if ev == "done"][0]["actual"]
+    assert actual["failed_count"] == 2
+    assert actual["failed_pages"] == [2, 3]
+    persisted = AudiobookStore.read_meta(bid)
+    assert persisted["actual"]["failed_count"] == 2
+    assert persisted["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_run_pipeline_clean_book_reports_zero_failures(monkeypatch):
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    events = _stub_pipeline_phases(monkeypatch, {"pages": 2})
+
+    await AudiobookService._run_pipeline(bid)
+
+    actual = [kw for ev, kw in events if ev == "done"][0]["actual"]
+    assert actual["failed_count"] == 0
+    assert actual["failed_pages"] == []
+
+
+@pytest.mark.asyncio
+async def test_concat_logs_warning_when_created_at_unparseable(caplog):
+    bid = AudiobookStore.create_book("Test.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    AudiobookStore.write_meta(bid, meta)
+    _write_clean_pages(bid, ["Page 1 content."])
+    with patch(
+        "app.services.audiobook_service.EngineManager.ensure_loaded",
+        new=AsyncMock(return_value=None),
+    ), patch("app.services.audiobook_service.EngineManager.touch"), patch(
+        "app.services.audiobook_service.EngineManager.generate",
+        side_effect=_mock_generate_yielding,
+    ):
+        await AudiobookService._phase_tts(bid, AudiobookStore.read_meta(bid))
+
+    broken_meta = dict(AudiobookStore.read_meta(bid), created_at="not-a-date")
+    with caplog.at_level("WARNING"):
+        actual = await AudiobookService._phase_concat(bid, broken_meta)
+
+    assert actual["processing_seconds"] == 0.0
+    assert any(
+        r.message == "audiobook.processing_seconds_unavailable"
+        or getattr(r, "msg", "") == "audiobook.processing_seconds_unavailable"
+        for r in caplog.records
+    )
 
 
 async def _mock_generate_always_fails(*args, **kwargs):

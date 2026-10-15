@@ -139,7 +139,7 @@ def test_state_exposes_language_catalog():
 async def test_generate_derives_language_from_voice(monkeypatch):
     seen = []
 
-    async def fake_generate(text, voice, speed, lang):
+    async def fake_generate(text, voice, speed, lang, failed_segments=None):
         seen.append(lang)
         yield np.zeros(1, dtype=np.float32)
 

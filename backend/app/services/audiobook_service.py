@@ -85,6 +85,12 @@ class AudiobookCancelled(Exception):
     """Raised inside a phase when the user has cancelled the job."""
 
 
+class PageSegmentsFailed(Exception):
+    def __init__(self, failed_segments: list[str]) -> None:
+        super().__init__(f"{len(failed_segments)} segment(s) failed to synthesize")
+        self.failed_segments = failed_segments
+
+
 class CostApprovalRequired(Exception):
     """Flex exhausted; a separately priced Standard request needs consent."""
 
@@ -804,6 +810,11 @@ class AudiobookService:
             meta = AudiobookStore.read_meta(book_id) or meta
             await cls._phase_tts(book_id, meta)
             actual = await cls._phase_concat(book_id, meta)
+            failed_pages = list(
+                (AudiobookStore.read_meta(book_id) or {}).get("failed_pages") or []
+            )
+            actual["failed_pages"] = failed_pages
+            actual["failed_count"] = len(failed_pages)
             final_meta = await AudiobookStore.update_meta(
                 book_id, status="done", actual=actual, error=None
             )
@@ -1641,8 +1652,6 @@ class AudiobookService:
             (AudiobookStore.read_meta(book_id) or {}).get("failed_pages") or []
         )
 
-        await EngineManager.ensure_loaded()
-
         produced = sum(
             os.path.getsize(path)
             for path in (
@@ -1656,7 +1665,7 @@ class AudiobookService:
             cls._check_cancel(book_id)
             # Wait for any interactive /speak to finish before grabbing the engine.
             async with interactive_tts_lock:
-                pass
+                await EngineManager.ensure_loaded()
 
             out_path = AudiobookStore.page_audio_path(book_id, n)
             if os.path.exists(out_path):
@@ -1756,12 +1765,15 @@ class AudiobookService:
         """
         chunks: list[np.ndarray] = []
         timings: list[tuple[int, str, int, int, bool]] = []
+        failed_segments: list[str] = []
         cursor = 0
         for paragraph, unit in _speech_units(text):
             segments = EngineManager.split_segments(unit)
             for index, segment in enumerate(segments):
                 start = cursor
-                async for chunk in EngineManager.generate(segment, voice, speed):
+                async for chunk in EngineManager.generate(
+                    segment, voice, speed, failed_segments=failed_segments
+                ):
                     cls._check_cancel(book_id)
                     chunks.append(chunk)
                     cursor += len(chunk)
@@ -1769,6 +1781,8 @@ class AudiobookService:
                 timings.append(
                     (paragraph, segment, start, cursor, index == len(segments) - 1)
                 )
+        if failed_segments:
+            raise PageSegmentsFailed(failed_segments)
         if not chunks:
             return np.zeros(int(0.3 * SAMPLE_RATE), dtype=np.float32), []
         return np.concatenate(chunks), _sentence_lines(timings)
@@ -1936,6 +1950,11 @@ class AudiobookService:
             t_created = calendar.timegm(time.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ"))
             processing_seconds = max(0.0, time.time() - t_created)
         except Exception:
+            log.warning(
+                "audiobook.processing_seconds_unavailable",
+                extra={"book_id": book_id, "created_at": str(created_at)},
+                exc_info=True,
+            )
             processing_seconds = 0.0
 
         budget = cls._budget_summary(dict(current_meta.get("budget") or {}))

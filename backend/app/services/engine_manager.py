@@ -50,10 +50,17 @@ class EngineManager:
 
     @classmethod
     async def generate(
-        cls, text: str, voice: str, speed: float, lang: str | None = None
+        cls,
+        text: str,
+        voice: str,
+        speed: float,
+        lang: str | None = None,
+        failed_segments: list[str] | None = None,
     ) -> AsyncGenerator[np.ndarray, None]:
         resolved = lang or espeak_lang_for_voice(voice)
-        async for chunk in TTSEngine.generate(text, voice, speed, resolved):
+        async for chunk in TTSEngine.generate(
+            text, voice, speed, resolved, failed_segments
+        ):
             yield chunk
 
     @classmethod

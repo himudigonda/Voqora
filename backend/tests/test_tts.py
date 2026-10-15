@@ -110,6 +110,7 @@ async def test_generate_passes_lang_through_to_model_create():
     was always phonemized with English rules. lang must now actually reach
     the model."""
     mock_model = MagicMock()
+    mock_model.voices = {"af_bella": object()}
     mock_model.create.return_value = (np.ones(100), None)
     TTSEngine._model = mock_model
 
@@ -423,3 +424,82 @@ def test_split_segments_breaks_on_cjk_and_devanagari_sentence_marks():
     assert zh == ["你好。", "今天天气很好！", "我们去公园吧？"]
     hi = TTSEngine._split_segments("नमस्ते। आप कैसे हैं।")
     assert hi == ["नमस्ते।", "आप कैसे हैं।"]
+
+
+@pytest.mark.asyncio
+async def test_generate_falls_back_to_default_voice_when_voice_unknown(caplog):
+    from app.services.languages import DEFAULT_VOICE, espeak_lang_for_voice
+
+    mock_model = MagicMock()
+    mock_model.voices = {DEFAULT_VOICE: object()}
+    mock_model.create.return_value = (np.ones(100), None)
+    TTSEngine._model = mock_model
+
+    with caplog.at_level("WARNING"):
+        chunks = [
+            c
+            async for c in TTSEngine.generate("Hello world.", "hf_gone", 1.0, lang="hi")
+        ]
+
+    assert chunks
+    assert mock_model.create.call_args[0][1] == DEFAULT_VOICE
+    assert mock_model.create.call_args[0][3] == espeak_lang_for_voice(DEFAULT_VOICE)
+    assert any(r.getMessage() == "tts.unknown_voice_fallback" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_generate_keeps_known_voice():
+    mock_model = MagicMock()
+    mock_model.voices = {"ff_siwis": object()}
+    mock_model.create.return_value = (np.ones(100), None)
+    TTSEngine._model = mock_model
+
+    async for _ in TTSEngine.generate("Bonjour.", "ff_siwis", 1.0):
+        pass
+
+    assert mock_model.create.call_args[0][1] == "ff_siwis"
+
+
+@pytest.mark.asyncio
+async def test_generate_reports_failed_segments_to_opt_in_caller():
+    mock_model = MagicMock()
+    mock_model.create.side_effect = [
+        (np.ones(100), None),
+        RuntimeError("boom"),
+        (np.ones(100), None),
+    ]
+    TTSEngine._model = mock_model
+    failed: list[str] = []
+
+    chunks = [
+        c
+        async for c in TTSEngine.generate(
+            "First one. Second one. Third one.",
+            "af_bella",
+            1.0,
+            failed_segments=failed,
+        )
+    ]
+
+    assert len(chunks) == 2
+    assert failed == ["Second one."]
+
+
+@pytest.mark.asyncio
+async def test_generate_without_failed_segments_still_skips_failures_silently():
+    mock_model = MagicMock()
+    mock_model.create.side_effect = [
+        (np.ones(100), None),
+        RuntimeError("boom"),
+        (np.ones(100), None),
+    ]
+    TTSEngine._model = mock_model
+
+    chunks = [
+        c
+        async for c in TTSEngine.generate(
+            "First one. Second one. Third one.", "af_bella", 1.0
+        )
+    ]
+
+    assert len(chunks) == 2
