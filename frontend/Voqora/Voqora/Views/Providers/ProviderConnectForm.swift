@@ -8,6 +8,7 @@ struct ProviderConnectForm: View {
 
     let provider: LLMProvider
     let backTitle: String
+    var cleaningCount: (LLMProvider) -> Int = { _ in 0 }
     let onBack: () -> Void
     let onFinished: () -> Void
 
@@ -17,6 +18,8 @@ struct ProviderConnectForm: View {
     @State private var models: [String] = []
     @State private var checking = false
     @State private var errorMessage: String?
+    @State private var useForAudiobooks = false
+    @State private var confirmingRemoval: LLMProvider?
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -24,6 +27,18 @@ struct ProviderConnectForm: View {
 
     private var isEditing: Bool {
         providers.isConnected(provider)
+    }
+
+    private var othersConnected: Bool {
+        providers.connectedProviders.contains { $0 != provider }
+    }
+
+    private var offersUseForAudiobooks: Bool {
+        othersConnected && providers.activeProvider != provider
+    }
+
+    private var firstProviderNotice: String? {
+        othersConnected || providers.activeProvider == provider ? nil : "Audiobooks will use \(provider.displayName)."
     }
 
     var body: some View {
@@ -73,6 +88,15 @@ struct ProviderConnectForm: View {
                 Label(provider.dataNotice, systemImage: provider.isLocal ? "lock.fill" : "arrow.up.forward.circle")
                     .font(vm.font(.rowSubtitle))
                     .foregroundStyle(Palette.textSecondary)
+                if offersUseForAudiobooks {
+                    Toggle("Use for audiobooks", isOn: $useForAudiobooks)
+                        .toggleStyle(.checkbox)
+                        .font(vm.font(.rowTitle))
+                } else if let firstProviderNotice {
+                    Label(firstProviderNotice, systemImage: "books.vertical")
+                        .font(vm.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textSecondary)
+                }
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(vm.font(.rowSubtitle))
@@ -84,6 +108,7 @@ struct ProviderConnectForm: View {
             footer
         }
         .onAppear(perform: prefill)
+        .providerRemovalDialog(target: $confirmingRemoval, cleaningCount: cleaningCount, onRemoved: onFinished)
     }
 
     private var header: some View {
@@ -106,9 +131,8 @@ struct ProviderConnectForm: View {
             Button(backTitle, action: onBack)
                 .buttonStyle(.voqoraSecondary)
             if isEditing {
-                Button("Remove", role: .destructive) {
-                    providers.remove(provider)
-                    onFinished()
+                Button("Remove…", role: .destructive) {
+                    confirmingRemoval = provider
                 }
                 .buttonStyle(.plain)
                 .font(vm.font(.button))
@@ -174,6 +198,7 @@ struct ProviderConnectForm: View {
         apiKey = providers.storedKey(for: provider)
         model = settings.model
         serverURL = settings.serverURL
+        useForAudiobooks = providers.activeProvider == nil && othersConnected
         if provider.isLocal {
             Task { await check(saving: false) }
         }
@@ -183,20 +208,25 @@ struct ProviderConnectForm: View {
         checking = true
         errorMessage = nil
         defer { checking = false }
-        var result = await providers.verify(draft)
+        let result = await providers.verify(draft)
         if !result.models.isEmpty {
             models = result.models
         }
         if !result.verified, trimmed(model).isEmpty, let first = result.models.first {
             model = first
-            result = await providers.verify(draft)
+            if saving {
+                errorMessage = provider.defaultModel.isEmpty
+                    ? "Pick a model to continue."
+                    : "Pick a model: \(provider.defaultModel) isn't available to this key."
+            }
+            return
         }
         guard saving else { return }
         guard result.verified else {
             errorMessage = result.error ?? "Voqora could not connect to \(provider.displayName)."
             return
         }
-        guard providers.save(draft) else {
+        guard providers.save(draft, makeActive: offersUseForAudiobooks && useForAudiobooks) else {
             errorMessage = "\(provider.displayName) accepted the key, but Voqora couldn't save it to your Keychain."
             return
         }

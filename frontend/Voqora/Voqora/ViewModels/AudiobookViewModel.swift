@@ -36,7 +36,51 @@ final class AudiobookViewModel: ObservableObject {
         let engine: String
     }
 
+    struct ProviderFix: Identifiable, Equatable {
+        let book: Audiobook
+        let provider: LLMProvider?
+
+        var id: String {
+            "\(book.bookID)-\(provider?.rawValue ?? "add")"
+        }
+    }
+
+    enum RetryPrompt: Identifiable, Equatable {
+        case switchProvider(book: Audiobook, startedWith: LLMProvider, active: LLMProvider, startedWithConnected: Bool)
+        case needsProvider(book: Audiobook, connected: [LLMProvider])
+
+        var id: String {
+            switch self {
+            case let .switchProvider(book, _, _, _), let .needsProvider(book, _): book.bookID
+            }
+        }
+    }
+
+    enum RetryDecision: Equatable {
+        case proceed(LLMProvider?)
+        case confirmSwitch(startedWith: LLMProvider, active: LLMProvider, startedWithConnected: Bool)
+        case needsProvider
+    }
+
+    @Published var providerFix: ProviderFix?
+    @Published var resumeOffer: ProviderFix?
+    @Published var retryPrompt: RetryPrompt?
+    private struct FixSnapshot {
+        let connected: [LLMProvider]
+        let credential: LLMCredential?
+        let saveCount: Int
+    }
+
+    private struct FinishedFix {
+        let fix: ProviderFix
+        let before: FixSnapshot
+    }
+
+    private var finishedFix: FinishedFix?
+    private var startedFix: FixSnapshot?
+
     private var uploadQueue: [QueuedUpload] = []
+    private var pendingUpload: QueuedUpload?
     private var uploadGeneration = 0
 
     var queuedUploadCount: Int {
@@ -224,34 +268,60 @@ final class AudiobookViewModel: ObservableObject {
             return
         }
         pendingDocument = document
+        requestEstimate(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine), replacing: nil)
+    }
+
+    func refreshEstimate() {
+        guard let upload = pendingUpload, pendingDocument != nil, !startingProcessing else { return }
+        requestEstimate(upload, replacing: pendingEstimate)
+    }
+
+    static func isEstimateStale(_ estimate: AudiobookEstimateResponse, credential: LLMCredential?) -> Bool {
+        guard let credential else { return estimate.llmProvider != nil }
+        if estimate.llmProvider != credential.provider.rawValue {
+            return true
+        }
+        guard let model = estimate.llmModel else { return false }
+        return model != credential.resolvedModel
+    }
+
+    private func requestEstimate(_ upload: QueuedUpload, replacing previous: AudiobookEstimateResponse?) {
+        pendingUpload = upload
         pendingEstimate = nil
         loadingError = nil
         uploadGeneration &+= 1
         let generation = uploadGeneration
         uploadInProgress = true
+        let credential = cleanupCredential
         Task {
             defer {
                 if generation == uploadGeneration {
                     uploadInProgress = false
                 }
             }
+            if let previous {
+                try? await service.delete(previous.bookID)
+            }
+            guard generation == uploadGeneration else { return }
             do {
                 let estimate = try await service.upload(
-                    document: document,
-                    voice: voice,
-                    speed: speed,
-                    engine: engine,
-                    cleanup: cleanupCredential
+                    document: upload.document,
+                    voice: upload.voice,
+                    speed: upload.speed,
+                    engine: upload.engine,
+                    cleanup: credential
                 )
                 guard generation == uploadGeneration else {
                     try? await service.delete(estimate.bookID)
                     return
                 }
                 pendingEstimate = estimate
-                MetricsService.shared.trackAudiobookUpload(
-                    pages: estimate.pageCount,
-                    fileKind: document.pathExtension.lowercased()
-                )
+                if previous == nil {
+                    MetricsService.shared.trackAudiobookUpload(
+                        pages: estimate.pageCount,
+                        fileKind: upload.document.pathExtension.lowercased()
+                    )
+                }
             } catch {
                 guard generation == uploadGeneration else { return }
                 loadingError = error.localizedDescription
@@ -312,6 +382,7 @@ final class AudiobookViewModel: ObservableObject {
             Task { try? await service.delete(est.bookID) }
         }
         pendingDocument = nil
+        pendingUpload = nil
         pendingEstimate = nil
         loadingError = nil
         AudiobookImportStaging.discard(stagedDocument)
@@ -341,6 +412,7 @@ final class AudiobookViewModel: ObservableObject {
                 try await service.start(bookID, cleanup: cleanup)
                 UsageStatsStore.shared.recordDocumentAdded(pages: est.pageCount)
                 pendingDocument = nil
+                pendingUpload = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
                 await refresh()
@@ -350,6 +422,7 @@ final class AudiobookViewModel: ObservableObject {
                 showToast(error.localizedDescription, kind: .error)
                 Task { try? await service.delete(bookID) }
                 pendingDocument = nil
+                pendingUpload = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
                 flushUploadQueue()
@@ -384,8 +457,67 @@ final class AudiobookViewModel: ObservableObject {
 
     static let missingProviderMessage = "Add an AI provider in Preferences first."
 
-    func retry(_ book: Audiobook) {
-        let cleanup = book.requiresLLMCleanup ? cleanupCredential : nil
+    static func retryDecision(
+        requiresCleanup: Bool,
+        startedWith: LLMProvider?,
+        active: LLMProvider?,
+        connected: [LLMProvider]
+    ) -> RetryDecision {
+        guard requiresCleanup else { return .proceed(nil) }
+        guard let active else { return .needsProvider }
+        if let startedWith, startedWith != active {
+            return .confirmSwitch(startedWith: startedWith, active: active, startedWithConnected: connected.contains(startedWith))
+        }
+        return .proceed(active)
+    }
+
+    static func cleaningBookCount(
+        provider: LLMProvider,
+        activeProvider: LLMProvider?,
+        books: [Audiobook],
+        states: [String: ProcessingStatus]
+    ) -> Int {
+        books.count { book in
+            guard book.requiresLLMCleanup, (states[book.bookID] ?? book.displayStatus).isProcessing else { return false }
+            return book.cleanupProvider.map { $0 == provider } ?? (activeProvider == provider)
+        }
+    }
+
+    func cleaningBookCount(using provider: LLMProvider) -> Int {
+        Self.cleaningBookCount(
+            provider: provider,
+            activeProvider: providers.activeProvider,
+            books: books,
+            states: processingState
+        )
+    }
+
+    func retry(_ book: Audiobook, using provider: LLMProvider? = nil) {
+        if let provider {
+            performRetry(book, cleanup: book.requiresLLMCleanup ? providers.credential(for: provider) : nil)
+            return
+        }
+        switch Self.retryDecision(
+            requiresCleanup: book.requiresLLMCleanup,
+            startedWith: book.cleanupProvider,
+            active: providers.activeProvider,
+            connected: providers.connectedProviders
+        ) {
+        case .proceed:
+            performRetry(book, cleanup: book.requiresLLMCleanup ? cleanupCredential : nil)
+        case let .confirmSwitch(startedWith, active, startedWithConnected):
+            retryPrompt = .switchProvider(
+                book: book,
+                startedWith: startedWith,
+                active: active,
+                startedWithConnected: startedWithConnected
+            )
+        case .needsProvider:
+            retryPrompt = .needsProvider(book: book, connected: providers.connectedProviders)
+        }
+    }
+
+    private func performRetry(_ book: Audiobook, cleanup: LLMCredential?) {
         guard !book.requiresLLMCleanup || cleanup != nil else {
             showToast(Self.missingProviderMessage, kind: .error)
             return
@@ -405,8 +537,71 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
+    func finishWithoutAI(_ book: Audiobook) {
+        if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
+            stopPlayback()
+        }
+        Task {
+            do {
+                _ = try await service.retry(book.bookID, cleanup: nil, finishWithoutCleanup: true)
+                showToast("Finishing without AI cleanup...", kind: .info)
+                await refresh()
+                subscribe(to: book.bookID)
+            } catch {
+                showToast(error.localizedDescription, kind: .error)
+            }
+        }
+    }
+
     func resumeNeedsKey(_ book: Audiobook) {
         retry(book)
+    }
+
+    func fixProvider(for book: Audiobook) {
+        guard let provider = book.providerToFix else {
+            retry(book)
+            return
+        }
+        beginProviderFix(ProviderFix(book: book, provider: provider))
+    }
+
+    func addProviderToResume(_ book: Audiobook) {
+        beginProviderFix(ProviderFix(book: book, provider: nil))
+    }
+
+    private func beginProviderFix(_ fix: ProviderFix) {
+        startedFix = FixSnapshot(connected: providers.connectedProviders, credential: fix.provider.flatMap(providers.credential(for:)), saveCount: providers.saveCount)
+        providerFix = fix
+    }
+
+    func endProviderFix() {
+        guard let fix = providerFix, let started = startedFix else {
+            providerFix = nil
+            return
+        }
+        finishedFix = FinishedFix(fix: fix, before: started)
+        providerFix = nil
+        startedFix = nil
+    }
+
+    func offerResumeAfterFix() {
+        guard let finished = finishedFix else { return }
+        finishedFix = nil
+        let changed: Bool
+        if let provider = finished.fix.provider {
+            let now = providers.credential(for: provider)
+            changed = now != nil && providers.saveCount != finished.before.saveCount
+        } else {
+            changed = providers.activeProvider != nil && providers.connectedProviders != finished.before.connected
+        }
+        if changed {
+            resumeOffer = finished.fix
+        }
+    }
+
+    func resumeAfterFix(_ fix: ProviderFix) {
+        resumeOffer = nil
+        retry(fix.book, using: fix.provider)
     }
 
     func subscribe(to bookID: String) {
@@ -448,6 +643,9 @@ final class AudiobookViewModel: ObservableObject {
                     await refresh()
                     break
                 } else if type == "failed" || type == "cancelled" {
+                    if type == "failed" {
+                        applyStatus(bookID: bookID, status: type, pageDone: 0, pageTotal: 0, error: event["error"] as? String)
+                    }
                     await refresh()
                     break
                 }
@@ -499,7 +697,7 @@ final class AudiobookViewModel: ObservableObject {
         case "done": .ready
         case "needs_key": .needsKey
         case "needs_cost_approval": .needsCostApproval(requiredCap: nil)
-        case "failed": .failed(reason: error ?? "Unknown error")
+        case "failed": .failed(reason: error ?? ProcessingStatus.unknownFailureReason)
         case "cancelled": .cancelled
         default: .queued
         }

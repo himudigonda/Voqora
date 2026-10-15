@@ -1,6 +1,3 @@
-"""Tests for LLMCleaner pure logic — error classification, cost estimation,
-section JSON parsing, section stitching, and retry behavior with mocked network."""
-
 from __future__ import annotations
 
 import asyncio
@@ -12,15 +9,16 @@ from app.services import llm_providers
 from app.services.llm_cleaner import (
     LLMAuthError,
     LLMBadResponseError,
+    LLMBillingError,
     LLMCapacityError,
     LLMCleaner,
     LLMIncompleteError,
+    LLMModelNotFoundError,
     LLMRateLimitError,
+    LLMRequestRejectedError,
 )
 from app.services.llm_cleaner import types as gemini_types
 from app.services.llm_providers import LLMCredential
-
-# ---------- error classification ----------
 
 
 @pytest.mark.parametrize(
@@ -87,9 +85,6 @@ def test_reraise_typed_classifies_capacity_by_error_code() -> None:
         LLMCleaner._reraise_typed(FakeApiError("server error"))
 
 
-# ---------- Flex retry / explicit Standard approval ----------
-
-
 def test_with_retry_never_silently_falls_back_to_standard_after_capacity_errors(
     monkeypatch,
 ) -> None:
@@ -102,8 +97,6 @@ def test_with_retry_never_silently_falls_back_to_standard_after_capacity_errors(
 
     with pytest.raises(LLMCapacityError):
         asyncio.run(LLMCleaner._with_retry("test", always_capacity_limited))
-    # Standard pricing needs a user-approved, separately budgeted request;
-    # retries for a Flex request must remain in the original tier.
     assert seen_tiers == [gemini_types.ServiceTier.FLEX] * LLMCleaner._MAX_RETRIES
 
 
@@ -119,7 +112,6 @@ def test_with_retry_never_falls_back_below_flex_fallback_threshold(monkeypatch) 
 
     result = asyncio.run(LLMCleaner._with_retry("test", one_flex_failure_then_ok))
     assert result == "ok"
-    # A single Flex 503 is below the fallback threshold — retry stays on Flex.
     assert seen_tiers == [gemini_types.ServiceTier.FLEX, gemini_types.ServiceTier.FLEX]
 
 
@@ -167,9 +159,6 @@ def test_with_retry_does_not_pay_again_for_a_deterministic_cutoff(monkeypatch) -
     assert calls == 1
 
 
-# ---------- cost / token estimation ----------
-
-
 @pytest.mark.parametrize("chars,expected", [(0, 1), (4, 1), (40, 10), (4000, 1000)])
 def test_estimate_tokens_rough_heuristic(chars: int, expected: int) -> None:
     assert LLMCleaner.estimate_tokens(chars) == expected
@@ -207,9 +196,6 @@ def test_reservation_envelope_is_conservative_for_image_input() -> None:
     text_only = LLMCleaner.clean_reservation_cost_usd(500, tier="flex")
     image = LLMCleaner.clean_reservation_cost_usd(500, tier="flex", image_input=True)
     assert image > text_only > 0
-
-
-# ---------- section JSON parsing ----------
 
 
 def test_parse_sections_strips_markdown_fences() -> None:
@@ -252,9 +238,6 @@ def test_parse_sections_drops_inverted_ranges() -> None:
     assert LLMCleaner._parse_sections_json(raw, max_page=10) == []
 
 
-# ---------- section stitching ----------
-
-
 def test_stitch_sections_inserts_front_matter_if_first_section_starts_late() -> None:
     sections = [{"title": "Chapter 1", "start_page": 5, "end_page": 10}]
     out = LLMCleaner._stitch_sections(sections, page_count=10)
@@ -267,7 +250,7 @@ def test_stitch_sections_inserts_front_matter_if_first_section_starts_late() -> 
 def test_stitch_sections_dedupes_overlapping_chunks() -> None:
     sections = [
         {"title": "A", "start_page": 1, "end_page": 5},
-        {"title": "A", "start_page": 1, "end_page": 5},  # exact dup
+        {"title": "A", "start_page": 1, "end_page": 5},
         {"title": "B", "start_page": 6, "end_page": 10},
     ]
     out = LLMCleaner._stitch_sections(sections, page_count=10)
@@ -287,16 +270,9 @@ def test_stitch_sections_returns_empty_list_for_empty_input() -> None:
     assert LLMCleaner._stitch_sections([], page_count=10) == []
 
 
-# ---------- clean_page early-return ----------
-
-
 def test_clean_page_empty_input_returns_dash_without_calling_api() -> None:
-    """Empty input must short-circuit — no key, no network call."""
     result = asyncio.run(LLMCleaner.clean_page(LLMCredential.gemini("anything"), "   "))
     assert result == "-"
-
-
-# ---------- clean_page retry logic with mocked _async_clean ----------
 
 
 def test_clean_page_does_not_retry_on_auth_error() -> None:
@@ -342,8 +318,6 @@ def test_clean_page_exhausts_retries_then_raises(monkeypatch) -> None:
     assert attempt["n"] == LLMCleaner._MAX_RETRIES
 
 
-# ---------- verify ----------
-
 GOOD = LLMCredential.gemini("good")
 
 
@@ -371,7 +345,6 @@ def test_verify_false_on_any_other_exception(monkeypatch) -> None:
 
 
 def test_verify_uses_standard_tier_not_flex() -> None:
-    """Key verification must never be subject to Flex's best-effort queuing."""
     seen_tiers: list = []
 
     async def capture_tier(_credential, _text, tier):
@@ -393,31 +366,31 @@ def test_verify_rejects_missing_key_without_a_request() -> None:
 
 def test_verify_lists_models_and_flags_an_unknown_model() -> None:
     credential = LLMCredential("ollama", model="llama9")
-    with patch.object(
-        llm_providers, "list_models", new=AsyncMock(return_value=["qwen3", "gemma4"])
+    missing = LLMModelNotFoundError("nope")
+    with (
+        patch.object(
+            llm_providers,
+            "list_model_ids",
+            new=AsyncMock(return_value=["qwen3", "gemma4"]),
+        ),
+        patch.object(llm_providers, "complete", new=AsyncMock(side_effect=missing)),
     ):
         result = asyncio.run(LLMCleaner.verify(credential))
     assert result.ok is False
-    assert result.models == ["qwen3", "gemma4"]
-    assert "llama9" in (result.error or "")
+    assert result.models == ["gemma4", "qwen3"]
+    assert result.error == "Ollama has no model named llama9. Choose one from the list."
 
 
 def test_verify_local_provider_without_model_returns_choices() -> None:
     with patch.object(
-        llm_providers, "list_models", new=AsyncMock(return_value=["qwen3"])
+        llm_providers, "list_model_ids", new=AsyncMock(return_value=["qwen3"])
     ):
         result = asyncio.run(LLMCleaner.verify(LLMCredential("lmstudio")))
     assert (result.ok, result.models) == (False, ["qwen3"])
+    assert result.error == "Choose a model for LM Studio."
 
 
 def test_verify_key_times_out_instead_of_hanging_forever(monkeypatch) -> None:
-    """Regression: Standard-tier calls get no HttpOptions, which the genai SDK
-    treats as an *unbounded* httpx timeout (see _async_clean). Before
-    _VERIFY_KEY_TIMEOUT_S existed, a dropped-packet/offline network made this
-    call — and the /llm/verify request it backs — hang forever
-    instead of failing fast. Use a near-zero timeout so the test itself
-    doesn't hang if the fix regresses.
-    """
     monkeypatch.setattr(LLMCleaner, "_VERIFY_KEY_TIMEOUT_S", 0.05)
     monkeypatch.setattr(LLMCleaner, "_BACKOFF_BASE", 0.0)
 
@@ -428,3 +401,365 @@ def test_verify_key_times_out_instead_of_hanging_forever(monkeypatch) -> None:
     with patch.object(LLMCleaner, "_async_clean", side_effect=hang_forever):
         result = asyncio.run(asyncio.wait_for(LLMCleaner.verify(GOOD), timeout=2.0))
     assert result.ok is False
+
+
+def _api_error(code: int, status: str, message: str, details: list | None = None):
+    from google.genai import errors
+
+    body = {"error": {"code": code, "status": status, "message": message}}
+    if details is not None:
+        body["error"]["details"] = details
+    cls = errors.ClientError if code < 500 else errors.ServerError
+    return cls(code, body)
+
+
+KEY_INVALID = _api_error(
+    400,
+    "INVALID_ARGUMENT",
+    "API key not valid. Please pass a valid API key.",
+    [{"reason": "API_KEY_INVALID"}],
+)
+FREE_TIER_ZERO = _api_error(
+    429,
+    "RESOURCE_EXHAUSTED",
+    "You exceeded your current quota. Quota exceeded for metric "
+    "generate_content_free_tier_requests, limit: 0, model: gemini-3.8-flash",
+)
+PER_MINUTE = _api_error(
+    429,
+    "RESOURCE_EXHAUSTED",
+    "Quota exceeded for GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+)
+DAILY_QUOTA = _api_error(
+    429,
+    "RESOURCE_EXHAUSTED",
+    "You exceeded your current quota, please check your plan and billing details. "
+    "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+)
+BARE_EXHAUSTED = _api_error(
+    429, "RESOURCE_EXHAUSTED", "Resource has been exhausted (e.g. check quota)."
+)
+BARE_EXCEEDED = _api_error(
+    429,
+    "RESOURCE_EXHAUSTED",
+    "You exceeded your current quota, please check your plan and billing details.",
+)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected", "message"),
+    [
+        (BARE_EXHAUSTED, LLMRateLimitError, "Google is rate limiting this key"),
+        (BARE_EXCEEDED, LLMRateLimitError, "Google is rate limiting this key"),
+        (KEY_INVALID, LLMAuthError, "Google rejected the API key"),
+        (
+            _api_error(401, "UNAUTHENTICATED", "bad creds"),
+            LLMAuthError,
+            "Google rejected the API key",
+        ),
+        (
+            _api_error(403, "PERMISSION_DENIED", "no access to gemini-3.8-flash"),
+            LLMAuthError,
+            "Google denied this key access to gemini-3.8-flash",
+        ),
+        (
+            _api_error(404, "NOT_FOUND", "models/x is not found"),
+            LLMModelNotFoundError,
+            "Google has no model named gemini-3.8-flash for this key.",
+        ),
+        (
+            FREE_TIER_ZERO,
+            LLMBillingError,
+            "Google's free tier has no quota for gemini-3.8-flash",
+        ),
+        (
+            DAILY_QUOTA,
+            LLMBillingError,
+            "Google's quota for gemini-3.8-flash is used up or not enabled for this key.",
+        ),
+        (PER_MINUTE, LLMRateLimitError, "Google is rate limiting this key"),
+        (
+            _api_error(400, "INVALID_ARGUMENT", "Unsupported thinking budget"),
+            LLMRequestRejectedError,
+            "Google rejected the request: Unsupported thinking budget",
+        ),
+        (
+            _api_error(503, "UNAVAILABLE", "The model is overloaded"),
+            LLMCapacityError,
+            "Google is busy right now",
+        ),
+        (
+            _api_error(500, "INTERNAL", "boom"),
+            LLMRateLimitError,
+            "Google had a server problem (500)",
+        ),
+    ],
+)
+def test_gemini_api_errors_are_classified_by_code_and_status(
+    error, expected, message
+) -> None:
+    with pytest.raises(expected) as raised:
+        LLMCleaner._reraise_typed(error, LLMCredential.gemini("k"))
+    assert message in raised.value.user_message
+    assert raised.value.__cause__ is error
+
+
+def test_gemini_message_naming_a_model_is_not_a_model_error() -> None:
+    error = _api_error(
+        403, "PERMISSION_DENIED", "Permission denied for model gemini-3.8-flash"
+    )
+    with pytest.raises(LLMAuthError):
+        LLMCleaner._reraise_typed(error, LLMCredential.gemini("k"))
+
+
+def test_gemini_timeout_is_a_retryable_timeout_message() -> None:
+    with pytest.raises(LLMRateLimitError, match="Google didn't answer in time"):
+        LLMCleaner._reraise_typed(TimeoutError(), LLMCredential.gemini("k"))
+
+
+@pytest.mark.parametrize(
+    "error", [LLMRequestRejectedError("bad"), LLMModelNotFoundError("x")]
+)
+def test_with_retry_does_not_retry_a_rejected_request(error, monkeypatch) -> None:
+    monkeypatch.setattr(LLMCleaner, "_BACKOFF_BASE", 0.0)
+    calls = 0
+
+    async def rejected(tier):
+        nonlocal calls
+        calls += 1
+        raise error
+
+    with pytest.raises(type(error)):
+        asyncio.run(LLMCleaner._with_retry("test", rejected))
+    assert calls == 1
+
+
+def test_with_retry_does_not_retry_billing_errors(monkeypatch) -> None:
+    monkeypatch.setattr(LLMCleaner, "_BACKOFF_BASE", 0.0)
+    calls = 0
+
+    async def broke(tier):
+        nonlocal calls
+        calls += 1
+        raise LLMBillingError("no credit")
+
+    with pytest.raises(LLMBillingError):
+        asyncio.run(LLMCleaner._with_retry("test", broke))
+    assert calls == 1
+
+
+def _gemini_client(generate):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate))
+    )
+
+
+def test_verify_gemini_makes_exactly_one_standard_call_and_never_retries(
+    monkeypatch,
+) -> None:
+    slept: list[float] = []
+
+    async def record_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr("app.services.llm_cleaner.asyncio.sleep", record_sleep)
+    calls: list[dict] = []
+
+    async def fail(**kwargs):
+        calls.append(kwargs)
+        raise _api_error(503, "UNAVAILABLE", "overloaded")
+
+    monkeypatch.setattr(
+        "app.services.llm_cleaner.genai.Client", lambda **_: _gemini_client(fail)
+    )
+    result = asyncio.run(LLMCleaner.verify(GOOD))
+    assert result.ok is False
+    assert result.error == "Google is busy right now. Try again shortly."
+    assert len(calls) == 1
+    assert calls[0]["config"].service_tier == gemini_types.ServiceTier.STANDARD
+    assert slept == []
+
+
+def test_verify_gemini_reports_the_real_model_not_found_reason() -> None:
+    credential = LLMCredential("google", api_key="k", model="gemini-9-pro")
+    error = _api_error(404, "NOT_FOUND", "models/gemini-9-pro is not found")
+    calls = []
+
+    async def fail(**kwargs):
+        calls.append(kwargs)
+        raise error
+
+    with patch(
+        "app.services.llm_cleaner.genai.Client", lambda **_: _gemini_client(fail)
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert result.error == "Google has no model named gemini-9-pro for this key."
+    assert len(calls) == 1
+
+
+def test_verify_gemini_unexpected_exception_gets_generic_message_and_is_logged(
+    caplog,
+) -> None:
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(
+            LLMCleaner,
+            "_async_clean",
+            new=AsyncMock(side_effect=ZeroDivisionError("x")),
+        ),
+    ):
+        result = asyncio.run(LLMCleaner.verify(GOOD))
+    assert result.error == "Voqora could not verify Google. Try again."
+    record = next(r for r in caplog.records if r.getMessage() == "llm.verify_failed")
+    assert (record.provider, record.model) == ("google", "gemini-3.8-flash")
+    assert record.error_type == "ZeroDivisionError"
+
+
+def test_verify_gemini_timeout_message() -> None:
+    async def hang(*_args, **_kwargs):
+        await asyncio.sleep(10)
+
+    with (
+        patch.object(LLMCleaner, "_VERIFY_KEY_TIMEOUT_S", 0.05),
+        patch.object(LLMCleaner, "_async_clean", side_effect=hang),
+    ):
+        result = asyncio.run(LLMCleaner.verify(GOOD))
+    assert result.error == "Google didn't answer in time. Try again."
+
+
+def test_verify_failure_log_carries_status_and_never_the_key(caplog) -> None:
+    secret = "AIzaSyDUMMYKEYDUMMYKEY1234567890"
+    error = _api_error(
+        403, "PERMISSION_DENIED", f"key {secret} is blocked sk-ant-abcdef123456"
+    )
+    credential = LLMCredential.gemini(secret)
+    with (
+        caplog.at_level("WARNING"),
+        patch.object(LLMCleaner, "_async_clean", new=AsyncMock(side_effect=error)),
+    ):
+        asyncio.run(LLMCleaner.verify(credential))
+    records = [r for r in caplog.records if r.getMessage() == "llm.verify_failed"]
+    assert records and records[0].http_status == 403
+    for record in caplog.records:
+        assert secret not in str(record.__dict__)
+        assert "sk-ant-abcdef123456" not in str(record.__dict__)
+    assert len(records[0].provider_message) <= 200
+
+
+def _chat_ok():
+    return AsyncMock(return_value=llm_providers.Completion("ok", 1, 1))
+
+
+def test_verify_accepts_a_typed_model_missing_from_the_list_when_it_answers() -> None:
+    credential = LLMCredential("openai", api_key="sk-test", model="gpt-image-mini")
+    with (
+        patch.object(
+            llm_providers, "list_model_ids", new=AsyncMock(return_value=["gpt-6-luna"])
+        ),
+        patch.object(llm_providers, "complete", new=_chat_ok()) as chat,
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert result.ok is True
+    chat.assert_awaited_once()
+
+
+def test_verify_matches_ollama_latest_tag_without_a_completion() -> None:
+    credential = LLMCredential("ollama", model="llama3")
+    with (
+        patch.object(
+            llm_providers,
+            "list_model_ids",
+            new=AsyncMock(return_value=["llama3:latest", "qwen3:8b"]),
+        ),
+        patch.object(llm_providers, "complete", new=_chat_ok()) as chat,
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert result.ok is True
+    chat.assert_not_called()
+
+
+def test_verify_accepts_a_model_the_marker_filter_hides_when_listed() -> None:
+    credential = LLMCredential("openai", api_key="sk-test", model="gpt-image-1")
+    with (
+        patch.object(
+            llm_providers,
+            "list_model_ids",
+            new=AsyncMock(return_value=["gpt-image-1", "gpt-6-luna"]),
+        ),
+        patch.object(llm_providers, "complete", new=_chat_ok()) as chat,
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert (result.ok, result.models) == (True, ["gpt-6-luna"])
+    chat.assert_not_called()
+
+
+def test_verify_without_a_model_list_probes_with_one_tiny_completion() -> None:
+    credential = LLMCredential(
+        "custom", model="my-model", base_url="http://127.0.0.1:9/v1"
+    )
+    with (
+        patch.object(
+            llm_providers,
+            "list_model_ids",
+            new=AsyncMock(side_effect=llm_providers.LLMModelListUnavailableError("x")),
+        ),
+        patch.object(llm_providers, "complete", new=_chat_ok()) as chat,
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert (result.ok, result.models) == (True, [])
+    chat.assert_awaited_once()
+    assert chat.await_args.kwargs["max_output_tokens"] <= 64
+
+
+def test_verify_without_a_model_list_or_model_asks_for_a_model() -> None:
+    credential = LLMCredential("custom", base_url="http://127.0.0.1:9/v1")
+    with patch.object(
+        llm_providers,
+        "list_model_ids",
+        new=AsyncMock(side_effect=llm_providers.LLMModelListUnavailableError("x")),
+    ):
+        result = asyncio.run(LLMCleaner.verify(credential))
+    assert result.error == "Choose a model for Custom Provider."
+
+
+def test_verify_returns_the_providers_own_message_for_every_llm_error() -> None:
+    credential = LLMCredential("openai", api_key="sk-test", model="gpt-6-luna")
+    for error in (
+        LLMBillingError("OpenAI is out of credit."),
+        LLMRateLimitError("OpenAI is busy or rate limited (429)."),
+        LLMBadResponseError("OpenAI returned an unexpected response."),
+    ):
+        with patch.object(
+            llm_providers, "list_model_ids", new=AsyncMock(side_effect=error)
+        ):
+            result = asyncio.run(LLMCleaner.verify(credential))
+        assert result.error == error.user_message
+
+
+def test_verify_treats_a_truncated_probe_as_a_working_model() -> None:
+    credential = LLMCredential("openai", api_key="sk-test", model="gpt-x")
+    with (
+        patch.object(llm_providers, "list_model_ids", new=AsyncMock(return_value=[])),
+        patch.object(
+            llm_providers,
+            "complete",
+            new=AsyncMock(side_effect=LLMIncompleteError("length")),
+        ),
+    ):
+        assert asyncio.run(LLMCleaner.verify(credential)).ok is True
+
+
+def test_verify_never_goes_through_with_retry(monkeypatch) -> None:
+    async def forbidden(*_args, **_kwargs):
+        raise AssertionError("verify must not retry")
+
+    monkeypatch.setattr(LLMCleaner, "_with_retry", forbidden)
+    with patch.object(LLMCleaner, "_async_clean", new=AsyncMock(return_value="ok")):
+        assert asyncio.run(LLMCleaner.verify(GOOD)).ok is True
+    credential = LLMCredential("ollama", model="m")
+    with patch.object(
+        llm_providers, "list_model_ids", new=AsyncMock(return_value=["m:latest"])
+    ):
+        assert asyncio.run(LLMCleaner.verify(credential)).ok is True

@@ -167,10 +167,10 @@ async def test_outline_entries_outside_the_page_range_are_dropped(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_docx_headings_short_circuit_the_llm(monkeypatch):
-    bid = _make_book("docx", 1)
+    bid = _make_book("docx", 2)
     doc = Document()
     doc.add_heading("Real Chapter One", level=1)
-    doc.add_paragraph("Body text.")
+    doc.add_paragraph("word " * 396)
     doc.add_heading("Real Chapter Two", level=1)
     doc.add_paragraph("More body text.")
     buffer = io.BytesIO()
@@ -206,10 +206,12 @@ async def test_docx_headings_are_used_for_local_first_books_too():
 
 @pytest.mark.asyncio
 async def test_markdown_headers_short_circuit_the_llm(monkeypatch):
-    bid = _make_book("md", 1)
+    bid = _make_book("md", 2)
     AudiobookStore.save_source(
         bid,
-        b"# Real Chapter One\n\nBody text.\n\n# Real Chapter Two\n\nMore text.\n",
+        b"# Real Chapter One\n\n"
+        + b"word " * 396
+        + b"\n\n# Real Chapter Two\n\nMore text.\n",
         "md",
     )
     detect = AsyncMock()

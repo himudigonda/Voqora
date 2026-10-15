@@ -8,10 +8,12 @@ enum AudiobookRoute: Hashable {
 enum LibrarySheet: Identifiable {
     case upload(URL)
     case completion(Audiobook)
+    case fixProvider(AudiobookViewModel.ProviderFix)
 
     var id: String {
         switch self {
         case let .upload(url): "upload-\(url.absoluteString)"
+        case let .fixProvider(fix): "fix-\(fix.id)"
         case let .completion(book): "completion-\(book.bookID)"
         }
     }
@@ -55,7 +57,7 @@ struct AudiobookLibraryView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: bookVM.libraryPath)
-        .sheet(item: librarySheetBinding) { sheet in
+        .sheet(item: librarySheetBinding, onDismiss: { bookVM.offerResumeAfterFix() }) { sheet in
             switch sheet {
             case let .upload(url):
                 UploadEstimateModal(documentURL: url)
@@ -66,7 +68,31 @@ struct AudiobookLibraryView: View {
                 CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
                     .environmentObject(vm)
                     .environmentObject(bookVM)
+            case let .fixProvider(fix):
+                AddProviderSheet(provider: fix.provider, cleaningCount: bookVM.cleaningBookCount(using:))
+                    .environmentObject(vm)
+                    .environmentObject(bookVM.providers)
             }
+        }
+        .confirmationDialog(
+            retryPromptTitle,
+            isPresented: retryPromptBinding,
+            titleVisibility: .visible,
+            presenting: bookVM.retryPrompt
+        ) { prompt in
+            retryPromptActions(prompt)
+        } message: { prompt in
+            Text(retryPromptMessage(prompt))
+        }
+        .alert(
+            "Resume \"\(bookVM.resumeOffer?.book.displayTitle ?? "this audiobook")\"?",
+            isPresented: resumeOfferBinding,
+            presenting: bookVM.resumeOffer
+        ) { fix in
+            Button("Resume") { bookVM.resumeAfterFix(fix) }
+            Button("Not Now", role: .cancel) { bookVM.resumeOffer = nil }
+        } message: { fix in
+            Text(resumeMessage(fix))
         }
         .onAppear { bookVM.startPolling() }
         .onDisappear { bookVM.stopPolling() }
@@ -124,6 +150,9 @@ struct AudiobookLibraryView: View {
                 if let book = bookVM.completionSummary {
                     return .completion(book)
                 }
+                if let fix = bookVM.providerFix {
+                    return .fixProvider(fix)
+                }
                 if let url = bookVM.pendingDocument {
                     return .upload(url)
                 }
@@ -133,11 +162,79 @@ struct AudiobookLibraryView: View {
                 guard newValue == nil else { return }
                 if bookVM.completionSummary != nil {
                     bookVM.completionSummary = nil
+                } else if bookVM.providerFix != nil {
+                    bookVM.endProviderFix()
                 } else if bookVM.pendingDocument != nil {
                     bookVM.cancelUpload()
                 }
             }
         )
+    }
+
+    private var retryPromptBinding: Binding<Bool> {
+        Binding(
+            get: { bookVM.retryPrompt != nil },
+            set: {
+                if !$0 {
+                    bookVM.retryPrompt = nil
+                }
+            }
+        )
+    }
+
+    private var resumeOfferBinding: Binding<Bool> {
+        Binding(
+            get: { bookVM.resumeOffer != nil },
+            set: {
+                if !$0 {
+                    bookVM.resumeOffer = nil
+                }
+            }
+        )
+    }
+
+    private var retryPromptTitle: String {
+        switch bookVM.retryPrompt {
+        case let .switchProvider(_, startedWith, active, _):
+            "This audiobook was cleaned with \(startedWith.displayName). Continue with \(active.displayName)?"
+        case let .needsProvider(book, _):
+            "Choose how to continue \"\(book.displayTitle)\""
+        case nil:
+            ""
+        }
+    }
+
+    private func retryPromptMessage(_ prompt: AudiobookViewModel.RetryPrompt) -> String {
+        switch prompt {
+        case .switchProvider:
+            "Pages already cleaned stay as they are. Only the remaining pages use the provider you choose."
+        case .needsProvider:
+            "This audiobook needs AI cleanup to continue. Choose a provider, or finish it without AI."
+        }
+    }
+
+    @ViewBuilder
+    private func retryPromptActions(_ prompt: AudiobookViewModel.RetryPrompt) -> some View {
+        switch prompt {
+        case let .switchProvider(book, startedWith, active, startedWithConnected):
+            Button("Use \(active.displayName)") { bookVM.retry(book, using: active) }
+            if startedWithConnected {
+                Button("Use \(startedWith.displayName)") { bookVM.retry(book, using: startedWith) }
+            }
+            Button("Cancel", role: .cancel) {}
+        case let .needsProvider(book, connected):
+            ForEach(connected) { provider in
+                Button("Use \(provider.displayName)") { bookVM.retry(book, using: provider) }
+            }
+            Button("Add Provider…") { bookVM.addProviderToResume(book) }
+            Button("Finish Without AI") { bookVM.finishWithoutAI(book) }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private func resumeMessage(_ fix: AudiobookViewModel.ProviderFix) -> String {
+        let name = (fix.provider ?? bookVM.providers.activeProvider)?.displayName
+        return name.map { "Voqora will continue where it stopped, using \($0)." } ?? "Voqora will continue where it stopped."
     }
 
     @ViewBuilder
@@ -228,6 +325,7 @@ struct AudiobookLibraryView: View {
     private func openBook(_ book: Audiobook) {
         switch book.displayStatus {
         case .ready: bookVM.openPlayer(for: book.bookID)
+        case .failed where book.providerToFix != nil: bookVM.fixProvider(for: book)
         case .failed, .cancelled: bookVM.retry(book)
         case .needsKey: bookVM.resumeNeedsKey(book)
         default: break

@@ -67,8 +67,7 @@ class TextExtractor:
 
     @classmethod
     def _docx_blocks(cls, source_path: str) -> list[tuple[str, str]]:
-        """Read a DOCX in document order as (text, paragraph style name) blocks,
-        including table content (tables carry an empty style name).
+        """Read a DOCX in document order, including table content.
 
         `doc.paragraphs` alone omits table cell text entirely — tables live
         in the separate `doc.tables` collection, unordered relative to

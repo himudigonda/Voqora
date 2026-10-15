@@ -73,7 +73,7 @@ def test_retry_called_twice_only_retries_once(monkeypatch):
     monkeypatch.setattr(
         AudiobookService,
         "retry_failed",
-        classmethod(lambda cls, b, c: fake_retry_failed(b, c)),
+        classmethod(lambda cls, b, c, **kw: fake_retry_failed(b, c)),
     )
     bid = _make_book(status="failed")
     client = TestClient(app)

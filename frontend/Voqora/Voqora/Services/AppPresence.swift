@@ -10,10 +10,6 @@ enum AppPresence {
         defaults.bool(forKey: hideFromDockKey)
     }
 
-    static func showsMenuBarIcon(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: showMenuBarIconKey) as? Bool ?? true
-    }
-
     static func setHideFromDock(_ hidden: Bool, defaults: UserDefaults = .standard) {
         defaults.set(hidden, forKey: hideFromDockKey)
         if hidden {

@@ -98,6 +98,58 @@ async def test_blank_page_in_text_pdf_skips_ocr_and_reservation(
     assert not (after.get("budget") or {}).get("ledger")
 
 
+def _write_source_pdf(bid: str, *, with_image: bool) -> None:
+    from PIL import Image
+
+    path = AudiobookStore.source_file_path(bid, "pdf")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if with_image:
+        Image.new("RGB", (200, 200), (20, 20, 20)).save(path)
+        return
+    with open(path, "wb") as f:
+        f.write(
+            b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\n"
+            b"endobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n"
+        )
+
+
+@pytest.mark.asyncio
+async def test_scanned_page_in_text_pdf_is_ocred_not_blanked(monkeypatch):
+    bid = _make_pdf_book(is_image_only=False)
+    _write_raw(bid, "")
+    _write_source_pdf(bid, with_image=True)
+    monkeypatch.setattr(
+        _pe.PDFExtractor,
+        "render_page_image",
+        classmethod(lambda cls, p, n, **kw: b"imgbytes"),
+    )
+    ocr = AsyncMock(return_value="Scanned appendix text.")
+    monkeypatch.setattr(_lc.LLMCleaner, "ocr_page", ocr)
+
+    AudiobookService.initialize()
+    await AudiobookService._phase_clean(bid, LLMCredential.gemini("test-key"))
+
+    ocr.assert_called_once()
+    assert _read_clean(bid) == "Scanned appendix text."
+
+
+@pytest.mark.asyncio
+async def test_page_without_raster_content_in_text_pdf_stays_blank(monkeypatch):
+    bid = _make_pdf_book(is_image_only=False)
+    _write_raw(bid, "")
+    _write_source_pdf(bid, with_image=False)
+    mocks = _forbid_llm(monkeypatch)
+
+    AudiobookService.initialize()
+    await AudiobookService._phase_clean(bid, LLMCredential.gemini("test-key"))
+
+    for mock in mocks.values():
+        mock.assert_not_called()
+    assert _read_clean(bid) == "-"
+
+
 @pytest.mark.asyncio
 async def test_blank_page_in_text_pdf_is_not_a_failure_for_a_text_only_model(
     monkeypatch,
@@ -109,6 +161,24 @@ async def test_blank_page_in_text_pdf_is_not_a_failure_for_a_text_only_model(
     AudiobookService.initialize()
     await AudiobookService._phase_clean(bid, LLMCredential("groq", api_key="gsk"))
 
+    assert _read_clean(bid) == "-"
+    assert not AudiobookStore.read_meta(bid).get("failed_pages")
+
+
+@pytest.mark.asyncio
+async def test_image_only_page_in_text_pdf_is_blank_not_failed_for_a_text_only_model(
+    monkeypatch,
+):
+    bid = _make_pdf_book(is_image_only=False)
+    _write_raw(bid, "")
+    _write_source_pdf(bid, with_image=True)
+    mocks = _forbid_llm(monkeypatch)
+
+    AudiobookService.initialize()
+    await AudiobookService._phase_clean(bid, LLMCredential("groq", api_key="gsk"))
+
+    for mock in mocks.values():
+        mock.assert_not_called()
     assert _read_clean(bid) == "-"
     assert not AudiobookStore.read_meta(bid).get("failed_pages")
 

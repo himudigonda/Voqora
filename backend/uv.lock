@@ -129,7 +129,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
-    { name = "pypdfium2", specifier = ">=4.0.0" },
+    { name = "pypdfium2", specifier = ">=5.0" },
     { name = "pypinyin", specifier = ">=0.55.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },

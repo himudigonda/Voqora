@@ -20,8 +20,10 @@ final class LLMProviderStore: ObservableObject {
 
     @Published private(set) var connected: [LLMProvider: LLMProviderSettings] = [:]
     @Published private(set) var activeProvider: LLMProvider?
+    private(set) var saveCount = 0
 
     private let defaults: UserDefaults
+    private var legacyMigration: Task<Void, Never>?
     private let secrets: SecretStore
     private let verifier: @MainActor (LLMCredential) async -> LLMVerification
 
@@ -44,6 +46,10 @@ final class LLMProviderStore: ObservableObject {
 
     var activeCredential: LLMCredential? {
         activeProvider.flatMap(credential(for:))
+    }
+
+    var needsActiveChoice: Bool {
+        activeProvider == nil && connected.count > 1
     }
 
     func isConnected(_ provider: LLMProvider) -> Bool {
@@ -72,7 +78,7 @@ final class LLMProviderStore: ObservableObject {
     }
 
     @discardableResult
-    func save(_ credential: LLMCredential) -> Bool {
+    func save(_ credential: LLMCredential, makeActive: Bool = false) -> Bool {
         let provider = credential.provider
         if provider.acceptsKey {
             let stored = credential.apiKey.isEmpty
@@ -81,7 +87,8 @@ final class LLMProviderStore: ObservableObject {
             guard stored else { return false }
         }
         connected[provider] = LLMProviderSettings(model: credential.model, serverURL: credential.serverURL)
-        if activeProvider == nil {
+        saveCount += 1
+        if makeActive || connected.count == 1 {
             activeProvider = provider
         }
         persist()
@@ -97,25 +104,48 @@ final class LLMProviderStore: ObservableObject {
     func remove(_ provider: LLMProvider) {
         _ = secrets.delete(provider.keychainKey)
         connected[provider] = nil
-        if activeProvider == provider {
-            activeProvider = connectedProviders.first
+        if activeProvider == provider || connected.count == 1 {
+            activeProvider = connected.count == 1 ? connectedProviders.first : nil
         }
         persist()
     }
 
+    func finishLegacyMigration() async {
+        await legacyMigration?.value
+    }
+
     private func load() {
-        if let data = defaults.data(forKey: Self.settingsKey),
-           let stored = try? JSONDecoder().decode([String: LLMProviderSettings].self, from: data)
-        {
-            connected = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in
-                LLMProvider(rawValue: key).map { ($0, value) }
-            })
-        } else if secrets.get(LLMProvider.google.keychainKey) != nil {
-            connected = [.google: LLMProviderSettings()]
+        guard let data = defaults.data(forKey: Self.settingsKey),
+              let stored = try? JSONDecoder().decode([String: LLMProviderSettings].self, from: data)
+        else {
+            adoptLegacyGeminiKey()
+            return
         }
-        let storedActive = defaults.string(forKey: Self.activeKey).flatMap(LLMProvider.init(rawValue:))
-        activeProvider = storedActive.flatMap { connected[$0] != nil ? $0 : nil } ?? connectedProviders.first
+        connected = Dictionary(uniqueKeysWithValues: stored.compactMap { key, value in
+            LLMProvider(rawValue: key).map { ($0, value) }
+        })
+        restoreActiveProvider()
         persist()
+    }
+
+    private func adoptLegacyGeminiKey() {
+        let secrets = secrets
+        legacyMigration = Task { [weak self] in
+            let hasLegacyKey = await Task.detached { secrets.get(LLMProvider.google.keychainKey) != nil }.value
+            guard let self else { return }
+            if hasLegacyKey, connected.isEmpty {
+                connected = [.google: LLMProviderSettings()]
+            }
+            restoreActiveProvider()
+            persist()
+        }
+    }
+
+    private func restoreActiveProvider() {
+        let storedActive = defaults.string(forKey: Self.activeKey).flatMap(LLMProvider.init(rawValue:))
+        activeProvider = activeProvider.flatMap { connected[$0] != nil ? $0 : nil }
+            ?? storedActive.flatMap { connected[$0] != nil ? $0 : nil }
+            ?? (connected.count == 1 ? connectedProviders.first : nil)
     }
 
     private func persist() {

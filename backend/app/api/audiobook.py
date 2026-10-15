@@ -38,7 +38,7 @@ from app.services.import_limits import (
     validate_magic,
 )
 from app.services.llm_cleaner import LLMCleaner
-from app.services.llm_providers import PROVIDERS, LLMCredential
+from app.services.llm_providers import PROVIDERS, LLMCredential, api_key_problem
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
 
@@ -90,7 +90,19 @@ def _provider_credential(
         return None
     if provider not in PROVIDERS:
         raise HTTPException(status_code=400, detail="Unknown AI provider.")
+    key_problem = api_key_problem(api_key or "")
+    if key_problem:
+        raise HTTPException(status_code=400, detail=key_problem)
     return LLMCredential(provider, api_key or "", model or "", base_url or "")
+
+
+def _pricing_credential(
+    provider: str | None, model: str | None, base_url: str | None
+) -> LLMCredential | None:
+    credential = _provider_credential(provider, None, model, base_url)
+    if credential is not None and base_url and credential.server_url_problem():
+        return _provider_credential(provider, None, model, None)
+    return credential
 
 
 def llm_credential(
@@ -251,6 +263,7 @@ async def upload_audiobook(
     engine: str | None = Form(default=None),
     llm_provider: str | None = Form(default=None),
     llm_model: str | None = Form(default=None),
+    llm_base_url: str | None = Form(default=None),
 ):
     """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
 
@@ -270,7 +283,7 @@ async def upload_audiobook(
     book_voice, book_speed, book_engine = _validated_synthesis_settings(
         voice, speed, engine
     )
-    pricing_credential = _provider_credential(llm_provider, None, llm_model, None)
+    pricing_credential = _pricing_credential(llm_provider, llm_model, llm_base_url)
 
     # Stream straight to a private staging file. Keeping chunks in a list and
     # joining them later made a nominal 100 MB document occupy multiple large
@@ -703,6 +716,9 @@ def cancel_audiobook(book_id: str):
 async def retry_audiobook(
     book_id: str,
     credential: LLMCredential | None = Depends(llm_credential),
+    x_voqora_llm_cleanup: str | None = Header(
+        default=None, alias="X-Voqora-LLM-Cleanup"
+    ),
 ):
     """Re-process failed pages (or the whole book if state is `failed`)."""
     _validate_book_id(book_id)
@@ -711,9 +727,10 @@ async def retry_audiobook(
         raise HTTPException(status_code=404, detail="Book not found.")
     if AudiobookService.is_processing(book_id):
         raise HTTPException(status_code=409, detail="Book is already processing.")
-    if bool(meta.get("uses_gemini_cleanup", True)):
+    cleanup = (x_voqora_llm_cleanup or "").strip().lower() != "false"
+    if cleanup and bool(meta.get("uses_gemini_cleanup", True)):
         credential = _require_credential(credential)
-    count = await AudiobookService.retry_failed(book_id, credential)
+    count = await AudiobookService.retry_failed(book_id, credential, cleanup=cleanup)
     return {"status": "queued", "retried_pages": count, "book_id": book_id}
 
 
@@ -798,7 +815,9 @@ async def delete_audiobook(book_id: str):
 @router.post("/llm/verify")
 async def verify_provider(req: VerifyProviderRequest):
     credential = _provider_credential(
-        req.provider, req.api_key, req.model, req.base_url
+        req.provider.strip(), req.api_key, req.model, req.base_url
     )
+    if credential is None:
+        raise HTTPException(status_code=400, detail="Choose an AI provider.")
     result = await LLMCleaner.verify(credential)
     return {"verified": result.ok, "models": result.models, "error": result.error}

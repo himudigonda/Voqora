@@ -63,6 +63,21 @@ struct AudiobookCardView: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
         .onHover { hovering = $0 }
         .contextMenu {
+            if let reason = status.failureReason {
+                Button {} label: {
+                    Label(reason, systemImage: "exclamationmark.triangle")
+                }
+                .disabled(true)
+            }
+            if let name = book.cleanedWithName {
+                Button {} label: {
+                    Label("Cleaned with \(name)", systemImage: "sparkles")
+                }
+                .disabled(true)
+            }
+            if status.failureReason != nil || book.cleanedWithName != nil {
+                Divider()
+            }
             if status.isProcessing {
                 Button { bookVM.cancel(book) } label: {
                     Label("Cancel Processing", systemImage: "xmark.circle")
@@ -70,6 +85,11 @@ struct AudiobookCardView: View {
                 Divider()
             }
             if case .failed = status {
+                if let provider = book.providerToFix {
+                    Button { bookVM.fixProvider(for: book) } label: {
+                        Label("Fix \(provider.displayName)…", systemImage: "key")
+                    }
+                }
                 Button { bookVM.retry(book) } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                 }
@@ -310,6 +330,13 @@ struct AudiobookCardView: View {
                     .lineLimit(1)
             }
             .buttonStyle(.plain)
+        case .failed:
+            Text(status.detailedCaption)
+                .font(vm.appFont(size: 11))
+                .foregroundStyle(captionColor)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .help(failureHelp)
         default:
             Text(status.caption)
                 .font(vm.appFont(size: 11))
@@ -318,6 +345,11 @@ struct AudiobookCardView: View {
                 .contentTransition(.numericText())
                 .lineLimit(1)
         }
+    }
+
+    private var failureHelp: String {
+        let action = book.providerToFix.map { "Click to fix \($0.displayName)." } ?? "Click to retry."
+        return [status.failureReason, action].compactMap(\.self).joined(separator: " ")
     }
 
     private var captionColor: Color {

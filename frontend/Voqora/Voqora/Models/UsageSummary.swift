@@ -36,31 +36,53 @@ enum StatsRange: String, CaseIterable, Identifiable {
     }
 
     func interval(endingAt now: Date, firstRecorded: Date?, calendar: Calendar) -> DateInterval {
-        let end = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))!
+        let end = calendar.shifting(calendar.startOfDay(for: now), .day, 1)
+        let currentMonthStart = calendar.start(of: .month, for: now)
         let start: Date = switch self {
         case .week:
-            calendar.date(byAdding: .day, value: -7, to: end)!
+            calendar.shifting(end, .day, -7)
         case .month:
-            calendar.date(byAdding: .day, value: -30, to: end)!
+            calendar.shifting(end, .day, -30)
         case .year:
-            calendar.date(byAdding: .month, value: -11, to: calendar.dateInterval(of: .month, for: now)!.start)!
+            calendar.shifting(currentMonthStart, .month, -11)
         case .all:
             min(
-                calendar.dateInterval(of: .month, for: firstRecorded ?? now)!.start,
-                calendar.date(byAdding: .month, value: -5, to: calendar.dateInterval(of: .month, for: now)!.start)!
+                calendar.start(of: .month, for: firstRecorded ?? now),
+                calendar.shifting(currentMonthStart, .month, -5)
             )
         }
-        return DateInterval(start: start, end: end)
+        return DateInterval(start: min(start, end), end: end)
     }
 
     func previousInterval(before interval: DateInterval, calendar: Calendar) -> DateInterval? {
         switch self {
-        case .week, .month:
-            DateInterval(start: interval.start.addingTimeInterval(-interval.duration), end: interval.start)
+        case .week:
+            DateInterval(start: calendar.shifting(interval.start, .day, -7), end: interval.start)
+        case .month:
+            DateInterval(start: calendar.shifting(interval.start, .day, -30), end: interval.start)
         case .year:
-            DateInterval(start: calendar.date(byAdding: .month, value: -12, to: interval.start)!, end: interval.start)
+            DateInterval(start: calendar.shifting(interval.start, .month, -12), end: interval.start)
         case .all:
             nil
+        }
+    }
+}
+
+private extension Calendar {
+    func shifting(_ date: Date, _ component: Component, _ value: Int) -> Date {
+        self.date(byAdding: component, value: value, to: date)
+            ?? date.addingTimeInterval(Double(value) * Self.approximateSeconds(component))
+    }
+
+    func start(of component: Component, for date: Date) -> Date {
+        dateInterval(of: component, for: date)?.start ?? startOfDay(for: date)
+    }
+
+    static func approximateSeconds(_ component: Component) -> TimeInterval {
+        switch component {
+        case .month: 30 * 86400
+        case .weekOfYear: 7 * 86400
+        default: 86400
         }
     }
 }
@@ -234,7 +256,7 @@ struct UsageSummary: Equatable {
             for (book, seconds) in day.books {
                 books[book, default: 0] += seconds
             }
-            let bucket = calendar.dateInterval(of: range.bucket, for: date)!.start
+            let bucket = calendar.start(of: range.bucket, for: date)
             let existing = buckets[bucket] ?? (0, 0)
             buckets[bucket] = (existing.speech + day.speechSeconds / 60, existing.listening + day.listeningSeconds / 60)
             let minutes = day.activeSeconds / 60
@@ -248,7 +270,7 @@ struct UsageSummary: Equatable {
         while cursor < interval.end {
             let value = buckets[cursor] ?? (0, 0)
             series.append(ActivityPoint(date: cursor, speechMinutes: value.speech, listeningMinutes: value.listening))
-            cursor = calendar.date(byAdding: range.bucket, value: 1, to: cursor)!
+            cursor = calendar.shifting(cursor, range.bucket, 1)
         }
 
         let totalUses = max(1, voices.values.reduce(0) { $0 + $1.uses })
@@ -299,11 +321,11 @@ struct UsageSummary: Equatable {
         var current = 0
         var cursor = calendar.startOfDay(for: now)
         if !active.contains(UsageLedger.dayKey(for: cursor, calendar: calendar)) {
-            cursor = calendar.date(byAdding: .day, value: -1, to: cursor)!
+            cursor = calendar.shifting(cursor, .day, -1)
         }
         while active.contains(UsageLedger.dayKey(for: cursor, calendar: calendar)) {
             current += 1
-            cursor = calendar.date(byAdding: .day, value: -1, to: cursor)!
+            cursor = calendar.shifting(cursor, .day, -1)
         }
         return (current, longest)
     }
@@ -311,11 +333,11 @@ struct UsageSummary: Equatable {
     static func heatmap(ledger: UsageLedger, weeks: Int, now: Date, calendar: Calendar) -> [[HeatmapDay]] {
         let today = calendar.startOfDay(for: now)
         let weekday = (calendar.component(.weekday, from: today) + 5) % 7
-        let thisMonday = calendar.date(byAdding: .day, value: -weekday, to: today)!
-        let firstMonday = calendar.date(byAdding: .weekOfYear, value: -(weeks - 1), to: thisMonday)!
+        let thisMonday = calendar.shifting(today, .day, -weekday)
+        let firstMonday = calendar.shifting(thisMonday, .weekOfYear, -(weeks - 1))
         return (0 ..< weeks).map { week in
             (0 ..< 7).map { offset in
-                let date = calendar.date(byAdding: .day, value: week * 7 + offset, to: firstMonday)!
+                let date = calendar.shifting(firstMonday, .day, week * 7 + offset)
                 let day = ledger.days[UsageLedger.dayKey(for: date, calendar: calendar)]
                 return HeatmapDay(
                     date: date,

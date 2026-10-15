@@ -19,7 +19,7 @@ final class AppPresenceTests: XCTestCase {
 
     func testDefaultsKeepDockAndMenuBarIcon() {
         XCTAssertFalse(AppPresence.hidesFromDock(defaults))
-        XCTAssertTrue(AppPresence.showsMenuBarIcon(defaults))
+        XCTAssertNil(defaults.object(forKey: AppPresence.showMenuBarIconKey))
     }
 
     func testHidingFromDockForcesMenuBarIconOn() {
@@ -28,7 +28,7 @@ final class AppPresenceTests: XCTestCase {
         AppPresence.setHideFromDock(true, defaults: defaults)
 
         XCTAssertTrue(AppPresence.hidesFromDock(defaults))
-        XCTAssertTrue(AppPresence.showsMenuBarIcon(defaults))
+        XCTAssertTrue(defaults.bool(forKey: AppPresence.showMenuBarIconKey))
     }
 
     func testRemovingMenuBarIconBringsBackTheDock() {
@@ -37,7 +37,7 @@ final class AppPresenceTests: XCTestCase {
         AppPresence.setShowMenuBarIcon(false, defaults: defaults)
 
         XCTAssertFalse(AppPresence.hidesFromDock(defaults))
-        XCTAssertFalse(AppPresence.showsMenuBarIcon(defaults))
+        XCTAssertFalse(defaults.bool(forKey: AppPresence.showMenuBarIconKey))
     }
 
     func testOnboardingAlwaysUsesTheDock() {

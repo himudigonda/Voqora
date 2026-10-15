@@ -19,9 +19,34 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let usesLLMCleanup: Bool?
     let budget: CleanupBudget?
     let error: String?
+    var errorCode: String? = nil
+    var llmProvider: String? = nil
+    var llmModel: String? = nil
+
+    static let providerFailureCodes: Set<String> = [
+        "llm_auth_failed",
+        "llm_billing_failed",
+        "llm_unreachable",
+        "llm_config_failed",
+        "llm_model_not_found",
+    ]
 
     var requiresLLMCleanup: Bool {
         usesLLMCleanup ?? true
+    }
+
+    var cleanupProvider: LLMProvider? {
+        llmProvider.flatMap(LLMProvider.init(rawValue:))
+    }
+
+    var cleanedWithName: String? {
+        guard usesLLMCleanup == true, let llmProvider else { return nil }
+        return cleanupProvider?.displayName ?? llmProvider
+    }
+
+    var providerToFix: LLMProvider? {
+        guard status == "failed", let errorCode, Self.providerFailureCodes.contains(errorCode) else { return nil }
+        return cleanupProvider
     }
 
     var id: String {
@@ -76,7 +101,7 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case "needs_cost_approval":
             .needsCostApproval(requiredCap: budget?.costApproval?.requiredCapUsd)
         case "failed":
-            .failed(reason: error ?? "Unknown error")
+            .failed(reason: error ?? ProcessingStatus.unknownFailureReason)
         case "cancelled":
             .cancelled
         default:
@@ -98,6 +123,9 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case estimated, actual, engine, voice, speed, budget
         case usesLLMCleanup = "uses_gemini_cleanup"
         case error
+        case errorCode = "error_code"
+        case llmProvider = "llm_provider"
+        case llmModel = "llm_model"
     }
 }
 
@@ -261,6 +289,18 @@ enum ProcessingStatus: Hashable {
             return true
         }
         return false
+    }
+
+    static let unknownFailureReason = "Unknown error"
+
+    var failureReason: String? {
+        guard case let .failed(reason) = self else { return nil }
+        let trimmed = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == Self.unknownFailureReason ? nil : trimmed
+    }
+
+    var detailedCaption: String {
+        failureReason ?? caption
     }
 
     var caption: String {

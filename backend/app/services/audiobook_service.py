@@ -101,6 +101,7 @@ class AudiobookLimitError(Exception):
 
 
 _MAX_WAV_PCM_BYTES = 0xFFFFFFFF - 36
+_STALE_TMP_AGE_S = 3600.0
 
 
 def _safe_failure(error: Exception) -> tuple[str, str]:
@@ -244,7 +245,11 @@ class AudiobookService:
 
     @classmethod
     async def _reconcile_llm_operation(
-        cls, book_id: str, receipt_id: str, usage: Any | None
+        cls,
+        book_id: str,
+        receipt_id: str,
+        usage: Any | None,
+        credential: LLMCredential | None = None,
     ) -> None:
         """Record actual provider usage, retaining reservation if usage is absent."""
         if usage is None:
@@ -279,6 +284,7 @@ class AudiobookService:
                         tier=item.tier,
                         provider=getattr(item, "provider", "google"),
                         model=getattr(item, "model", ""),
+                        credential=credential,
                     )
                     for item in receipts
                 )
@@ -356,6 +362,9 @@ class AudiobookService:
                 current["gemini_tier"] = "standard"
                 current["status"] = "queued"
                 current["error"] = None
+                current["error_code"] = None
+                current["llm_provider"] = credential.provider if credential else None
+                current["llm_model"] = credential.resolved_model if credential else None
 
             await AudiobookStore.mutate_meta(book_id, approve_mutation)
         else:
@@ -368,6 +377,9 @@ class AudiobookService:
                 current["gemini_tier"] = "flex"
                 current["status"] = "queued"
                 current["error"] = None
+                current["error_code"] = None
+                current["llm_provider"] = None
+                current["llm_model"] = None
 
             await AudiobookStore.mutate_meta(book_id, local_mutation)
         await cls.enqueue(book_id, credential if approve else None)
@@ -419,8 +431,11 @@ class AudiobookService:
                 error_code, error_message = _safe_failure(e)
                 log.error(
                     "audiobook.pipeline_fatal",
-                    extra={"book_id": book_id, "failure_code": error_code},
-                    exc_info=True,
+                    extra={
+                        "book_id": book_id,
+                        "failure_code": error_code,
+                        "error_type": type(e).__name__,
+                    },
                 )
                 if AudiobookStore.read_meta(book_id) is not None:
                     await AudiobookStore.update_meta(
@@ -451,9 +466,15 @@ class AudiobookService:
         cls._job_keys[book_id] = credential
         cls._cancel_flags.pop(book_id, None)
         try:
-            updated = await AudiobookStore.update_meta(
-                book_id, status="queued", error=None
-            )
+            queued_patch: dict[str, Any] = {
+                "status": "queued",
+                "error": None,
+                "error_code": None,
+            }
+            if credential is not None:
+                queued_patch["llm_provider"] = credential.provider
+                queued_patch["llm_model"] = credential.resolved_model
+            updated = await AudiobookStore.update_meta(book_id, **queued_patch)
             if not updated:
                 cls._scheduled_book_ids.discard(book_id)
                 cls._job_keys.pop(book_id, None)
@@ -496,6 +517,7 @@ class AudiobookService:
                 ),
                 status="queued",
                 error=None,
+                error_code=None,
                 budget=(
                     cls._budget_summary(dict(existing_budget))
                     if existing_budget
@@ -576,20 +598,13 @@ class AudiobookService:
         return deleted
 
     @classmethod
-    async def retry_failed(cls, book_id: str, credential: LLMCredential | None) -> int:
-        """Re-process pages currently listed in `meta.failed_pages`, OR resume
-        a stuck book in `needs_key` / `failed` state.
-
-        Deletes failed pages' per-page WAV (so TTS re-runs) plus the final
-        audio.wav (so concat re-runs). Clean text is only deleted — forcing
-        a re-run of the costly LLM cleaning call — for pages whose
-        `page_status` actually indicates a *cleaning* failure; a page that
-        only failed TTS keeps its already-correct clean text and just gets
-        re-synthesized. Clears the failed list, and enqueues the book.
-        Returns the number of pages slated for retry. For needs_key/failed
-        without per-page failures, returns 0 but still enqueues a fresh
-        pipeline run.
-        """
+    async def retry_failed(
+        cls,
+        book_id: str,
+        credential: LLMCredential | None,
+        *,
+        cleanup: bool = True,
+    ) -> int:
         meta = AudiobookStore.read_meta(book_id)
         if meta is None:
             return 0
@@ -642,13 +657,22 @@ class AudiobookService:
                     os.remove(p)
             except OSError:
                 pass
-        await AudiobookStore.update_meta(
-            book_id,
-            failed_pages=[],
-            page_status=page_status,
-            error=None,
-            status="queued",
-        )
+        patch: dict[str, Any] = {
+            "failed_pages": [],
+            "page_status": page_status,
+            "error": None,
+            "error_code": None,
+            "status": "queued",
+        }
+        if not cleanup:
+            credential = None
+            patch.update(
+                uses_gemini_cleanup=False,
+                gemini_tier="flex",
+                llm_provider=None,
+                llm_model=None,
+            )
+        await AudiobookStore.update_meta(book_id, **patch)
         await cls.enqueue(book_id, credential)
         return len(failed)
 
@@ -697,11 +721,34 @@ class AudiobookService:
 
     # ---------- resume on startup ----------
 
+    @staticmethod
+    def sweep_stale_tmp_files(root: str, max_age_s: float = _STALE_TMP_AGE_S) -> int:
+        cutoff = time.time() - max_age_s
+        removed = 0
+        for directory, _, names in os.walk(root):
+            for name in names:
+                if not name.endswith(".tmp"):
+                    continue
+                path = os.path.join(directory, name)
+                try:
+                    if os.path.getmtime(path) < cutoff:
+                        os.remove(path)
+                        removed += 1
+                except OSError:
+                    log.warning(
+                        "audiobook.tmp_sweep_failed",
+                        extra={"failure_code": "tmp_sweep_failed"},
+                    )
+        return removed
+
     @classmethod
     async def resume_in_progress(cls) -> None:
         """Scan store for in-progress books. If cleaning was in flight (needs key),
         flag as needs_key. Otherwise auto-resume non-clean phases."""
         cls.initialize()
+        await asyncio.get_running_loop().run_in_executor(
+            cls._executor, cls.sweep_stale_tmp_files, AudiobookStore.root_dir()
+        )
         for meta in AudiobookStore.list_books():
             status = meta.get("status")
             if status not in {
@@ -817,8 +864,11 @@ class AudiobookService:
             # pipeline's actual top-level failure path; it must log.
             log.error(
                 "audiobook.run_pipeline_failed",
-                extra={"book_id": book_id, "failure_code": _safe_failure(e)[0]},
-                exc_info=True,
+                extra={
+                    "book_id": book_id,
+                    "failure_code": _safe_failure(e)[0],
+                    "error_type": type(e).__name__,
+                },
             )
             error_code, error_message = _safe_failure(e)
             await AudiobookStore.update_meta(
@@ -940,6 +990,46 @@ class AudiobookService:
 
     # ---------- phase: section detection ----------
 
+    @staticmethod
+    def _outline_sections(outline: list[dict], page_count: int) -> list[dict]:
+        def distinct_by_page(entries: list[dict]) -> list[dict]:
+            seen: set[int] = set()
+            kept: list[dict] = []
+            for entry in entries:
+                if entry["start_page"] not in seen:
+                    seen.add(entry["start_page"])
+                    kept.append(entry)
+            return kept
+
+        levels = sorted({int(entry.get("level", 0)) for entry in outline})
+        chosen: list[dict] = []
+        for level in levels:
+            candidates = distinct_by_page(
+                [e for e in outline if int(e.get("level", 0)) == level]
+            )
+            if len(candidates) >= 2:
+                chosen = candidates
+                break
+        if not chosen:
+            chosen = distinct_by_page(
+                [e for e in outline if int(e.get("level", 0)) == levels[0]]
+            )
+
+        ordered = sorted(chosen, key=lambda entry: entry["start_page"])
+        sections: list[dict] = []
+        for i, entry in enumerate(ordered):
+            end_page = (
+                ordered[i + 1]["start_page"] - 1 if i + 1 < len(ordered) else page_count
+            )
+            sections.append(
+                {
+                    "title": entry["title"],
+                    "start_page": entry["start_page"],
+                    "end_page": max(entry["start_page"], end_page),
+                }
+            )
+        return sections
+
     @classmethod
     async def _phase_section(
         cls, book_id: str, credential: LLMCredential | None, meta: dict[str, Any]
@@ -954,10 +1044,6 @@ class AudiobookService:
         page_count = int(meta.get("page_count") or 0)
         loop = asyncio.get_running_loop()
 
-        # Path A: the source's own structure first (no API call needed): the
-        # PDF outline, DOCX Heading N styles, or Markdown '#'/'##' headers.
-        # A local-first Markdown book is left to Path B, which reads every
-        # heading level.
         uses_llm_cleanup = bool(meta.get("uses_gemini_cleanup", True))
         source_path = AudiobookStore.source_file_path(book_id, file_ext)
         outline: list[dict] | None
@@ -976,21 +1062,7 @@ class AudiobookService:
 
         sections: list[dict] = []
         if outline:
-            # Convert flat outline (title, start_page) to contiguous sections.
-            sorted_outline = sorted(outline, key=lambda x: x["start_page"])
-            for i, entry in enumerate(sorted_outline):
-                end_page = (
-                    sorted_outline[i + 1]["start_page"] - 1
-                    if i + 1 < len(sorted_outline)
-                    else page_count
-                )
-                sections.append(
-                    {
-                        "title": entry["title"],
-                        "start_page": entry["start_page"],
-                        "end_page": max(entry["start_page"], end_page),
-                    }
-                )
+            sections = cls._outline_sections(outline, page_count)
             if sections and sections[0]["start_page"] > 1:
                 sections.insert(
                     0,
@@ -1056,7 +1128,10 @@ class AudiobookService:
                         timeout=120.0,
                     )
                     await cls._reconcile_llm_operation(
-                        book_id, receipt_id, getattr(sections, "usage", None)
+                        book_id,
+                        receipt_id,
+                        getattr(sections, "usage", None),
+                        credential,
                     )
             except TimeoutError:
                 log.warning(
@@ -1232,7 +1307,17 @@ class AudiobookService:
                 with open(raw_path, encoding="utf-8") as f:
                     raw_text = f.read()
 
-                is_blank_text_page = text_layer_pdf and not raw_text.strip()
+                is_blank_text_page = False
+                if text_layer_pdf and not raw_text.strip() and reads_images is False:
+                    is_blank_text_page = True
+                elif text_layer_pdf and not raw_text.strip():
+                    has_images = await asyncio.get_running_loop().run_in_executor(
+                        cls._executor,
+                        PDFExtractor.page_has_images,
+                        AudiobookStore.source_file_path(book_id, file_ext),
+                        n,
+                    )
+                    is_blank_text_page = not has_images
                 is_ocr = (
                     is_pdf
                     and not is_blank_text_page
@@ -1320,7 +1405,10 @@ class AudiobookService:
                                 timeout=_GEMINI_PAGE_TIMEOUT_S,
                             )
                             await cls._reconcile_llm_operation(
-                                book_id, receipt_id, getattr(cleaned, "usage", None)
+                                book_id,
+                                receipt_id,
+                                getattr(cleaned, "usage", None),
+                                credential,
                             )
                         except TimeoutError:
                             log.warning(
@@ -1346,7 +1434,10 @@ class AudiobookService:
                                 timeout=_GEMINI_PAGE_TIMEOUT_S,
                             )
                             await cls._reconcile_llm_operation(
-                                book_id, receipt_id, getattr(cleaned, "usage", None)
+                                book_id,
+                                receipt_id,
+                                getattr(cleaned, "usage", None),
+                                credential,
                             )
                         except TimeoutError:
                             log.warning(

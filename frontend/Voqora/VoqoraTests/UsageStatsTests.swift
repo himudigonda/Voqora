@@ -141,6 +141,60 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertTrue(store.ledger.days.isEmpty)
     }
 
+    func test_recordingStaysBlockedAfterEraseUntilResumed() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = UsageStatsStore(storageURL: url, calendar: calendar)
+        store.recordLaunch()
+        try store.eraseAll()
+        store.recordLaunch(at: date(15))
+        XCTAssertTrue(store.ledger.days.isEmpty)
+    }
+
+    func test_recordingResumesAfterFailedErase() throws {
+        let url = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = UsageStatsStore(storageURL: url, calendar: calendar)
+        store.recordLaunch()
+        try store.eraseAll()
+
+        store.resumeAfterFailedErase()
+        store.recordLaunch(at: date(15))
+        store.saveNow()
+
+        XCTAssertEqual(store.ledger.days["2026-10-15"]?.launches, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func test_previousWeekKeepsItsFirstDayAcrossDaylightSavingStart() throws {
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let now = try XCTUnwrap(newYork.date(from: DateComponents(year: 2026, month: 3, day: 10, hour: 12)))
+        let current = StatsRange.week.interval(endingAt: now, firstRecorded: nil, calendar: newYork)
+
+        let previous = StatsRange.week.previousInterval(before: current, calendar: newYork)
+
+        XCTAssertEqual(previous?.start, newYork.date(from: DateComponents(year: 2026, month: 2, day: 25)))
+        XCTAssertEqual(previous?.end, current.start)
+
+        var ledger = UsageLedger()
+        let oldestDay = try XCTUnwrap(newYork.date(from: DateComponents(year: 2026, month: 2, day: 25, hour: 9)))
+        ledger.recordSpeech(SpeechSample(text: "a b", voice: "af_bella", speed: 1, audioSeconds: 10), at: oldestDay, calendar: newYork)
+        let summary = UsageSummary.make(ledger: ledger, range: .week, now: now, calendar: newYork)
+        XCTAssertEqual(summary.previous?.speechCount, 1)
+    }
+
+    func test_previousMonthKeepsItsFirstDayAcrossDaylightSavingStart() throws {
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let now = try XCTUnwrap(newYork.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 12)))
+        let current = StatsRange.month.interval(endingAt: now, firstRecorded: nil, calendar: newYork)
+
+        let previous = StatsRange.month.previousInterval(before: current, calendar: newYork)
+
+        XCTAssertEqual(previous?.start, newYork.date(from: DateComponents(year: 2026, month: 1, day: 20)))
+    }
+
     func test_unreadableFileIsSetAsideAndReported() throws {
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }

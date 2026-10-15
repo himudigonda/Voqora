@@ -13,6 +13,7 @@ from collections.abc import Iterable
 
 import pdfplumber
 import pypdfium2 as pdfium
+import pypdfium2.raw as pdfium_c
 from PIL import Image
 
 from app.core.config import settings
@@ -50,6 +51,31 @@ class PDFExtractor:
         texts = cls.read_page_texts(pdf_path, indices=range(5))
         total_chars = sum(len(text) for text in texts)
         return total_chars < cls._IMAGE_ONLY_CHAR_THRESHOLD
+
+    @classmethod
+    def page_has_images(cls, pdf_path: str, page_num: int) -> bool:
+        try:
+            with _PDFIUM_LOCK:
+                doc = pdfium.PdfDocument(pdf_path)
+                try:
+                    if not 1 <= page_num <= len(doc):
+                        return False
+                    page = doc[page_num - 1]
+                    try:
+                        image_objects = page.get_objects(
+                            filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE]
+                        )
+                        return next(image_objects, None) is not None
+                    finally:
+                        page.close()
+                finally:
+                    doc.close()
+        except (OSError, pdfium.PdfiumError):
+            log.warning(
+                "pdf.image_probe_failed",
+                extra={"failure_code": "pdf_image_probe_failed"},
+            )
+            return False
 
     @classmethod
     def sample_word_count(cls, pdf_path: str) -> int:

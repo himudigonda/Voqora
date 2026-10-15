@@ -168,3 +168,29 @@ nonisolated struct LLMVerification: Equatable, Sendable {
     let models: [String]
     let error: String?
 }
+
+nonisolated enum ProviderRemovalNotice {
+    static func title(for provider: LLMProvider) -> String {
+        "Remove \(provider.displayName)?"
+    }
+
+    static func message(
+        provider: LLMProvider,
+        isActive: Bool,
+        cleaningCount: Int,
+        remaining: [LLMProvider]
+    ) -> String {
+        var sentences = [provider.acceptsKey ? "Its API key is deleted from your Keychain." : "Voqora forgets this connection."]
+        guard isActive else { return sentences.joined(separator: " ") }
+        if cleaningCount > 0 {
+            let books = cleaningCount == 1 ? "1 audiobook is" : "\(cleaningCount) audiobooks are"
+            sentences.append("\(books) cleaning with \(provider.displayName) right now. Resuming later needs another provider.")
+        }
+        switch remaining.count {
+        case 0: sentences.append("Audiobook cleanup stays off until you add a provider.")
+        case 1: sentences.append("Audiobooks will switch to \(remaining[0].displayName).")
+        default: sentences.append("You'll choose which provider audiobooks use next.")
+        }
+        return sentences.joined(separator: " ")
+    }
+}

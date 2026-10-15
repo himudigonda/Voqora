@@ -125,6 +125,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         if let cleanup {
             fields.append(("llm_provider", cleanup.provider.rawValue))
             fields.append(("llm_model", cleanup.resolvedModel))
+            if cleanup.provider.acceptsServerURL, !cleanup.serverURL.isEmpty {
+                fields.append(("llm_base_url", cleanup.serverURL))
+            }
         }
         let bodyURL = try Self.makeMultipartUploadBody(document: document, boundary: boundary, fields: fields)
         defer { try? FileManager.default.removeItem(at: bodyURL) }
@@ -199,9 +202,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    func retry(_ id: String, cleanup: LLMCredential?) async throws -> Int {
+    func retry(_ id: String, cleanup: LLMCredential?, finishWithoutCleanup: Bool = false) async throws -> Int {
         var req = try connection.request(path: "audiobook/\(id)/retry", method: "POST")
-        cleanup?.apply(to: &req)
+        if finishWithoutCleanup {
+            req.setValue("false", forHTTPHeaderField: "X-Voqora-LLM-Cleanup")
+        } else {
+            cleanup?.apply(to: &req)
+        }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Retry failed"
@@ -378,9 +385,15 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             "model": credential.model,
             "base_url": credential.serverURL,
         ])
-        guard let (data, _) = try? await URLSession.shared.data(for: req),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return unreachable }
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else { return unreachable }
+        return Self.decodeVerification(data: data, statusCode: (response as? HTTPURLResponse)?.statusCode) ?? unreachable
+    }
+
+    nonisolated static func decodeVerification(data: Data, statusCode: Int?) -> LLMVerification? {
+        guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let statusCode, !(200 ..< 300).contains(statusCode), let detail = obj["detail"] as? String {
+            return LLMVerification(verified: false, models: [], error: detail)
+        }
         return LLMVerification(
             verified: (obj["verified"] as? Bool) ?? false,
             models: (obj["models"] as? [String]) ?? [],

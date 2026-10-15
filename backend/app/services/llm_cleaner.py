@@ -1,17 +1,12 @@
-"""Narration cleanup, OCR and chapter detection through the user's LLM provider.
-
-Gemini runs through the google.genai SDK so it can use the Flex service tier;
-every other provider goes through ``llm_providers``. Credentials arrive per
-request from the app and are never persisted.
-"""
-
 import asyncio
 import json
 import re
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types
 
 from app.core.logging import get_logger
@@ -20,46 +15,35 @@ from app.services.llm_providers import (
     PROVIDERS,
     LLMAuthError,
     LLMBadResponseError,
+    LLMBillingError,
     LLMCapacityError,
-    LLMConfigError,
     LLMCredential,
+    LLMError,
     LLMIncompleteError,
+    LLMModelListUnavailableError,
+    LLMModelNotFoundError,
     LLMRateLimitError,
+    LLMRequestRejectedError,
+    log_failure,
+    model_is_listed,
+    short_text,
 )
 
 log = get_logger(__name__)
 
-# Pricing constants (Gemini 3.8 Flash, Sept 2026). Update if rates change.
-# Standard is $0.75/M input, $3.75/M output through 2026-12-31 (rises to
-# $1.50 / $7.50 on 2027-01-01 — revisit these constants before then).
-# Halved from standard rates since all calls below run on the Flex service
-# tier (50% discount). https://ai.google.dev/gemini-api/docs/pricing
-# https://ai.google.dev/gemini-api/docs/flex-inference
-INPUT_USD_PER_M_TOKENS = 0.375  # $0.75/M standard, Flex = 50%
-OUTPUT_USD_PER_M_TOKENS = 1.875  # $3.75/M standard, Flex = 50%
+# Gemini 3.8 Flash Standard is $0.75/$3.75 per M tokens through 2026-12-31 (then $1.50/$7.50); Flex is 50% of Standard.
+INPUT_USD_PER_M_TOKENS = 0.375
+OUTPUT_USD_PER_M_TOKENS = 1.875
 STANDARD_INPUT_USD_PER_M_TOKENS = 0.75
 STANDARD_OUTPUT_USD_PER_M_TOKENS = 3.75
 PRICING_VERSION = "llm-providers-2026-10"
 
-# Cost reservations deliberately use bounded response sizes. Besides keeping a
-# malformed page from consuming an unbounded amount of a user's API budget,
-# this makes the reservation a real upper bound rather than a hopeful
-# character-count estimate. 8k tokens is ample for one extracted page; the
-# section operation only returns compact JSON and needs considerably less.
 _CLEAN_MAX_OUTPUT_TOKENS = 8_192
 _SECTION_MAX_OUTPUT_TOKENS = 4_096
 
 
 @dataclass(frozen=True)
 class LLMUsage:
-    """Provider usage returned with a successful generation.
-
-    The SDK has changed the concrete response model across releases, so this
-    deliberately stores only the stable numeric fields Voqora needs for its
-    local cost receipt. ``None`` means the provider did not return usage; the
-    caller must retain its conservative reservation in that case.
-    """
-
     input_tokens: int | None
     output_tokens: int | None
     tier: str
@@ -75,8 +59,6 @@ class VerifyResult:
 
 
 class GeneratedText(str):
-    """A string-compatible provider response with optional usage attached."""
-
     usage: LLMUsage | None
 
     def __new__(cls, value: str, usage: LLMUsage | None = None):
@@ -86,8 +68,6 @@ class GeneratedText(str):
 
 
 class GeneratedSections(list[dict]):
-    """List-compatible section result carrying successful call receipts."""
-
     usage: tuple[LLMUsage, ...]
 
     def __init__(self, values: list[dict], usage: list[LLMUsage]):
@@ -95,16 +75,10 @@ class GeneratedSections(list[dict]):
         self.usage = tuple(usage)
 
 
-# gemini-2.5-flash was sunset for new users (404: "no longer available to new
-# users") as of Sept 2026 — migrated to gemini-3.8-flash.
 MODEL_NAME = "gemini-3.8-flash"
 
-# Flex service tier: 50% cheaper than standard, best-effort/sheddable capacity
-# (minutes-scale latency, can 503 under load). We retry only within Flex; a
-# Standard-tier request needs explicit per-book user approval before dispatch.
-# The long client timeout is only used for Flex calls, to tolerate queuing.
-# https://ai.google.dev/gemini-api/docs/flex-inference
-FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)  # 15 min, per Google's guidance
+FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)
+STANDARD_HTTP_OPTIONS = types.HttpOptions(timeout=180_000)
 
 CLEAN_SYSTEM_PROMPT = """\
 You are preparing document text — from a PDF, Markdown, or plain-text source —
@@ -207,12 +181,9 @@ If the page is blank or unreadable, output the single character "-".
 
 
 class LLMCleaner:
-    # Expose the recorded pricing receipt through the service API so job
-    # metadata remains self-describing without duplicating a magic string.
     PRICING_VERSION = PRICING_VERSION
     _MAX_RETRIES = 4
-    _BACKOFF_BASE = 2.0  # 2s, 4s, 8s, 16s
-    # ---------- retry helper (DRY for clean_page + ocr_page) ----------
+    _BACKOFF_BASE = 2.0
 
     @classmethod
     async def _with_retry(
@@ -221,30 +192,14 @@ class LLMCleaner:
         coro_factory,
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ):
-        """Run `coro_factory(tier)` up to _MAX_RETRIES times with exponential backoff.
-
-        Starts on `start_tier` (Flex by default) and never changes tier. A
-        Standard request has a different cost envelope and is only created by
-        an explicit, separately-approved job transition.
-
-        - LLMAuthError / LLMIncompleteError → re-raised immediately (won't recover on retry).
-        - LLMCapacityError / LLMRateLimitError / LLMBadResponseError /
-          generic Exception → sleep _BACKOFF_BASE * 2^attempt and retry.
-        - All attempts exhausted → re-raise the last seen exception, or a
-          LLMBadResponseError with `label` if none was captured.
-
-        See HARD-034 — extracted from duplicated loops in clean_page/ocr_page.
-        """
         last_exc: Exception | None = None
         tier = start_tier
         for attempt in range(cls._MAX_RETRIES):
             try:
                 return await coro_factory(tier)
-            except (LLMConfigError, LLMIncompleteError):
-                raise
-            except LLMCapacityError as e:
-                last_exc = e
-            except (LLMRateLimitError, LLMBadResponseError) as e:
+            except LLMError as e:
+                if not e.retryable:
+                    raise
                 last_exc = e
             except Exception as e:
                 last_exc = e
@@ -252,31 +207,27 @@ class LLMCleaner:
                 await asyncio.sleep(cls._BACKOFF_BASE * (2**attempt))
         raise last_exc or LLMBadResponseError(f"{label}: unknown error")
 
-    # ---------- error classification ----------
+    @staticmethod
+    def _reraise_typed(e: Exception, credential: LLMCredential | None = None) -> None:
+        credential = credential or LLMCredential.gemini("")
+        typed = LLMCleaner._classify_gemini_error(e, credential)
+        log_failure("llm.provider_call_failed", credential, typed)
+        raise typed from e
 
     @staticmethod
-    def _reraise_typed(e: Exception) -> None:
+    def _classify_gemini_error(e: Exception, credential: LLMCredential) -> LLMError:
+        if isinstance(e, genai_errors.APIError):
+            return LLMCleaner._classify_gemini_api_error(e, credential)
+        name = credential.name
+        if isinstance(e, (TimeoutError, httpx.TimeoutException)):
+            return LLMRateLimitError(f"{name} didn't answer in time. Try again.")
+        if isinstance(e, httpx.HTTPError):
+            return LLMRateLimitError(f"Voqora could not reach {name}.")
         msg = str(e).lower()
-        code = getattr(e, "code", None)
-        # Flex capacity/sheddable failures (503/UNAVAILABLE) — checked first
-        # since they're an unambiguous, specific signal (unlike the broad
-        # "model" keyword below). The job owner can safely present an
-        # explicit Standard-tier approval after retries are exhausted.
-        if code == 503 or any(
+        if getattr(e, "code", None) == 503 or any(
             k in msg for k in ("503", "unavailable", "overloaded", "capacity")
         ):
-            raise LLMCapacityError("Gemini capacity is temporarily unavailable.") from e
-        # Ordered most-specific-first. "model" (checked last, below) is far too
-        # broad to lead with: Gemini's quota and permission-denied bodies
-        # routinely name the model -- quota dimensions embed
-        # {"model": "gemini-3.8-flash"}, and access errors read "... for model
-        # X". With the broad check first, a genuine bad key was classified
-        # LLMBadResponseError, so _with_retry burned all four attempts
-        # instead of failing fast, the caller never saw LLMAuthError, and
-        # the user was never told to fix their key -- the book just degraded
-        # to locally-cleaned narration on every page.
-        #
-        # True auth failures: bad key, wrong project, permission denied.
+            return LLMCapacityError("Gemini capacity is temporarily unavailable.")
         if any(
             k in msg
             for k in (
@@ -286,19 +237,94 @@ class LLMCleaner:
                 "unauthorized",
                 "401",
                 "credentials",
-                "invalid api key",
-                "api key not valid",
             )
         ):
-            raise LLMAuthError("Gemini rejected the configured credential.") from e
+            return LLMAuthError("Gemini rejected the configured credential.")
         if any(k in msg for k in ("429", "rate limit", "quota", "resource_exhausted")):
-            raise LLMRateLimitError("Gemini rate limit reached.") from e
-        # Model-not-found / 404 → transient bad-response, NOT an auth error.
-        if any(k in msg for k in ("not found", "404", "model", "does not exist")):
-            raise LLMBadResponseError("Gemini returned an unsupported response.") from e
-        raise LLMBadResponseError("Gemini request failed.") from e
+            return LLMRateLimitError("Gemini rate limit reached.")
+        if any(k in msg for k in ("not found", "404", "does not exist")):
+            return LLMBadResponseError("Gemini returned an unsupported response.")
+        return LLMBadResponseError("Gemini request failed.")
 
-    # ---------- text cleaning ----------
+    @staticmethod
+    def _classify_gemini_api_error(
+        e: genai_errors.APIError, credential: LLMCredential
+    ) -> LLMError:
+        name, model = credential.name, credential.resolved_model
+        code = e.code if isinstance(e.code, int) else None
+        status = str(e.status or "").upper()
+        message = str(e.message or "")
+        blob = f"{message} {getattr(e, 'details', '')}".lower()
+        detail = short_text(message, 160, credential.api_key)
+        facts = {"status": code, "detail": message or status}
+        suffix = f" ({detail})" if detail else ""
+        if code == 401 or "api_key_invalid" in blob or "api key not valid" in blob:
+            return LLMAuthError(
+                f"{name} rejected the API key. Update it in Settings.{suffix}", **facts
+            )
+        if code == 403 or status == "PERMISSION_DENIED":
+            return LLMAuthError(
+                f"{name} denied this key access to {model}."
+                f" Check the key's permissions or choose another model.{suffix}",
+                **facts,
+            )
+        if code == 404 or status == "NOT_FOUND":
+            return LLMModelNotFoundError(
+                f"{name} has no model named {model} for this key.", **facts
+            )
+        if code == 429 or status == "RESOURCE_EXHAUSTED":
+            return LLMCleaner._classify_gemini_quota(credential, blob, facts)
+        if code == 503 or status == "UNAVAILABLE":
+            return LLMCapacityError(
+                f"{name} is busy right now. Try again shortly.", **facts
+            )
+        if code == 408 or status == "DEADLINE_EXCEEDED":
+            return LLMRateLimitError(
+                f"{name} didn't answer in time. Try again.", **facts
+            )
+        if code is not None and code >= 500:
+            return LLMRateLimitError(
+                f"{name} had a server problem ({code}). Try again shortly.", **facts
+            )
+        if code is not None and 400 <= code < 500:
+            return LLMRequestRejectedError(
+                (
+                    f"{name} rejected the request: {detail}"
+                    if detail
+                    else f"{name} rejected the request ({code})."
+                ),
+                **facts,
+            )
+        return LLMBadResponseError(f"{name} request failed.{suffix}", **facts)
+
+    @staticmethod
+    def _classify_gemini_quota(
+        credential: LLMCredential, blob: str, facts: dict[str, Any]
+    ) -> LLMError:
+        name, model = credential.name, credential.resolved_model
+        compact = blob.replace(" ", "").replace("_", "")
+        if re.search(r"limit\W{1,4}0\b", blob):
+            return LLMBillingError(
+                f"{name}'s free tier has no quota for {model}."
+                " Enable billing for this key or choose another model.",
+                **facts,
+            )
+        if "perday" in compact or any(
+            marker in compact
+            for marker in (
+                "enablebilling",
+                "billingisnot",
+                "billingdisabled",
+                "billingaccount",
+            )
+        ):
+            return LLMBillingError(
+                f"{name}'s quota for {model} is used up or not enabled for this key.",
+                **facts,
+            )
+        return LLMRateLimitError(
+            f"{name} is rate limiting this key. Try again in a moment.", **facts
+        )
 
     @classmethod
     async def clean_page(
@@ -307,7 +333,6 @@ class LLMCleaner:
         raw_text: str,
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
-        """Strict-clean a single page. Retries on transient errors."""
         if not raw_text.strip():
             return "-"
         return await cls._with_retry(
@@ -331,7 +356,11 @@ class LLMCleaner:
                 max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
                 empty="-",
             )
-        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        http_options = (
+            FLEX_HTTP_OPTIONS
+            if tier == types.ServiceTier.FLEX
+            else STANDARD_HTTP_OPTIONS
+        )
         client = genai.Client(api_key=credential.api_key, http_options=http_options)
         config = types.GenerateContentConfig(
             system_instruction=CLEAN_SYSTEM_PROMPT,
@@ -346,7 +375,7 @@ class LLMCleaner:
                 contents=raw_text,
             )
         except Exception as e:
-            cls._reraise_typed(e)
+            cls._reraise_typed(e, credential)
         cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
@@ -362,8 +391,6 @@ class LLMCleaner:
                 f"Gemini stopped early: {getattr(reason, 'name', reason)}"
             )
 
-    # ---------- OCR (image pages) ----------
-
     @classmethod
     async def ocr_page(
         cls,
@@ -371,7 +398,6 @@ class LLMCleaner:
         image_bytes: bytes,
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
-        """OCR + clean a scanned page image via Gemini vision. Retries on transient errors."""
         return await cls._with_retry(
             "ocr_page",
             lambda tier: cls._async_ocr(credential, image_bytes, tier),
@@ -393,11 +419,12 @@ class LLMCleaner:
                 max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
                 empty="-",
             )
-        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        http_options = (
+            FLEX_HTTP_OPTIONS
+            if tier == types.ServiceTier.FLEX
+            else STANDARD_HTTP_OPTIONS
+        )
         client = genai.Client(api_key=credential.api_key, http_options=http_options)
-        # Passed as system_instruction, mirroring _async_clean. It used to ride
-        # along as an ordinary content part next to the image, which weights it
-        # like user input rather than an instruction.
         config = types.GenerateContentConfig(
             system_instruction=OCR_AND_CLEAN_PROMPT,
             temperature=0.1,
@@ -412,18 +439,15 @@ class LLMCleaner:
                 contents=[image_part],
             )
         except Exception as e:
-            cls._reraise_typed(e)
+            cls._reraise_typed(e, credential)
         cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
             text if text else "-", cls._usage_from_response(resp, tier, credential)
         )
 
-    # ---------- cost / token estimation ----------
-
     @staticmethod
     def estimate_tokens(char_count: int) -> int:
-        """Rough heuristic: ~4 chars per token for English."""
         return max(1, char_count // 4)
 
     @staticmethod
@@ -464,7 +488,6 @@ class LLMCleaner:
     def estimate_cost_usd(
         cls, total_chars: int, credential: LLMCredential | None = None
     ) -> float:
-        """Strict-preserve: output ≈ input length, so use same token count for both."""
         tok = cls.estimate_tokens(total_chars)
         return cls._credential_price(credential, "flex").cost(tok, tok)
 
@@ -472,7 +495,6 @@ class LLMCleaner:
     def estimate_max_cost_usd(
         cls, total_chars: int, credential: LLMCredential | None = None
     ) -> float:
-        """Conservative Standard-tier envelope for preflight disclosure."""
         input_tokens = cls.estimate_tokens(total_chars)
         return cls._credential_price(credential, "standard").cost(
             input_tokens, max(input_tokens * 2, 1)
@@ -491,7 +513,12 @@ class LLMCleaner:
         tier: str,
         provider: str = "google",
         model: str = "",
+        credential: LLMCredential | None = None,
     ) -> float:
+        if credential is not None:
+            return cls._credential_price(credential, tier).cost(
+                input_tokens, output_tokens
+            )
         return cls.price_for(provider, model, tier=tier).cost(
             input_tokens, output_tokens
         )
@@ -507,7 +534,6 @@ class LLMCleaner:
         extra_input_tokens: int = 0,
         credential: LLMCredential | None = None,
     ) -> float:
-        """Conservative, bounded envelope used *before* dispatching a call."""
         return cls._credential_price(credential, tier).cost(
             cls.estimate_tokens(input_chars) + prompt_tokens + extra_input_tokens,
             max_output_tokens,
@@ -522,9 +548,6 @@ class LLMCleaner:
         image_input: bool = False,
         credential: LLMCredential | None = None,
     ) -> float:
-        # The largest accepted raster is 16 MP. Reserve 16k input tokens for
-        # vision pages; it is intentionally above normal image-token use so a
-        # page can never be dispatched on an optimistic OCR estimate.
         return cls.reserve_cost_usd(
             input_chars,
             tier=tier,
@@ -543,10 +566,6 @@ class LLMCleaner:
         tier: str,
         credential: LLMCredential | None = None,
     ) -> float:
-        # Every chunk includes the instruction and has its own bounded JSON
-        # response. Overlap is already present in input_chars supplied by the
-        # caller, which builds the same chunks as detect_sections. Each chunk
-        # is a separate request, so long-context rates apply per chunk.
         chunks = max(1, chunk_count)
         return chunks * cls.reserve_cost_usd(
             -(-input_chars // chunks),
@@ -594,7 +613,6 @@ class LLMCleaner:
         tier: "types.ServiceTier",
         credential: LLMCredential | None = None,
     ) -> LLMUsage | None:
-        """Extract a small, SDK-version-tolerant provider usage receipt."""
         usage = getattr(response, "usage_metadata", None)
         if usage is None:
             return None
@@ -622,8 +640,6 @@ class LLMCleaner:
             credential.resolved_model if credential else MODEL_NAME,
         )
 
-    # ---------- section detection (Phase 2) ----------
-
     SECTION_PROMPT = (
         "Below are the cleaned pages of a document, one per `=== PAGE N ===` "
         "header. Identify the chapter or section boundaries.\n"
@@ -641,7 +657,6 @@ class LLMCleaner:
 
     @classmethod
     def _section_chunks(cls, pages: list[str]) -> list[tuple[int, str]]:
-        """Build the exact bounded requests used by section detection."""
         chunks: list[tuple[int, str]] = []
         cur_pages: list[str] = []
         cur_chars = 0
@@ -662,7 +677,6 @@ class LLMCleaner:
 
     @classmethod
     def section_reservation_envelope(cls, pages: list[str]) -> tuple[int, int]:
-        """Return actual chunked input size/count before any request is sent."""
         chunks = cls._section_chunks(pages)
         return sum(len(text) for _, text in chunks), len(chunks)
 
@@ -673,12 +687,6 @@ class LLMCleaner:
         pages: list[str],
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> list[dict]:
-        """Identify sections from a list of cleaned pages.
-
-        `pages` is 1-indexed (pages[0] is page 1). Returns a list of
-        {"title": str, "start_page": int, "end_page": int} sorted by start_page,
-        contiguous and non-overlapping. Returns [] on total failure.
-        """
         if not pages:
             return []
 
@@ -702,8 +710,6 @@ class LLMCleaner:
                 parsed = [s for s in parsed if s["start_page"] >= first_page]
                 all_sections.extend(parsed)
             except LLMCapacityError:
-                # A capacity transition is a product decision with a different
-                # price tier; never convert it into an invisible fallback.
                 raise
             except Exception:
                 log.warning(
@@ -734,7 +740,11 @@ class LLMCleaner:
                 text=joined_text,
                 max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS,
             )
-        http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
+        http_options = (
+            FLEX_HTTP_OPTIONS
+            if tier == types.ServiceTier.FLEX
+            else STANDARD_HTTP_OPTIONS
+        )
         client = genai.Client(api_key=credential.api_key, http_options=http_options)
         config = types.GenerateContentConfig(
             system_instruction=cls.SECTION_PROMPT,
@@ -750,14 +760,13 @@ class LLMCleaner:
                 contents=joined_text,
             )
         except Exception as e:
-            cls._reraise_typed(e)
+            cls._reraise_typed(e, credential)
         return GeneratedText(
             resp.text or "", cls._usage_from_response(resp, tier, credential)
         )
 
     @staticmethod
     def _parse_sections_json(raw: str, max_page: int) -> list[dict]:
-        """Parse the model's JSON output into a clean list. Tolerant to markdown fences."""
         s = raw.strip()
         s = re.sub(r"^```(?:json)?\s*", "", s)
         s = re.sub(r"\s*```$", "", s)
@@ -786,8 +795,6 @@ class LLMCleaner:
 
     @staticmethod
     def _stitch_sections(sections: list[dict], page_count: int) -> list[dict]:
-        """Merge overlapping/duplicate sections from chunked results into one
-        contiguous, non-overlapping list covering [1..page_count]."""
         if not sections:
             return []
 
@@ -822,56 +829,75 @@ class LLMCleaner:
             )
         return cleaned
 
-    # Standard-tier calls get no HttpOptions (see _async_clean: http_options
-    # is only set for Flex), which the genai SDK treats as an *unbounded*
-    # httpx timeout, not a sane default — a request can hang forever on a
-    # dropped-packet/offline network instead of failing fast. Every other
-    # Standard-tier caller (clean_page/ocr_page/detect_sections during a
-    # cost-approved run) is already bounded by an outer asyncio.wait_for in
-    # AudiobookService; this endpoint had no such wrapper, so a user checking
-    # their API key with no network could hang the request indefinitely.
     _VERIFY_KEY_TIMEOUT_S = 20.0
+    _PROBE_MAX_OUTPUT_TOKENS = 32
 
     @classmethod
-    async def verify(cls, credential: LLMCredential) -> VerifyResult:
-        """Check a credential and list the provider's chat models when it can.
-
-        Gemini is checked with a tiny Standard-tier generation, never Flex, so
-        the check is not subject to Flex's best-effort queuing. Every path is
-        bounded by `_VERIFY_KEY_TIMEOUT_S` so an outage fails fast.
-        """
+    async def verify(cls, credential: LLMCredential | None) -> VerifyResult:
+        if credential is None:
+            return VerifyResult(False, [], "Choose an AI provider.")
         problem = credential.problem(require_model=False)
         if problem:
             return VerifyResult(False, [], problem)
-        models: list[str] = []
         try:
-            if credential.is_gemini:
-                await asyncio.wait_for(
-                    cls._with_retry(
-                        "verify_key",
-                        lambda tier: cls._async_clean(credential, "Say 'ok'.", tier),
-                        start_tier=types.ServiceTier.STANDARD,
-                    ),
-                    timeout=cls._VERIFY_KEY_TIMEOUT_S,
-                )
-            else:
-                models = await asyncio.wait_for(
-                    llm_providers.list_models(credential),
-                    timeout=cls._VERIFY_KEY_TIMEOUT_S,
-                )
-        except LLMConfigError as e:
+            return await asyncio.wait_for(
+                cls._verify(credential), timeout=cls._VERIFY_KEY_TIMEOUT_S
+            )
+        except TimeoutError as e:
+            message = f"{credential.name} didn't answer in time. Try again."
+            log_failure("llm.verify_failed", credential, e, detail="verify timed out")
+            return VerifyResult(False, [], message)
+        except LLMError as e:
+            log_failure("llm.verify_failed", credential, e)
             return VerifyResult(False, [], e.user_message)
-        except Exception:
+        except Exception as e:
+            log_failure("llm.verify_failed", credential, e)
             return VerifyResult(
                 False, [], f"Voqora could not verify {credential.name}. Try again."
             )
+
+    @classmethod
+    async def _verify(cls, credential: LLMCredential) -> VerifyResult:
+        if credential.is_gemini:
+            await cls._probe_gemini(credential)
+            return VerifyResult(True, [])
+        ids: list[str] = []
+        try:
+            ids = await llm_providers.list_model_ids(credential)
+        except LLMModelListUnavailableError:
+            pass
+        models = llm_providers.chat_models(ids)
         model = credential.resolved_model
         if not model:
             return VerifyResult(False, models, f"Choose a model for {credential.name}.")
-        if models and model not in models:
+        if ids and model_is_listed(model, ids):
+            return VerifyResult(True, models)
+        try:
+            await cls._probe_model(credential)
+        except LLMIncompleteError:
+            return VerifyResult(True, models)
+        except LLMModelNotFoundError:
+            hint = " Choose one from the list." if models else ""
             return VerifyResult(
-                False,
-                models,
-                f"{credential.name} has no model named {model}. Choose one from the list.",
+                False, models, f"{credential.name} has no model named {model}.{hint}"
             )
+        except LLMError as e:
+            log_failure("llm.verify_failed", credential, e)
+            return VerifyResult(False, models, e.user_message)
         return VerifyResult(True, models)
+
+    @classmethod
+    async def _probe_gemini(cls, credential: LLMCredential) -> None:
+        try:
+            await cls._async_clean(credential, "Say 'ok'.", types.ServiceTier.STANDARD)
+        except LLMIncompleteError:
+            return
+
+    @classmethod
+    async def _probe_model(cls, credential: LLMCredential) -> None:
+        await llm_providers.complete(
+            credential,
+            system="Reply with the single word ok.",
+            text="ok",
+            max_output_tokens=cls._PROBE_MAX_OUTPUT_TOKENS,
+        )

@@ -12,6 +12,7 @@ struct UploadEstimateModal: View {
     let documentURL: URL
 
     @State private var useCleanup = false
+    @State private var addingProvider = false
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -45,6 +46,11 @@ struct UploadEstimateModal: View {
         .padding(28)
         .frame(width: 520, height: 640)
         .voqoraSurface(.floating, in: Rectangle())
+        .sheet(isPresented: $addingProvider, onDismiss: refreshEstimateIfStale) {
+            AddProviderSheet(cleaningCount: bookVM.cleaningBookCount(using:))
+                .environmentObject(vm)
+                .environmentObject(providers)
+        }
     }
 
     private var header: some View {
@@ -137,13 +143,19 @@ struct UploadEstimateModal: View {
                     "Voqora has no published rate for \(est.llmModel ?? "this model"), so it budgets the book at a conservative rate."
                 )
             }
-            if est.isImageOnly, useCleanup, est.readsImages == false {
+            if est.isImageOnly, hasProvider, est.readsImages == false {
                 notice(
                     "doc.viewfinder",
-                    "\(est.llmModel ?? "This model") can't read scanned pages. Choose a model with vision in Preferences."
+                    "\(est.llmModel ?? providerName) can't read scanned pages. Choose another provider above."
                 )
             }
-            if est.isImageOnly, !useCleanup {
+            if est.isImageOnly, hasProvider, est.readsImages == nil {
+                notice(
+                    "doc.viewfinder",
+                    "Voqora can't tell whether \(est.llmModel ?? providerName) reads scanned pages."
+                )
+            }
+            if est.isImageOnly, !useCleanup, est.readsImages != false {
                 notice("doc.viewfinder", "This scanned PDF needs AI cleanup to read its text.")
             }
             if let duplicateTitle = est.duplicateOfTitle {
@@ -183,38 +195,98 @@ struct UploadEstimateModal: View {
     }
 
     private var cleanupOption: some View {
-        HStack(spacing: 12) {
-            if let provider = providers.activeProvider {
-                ProviderTile(provider: provider, size: 28)
-            } else {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(accentColor)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(hasProvider ? "Clean Up with \(providerName)" : "AI Cleanup")
-                    .font(vm.appFont(size: 12, weight: .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                Text(providers.activeProvider.map(\.dataNotice) ?? "Add an AI provider in Preferences to use this.")
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(Palette.textSecondary)
-            }
-            Spacer(minLength: 8)
-            if hasProvider {
-                Toggle("Clean Up with \(providerName)", isOn: $useCleanup)
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .tint(accentColor)
-            } else {
-                Button("Add Provider…") {
-                    cancel()
-                    vm.selectedTab = "preferences"
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                if let provider = providers.activeProvider {
+                    ProviderTile(provider: provider, size: 28)
+                } else {
+                    Image(systemName: "sparkles")
+                        .foregroundStyle(accentColor)
                 }
-                .buttonStyle(.bordered)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(hasProvider ? "Clean Up with \(providerName)" : "AI Cleanup")
+                        .font(vm.appFont(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.textPrimary)
+                    Text(cleanupSubtitle)
+                        .font(vm.appFont(size: 11))
+                        .foregroundStyle(Palette.textSecondary)
+                }
+                Spacer(minLength: 8)
+                if hasProvider {
+                    Toggle("Clean Up with \(providerName)", isOn: $useCleanup)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(accentColor)
+                }
             }
+            providerRow
         }
         .padding(12)
         .background(accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var cleanupSubtitle: String {
+        if let provider = providers.activeProvider {
+            return provider.dataNotice
+        }
+        return providers.connectedProviders.isEmpty
+            ? "Add an AI provider to use this."
+            : "Choose which provider audiobooks use."
+    }
+
+    private var providerRow: some View {
+        HStack(spacing: 8) {
+            Text("Provider")
+                .font(vm.appFont(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+            Spacer(minLength: 8)
+            if providers.connectedProviders.isEmpty {
+                Button("Add Provider…") { addingProvider = true }
+                    .buttonStyle(.bordered)
+            } else {
+                Menu {
+                    ForEach(providers.connectedProviders) { provider in
+                        Button {
+                            choose(provider)
+                        } label: {
+                            if provider == providers.activeProvider {
+                                Label(provider.displayName, systemImage: "checkmark")
+                            } else {
+                                Text(provider.displayName)
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Add Provider…") { addingProvider = true }
+                } label: {
+                    Text(providerMenuTitle)
+                }
+                .fixedSize()
+                .disabled(bookVM.startingProcessing)
+                .accessibilityLabel("AI provider")
+            }
+        }
+    }
+
+    private var providerMenuTitle: String {
+        guard let credential = providers.activeCredential else {
+            return providers.activeProvider?.displayName ?? "Choose a Provider"
+        }
+        let model = credential.resolvedModel
+        return model.isEmpty ? credential.provider.displayName : "\(credential.provider.displayName) · \(model)"
+    }
+
+    private func choose(_ provider: LLMProvider) {
+        providers.use(provider)
+        refreshEstimateIfStale()
+    }
+
+    private func refreshEstimateIfStale() {
+        guard let estimate = bookVM.pendingEstimate,
+              AudiobookViewModel.isEstimateStale(estimate, credential: providers.activeCredential)
+        else { return }
+        bookVM.refreshEstimate()
     }
 
     private var actions: some View {

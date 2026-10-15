@@ -2,15 +2,18 @@ import SwiftUI
 
 struct AddProviderSheet: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @EnvironmentObject var providers: LLMProviderStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     private let opensDirectly: Bool
+    private let cleaningCount: (LLMProvider) -> Int
     @State private var selected: LLMProvider?
 
-    init(provider: LLMProvider? = nil) {
+    init(provider: LLMProvider? = nil, cleaningCount: @escaping (LLMProvider) -> Int = { _ in 0 }) {
         opensDirectly = provider != nil
+        self.cleaningCount = cleaningCount
         _selected = State(initialValue: provider)
     }
 
@@ -20,6 +23,7 @@ struct AddProviderSheet: View {
                 ProviderConnectForm(
                     provider: selected,
                     backTitle: opensDirectly ? "Cancel" : "Back",
+                    cleaningCount: cleaningCount,
                     onBack: {
                         if opensDirectly {
                             dismiss()
@@ -38,6 +42,16 @@ struct AddProviderSheet: View {
         .padding(32)
         .frame(width: 760, height: selected == nil ? 700 : 560)
         .voqoraSurface(.floating, in: Rectangle())
+    }
+
+    private var audiobookFooter: String {
+        if let active = providers.activeProvider {
+            return "Audiobooks keep using \(active.displayName) until you choose another."
+        }
+        if providers.needsActiveChoice {
+            return "Choose which provider audiobooks use in Preferences."
+        }
+        return "Audiobooks will use the first provider you connect."
     }
 
     private var chooser: some View {
@@ -70,7 +84,7 @@ struct AddProviderSheet: View {
                 }
                 .padding(.vertical, 2)
             }
-            Label("Adding a provider won't change your current narration setup.", systemImage: "info.circle")
+            Label(audiobookFooter, systemImage: "info.circle")
                 .font(vm.appFont(size: 12))
                 .foregroundStyle(Palette.textSecondary)
         }

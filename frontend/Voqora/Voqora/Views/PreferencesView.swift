@@ -708,6 +708,7 @@ struct PreferencesView: View {
             }
 
             guard failures.isEmpty else {
+                UsageStatsStore.shared.resumeAfterFailedErase()
                 erasingLocalData = false
                 eraseError = "Some local data could not be removed (\(failures.joined(separator: ", "))). Voqora is still open; retrying this action is safe."
                 return

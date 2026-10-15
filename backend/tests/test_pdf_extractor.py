@@ -145,3 +145,27 @@ def test_atomic_write_leaves_no_tmp_files(tmp_path):
     assert os.listdir(tmp_path / "pages") == ["001.txt"]
     with open(out, encoding="utf-8") as f:
         assert f.read() == "hello"
+
+
+def test_page_has_images_detects_a_raster_page(tmp_path):
+    from PIL import Image
+
+    path = str(tmp_path / "scan.pdf")
+    Image.new("RGB", (200, 200), (10, 10, 10)).save(path)
+
+    assert PDFExtractor.page_has_images(path, 1) is True
+
+
+def test_page_has_images_is_false_for_a_page_without_content(tmp_path):
+    path = _write(tmp_path, 2, [{"title": "Only", "page": 0}])
+
+    assert PDFExtractor.page_has_images(path, 1) is False
+    assert PDFExtractor.page_has_images(path, 2) is False
+
+
+def test_page_has_images_is_false_out_of_range_and_for_unreadable_files(tmp_path):
+    path = _write(tmp_path, 1, [{"title": "Only", "page": 0}])
+
+    assert PDFExtractor.page_has_images(path, 0) is False
+    assert PDFExtractor.page_has_images(path, 5) is False
+    assert PDFExtractor.page_has_images(str(tmp_path / "missing.pdf"), 1) is False

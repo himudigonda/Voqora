@@ -103,6 +103,10 @@ final class UsageStatsStore: ObservableObject {
         try FileManager.default.removeItem(at: storageURL)
     }
 
+    func resumeAfterFailedErase() {
+        isErased = false
+    }
+
     func saveNow() {
         saveTask?.cancel()
         saveTask = nil
