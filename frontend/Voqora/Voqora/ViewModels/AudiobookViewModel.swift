@@ -94,6 +94,7 @@ final class AudiobookViewModel: ObservableObject {
     private var completionObserver: AnyCancellable?
     private var resumePointSaver: AnyCancellable?
     private var sectionSleepObserver: AnyCancellable?
+    private var listeningObservers: Set<AnyCancellable> = []
 
     private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
     private let listBooks: @MainActor () async throws -> [Audiobook]
@@ -142,6 +143,17 @@ final class AudiobookViewModel: ObservableObject {
                 else { return }
                 pauseForSleep(fadeOverSeconds: 1)
             }
+        audio.$currentTime
+            .sink { [weak self] _ in self?.tickListening() }
+            .store(in: &listeningObservers)
+        audio.$isPlaying
+            .removeDuplicates()
+            .sink { [weak self] playing in self?.tickListening(isPlaying: playing) }
+            .store(in: &listeningObservers)
+    }
+
+    private func tickListening(isPlaying: Bool? = nil) {
+        UsageStatsStore.shared.listeningTick(bookID: nowPlaying?.bookID, isPlaying: isPlaying ?? audio.isPlaying)
     }
 
     var cleanupCredential: LLMCredential? {
@@ -294,6 +306,7 @@ final class AudiobookViewModel: ObservableObject {
             defer { startingProcessing = false }
             do {
                 try await service.start(bookID, cleanup: cleanup)
+                UsageStatsStore.shared.recordDocumentAdded(pages: est.pageCount)
                 pendingDocument = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)

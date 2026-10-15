@@ -673,6 +673,11 @@ struct PreferencesView: View {
             } catch {
                 failures.append("history")
             }
+            do {
+                try UsageStatsStore.shared.eraseAll()
+            } catch {
+                failures.append("stats")
+            }
             for key in KeychainKey.allCases where !KeychainService.delete(key) {
                 failures.append("saved credential")
             }

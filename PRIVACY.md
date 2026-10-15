@@ -14,9 +14,9 @@ product. We do not sell it.
 
 ## What stays on your Mac
 
-Speech is generated on your Mac. Your documents, generated audio, history, and
-audiobook progress are stored locally and are removed when you delete them or
-use **Preferences -> Data -> Erase All Local Data**.
+Speech is generated on your Mac. Your documents, generated audio, history,
+usage stats, and audiobook progress are stored locally and are removed when you
+delete them or use **Preferences -> Data -> Erase All Local Data**.
 
 ## Third-party services
 

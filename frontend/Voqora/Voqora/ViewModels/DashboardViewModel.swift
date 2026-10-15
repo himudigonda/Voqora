@@ -358,6 +358,12 @@ class DashboardViewModel: ObservableObject {
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
+                UsageStatsStore.shared.recordSpeech(
+                    text: spokenText ?? cleaned,
+                    voice: selectedVoice,
+                    speed: speechSpeed,
+                    audioSeconds: audio.renderedAudioSeconds
+                )
             } catch {
                 guard !Task.isCancelled, generation == speakGeneration else { return }
                 VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": selectedVoice, "chars": "\(cleaned.count)"])

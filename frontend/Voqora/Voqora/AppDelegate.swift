@@ -76,6 +76,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         stopOwnedBackend?()
+        UsageStatsStore.shared.commitListening()
+        UsageStatsStore.shared.saveNow()
         MetricsFlushDriver.shared.stop()
     }
 }

@@ -235,6 +235,7 @@ private extension VoqoraWindow {
         switch vm.selectedTab {
         case "home": MainDashboardView()
         case "history": VaultView()
+        case "stats": StatsView()
         case "books": AudiobookLibraryView()
         case "preferences": PreferencesView()
         case "about": AboutView()
@@ -248,6 +249,7 @@ private extension VoqoraWindow {
                 VStack(spacing: DesignTokens.Spacing.xxs) {
                     sidebarLink("Now Playing", icon: "play.circle.fill", value: "home")
                     sidebarLink("The Vault", icon: "clock.arrow.circlepath", value: "history")
+                    sidebarLink("Stats", icon: "chart.bar.fill", value: "stats")
                 }
             }
             PaneSection("Audiobooks") {

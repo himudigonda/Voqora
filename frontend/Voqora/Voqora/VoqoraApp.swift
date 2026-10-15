@@ -96,6 +96,8 @@ struct VoqoraApp: App {
 
         if !runningTests {
             setupShortcuts(vm: vmInstance)
+            UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
+            UsageStatsStore.shared.recordLaunch()
 
             if !RuntimeEnvironment.disablesTelemetry {
                 MetricsService.shared.trackLaunch()
@@ -210,6 +212,7 @@ struct VoqoraApp: App {
                         .environmentObject(updater)
                         .environmentObject(installer)
                         .environmentObject(providers)
+                        .environmentObject(UsageStatsStore.shared)
                 }
             }
         }

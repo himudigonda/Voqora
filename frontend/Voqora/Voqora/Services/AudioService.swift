@@ -701,6 +701,7 @@ class AudioService: NSObject, ObservableObject {
         do {
             let exportedURL = try Self.writeWAV(pcmData: lastAudioData, to: desktop, timestamp: timestamp)
             MetricsService.shared.trackExport(audioSeconds: renderedAudioSeconds)
+            UsageStatsStore.shared.recordExport()
             return exportedURL
         } catch let error as ExportError {
             throw error
