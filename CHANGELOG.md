@@ -1,5 +1,58 @@
 # Changelog
 
+## [Unreleased]
+
+### New
+
+- AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
+  Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
+  OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or
+  during setup. Voqora checks each connection before saving it. Existing
+  Gemini keys move to Google automatically.
+- Keys are stored in your macOS login Keychain, one per provider. They go only
+  to the Voqora service on your Mac, with each request, and from there to the
+  provider you connected. Ollama and LM Studio keep page text on your Mac.
+- Preferences -> AI Cleanup has a "Used for audiobooks" chooser, and the New
+  Audiobook sheet has a provider menu. Removing a provider asks first and says
+  what will happen to audiobooks that use it.
+- When cleanup fails, the book shows the reason. Choose Fix Provider to correct
+  the key or model, then Resume, or choose Finish Without AI to narrate the
+  remaining pages from local text.
+- Custom servers need https when an API key is set, unless the server is on
+  this computer. Custom servers on your own computer or local network are
+  priced as free.
+- Hide from Dock & App Switcher in Preferences -> General keeps Voqora in the
+  menu bar only.
+- Turning off Share Usage Analytics now asks you to confirm.
+- Stats page in the sidebar: listening time, voices, streaks, and library
+  totals. Stats are kept only on your Mac, never sent, and can be reset from
+  the page. Erase All Local Data clears them too.
+- 28 voices in eight languages: English (US and UK), Spanish, French, Italian,
+  Portuguese (Brazil), Hindi, and Mandarin (beta). Voices are grouped by
+  language in the picker, and you can play a short sample of each.
+- Auto-detect Language in Preferences switches to a voice in the text's
+  language when it differs from your voice's language.
+- Drop several files on Library at once to add them together.
+- Chapter lists come from Word and Markdown headings and from PDF outlines.
+  Documents without headings get "Part N" sections.
+
+### Changed
+
+- British voices now use British English pronunciation.
+- The cleanup tiles on the New Audiobook sheet read "Cleanup Tokens" and
+  "Cleanup Cost" instead of naming Gemini.
+
+### Fixed
+
+- Scanned pages inside text PDFs are now read with OCR instead of being
+  skipped.
+- Chapter lists from Word, Markdown, and PDF headings no longer repeat
+  sections.
+- Blank pages are skipped instead of sent to OCR.
+- Leftover temporary files from an interrupted run are removed at launch.
+- Files that contain only whitespace are rejected with a clear message, and
+  cancelling an upload no longer races with the next one.
+
 ## [1.2.6] - 2026-10-12
 
 ### Fixed

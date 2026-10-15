@@ -10,7 +10,10 @@ not a hosted Voqora API.
 - Load Kokoro ONNX and its voice data on the Mac.
 - Stream generated audio back to the native client.
 - Extract and persist audiobook work so long documents can resume.
-- Use Gemini only for optional document cleanup and scanned-PDF OCR.
+- Serve the language and voice catalog (28 voices in eight languages) and pick
+  the espeak-ng language from the voice.
+- Use an AI provider only for optional document cleanup and scanned-page OCR.
+  The provider and key come from the request headers and are never stored.
 
 ## Local development
 

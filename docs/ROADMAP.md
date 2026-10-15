@@ -17,8 +17,14 @@
 - Selected-text speech shares the same player and transcript.
 - The Vault for searching, starring, and replaying spoken selections.
 - DOCX, TXT, and Markdown audiobooks alongside PDF, with local cleanup by
-  default and Gemini cleanup as an explicit choice.
+  default and AI cleanup as an explicit choice.
 - Guided DMG downloads for updates, with SHA-256 verification.
+- AI cleanup through ten providers (OpenAI, Anthropic, xAI, Groq, Cerebras,
+  Google Gemini, OpenRouter, Ollama, LM Studio, and Custom servers), with keys
+  in the macOS Keychain and local providers that keep text on the Mac.
+- 28 voices in eight languages, with voice samples and optional language
+  auto-detect.
+- A local Stats page, and an option to hide Voqora from the Dock.
 
 ## Next public-quality work
 

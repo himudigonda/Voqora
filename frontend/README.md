@@ -36,7 +36,9 @@ not launch a Mac app host.
 | Path | Responsibility |
 | --- | --- |
 | `Voqora/Voqora/Views/` | Reading, audiobook, onboarding, and Preferences UI. |
-| `Voqora/Voqora/Services/` | Local-server lifecycle, streaming audio, history, telemetry, and system integration. |
+| `Voqora/Voqora/Services/` | Local-server lifecycle, streaming audio, history, telemetry, Keychain and AI-provider storage, local stats, and system integration. |
+| `Voqora/Voqora/Views/Providers/` | Connecting, choosing, and removing AI cleanup providers. |
+| `Voqora/Voqora/Views/Stats/` | The local Stats page. |
 | `Voqora/Voqora/Utilities/Shortcuts.swift` | Default global shortcuts and their registrations. |
 | `VoqoraTests/` | Native unit and service behavior. |
 

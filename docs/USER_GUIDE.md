@@ -53,14 +53,24 @@ first try, click back into the source app, select the text again, and retry.
 ## Choose a voice and speed
 
 Open Preferences to choose a voice, set the reading speed, adjust volume, and
-change the global shortcuts. Voqora includes eight Kokoro voice options:
+change the global shortcuts. Voqora includes 28 Kokoro voices in eight
+languages, grouped by language in the voice picker:
 
-| Voice | Voice |
+| Language | Voices |
 | --- | --- |
-| `af_bella` | `af_sarah` |
-| `am_adam` | `am_michael` |
-| `bf_emma` | `bf_isabella` |
-| `bm_george` | `bm_lewis` |
+| English (US) | Bella, Sarah, Heart, Nicole, Aoede, Kore, Adam, Michael, Fenrir, Puck |
+| English (UK) | Emma, Isabella, George, Lewis, Fable |
+| Spanish | Dora, Alex |
+| French | Siwis |
+| Italian | Sara, Nicola |
+| Portuguese (Brazil) | Dora, Alex |
+| Hindi | Aanya, Diya, Arjun, Kabir |
+| Mandarin (beta) | Xiaoxiao, Yunyang |
+
+Choose the play button next to the picker to hear a short sample of a voice.
+Pick a voice in the language of your text; British voices use British English
+pronunciation. Turn on **Auto-detect Language** to switch to a voice in the
+text's language when it differs from your voice's language.
 
 There is no universally right voice or speed. Voqora starts with Bella. Adjust
 the voice and speed until you can follow a paragraph without wanting to rewind it.
@@ -69,7 +79,7 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 
 1. Open **Library** in the sidebar.
 2. Add the PDF, TXT, DOCX, or Markdown file you want to finish, or drop it on
-   the window.
+   the window. You can drop several files at once.
 3. Review the page count, word count, and expected length, then choose
    **Create Audiobook**.
 4. When the book is ready, choose **Listen Now**. Later, use **Continue
@@ -81,7 +91,8 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
   freely; it returns to the current line after a few seconds, or choose
   **Current Line**.
 - Click any sentence to play from it, or open **Sections** to jump to a
-  heading.
+  heading. Sections come from the headings in Word and Markdown files and from
+  the PDF's outline; a document without them is split into Parts.
 - Hover over the progress bar to preview a time and its section, then click or
   drag to go there.
 - Use the speed button to change the playback speed, and the moon button to
@@ -97,23 +108,56 @@ starting the document from the beginning.
 ### Optional document cleanup
 
 Most text-based documents can be handled locally. If extraction is poor, you
-can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic, xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible server.
+can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic,
+xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or a Custom
+OpenAI-compatible server.
 
 1. Open **Preferences -> AI Cleanup -> Add Provider**, pick a provider, enter
-   its API key (local providers need none) and model, and choose **Connect**.
-   Voqora checks the connection before saving. If you connect more than one,
-   choose **Use** on the one to clean up new audiobooks. You can also connect a
-   provider during setup.
-2. When you add a document, turn on **Clean Up with <provider>** at the bottom
-   of the New Audiobook sheet. The Cleanup Tokens and Cleanup Cost tiles then
-   show the estimate; local providers are free.
+   its API key (Ollama and LM Studio need none) and model, and choose
+   **Connect**. Voqora checks the connection before saving. You can also
+   connect a provider during setup.
+2. If you connect more than one, choose the one under **Used for audiobooks**.
+3. When you add a document, turn on **Clean Up with <provider>** at the bottom
+   of the New Audiobook sheet. The provider menu there switches providers for
+   that book. The Cleanup Tokens and Cleanup Cost tiles show the estimate;
+   local providers are free.
+
+Your API key is stored in your macOS login Keychain. Voqora sends it only to its
+own service on your Mac, with each cleanup request, and from there to the
+provider you connected. Removing a provider asks you to confirm, deletes its key
+from the Keychain, and tells you what happens to audiobooks that use it.
+
+A Custom server needs an `https://` address when you set an API key, unless it
+runs on this computer. Without a key, `http://` works only for servers on this
+computer or your local network. A Custom server on your own computer or network
+is treated as free.
 
 A scanned PDF needs a provider and model that can read images before it can be
-narrated. That operation sends the relevant document material to the provider
-you chose, or keeps it on your Mac with a local provider. It is separate from the core
-selected-text speech flow and can be skipped. If a page cannot be cleaned, Voqora
-narrates its local text instead and marks it for retry; right-click the book in
-the Library to retry those pages.
+narrated; scanned pages inside an otherwise text PDF are read the same way.
+That operation sends the relevant document material to the provider you chose,
+or keeps it on your Mac with Ollama, LM Studio, or a local Custom server. It is
+separate from the core selected-text speech flow and can be skipped.
+
+If a page cannot be cleaned, Voqora narrates its local text instead and marks it
+for retry; right-click the book in the Library to retry those pages. If
+cleanup stops for a provider problem, such as a rejected key or an unavailable
+model, the book shows the reason. Choose **Fix Provider** to correct the
+connection, then **Resume** to continue where it stopped. Pages already cleaned
+stay as they are. To continue without AI, choose **Finish Without AI**; the
+remaining pages are narrated from local text.
+
+## Stats
+
+Open **Stats** in the sidebar to see your listening time, voices, streaks, and
+library totals over the last 7 days, 30 days, 12 months, or all time. Stats are
+kept in a file on your Mac and are never sent anywhere. Choose **Reset Stats**
+on the page to clear them; **Erase All Local Data** clears them too.
+
+## Run Voqora from the menu bar
+
+Turn on **Preferences -> General -> Hide from Dock & App Switcher** to keep
+Voqora in the menu bar only. The menu bar icon stays on while the Dock icon is
+hidden.
 
 ## The Vault and export
 

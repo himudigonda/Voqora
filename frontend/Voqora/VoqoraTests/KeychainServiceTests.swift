@@ -34,22 +34,4 @@ final class KeychainServiceTests: XCTestCase {
         XCTAssertFalse(KeychainService.has(key, service: service))
         XCTAssertNil(KeychainService.get(key, service: service))
     }
-
-    func testOnlyItemsReportingAnOlderAccessibilityNeedMigration() {
-        let older = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock as String]
-        let current = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String]
-
-        XCTAssertTrue(KeychainService.needsAccessibilityMigration(older))
-        XCTAssertFalse(KeychainService.needsAccessibilityMigration(current))
-        XCTAssertFalse(KeychainService.needsAccessibilityMigration([:]))
-    }
-
-    func testMigrationNeverLosesTheSecret() {
-        KeychainService.set("legacy-secret", for: key, service: service)
-        let older = [kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock as String]
-
-        KeychainService.migrateAccessibility(of: older, key: key, service: service)
-
-        XCTAssertEqual(KeychainService.get(key, service: service), "legacy-secret")
-    }
 }

@@ -20,8 +20,6 @@ nonisolated struct KeychainKey: Hashable, Sendable {
 }
 
 nonisolated enum KeychainService {
-    private static let accessibility = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-
     private static func baseQuery(_ key: KeychainKey, service: String?) -> [String: Any] {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -40,22 +38,17 @@ nonisolated enum KeychainService {
 
         var addQuery = query
         addQuery[kSecValueData as String] = Data(value.utf8)
-        addQuery[kSecAttrAccessible as String] = accessibility
+        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
     static func get(_ key: KeychainKey, service: String? = nil) -> String? {
         var query = baseQuery(key, service: service)
         query[kSecReturnData as String] = true
-        query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let item = result as? [String: Any],
-              let data = item[kSecValueData as String] as? Data
-        else { return nil }
-        migrateAccessibility(of: item, key: key, service: service)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
 
@@ -70,18 +63,5 @@ nonisolated enum KeychainService {
         query[kSecReturnAttributes as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
-    }
-
-    static func needsAccessibilityMigration(_ attributes: [String: Any]) -> Bool {
-        guard let reported = attributes[kSecAttrAccessible as String] as? String else { return false }
-        return reported != (accessibility as String)
-    }
-
-    static func migrateAccessibility(of attributes: [String: Any], key: KeychainKey, service: String?) {
-        guard needsAccessibilityMigration(attributes) else { return }
-        SecItemUpdate(
-            baseQuery(key, service: service) as CFDictionary,
-            [kSecAttrAccessible as String: accessibility] as CFDictionary
-        )
     }
 }

@@ -52,8 +52,35 @@ The audiobook service extracts a document, processes pages, creates audio, and
 persists local metadata needed for progress and resume. Local extraction is the
 default. Optional LLM cleanup and OCR are invoked only with a user-connected
 provider and an explicit selection of that workflow. `llm_providers.py` holds
-the provider registry and the OpenAI-compatible and Anthropic transports;
-Gemini keeps its SDK path in `llm_cleaner.py` for the Flex service tier.
+the provider registry (OpenAI, Anthropic, xAI, Groq, Cerebras, Google,
+OpenRouter, Ollama, LM Studio, and Custom), server-URL checks, and the
+OpenAI-compatible and Anthropic transports; Gemini keeps its SDK path in
+`llm_cleaner.py` for the Flex service tier.
+
+The app stores each provider's key in the macOS login Keychain and sends the
+active provider, model, and key as request headers to the local service on
+every cleanup request. The service does not persist them. Ollama, LM Studio,
+and Custom servers on this computer or network keep page text off the internet.
+Cleanup failures are reported with a reason so the app can offer to fix the
+provider, resume, or finish the book without AI.
+
+Chapters come from DOCX and Markdown headings and from PDF outlines, with a
+"Part N" fallback. Scanned pages inside text PDFs are routed to OCR when a
+provider is available.
+
+## Languages and voices
+
+`languages.py` holds the catalog of 28 voices in eight languages. The first
+letter of a voice ID selects the espeak-ng language used for phonemization
+(for example `b` is `en-gb` and `z` is `cmn`), so the client sends no separate
+language field. The app can optionally switch voices when the text is in a
+different language.
+
+## Local stats
+
+`UsageStatsStore` keeps listening time, voice use, and library totals in
+`usage-stats.json` in the app's support directory. It is never sent to the
+analytics server and is cleared by Erase All Local Data.
 
 ## Key directories
 
