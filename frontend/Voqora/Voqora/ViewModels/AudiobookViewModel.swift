@@ -630,6 +630,8 @@ final class AudiobookViewModel: ObservableObject {
                     let page = event["page"] as? Int ?? 0
                     let total = event["total"] as? Int ?? 0
                     applyPhase(bookID: bookID, phase: phase, page: page, total: total)
+                } else if type == "stalled" {
+                    applyStalled(bookID: bookID)
                 } else if type == "done" {
                     let generation = beginCompletionFetch()
                     await refresh()
@@ -702,6 +704,10 @@ final class AudiobookViewModel: ObservableObject {
         default: .queued
         }
         processingState[bookID] = s
+    }
+
+    func applyStalled(bookID: String) {
+        processingState[bookID] = .reconnecting
     }
 
     func applyPhase(bookID: String, phase: String, page: Int, total: Int) {
@@ -1026,7 +1032,11 @@ final class AudiobookViewModel: ObservableObject {
 
     func cancel(_ book: Audiobook) {
         Task {
-            await service.cancel(book.bookID)
+            do {
+                try await service.cancel(book.bookID)
+            } catch {
+                showToast(error.localizedDescription, kind: .error)
+            }
             await refresh()
         }
     }

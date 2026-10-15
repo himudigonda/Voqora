@@ -233,7 +233,7 @@ struct AudiobookCardView: View {
     @ViewBuilder
     private var stateOverlay: some View {
         switch status {
-        case .queued:
+        case .queued, .reconnecting:
             ZStack {
                 RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.4))
                 ProgressView().tint(accentColor).scaleEffect(0.8)

@@ -40,6 +40,10 @@ final class BackendConnection: @unchecked Sendable {
 
     private init() {}
 
+    init(baseURL: URL, token: String) {
+        state = State(baseURL: baseURL, token: token)
+    }
+
     deinit { invalidate() }
 
     private func closeLocked() {

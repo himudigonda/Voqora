@@ -64,4 +64,40 @@ final class AudiobookServiceTests: XCTestCase {
     func test_verificationIgnoresNonJSONBodies() {
         XCTAssertNil(AudiobookService.decodeVerification(data: Data("oops".utf8), statusCode: 502))
     }
+
+    func test_cancel_throwsForNonexistentBook() async {
+        let service = AudiobookService(connection: unreachableConnection())
+        do {
+            try await service.cancel("definitely-not-a-real-book-\(UUID().uuidString)")
+            XCTFail("cancel must throw on a transport error or non-2xx response")
+        } catch {}
+    }
+
+    func test_subscribe_yieldsStalledEventAfterConsecutiveFailures() async {
+        let service = AudiobookService(connection: unreachableConnection())
+        let stream = service.subscribe(to: "any-book")
+
+        let sawStalled = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await event in stream where event["type"] as? String == "stalled" {
+                    return true
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                return false
+            }
+            let result = await group.next() ?? false
+            group.cancelAll()
+            return result
+        }
+
+        XCTAssertTrue(sawStalled)
+        XCTAssertEqual(AudiobookService.stalledReconnectThreshold, 3)
+    }
+
+    private func unreachableConnection() -> BackendConnection {
+        BackendConnection(baseURL: URL(string: "http://127.0.0.1:1")!, token: "test")
+    }
 }

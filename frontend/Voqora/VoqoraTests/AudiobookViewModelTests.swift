@@ -302,4 +302,28 @@ final class AudiobookViewModelTests: XCTestCase {
         let textOnly = NSItemProvider(object: "hello" as NSString)
         XCTAssertFalse(vm.importDroppedDocuments([textOnly], defaultVoice: "af_bella", defaultSpeed: 1.0))
     }
+
+    func test_applyStalled_setsReconnectingState() {
+        let vm = makeVM()
+        vm.applyStalled(bookID: "book-stalled")
+        XCTAssertEqual(vm.processingState["book-stalled"], .reconnecting)
+        XCTAssertTrue(ProcessingStatus.reconnecting.isProcessing)
+    }
+
+    func test_applyStalled_isSupersededByNextRealEvent() {
+        let vm = makeVM()
+        vm.applyStalled(bookID: "book-recovering")
+        vm.applyStatus(bookID: "book-recovering", status: "tts", pageDone: 3, pageTotal: 10, error: nil)
+        XCTAssertEqual(vm.processingState["book-recovering"], .generating(page: 3, total: 10))
+    }
+
+    func test_cancelBook_showsToastOnFailure() async {
+        let vm = makeVM()
+        XCTAssertNil(vm.toast)
+
+        vm.cancel(makeBook(id: "book-cancel-fail-\(UUID().uuidString)"))
+        await waitUntil { vm.toast != nil }
+
+        XCTAssertEqual(vm.toast?.kind, .error)
+    }
 }

@@ -264,6 +264,7 @@ class DashboardViewModel: ObservableObject {
     private var unduckTask: Task<Void, Never>?
     private var errorResetTask: Task<Void, Never>?
     private(set) var errorResetGeneration = 0
+    var awaitingFirstChunk = false
     private var actionFeedbackTask: Task<Void, Never>?
 
     private var cancellables = Set<AnyCancellable>()
@@ -311,7 +312,9 @@ class DashboardViewModel: ObservableObject {
                     speechFollower.clear()
                 }
                 if isPlaying {
-                    status = .speaking
+                    if !awaitingFirstChunk {
+                        status = .speaking
+                    }
                     if enableDucking {
                         system.beginDucking { [weak self] message in
                             self?.showTransientError(message)
@@ -389,6 +392,9 @@ class DashboardViewModel: ObservableObject {
         currentSpeakTask = Task { [weak self] in
             guard let self else { return }
             defer {
+                if generation == self.speakGeneration {
+                    self.awaitingFirstChunk = false
+                }
                 if Task.isCancelled, generation == self.speakGeneration {
                     if self.status == .thinking {
                         self.status = .ready
@@ -400,6 +406,7 @@ class DashboardViewModel: ObservableObject {
                 }
             }
             status = .thinking
+            awaitingFirstChunk = true
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
             let effectiveVoice = autoDetectLanguage
@@ -426,6 +433,7 @@ class DashboardViewModel: ObservableObject {
                     guard !Task.isCancelled, generation == speakGeneration else {
                         return
                     }
+                    awaitingFirstChunk = false
                     if status == .thinking {
                         status = .speaking
                     }
@@ -466,6 +474,7 @@ class DashboardViewModel: ObservableObject {
             } catch {
                 guard !Task.isCancelled, generation == speakGeneration else { return }
                 VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": effectiveVoice, "chars": "\(cleaned.count)"])
+                awaitingFirstChunk = false
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error))
             }
@@ -541,6 +550,7 @@ class DashboardViewModel: ObservableObject {
         speakGeneration &+= 1
         currentSpeakTask?.cancel()
         currentSpeakTask = nil
+        awaitingFirstChunk = false
 
         if let audiobookVM, audiobookVM.nowPlaying != nil || audiobookVM.isPreparingPlayback {
             audiobookVM.stopPlayback()

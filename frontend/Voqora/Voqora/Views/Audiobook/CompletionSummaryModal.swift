@@ -82,9 +82,23 @@ struct CompletionSummaryModal: View {
                 Text("\(book.failedPages.count) \(book.failedPages.count == 1 ? "page" : "pages") didn't process fully")
                     .font(vm.appFont(size: 12, weight: .bold))
                     .foregroundStyle(Palette.textPrimary)
-                Text("Right-click the book in your library to retry.")
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(Palette.textSecondary)
+                Button {
+                    let snapshot = book
+                    dismiss()
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(250))
+                        bookVM.retry(snapshot)
+                    }
+                } label: {
+                    Label(
+                        "Retry \(book.failedPages.count) failed \(book.failedPages.count == 1 ? "page" : "pages")",
+                        systemImage: "arrow.clockwise"
+                    )
+                    .font(vm.appFont(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(accentColor)
+                .padding(.top, 2)
             }
             Spacer(minLength: 0)
         }

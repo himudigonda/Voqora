@@ -68,11 +68,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: cacheDir)
     }
 
-    func cancel(_ id: String) async {
-        guard let req = try? connection.request(path: "audiobook/\(id)/cancel", method: "POST") else {
-            return
+    func cancel(_ id: String) async throws {
+        let req = try connection.request(path: "audiobook/\(id)/cancel", method: "POST")
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
+            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Could not stop processing."
+            throw AudiobookServiceError.uploadFailed(detail)
         }
-        _ = try? await URLSession.shared.data(for: req)
     }
 
     func transcript(for id: String) async throws -> Transcript {
@@ -253,10 +255,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
+    static let stalledReconnectThreshold = 3
+
     func subscribe(to id: String) -> AsyncStream<[String: Any]> {
         AsyncStream { continuation in
             let task = Task {
                 var attempt = 0
+                var consecutiveFailures = 0
                 while !Task.isCancelled {
                     guard var req = try? self.connection.request(
                         path: "audiobook/\(id)/events", timeout: 0
@@ -280,6 +285,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                                 guard let data = json.data(using: .utf8),
                                       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
                                 else { continue }
+                                consecutiveFailures = 0
                                 continuation.yield(obj)
                                 if let type = obj["type"] as? String,
                                    type == "done" || type == "failed" || type == "cancelled"
@@ -291,6 +297,10 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                         }
                     } catch {
                         VoqoraLog.warn("AudiobookService", "SSE connection dropped", ["bookID": id, "failureCode": "event_stream_disconnected", "attempt": "\(attempt)"])
+                        consecutiveFailures += 1
+                        if consecutiveFailures == Self.stalledReconnectThreshold {
+                            continuation.yield(["type": "stalled", "attempt": consecutiveFailures])
+                        }
                     }
                     if sawTerminal || bookGone || Task.isCancelled {
                         break

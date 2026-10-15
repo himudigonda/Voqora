@@ -271,6 +271,7 @@ enum ProcessingStatus: Hashable {
     case sectioning(page: Int, total: Int)
     case generating(page: Int, total: Int)
     case finishing
+    case reconnecting
     case ready
     case needsKey
     case needsCostApproval(requiredCap: Double?)
@@ -279,7 +280,7 @@ enum ProcessingStatus: Hashable {
 
     var isProcessing: Bool {
         switch self {
-        case .extracting, .cleaning, .sectioning, .generating, .finishing, .queued: true
+        case .extracting, .cleaning, .sectioning, .generating, .finishing, .queued, .reconnecting: true
         default: false
         }
     }
@@ -312,6 +313,7 @@ enum ProcessingStatus: Hashable {
         case .sectioning: "Finding chapters…"
         case let .generating(p, t): Self.pageCaption("Narrating", done: p, total: t)
         case .finishing: "Finishing up…"
+        case .reconnecting: "Reconnecting…"
         case .ready: "Ready"
         case .needsKey: "Needs AI provider"
         case .needsCostApproval: "Needs approval"

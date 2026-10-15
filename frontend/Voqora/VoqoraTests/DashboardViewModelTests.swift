@@ -312,6 +312,36 @@ final class DashboardViewModelTests: XCTestCase {
         )
     }
 
+    func test_isPlayingDoesNotFlipToSpeakingUntilFirstChunkArrives() {
+        let audio = AudioService()
+        let vm = DashboardViewModel(
+            backend: BackendService(),
+            system: SystemService(),
+            audio: audio,
+            history: HistoryManager(),
+            startsBackgroundWork: false,
+            defaults: testDefaults
+        )
+        vm.awaitingFirstChunk = true
+
+        audio.isPlaying = true
+        XCTAssertNotEqual(vm.status, .speaking, "the loading state must hold until the first chunk arrives")
+
+        audio.isPlaying = false
+        vm.awaitingFirstChunk = false
+        audio.isPlaying = true
+        XCTAssertEqual(vm.status, .speaking)
+    }
+
+    func test_stopPlaybackClearsAwaitingFirstChunk() {
+        let vm = makeVM()
+        vm.awaitingFirstChunk = true
+
+        vm.stopPlayback()
+
+        XCTAssertFalse(vm.awaitingFirstChunk)
+    }
+
     func test_togglePlayback_error_current_reset_returns_to_ready() {
         let vm = makeVM()
         vm.togglePlayback() // sets .error
