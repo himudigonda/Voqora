@@ -16,12 +16,12 @@ struct Audiobook: Identifiable, Codable, Hashable {
     let engine: String
     let voice: String
     let speed: Double
-    let usesGeminiCleanup: Bool?
-    let budget: GeminiBudget?
+    let usesLLMCleanup: Bool?
+    let budget: CleanupBudget?
     let error: String?
 
-    var requiresGeminiCleanup: Bool {
-        usesGeminiCleanup ?? true
+    var requiresLLMCleanup: Bool {
+        usesLLMCleanup ?? true
     }
 
     var id: String {
@@ -96,12 +96,12 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case totalAudioSeconds = "total_audio_seconds"
         case failedPages = "failed_pages"
         case estimated, actual, engine, voice, speed, budget
-        case usesGeminiCleanup = "uses_gemini_cleanup"
+        case usesLLMCleanup = "uses_gemini_cleanup"
         case error
     }
 }
 
-struct GeminiBudget: Codable, Hashable {
+struct CleanupBudget: Codable, Hashable {
     let capUsd: Double?
     let actualUsd: Double?
     let reservedUsd: Double?
@@ -209,6 +209,10 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     let costWarning: Bool
     let duplicateOfBookID: String?
     let duplicateOfTitle: String?
+    var llmProvider: String?
+    var llmModel: String?
+    var pricingKnown: Bool?
+    var readsImages: Bool?
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -224,6 +228,10 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case costWarning = "cost_warning"
         case duplicateOfBookID = "duplicate_of_book_id"
         case duplicateOfTitle = "duplicate_of_title"
+        case llmProvider = "llm_provider"
+        case llmModel = "llm_model"
+        case pricingKnown = "pricing_known"
+        case readsImages = "reads_images"
     }
 }
 
@@ -265,7 +273,7 @@ enum ProcessingStatus: Hashable {
         case let .generating(p, t): Self.pageCaption("Narrating", done: p, total: t)
         case .finishing: "Finishing up…"
         case .ready: "Ready"
-        case .needsKey: "Needs Gemini API key"
+        case .needsKey: "Needs AI provider"
         case .needsCostApproval: "Needs approval"
         case .failed: "Failed. Click to retry."
         case .cancelled: "Stopped. Click to restart."

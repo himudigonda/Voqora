@@ -10,8 +10,9 @@ it.
 - **Private, on-device speech.** Your text is turned into speech on your Mac,
   never on a server, and it works offline.
 - **Unlimited.** No character quotas, no credits, no subscription.
-- **Smarter audiobooks with Gemini.** Bring your own Gemini API key to clean up
-  messy PDFs and scans before narration.
+- **Smarter audiobooks with your AI provider.** Connect OpenAI, Anthropic, xAI,
+  Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or your own
+  server to clean up messy PDFs and scans before narration.
 - **Free.**
 
 Previously published as SuperSay. Its archival product history lives in the
@@ -84,12 +85,12 @@ flowchart LR
     A["Select text or add a document"] --> B["Voqora for macOS"]
     B --> C["Bundled local speech engine"]
     C --> D["Audio playback or audiobook"]
-    E["Optional document cleanup with your Gemini key"] -. only when chosen .-> B
+    E["Optional document cleanup with your AI provider"] -. only when chosen .-> B
 ```
 
 Speech runs entirely on your Mac, so it is private, unlimited, and works
-offline. Audiobooks work out of the box; add your own Gemini API key for
-cleaner text from messy PDFs and scanned pages.
+offline. Audiobooks work out of the box; connect an AI provider, cloud or local,
+for cleaner text from messy PDFs and scanned pages.
 
 ## Built as a native Mac utility
 

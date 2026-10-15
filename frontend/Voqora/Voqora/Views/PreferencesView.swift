@@ -16,7 +16,8 @@ struct PreferencesView: View {
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
-    @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
+    @AppStorage(AppPresence.showMenuBarIconKey) var showMenuBarIcon = true
+    @AppStorage(AppPresence.hideFromDockKey) var hideFromDock = false
     @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = true
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
@@ -26,6 +27,7 @@ struct PreferencesView: View {
     @State private var showEraseConfirmation = false
     @State private var erasingLocalData = false
     @State private var eraseError: String?
+    @State private var confirmingAnalyticsOptOut = false
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -120,57 +122,12 @@ struct PreferencesView: View {
                     }
                 }
 
+                PreferenceSection(title: "AI Cleanup", icon: "sparkles") {
+                    AICleanupSettings()
+                }
+
                 PreferenceSection(title: "Audiobooks", icon: "books.vertical") {
                     VStack(alignment: .leading, spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Label("Gemini API Key", systemImage: "key.fill")
-                                    .font(vm.font(.rowTitle))
-                                Spacer()
-                                if bookVM.keyVerified {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "checkmark.seal.fill")
-                                        Text("VERIFIED")
-                                    }
-                                    .font(vm.font(.chip))
-                                    .kerning(0.6)
-                                    .foregroundStyle(Palette.success)
-                                }
-                            }
-                            HStack {
-                                SecureField("AIza...", text: $bookVM.draftKey)
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(vm.font(.rowTitle).monospaced())
-                                Button {
-                                    bookVM.verifyAndSaveKey()
-                                } label: {
-                                    if bookVM.verifyingKey {
-                                        ProgressView().scaleEffect(0.6).frame(width: 60)
-                                    } else {
-                                        Text("Verify").frame(width: 60)
-                                    }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(accentColor)
-                                .disabled(bookVM.draftKey.trimmingCharacters(in: .whitespaces).isEmpty || bookVM.verifyingKey)
-                            }
-                            HStack {
-                                Link("Get a key from aistudio.google.com",
-                                     destination: URL(string: "https://aistudio.google.com/apikey")!)
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(accentColor)
-                                Spacer()
-                                if bookVM.hasStoredKey {
-                                    Button("Remove") { bookVM.removeKey() }
-                                        .buttonStyle(.plain)
-                                        .font(vm.font(.rowSubtitle))
-                                        .foregroundStyle(Palette.danger)
-                                }
-                            }
-                        }
-
-                        Divider()
-
                         HStack {
                             Label("Default Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
@@ -203,8 +160,8 @@ struct PreferencesView: View {
                         }
 
                         Text(
-                            "Text-based documents are narrated locally by default. You can opt into Gemini cleanup for " +
-                                "a difficult document, and scanned PDFs need Gemini OCR before they can be narrated."
+                            "Text-based documents are narrated locally by default. You can opt into AI cleanup for " +
+                                "a difficult document, and scanned PDFs need an AI provider that can read images."
                         )
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textSecondary)
@@ -340,15 +297,57 @@ struct PreferencesView: View {
 
                         Divider()
 
-                        Toggle(isOn: $showMenuBarIcon) {
-                            Text("Show Menu Bar Icon")
-                                .font(vm.font(.rowTitle))
+                        Toggle(isOn: Binding(
+                            get: { hideFromDock },
+                            set: { hidden in
+                                AppPresence.setHideFromDock(hidden)
+                                AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Hide from Dock & App Switcher")
+                                    .font(vm.font(.rowTitle))
+                                Text("Keep Voqora in the menu bar only (hides the Dock icon and ⌘-Tab entry).")
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
+                            }
                         }
                         .toggleStyle(.switch)
 
                         Divider()
 
-                        Toggle(isOn: $analyticsEnabled) {
+                        Toggle(isOn: Binding(
+                            get: { showMenuBarIcon },
+                            set: { shown in
+                                AppPresence.setShowMenuBarIcon(shown)
+                                AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Show Menu Bar Icon")
+                                    .font(vm.font(.rowTitle))
+                                if hideFromDock {
+                                    Text("Always on while Voqora is hidden from the Dock, so you can still reach it.")
+                                        .font(vm.font(.rowSubtitle))
+                                        .foregroundStyle(Palette.textSecondary)
+                                }
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .disabled(hideFromDock)
+
+                        Divider()
+
+                        Toggle(isOn: Binding(
+                            get: { analyticsEnabled },
+                            set: { enabled in
+                                if enabled {
+                                    analyticsEnabled = true
+                                } else {
+                                    confirmingAnalyticsOptOut = true
+                                }
+                            }
+                        )) {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Share Usage Analytics")
                                     .font(vm.font(.rowTitle))
@@ -359,6 +358,11 @@ struct PreferencesView: View {
                         }
                         .toggleStyle(.switch)
                     }
+                }
+
+                .sheet(isPresented: $confirmingAnalyticsOptOut) {
+                    AnalyticsOptOutSheet()
+                        .environmentObject(vm)
                 }
 
                 PreferenceSection(title: "Notifications", icon: "bell.badge") {
@@ -560,7 +564,7 @@ struct PreferencesView: View {
                                 .font(vm.font(.sectionTitle))
                             Text(
                                 "Permanently removes every audiobook and source document, generated audio, history, caches, " +
-                                    "settings, your name and email, telemetry outbox, anonymous identifier, and saved Gemini credential " +
+                                    "settings, your name and email, telemetry outbox, anonymous identifier, and saved AI provider keys " +
                                     "from this Mac. Voqora will quit when complete."
                             )
                             .font(vm.font(.rowSubtitle))
@@ -592,7 +596,7 @@ struct PreferencesView: View {
         } message: {
             Text(
                 "This cannot be undone. All local books, sources, audio, history, settings, caches, telemetry outbox, " +
-                    "your name and email, anonymous identifier, and Gemini credential will be permanently removed. Voqora " +
+                    "your name and email, anonymous identifier, and AI provider keys will be permanently removed. Voqora " +
                     "will quit after the erase finishes."
             )
         }

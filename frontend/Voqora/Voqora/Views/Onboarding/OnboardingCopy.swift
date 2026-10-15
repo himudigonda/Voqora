@@ -42,6 +42,11 @@ enum OnboardingCopy {
     static let customizeAccentLabel = "Accent Color"
     static let customizeIconLabel = "App Icon"
 
+    static let cleanupTitle = "Clean Up Hard Documents"
+    static let cleanupBody = "Optional. Connect an AI provider to tidy messy PDFs and read scanned pages. "
+        + "Narration always stays on your Mac, and you can change this later in Preferences."
+    static let cleanupSkipButton = "Skip"
+
     static let doneTitle = "You're All Set"
     static let doneBody = "Select text in any app and press ⌘⇧. to hear it. Add documents in Library to make audiobooks."
     static let doneSampleButton = "Hear a Sample"

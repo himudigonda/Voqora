@@ -11,6 +11,7 @@ struct VoqoraWindow: View {
     @EnvironmentObject var permissions: PermissionsService
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
+    @Environment(\.openWindow) private var openWindow
     @State private var globalDropHovering = false
     @State private var showOnboarding = false
 
@@ -123,6 +124,8 @@ struct VoqoraWindow: View {
         .tint(accentColor)
         .preferredColorScheme(vm.appTheme == "system" ? nil : (vm.appTheme == "dark" ? .dark : .light))
         .onAppear {
+            WindowPresenter.shared.openDashboard = { openWindow(id: "dashboard") }
+            AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
             Task {
                 await launchManager.prepare()
                 if launchManager.isReady {
@@ -152,6 +155,7 @@ struct VoqoraWindow: View {
             }
         }
         .onChange(of: onboarding.version) { _, _ in
+            AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
             if !onboarding.needsOnboarding {
                 showOnboarding = false
             } else {
@@ -161,6 +165,7 @@ struct VoqoraWindow: View {
         .overlay {
             if showOnboarding {
                 OnboardingView()
+                    .environmentObject(bookVM.providers)
                     .environmentObject(onboarding)
                     .environmentObject(permissions)
                     .environmentObject(identity)

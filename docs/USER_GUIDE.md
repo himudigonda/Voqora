@@ -97,16 +97,20 @@ starting the document from the beginning.
 ### Optional document cleanup
 
 Most text-based documents can be handled locally. If extraction is poor, you
-can choose optional cleanup with a Gemini API key you provide:
+can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic, xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or any OpenAI-compatible server.
 
-1. Add your key under **Preferences -> Audiobooks -> Gemini API Key** and
-   choose **Verify**.
-2. When you add a document, turn on **Clean Up with Gemini** at the bottom of
-   the New Audiobook sheet. The Gemini Tokens and Gemini Cost tiles then show
-   the estimate.
+1. Open **Preferences -> AI Cleanup -> Add Provider**, pick a provider, enter
+   its API key (local providers need none) and model, and choose **Connect**.
+   Voqora checks the connection before saving. If you connect more than one,
+   choose **Use** on the one to clean up new audiobooks. You can also connect a
+   provider during setup.
+2. When you add a document, turn on **Clean Up with <provider>** at the bottom
+   of the New Audiobook sheet. The Cleanup Tokens and Cleanup Cost tiles then
+   show the estimate; local providers are free.
 
-A scanned PDF needs Gemini OCR before it can be narrated. That operation sends
-the relevant document material to Gemini. It is separate from the core
+A scanned PDF needs a provider and model that can read images before it can be
+narrated. That operation sends the relevant document material to the provider
+you chose, or keeps it on your Mac with a local provider. It is separate from the core
 selected-text speech flow and can be skipped. If a page cannot be cleaned, Voqora
 narrates its local text instead and marks it for retry; right-click the book in
 the Library to retry those pages.
@@ -142,8 +146,9 @@ utility in Preferences.
 ### A document needs cleaner text
 
 Try the local flow first. If the document is scanned or extraction is poor,
-use the optional Gemini-cleanup path only if you are comfortable sending that
-document material to Gemini with your own key.
+use the optional AI cleanup path with a local provider, or with a cloud
+provider only if you are comfortable sending that document material to it with
+your own key.
 
 ### Where are the logs?
 

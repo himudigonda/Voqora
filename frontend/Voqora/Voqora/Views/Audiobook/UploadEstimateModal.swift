@@ -4,13 +4,14 @@ import SwiftUI
 struct UploadEstimateModal: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var providers: LLMProviderStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     let documentURL: URL
 
-    @State private var useGeminiCleanup = false
+    @State private var useCleanup = false
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -30,7 +31,7 @@ struct UploadEstimateModal: View {
                     .padding(.horizontal, 1)
                 }
                 .frame(maxHeight: .infinity)
-                geminiOption
+                cleanupOption
                 actions
             } else if bookVM.uploadInProgress {
                 loadingState
@@ -44,7 +45,6 @@ struct UploadEstimateModal: View {
         .padding(28)
         .frame(width: 520, height: 640)
         .voqoraSurface(.floating, in: Rectangle())
-        .onAppear { bookVM.refreshKeyState() }
     }
 
     private var header: some View {
@@ -105,15 +105,15 @@ struct UploadEstimateModal: View {
             }
             HStack(spacing: 12) {
                 StatTile(
-                    label: "Gemini Tokens",
-                    value: useGeminiCleanup ? numberFormat(est.estimatedTokenCount) : "OFF",
+                    label: "Cleanup Tokens",
+                    value: useCleanup ? numberFormat(est.estimatedTokenCount) : "OFF",
                     icon: "number",
                     appFont: vm.appFont,
                     accentColor: accentColor
                 )
                 StatTile(
-                    label: "Gemini Cost",
-                    value: useGeminiCleanup ? formatCost(est.estimatedCostUsd) : "OFF",
+                    label: "Cleanup Cost",
+                    value: cleanupCostLabel(for: est),
                     icon: "dollarsign.circle",
                     appFont: vm.appFont,
                     accentColor: accentColor
@@ -124,15 +124,27 @@ struct UploadEstimateModal: View {
 
     private func notices(for est: AudiobookEstimateResponse) -> some View {
         VStack(spacing: 10) {
-            if useGeminiCleanup, est.costWarning {
+            if useCleanup, est.costWarning {
                 notice(
                     "dollarsign.circle.fill",
-                    "Gemini's conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). " +
+                    "\(providerName)'s conservative cost envelope is \(formatCost(est.maximumCostUsd ?? est.estimatedCostUsd)). " +
                         "The shown estimate may be lower; Voqora will not silently switch to a more expensive tier."
                 )
             }
-            if est.isImageOnly, !useGeminiCleanup {
-                notice("doc.viewfinder", "This scanned PDF needs Gemini to read its text.")
+            if useCleanup, est.pricingKnown == false {
+                notice(
+                    "dollarsign.circle.fill",
+                    "Voqora has no published rate for \(est.llmModel ?? "this model"), so it budgets the book at a conservative rate."
+                )
+            }
+            if est.isImageOnly, useCleanup, est.readsImages == false {
+                notice(
+                    "doc.viewfinder",
+                    "\(est.llmModel ?? "This model") can't read scanned pages. Choose a model with vision in Preferences."
+                )
+            }
+            if est.isImageOnly, !useCleanup {
+                notice("doc.viewfinder", "This scanned PDF needs AI cleanup to read its text.")
             }
             if let duplicateTitle = est.duplicateOfTitle {
                 notice("doc.on.doc.fill", "You already imported this exact file as \"\(duplicateTitle)\".")
@@ -154,28 +166,46 @@ struct UploadEstimateModal: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
-    private var geminiOption: some View {
+    private var providerName: String {
+        providers.activeProvider?.displayName ?? "The AI provider"
+    }
+
+    private var hasProvider: Bool {
+        providers.activeCredential != nil
+    }
+
+    private func cleanupCostLabel(for est: AudiobookEstimateResponse) -> String {
+        guard useCleanup else { return "OFF" }
+        if est.maximumCostUsd == 0 {
+            return "FREE"
+        }
+        return formatCost(est.estimatedCostUsd)
+    }
+
+    private var cleanupOption: some View {
         HStack(spacing: 12) {
-            Image(systemName: "sparkles")
-                .foregroundStyle(accentColor)
+            if let provider = providers.activeProvider {
+                ProviderTile(provider: provider, size: 28)
+            } else {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(accentColor)
+            }
             VStack(alignment: .leading, spacing: 2) {
-                Text("Clean Up with Gemini")
+                Text(hasProvider ? "Clean Up with \(providerName)" : "AI Cleanup")
                     .font(vm.appFont(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.textPrimary)
-                Text(bookVM.hasStoredKey
-                    ? "Sends page text and scanned pages to Google Gemini."
-                    : "Add a Gemini API key in Preferences to use this.")
+                Text(providers.activeProvider.map(\.dataNotice) ?? "Add an AI provider in Preferences to use this.")
                     .font(vm.appFont(size: 11))
                     .foregroundStyle(Palette.textSecondary)
             }
             Spacer(minLength: 8)
-            if bookVM.hasStoredKey {
-                Toggle("Clean Up with Gemini", isOn: $useGeminiCleanup)
+            if hasProvider {
+                Toggle("Clean Up with \(providerName)", isOn: $useCleanup)
                     .toggleStyle(.switch)
                     .labelsHidden()
                     .tint(accentColor)
             } else {
-                Button("Add Key…") {
+                Button("Add Provider…") {
                     cancel()
                     vm.selectedTab = "preferences"
                 }
@@ -197,13 +227,10 @@ struct UploadEstimateModal: View {
             .buttonStyle(.voqoraSecondary)
 
             Button {
-                if useGeminiCleanup, !bookVM.keyVerified {
-                    bookVM.showToast(
-                        "Set a Gemini API key in Preferences first.",
-                        kind: .error
-                    )
+                if useCleanup, !hasProvider {
+                    bookVM.showToast(AudiobookViewModel.missingProviderMessage, kind: .error)
                 } else {
-                    bookVM.startProcessing(useGeminiCleanup: useGeminiCleanup)
+                    bookVM.startProcessing(useCleanup: useCleanup)
                 }
             } label: {
                 if bookVM.startingProcessing {
@@ -225,8 +252,9 @@ struct UploadEstimateModal: View {
             .disabled(Self.isStartDisabled(
                 startingProcessing: bookVM.startingProcessing,
                 isImageOnly: bookVM.pendingEstimate?.isImageOnly ?? false,
-                useGeminiCleanup: useGeminiCleanup,
-                hasStoredKey: bookVM.hasStoredKey
+                useCleanup: useCleanup,
+                hasProvider: hasProvider,
+                providerReadsImages: bookVM.pendingEstimate?.readsImages
             ))
             .keyboardShortcut(.defaultAction)
         }
@@ -242,16 +270,20 @@ struct UploadEstimateModal: View {
     static func isStartDisabled(
         startingProcessing: Bool,
         isImageOnly: Bool,
-        useGeminiCleanup: Bool,
-        hasStoredKey: Bool
+        useCleanup: Bool,
+        hasProvider: Bool,
+        providerReadsImages: Bool? = nil
     ) -> Bool {
         if startingProcessing {
             return true
         }
-        if isImageOnly, !useGeminiCleanup {
+        if isImageOnly, !useCleanup {
             return true
         }
-        if useGeminiCleanup, !hasStoredKey {
+        if isImageOnly, useCleanup, providerReadsImages == false {
+            return true
+        }
+        if useCleanup, !hasProvider {
             return true
         }
         return false

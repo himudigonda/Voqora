@@ -486,14 +486,14 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_displayStatus_costApprovalCarriesPersistedAbsoluteCap() {
-        let approval = GeminiBudget.CostApproval(
+        let approval = CleanupBudget.CostApproval(
             requiredCapUsd: 2.75,
             currentCapUsd: 1.00,
             tier: "standard"
         )
         let book = makeBook(
             status: "needs_cost_approval",
-            budget: GeminiBudget(capUsd: 1, actualUsd: 0.4, reservedUsd: 0.6, costApproval: approval)
+            budget: CleanupBudget(capUsd: 1, actualUsd: 0.4, reservedUsd: 0.6, costApproval: approval)
         )
 
         guard case let .needsCostApproval(requiredCap) = book.displayStatus else {
@@ -509,7 +509,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         status: String = "done",
         pageDone: Int = 1,
         pageTotal: Int = 1,
-        budget: GeminiBudget? = nil,
+        budget: CleanupBudget? = nil,
         sections: [AudiobookSection] = [],
         totalAudioSeconds: Double = 0
     ) -> Audiobook {
@@ -529,7 +529,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
             engine: "kokoro",
             voice: "af_bella",
             speed: 1,
-            usesGeminiCleanup: false,
+            usesLLMCleanup: false,
             budget: budget,
             error: nil
         )

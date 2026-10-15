@@ -1,13 +1,25 @@
 import Foundation
 import Security
 
-enum KeychainKey: String, CaseIterable {
-    case geminiAPIKey = "com.himudigonda.Voqora.gemini_api_key"
-    case sessionToken = "com.himudigonda.Voqora.session_token"
-    case refreshToken = "com.himudigonda.Voqora.refresh_token"
+nonisolated struct KeychainKey: Hashable, Sendable {
+    let rawValue: String
+
+    static let sessionToken = KeychainKey(rawValue: "com.himudigonda.Voqora.session_token")
+    static let refreshToken = KeychainKey(rawValue: "com.himudigonda.Voqora.refresh_token")
+
+    static func llmAPIKey(_ provider: LLMProvider) -> KeychainKey {
+        if provider == .google {
+            return KeychainKey(rawValue: "com.himudigonda.Voqora.gemini_api_key")
+        }
+        return KeychainKey(rawValue: "com.himudigonda.Voqora.llm_api_key.\(provider.rawValue)")
+    }
+
+    static var allCases: [KeychainKey] {
+        [.sessionToken, .refreshToken] + LLMProvider.allCases.map(llmAPIKey)
+    }
 }
 
-enum KeychainService {
+nonisolated enum KeychainService {
     @discardableResult
     static func set(_ value: String, for key: KeychainKey) -> Bool {
         let data = Data(value.utf8)

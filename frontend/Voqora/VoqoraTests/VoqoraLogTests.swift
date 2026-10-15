@@ -22,6 +22,12 @@ final class VoqoraLogTests: XCTestCase {
         XCTAssertFalse(out.contains(apiKey))
     }
 
+    func testEveryProviderKeyFormatRedactedUnderGenericKeyName() {
+        for apiKey in ["sk-proj-fake123", "sk-ant-api03-fake", "xai-fake123", "gsk_fake123", "csk-fake123", "sk-or-v1-fake"] {
+            XCTAssertFalse(serialized(["value": apiKey]).contains(apiKey), apiKey)
+        }
+    }
+
     func testIPCTokenRedactedUnderConventionalKeyName() {
         let token = Data((0 ..< 32).map { _ in UInt8.random(in: 0 ... 255) }).base64EncodedString()
         let out = serialized(["ipcToken": token])

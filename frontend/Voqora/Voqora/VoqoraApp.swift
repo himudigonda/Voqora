@@ -23,6 +23,7 @@ struct VoqoraApp: App {
     @StateObject private var updater: AppUpdater
 
     @StateObject private var installer: GuidedInstallerService
+    @StateObject private var providers: LLMProviderStore
 
     private let backend: BackendService
 
@@ -72,7 +73,8 @@ struct VoqoraApp: App {
             startsBackgroundWork: false
         )
 
-        let audiobookInstance = AudiobookViewModel(audio: audioInstance)
+        let providersInstance = LLMProviderStore(defaults: testDefaults ?? .standard)
+        let audiobookInstance = AudiobookViewModel(audio: audioInstance, providers: providersInstance)
 
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
@@ -83,6 +85,7 @@ struct VoqoraApp: App {
         _identity = StateObject(wrappedValue: identityInstance)
         _updater = StateObject(wrappedValue: updaterInstance)
         _installer = StateObject(wrappedValue: installerInstance)
+        _providers = StateObject(wrappedValue: providersInstance)
 
         vmInstance.audiobookVM = audiobookInstance
 
@@ -206,13 +209,17 @@ struct VoqoraApp: App {
                         .environmentObject(permissions)
                         .environmentObject(updater)
                         .environmentObject(installer)
+                        .environmentObject(providers)
                 }
             }
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])
 
-        MenuBarExtra(isInserted: $showMenuBarIcon) {
+        MenuBarExtra(isInserted: Binding(
+            get: { showMenuBarIcon },
+            set: { AppPresence.setShowMenuBarIcon($0) }
+        )) {
             Button {
                 Task { await dashboardVM.speakSelection() }
             } label: {
@@ -280,7 +287,7 @@ struct VoqoraApp: App {
             if let book = audiobookVM.continueListeningBook {
                 Button {
                     dashboardVM.openAudiobook(book.bookID)
-                    NSApp.activate(ignoringOtherApps: true)
+                    WindowPresenter.shared.show()
                 } label: {
                     Label("Continue: \(book.displayTitle)", systemImage: "book.fill")
                 }
@@ -288,7 +295,7 @@ struct VoqoraApp: App {
 
             Button {
                 dashboardVM.showLibrary()
-                NSApp.activate(ignoringOtherApps: true)
+                WindowPresenter.shared.show()
             } label: {
                 Label("Open Audiobooks", systemImage: "books.vertical")
             }
@@ -297,21 +304,21 @@ struct VoqoraApp: App {
 
             Button {
                 dashboardVM.selectedTab = "home"
-                NSApp.activate(ignoringOtherApps: true)
+                WindowPresenter.shared.show()
             } label: {
                 Label("Open Voqora", systemImage: "macwindow")
             }
 
             Button {
                 dashboardVM.selectedTab = "preferences"
-                NSApp.activate(ignoringOtherApps: true)
+                WindowPresenter.shared.show()
             } label: {
                 Label("Preferences…", systemImage: "gearshape")
             }
 
             Button {
                 dashboardVM.selectedTab = "about"
-                NSApp.activate(ignoringOtherApps: true)
+                WindowPresenter.shared.show()
                 Task { await updater.checkGitHubReleaseForUpdate() }
             } label: {
                 Label(

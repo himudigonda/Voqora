@@ -1,7 +1,8 @@
-"""GeminiCleaner — text-cleaning and OCR via Gemini 3.8 Flash (google.genai SDK).
+"""Narration cleanup, OCR and chapter detection through the user's LLM provider.
 
-The user's API key is sent per-request (X-Gemini-Api-Key header from Swift).
-Never persisted on disk.
+Gemini runs through the google.genai SDK so it can use the Flex service tier;
+every other provider goes through ``llm_providers``. Credentials arrive per
+request from the app and are never persisted.
 """
 
 import asyncio
@@ -14,6 +15,17 @@ from google import genai
 from google.genai import types
 
 from app.core.logging import get_logger
+from app.services import llm_providers
+from app.services.llm_providers import (
+    PROVIDERS,
+    LLMAuthError,
+    LLMBadResponseError,
+    LLMCapacityError,
+    LLMConfigError,
+    LLMCredential,
+    LLMIncompleteError,
+    LLMRateLimitError,
+)
 
 log = get_logger(__name__)
 
@@ -27,7 +39,7 @@ INPUT_USD_PER_M_TOKENS = 0.375  # $0.75/M standard, Flex = 50%
 OUTPUT_USD_PER_M_TOKENS = 1.875  # $3.75/M standard, Flex = 50%
 STANDARD_INPUT_USD_PER_M_TOKENS = 0.75
 STANDARD_OUTPUT_USD_PER_M_TOKENS = 3.75
-PRICING_VERSION = "gemini-3.8-flash-2026-09"
+PRICING_VERSION = "llm-providers-2026-10"
 
 # Cost reservations deliberately use bounded response sizes. Besides keeping a
 # malformed page from consuming an unbounded amount of a user's API budget,
@@ -39,7 +51,7 @@ _SECTION_MAX_OUTPUT_TOKENS = 4_096
 
 
 @dataclass(frozen=True)
-class GeminiUsage:
+class LLMUsage:
     """Provider usage returned with a successful generation.
 
     The SDK has changed the concrete response model across releases, so this
@@ -51,14 +63,23 @@ class GeminiUsage:
     input_tokens: int | None
     output_tokens: int | None
     tier: str
+    provider: str = "google"
+    model: str = ""
+
+
+@dataclass(frozen=True)
+class VerifyResult:
+    ok: bool
+    models: list[str]
+    error: str | None = None
 
 
 class GeneratedText(str):
-    """A string-compatible Gemini response with optional usage attached."""
+    """A string-compatible provider response with optional usage attached."""
 
-    usage: GeminiUsage | None
+    usage: LLMUsage | None
 
-    def __new__(cls, value: str, usage: GeminiUsage | None = None):
+    def __new__(cls, value: str, usage: LLMUsage | None = None):
         obj = super().__new__(cls, value)
         obj.usage = usage
         return obj
@@ -67,9 +88,9 @@ class GeneratedText(str):
 class GeneratedSections(list[dict]):
     """List-compatible section result carrying successful call receipts."""
 
-    usage: tuple[GeminiUsage, ...]
+    usage: tuple[LLMUsage, ...]
 
-    def __init__(self, values: list[dict], usage: list[GeminiUsage]):
+    def __init__(self, values: list[dict], usage: list[LLMUsage]):
         super().__init__(values)
         self.usage = tuple(usage)
 
@@ -85,7 +106,7 @@ MODEL_NAME = "gemini-3.8-flash"
 # https://ai.google.dev/gemini-api/docs/flex-inference
 FLEX_HTTP_OPTIONS = types.HttpOptions(timeout=900_000)  # 15 min, per Google's guidance
 
-GEMINI_CLEAN_SYSTEM_PROMPT = """\
+CLEAN_SYSTEM_PROMPT = """\
 You are preparing document text — from a PDF, Markdown, or plain-text source —
 to be narrated aloud as an audiobook, and to be read on screen as the listener
 follows along. Your output serves both, so it must sound like a script and look
@@ -185,27 +206,7 @@ If the page is blank or unreadable, output the single character "-".
 """
 
 
-class GeminiAuthError(Exception):
-    """Invalid API key."""
-
-
-class GeminiRateLimitError(Exception):
-    """Gemini returned 429 after retries exhausted."""
-
-
-class GeminiBadResponseError(Exception):
-    """Gemini returned an unexpected response."""
-
-
-class GeminiIncompleteError(Exception):
-    """Gemini stopped before the end of the page (token cap, recitation, or safety)."""
-
-
-class GeminiCapacityError(Exception):
-    """Flex tier at capacity (503/UNAVAILABLE) — recoverable by falling back to Standard."""
-
-
-class GeminiCleaner:
+class LLMCleaner:
     # Expose the recorded pricing receipt through the service API so job
     # metadata remains self-describing without duplicating a magic string.
     PRICING_VERSION = PRICING_VERSION
@@ -226,11 +227,11 @@ class GeminiCleaner:
         Standard request has a different cost envelope and is only created by
         an explicit, separately-approved job transition.
 
-        - GeminiAuthError / GeminiIncompleteError → re-raised immediately (won't recover on retry).
-        - GeminiCapacityError / GeminiRateLimitError / GeminiBadResponseError /
+        - LLMAuthError / LLMIncompleteError → re-raised immediately (won't recover on retry).
+        - LLMCapacityError / LLMRateLimitError / LLMBadResponseError /
           generic Exception → sleep _BACKOFF_BASE * 2^attempt and retry.
         - All attempts exhausted → re-raise the last seen exception, or a
-          GeminiBadResponseError with `label` if none was captured.
+          LLMBadResponseError with `label` if none was captured.
 
         See HARD-034 — extracted from duplicated loops in clean_page/ocr_page.
         """
@@ -239,17 +240,17 @@ class GeminiCleaner:
         for attempt in range(cls._MAX_RETRIES):
             try:
                 return await coro_factory(tier)
-            except (GeminiAuthError, GeminiIncompleteError):
+            except (LLMConfigError, LLMIncompleteError):
                 raise
-            except GeminiCapacityError as e:
+            except LLMCapacityError as e:
                 last_exc = e
-            except (GeminiRateLimitError, GeminiBadResponseError) as e:
+            except (LLMRateLimitError, LLMBadResponseError) as e:
                 last_exc = e
             except Exception as e:
                 last_exc = e
             if attempt < cls._MAX_RETRIES - 1:
                 await asyncio.sleep(cls._BACKOFF_BASE * (2**attempt))
-        raise last_exc or GeminiBadResponseError(f"{label}: unknown error")
+        raise last_exc or LLMBadResponseError(f"{label}: unknown error")
 
     # ---------- error classification ----------
 
@@ -264,16 +265,14 @@ class GeminiCleaner:
         if code == 503 or any(
             k in msg for k in ("503", "unavailable", "overloaded", "capacity")
         ):
-            raise GeminiCapacityError(
-                "Gemini capacity is temporarily unavailable."
-            ) from e
+            raise LLMCapacityError("Gemini capacity is temporarily unavailable.") from e
         # Ordered most-specific-first. "model" (checked last, below) is far too
         # broad to lead with: Gemini's quota and permission-denied bodies
         # routinely name the model -- quota dimensions embed
         # {"model": "gemini-3.8-flash"}, and access errors read "... for model
         # X". With the broad check first, a genuine bad key was classified
-        # GeminiBadResponseError, so _with_retry burned all four attempts
-        # instead of failing fast, the caller never saw GeminiAuthError, and
+        # LLMBadResponseError, so _with_retry burned all four attempts
+        # instead of failing fast, the caller never saw LLMAuthError, and
         # the user was never told to fix their key -- the book just degraded
         # to locally-cleaned narration on every page.
         #
@@ -291,22 +290,20 @@ class GeminiCleaner:
                 "api key not valid",
             )
         ):
-            raise GeminiAuthError("Gemini rejected the configured credential.") from e
+            raise LLMAuthError("Gemini rejected the configured credential.") from e
         if any(k in msg for k in ("429", "rate limit", "quota", "resource_exhausted")):
-            raise GeminiRateLimitError("Gemini rate limit reached.") from e
+            raise LLMRateLimitError("Gemini rate limit reached.") from e
         # Model-not-found / 404 → transient bad-response, NOT an auth error.
         if any(k in msg for k in ("not found", "404", "model", "does not exist")):
-            raise GeminiBadResponseError(
-                "Gemini returned an unsupported response."
-            ) from e
-        raise GeminiBadResponseError("Gemini request failed.") from e
+            raise LLMBadResponseError("Gemini returned an unsupported response.") from e
+        raise LLMBadResponseError("Gemini request failed.") from e
 
     # ---------- text cleaning ----------
 
     @classmethod
     async def clean_page(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         raw_text: str,
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
@@ -315,28 +312,36 @@ class GeminiCleaner:
             return "-"
         return await cls._with_retry(
             "clean_page",
-            lambda tier: cls._async_clean(api_key, raw_text, tier),
+            lambda tier: cls._async_clean(credential, raw_text, tier),
             start_tier=start_tier,
         )
 
     @classmethod
     async def _async_clean(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         raw_text: str,
         tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
+        if not credential.is_gemini:
+            return await cls._async_complete(
+                credential,
+                CLEAN_SYSTEM_PROMPT,
+                text=raw_text,
+                max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
+                empty="-",
+            )
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
-        client = genai.Client(api_key=api_key, http_options=http_options)
+        client = genai.Client(api_key=credential.api_key, http_options=http_options)
         config = types.GenerateContentConfig(
-            system_instruction=GEMINI_CLEAN_SYSTEM_PROMPT,
+            system_instruction=CLEAN_SYSTEM_PROMPT,
             temperature=0.1,
             max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
             service_tier=tier,
         )
         try:
             resp = await client.aio.models.generate_content(
-                model=MODEL_NAME,
+                model=credential.resolved_model,
                 config=config,
                 contents=raw_text,
             )
@@ -345,7 +350,7 @@ class GeminiCleaner:
         cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
-            text if text else "-", cls._usage_from_response(resp, tier)
+            text if text else "-", cls._usage_from_response(resp, tier, credential)
         )
 
     @staticmethod
@@ -353,7 +358,7 @@ class GeminiCleaner:
         candidates = getattr(resp, "candidates", None) or []
         reason = getattr(candidates[0], "finish_reason", None) if candidates else None
         if reason is not None and reason != types.FinishReason.STOP:
-            raise GeminiIncompleteError(
+            raise LLMIncompleteError(
                 f"Gemini stopped early: {getattr(reason, 'name', reason)}"
             )
 
@@ -362,26 +367,34 @@ class GeminiCleaner:
     @classmethod
     async def ocr_page(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         image_bytes: bytes,
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
         """OCR + clean a scanned page image via Gemini vision. Retries on transient errors."""
         return await cls._with_retry(
             "ocr_page",
-            lambda tier: cls._async_ocr(api_key, image_bytes, tier),
+            lambda tier: cls._async_ocr(credential, image_bytes, tier),
             start_tier=start_tier,
         )
 
     @classmethod
     async def _async_ocr(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         image_bytes: bytes,
         tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
+        if not credential.is_gemini:
+            return await cls._async_complete(
+                credential,
+                OCR_AND_CLEAN_PROMPT,
+                image_jpeg=image_bytes,
+                max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
+                empty="-",
+            )
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
-        client = genai.Client(api_key=api_key, http_options=http_options)
+        client = genai.Client(api_key=credential.api_key, http_options=http_options)
         # Passed as system_instruction, mirroring _async_clean. It used to ride
         # along as an ordinary content part next to the image, which weights it
         # like user input rather than an instruction.
@@ -394,7 +407,7 @@ class GeminiCleaner:
         image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
         try:
             resp = await client.aio.models.generate_content(
-                model=MODEL_NAME,
+                model=credential.resolved_model,
                 config=config,
                 contents=[image_part],
             )
@@ -403,7 +416,7 @@ class GeminiCleaner:
         cls._require_complete(resp)
         text = (resp.text or "").strip()
         return GeneratedText(
-            text if text else "-", cls._usage_from_response(resp, tier)
+            text if text else "-", cls._usage_from_response(resp, tier, credential)
         )
 
     # ---------- cost / token estimation ----------
@@ -413,22 +426,57 @@ class GeminiCleaner:
         """Rough heuristic: ~4 chars per token for English."""
         return max(1, char_count // 4)
 
-    @classmethod
-    def estimate_cost_usd(cls, total_chars: int) -> float:
-        """Strict-preserve: output ≈ input length, so use same token count for both."""
-        tok = cls.estimate_tokens(total_chars)
-        input_usd = (tok / 1_000_000) * INPUT_USD_PER_M_TOKENS
-        output_usd = (tok / 1_000_000) * OUTPUT_USD_PER_M_TOKENS
-        return input_usd + output_usd
+    @staticmethod
+    def price_for(
+        provider: str = "google", model: str = "", *, tier: str = "flex"
+    ) -> llm_providers.ModelPrice:
+        if provider == "google":
+            if model not in ("", MODEL_NAME):
+                return llm_providers.UNLISTED_MODEL_PRICE
+            if tier == "standard":
+                return llm_providers.ModelPrice(
+                    STANDARD_INPUT_USD_PER_M_TOKENS, STANDARD_OUTPUT_USD_PER_M_TOKENS
+                )
+            return llm_providers.ModelPrice(
+                INPUT_USD_PER_M_TOKENS, OUTPUT_USD_PER_M_TOKENS
+            )
+        return PROVIDERS[provider].price(model)
 
     @classmethod
-    def estimate_max_cost_usd(cls, total_chars: int) -> float:
+    def _credential_price(
+        cls, credential: LLMCredential | None, tier: str
+    ) -> llm_providers.ModelPrice:
+        if credential is None:
+            return cls.price_for(tier=tier)
+        if credential.is_gemini:
+            return cls.price_for("google", credential.resolved_model, tier=tier)
+        return credential.price
+
+    @staticmethod
+    def is_priced(credential: LLMCredential | None) -> bool:
+        if credential is None:
+            return True
+        if credential.is_gemini:
+            return credential.resolved_model == MODEL_NAME
+        return credential.is_priced
+
+    @classmethod
+    def estimate_cost_usd(
+        cls, total_chars: int, credential: LLMCredential | None = None
+    ) -> float:
+        """Strict-preserve: output ≈ input length, so use same token count for both."""
+        tok = cls.estimate_tokens(total_chars)
+        return cls._credential_price(credential, "flex").cost(tok, tok)
+
+    @classmethod
+    def estimate_max_cost_usd(
+        cls, total_chars: int, credential: LLMCredential | None = None
+    ) -> float:
         """Conservative Standard-tier envelope for preflight disclosure."""
         input_tokens = cls.estimate_tokens(total_chars)
-        output_tokens = max(input_tokens * 2, 1)
-        return (input_tokens / 1_000_000) * STANDARD_INPUT_USD_PER_M_TOKENS + (
-            output_tokens / 1_000_000
-        ) * STANDARD_OUTPUT_USD_PER_M_TOKENS
+        return cls._credential_price(credential, "standard").cost(
+            input_tokens, max(input_tokens * 2, 1)
+        )
 
     @staticmethod
     def _tier_name(tier: "types.ServiceTier") -> str:
@@ -436,18 +484,17 @@ class GeminiCleaner:
 
     @classmethod
     def cost_for_tokens(
-        cls, input_tokens: int, output_tokens: int, *, tier: str
+        cls,
+        input_tokens: int,
+        output_tokens: int,
+        *,
+        tier: str,
+        provider: str = "google",
+        model: str = "",
     ) -> float:
-        """Calculate a price using the versioned rate receipt above."""
-        if tier == "standard":
-            input_rate = STANDARD_INPUT_USD_PER_M_TOKENS
-            output_rate = STANDARD_OUTPUT_USD_PER_M_TOKENS
-        else:
-            input_rate = INPUT_USD_PER_M_TOKENS
-            output_rate = OUTPUT_USD_PER_M_TOKENS
-        return (max(0, input_tokens) / 1_000_000) * input_rate + (
-            max(0, output_tokens) / 1_000_000
-        ) * output_rate
+        return cls.price_for(provider, model, tier=tier).cost(
+            input_tokens, output_tokens
+        )
 
     @classmethod
     def reserve_cost_usd(
@@ -458,17 +505,22 @@ class GeminiCleaner:
         max_output_tokens: int,
         prompt_tokens: int = 0,
         extra_input_tokens: int = 0,
+        credential: LLMCredential | None = None,
     ) -> float:
         """Conservative, bounded envelope used *before* dispatching a call."""
-        return cls.cost_for_tokens(
+        return cls._credential_price(credential, tier).cost(
             cls.estimate_tokens(input_chars) + prompt_tokens + extra_input_tokens,
             max_output_tokens,
-            tier=tier,
         )
 
     @classmethod
     def clean_reservation_cost_usd(
-        cls, input_chars: int, *, tier: str, image_input: bool = False
+        cls,
+        input_chars: int,
+        *,
+        tier: str,
+        image_input: bool = False,
+        credential: LLMCredential | None = None,
     ) -> float:
         # The largest accepted raster is 16 MP. Reserve 16k input tokens for
         # vision pages; it is intentionally above normal image-token use so a
@@ -479,26 +531,69 @@ class GeminiCleaner:
             max_output_tokens=_CLEAN_MAX_OUTPUT_TOKENS,
             prompt_tokens=2_000,
             extra_input_tokens=16_384 if image_input else 0,
+            credential=credential,
         )
 
     @classmethod
     def section_reservation_cost_usd(
-        cls, input_chars: int, chunk_count: int, *, tier: str
+        cls,
+        input_chars: int,
+        chunk_count: int,
+        *,
+        tier: str,
+        credential: LLMCredential | None = None,
     ) -> float:
         # Every chunk includes the instruction and has its own bounded JSON
         # response. Overlap is already present in input_chars supplied by the
-        # caller, which builds the same chunks as detect_sections.
-        return cls.reserve_cost_usd(
-            input_chars,
+        # caller, which builds the same chunks as detect_sections. Each chunk
+        # is a separate request, so long-context rates apply per chunk.
+        chunks = max(1, chunk_count)
+        return chunks * cls.reserve_cost_usd(
+            -(-input_chars // chunks),
             tier=tier,
-            max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS * max(1, chunk_count),
-            prompt_tokens=700 * max(1, chunk_count),
+            max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS,
+            prompt_tokens=700,
+            credential=credential,
         )
 
     @classmethod
+    async def _async_complete(
+        cls,
+        credential: LLMCredential,
+        system: str,
+        *,
+        text: str | None = None,
+        image_jpeg: bytes | None = None,
+        max_output_tokens: int,
+        empty: str = "",
+    ) -> GeneratedText:
+        completion = await llm_providers.complete(
+            credential,
+            system=system,
+            text=text,
+            image_jpeg=image_jpeg,
+            max_output_tokens=max_output_tokens,
+        )
+        if not completion.text and (image_jpeg is not None or (text or "").strip()):
+            raise LLMBadResponseError(f"{credential.name} returned no text.")
+        usage = None
+        if completion.input_tokens is not None and completion.output_tokens is not None:
+            usage = LLMUsage(
+                completion.input_tokens,
+                completion.output_tokens,
+                "standard",
+                credential.provider,
+                credential.resolved_model,
+            )
+        return GeneratedText(completion.text or empty, usage)
+
+    @classmethod
     def _usage_from_response(
-        cls, response: Any, tier: "types.ServiceTier"
-    ) -> GeminiUsage | None:
+        cls,
+        response: Any,
+        tier: "types.ServiceTier",
+        credential: LLMCredential | None = None,
+    ) -> LLMUsage | None:
         """Extract a small, SDK-version-tolerant provider usage receipt."""
         usage = getattr(response, "usage_metadata", None)
         if usage is None:
@@ -519,7 +614,13 @@ class GeminiCleaner:
             output_tokens = max(0, total_tokens - input_tokens)
         if input_tokens is None or output_tokens is None:
             return None
-        return GeminiUsage(input_tokens, output_tokens, cls._tier_name(tier))
+        return LLMUsage(
+            input_tokens,
+            output_tokens,
+            cls._tier_name(tier),
+            "google",
+            credential.resolved_model if credential else MODEL_NAME,
+        )
 
     # ---------- section detection (Phase 2) ----------
 
@@ -568,7 +669,7 @@ class GeminiCleaner:
     @classmethod
     async def detect_sections(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         pages: list[str],
         start_tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> list[dict]:
@@ -584,13 +685,13 @@ class GeminiCleaner:
         chunks = cls._section_chunks(pages)
 
         all_sections: list[dict] = []
-        receipts: list[GeminiUsage] = []
+        receipts: list[LLMUsage] = []
         for first_page, text in chunks:
             try:
                 resp_text = await cls._with_retry(
                     "detect_sections",
                     lambda tier, text=text: cls._async_section_call(
-                        api_key, text, tier
+                        credential, text, tier
                     ),
                     start_tier=start_tier,
                 )
@@ -600,7 +701,7 @@ class GeminiCleaner:
                 parsed = cls._parse_sections_json(resp_text, max_page=len(pages))
                 parsed = [s for s in parsed if s["start_page"] >= first_page]
                 all_sections.extend(parsed)
-            except GeminiCapacityError:
+            except LLMCapacityError:
                 # A capacity transition is a product decision with a different
                 # price tier; never convert it into an invisible fallback.
                 raise
@@ -622,12 +723,19 @@ class GeminiCleaner:
     @classmethod
     async def _async_section_call(
         cls,
-        api_key: str,
+        credential: LLMCredential,
         joined_text: str,
         tier: "types.ServiceTier" = types.ServiceTier.FLEX,
     ) -> str:
+        if not credential.is_gemini:
+            return await cls._async_complete(
+                credential,
+                cls.SECTION_PROMPT,
+                text=joined_text,
+                max_output_tokens=_SECTION_MAX_OUTPUT_TOKENS,
+            )
         http_options = FLEX_HTTP_OPTIONS if tier == types.ServiceTier.FLEX else None
-        client = genai.Client(api_key=api_key, http_options=http_options)
+        client = genai.Client(api_key=credential.api_key, http_options=http_options)
         config = types.GenerateContentConfig(
             system_instruction=cls.SECTION_PROMPT,
             temperature=0.1,
@@ -637,17 +745,19 @@ class GeminiCleaner:
         )
         try:
             resp = await client.aio.models.generate_content(
-                model=MODEL_NAME,
+                model=credential.resolved_model,
                 config=config,
                 contents=joined_text,
             )
         except Exception as e:
             cls._reraise_typed(e)
-        return GeneratedText(resp.text or "", cls._usage_from_response(resp, tier))
+        return GeneratedText(
+            resp.text or "", cls._usage_from_response(resp, tier, credential)
+        )
 
     @staticmethod
     def _parse_sections_json(raw: str, max_page: int) -> list[dict]:
-        """Parse Gemini's JSON output into a clean list. Tolerant to markdown fences."""
+        """Parse the model's JSON output into a clean list. Tolerant to markdown fences."""
         s = raw.strip()
         s = re.sub(r"^```(?:json)?\s*", "", s)
         s = re.sub(r"\s*```$", "", s)
@@ -723,26 +833,45 @@ class GeminiCleaner:
     _VERIFY_KEY_TIMEOUT_S = 20.0
 
     @classmethod
-    async def verify_key(cls, api_key: str) -> bool:
-        """Lightweight key check: tiny generation. Returns True if key works.
+    async def verify(cls, credential: LLMCredential) -> VerifyResult:
+        """Check a credential and list the provider's chat models when it can.
 
-        Forced onto the Standard tier rather than Flex — key verification is
-        a user-facing, latency-sensitive check and must not be subject to
-        Flex's minutes-scale best-effort queuing. Bounded by an explicit
-        overall timeout (see `_VERIFY_KEY_TIMEOUT_S`) so a network outage
-        fails fast instead of hanging the request forever.
+        Gemini is checked with a tiny Standard-tier generation, never Flex, so
+        the check is not subject to Flex's best-effort queuing. Every path is
+        bounded by `_VERIFY_KEY_TIMEOUT_S` so an outage fails fast.
         """
+        problem = credential.problem(require_model=False)
+        if problem:
+            return VerifyResult(False, [], problem)
+        models: list[str] = []
         try:
-            await asyncio.wait_for(
-                cls._with_retry(
-                    "verify_key",
-                    lambda tier: cls._async_clean(api_key, "Say 'ok'.", tier),
-                    start_tier=types.ServiceTier.STANDARD,
-                ),
-                timeout=cls._VERIFY_KEY_TIMEOUT_S,
-            )
-            return True
-        except GeminiAuthError:
-            return False
+            if credential.is_gemini:
+                await asyncio.wait_for(
+                    cls._with_retry(
+                        "verify_key",
+                        lambda tier: cls._async_clean(credential, "Say 'ok'.", tier),
+                        start_tier=types.ServiceTier.STANDARD,
+                    ),
+                    timeout=cls._VERIFY_KEY_TIMEOUT_S,
+                )
+            else:
+                models = await asyncio.wait_for(
+                    llm_providers.list_models(credential),
+                    timeout=cls._VERIFY_KEY_TIMEOUT_S,
+                )
+        except LLMConfigError as e:
+            return VerifyResult(False, [], e.user_message)
         except Exception:
-            return False
+            return VerifyResult(
+                False, [], f"Voqora could not verify {credential.name}. Try again."
+            )
+        model = credential.resolved_model
+        if not model:
+            return VerifyResult(False, models, f"Choose a model for {credential.name}.")
+        if models and model not in models:
+            return VerifyResult(
+                False,
+                models,
+                f"{credential.name} has no model named {model}. Choose one from the list.",
+            )
+        return VerifyResult(True, models)

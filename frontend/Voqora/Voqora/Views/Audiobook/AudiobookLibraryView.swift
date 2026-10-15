@@ -61,6 +61,7 @@ struct AudiobookLibraryView: View {
                 UploadEstimateModal(documentURL: url)
                     .environmentObject(vm)
                     .environmentObject(bookVM)
+                    .environmentObject(bookVM.providers)
             case let .completion(book):
                 CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
                     .environmentObject(vm)

@@ -1,6 +1,6 @@
 """Tests for the audiobook pipeline.
 
-Mocks: PDFExtractor (no real PDFs), GeminiCleaner (no API calls),
+Mocks: PDFExtractor (no real PDFs), LLMCleaner (no API calls),
 EngineManager.generate (yields short np arrays).
 """
 
@@ -25,7 +25,8 @@ from app.services.audiobook_service import (
     _wav_header,
 )
 from app.services.audiobook_store import AudiobookStore
-from app.services.gemini_cleaner import GeminiCleaner, GeminiUsage
+from app.services.llm_cleaner import LLMCleaner, LLMUsage
+from app.services.llm_providers import LLMCredential
 from app.services.text_normalizer import has_residual_markup
 
 
@@ -118,7 +119,7 @@ async def test_gemini_budget_ledger_reserves_atomically_and_reconciles_actual_us
 
     receipts = await asyncio.gather(
         *(
-            AudiobookService._reserve_gemini_operation(
+            AudiobookService._reserve_llm_operation(
                 bid, operation=f"clean_page:{n}", reserved_usd=0.03
             )
             for n in range(4)
@@ -130,15 +131,39 @@ async def test_gemini_budget_ledger_reserves_atomically_and_reconciles_actual_us
     assert budget["reserved_usd"] == pytest.approx(0.09)
     assert budget["available_usd"] == pytest.approx(0.0)
 
-    await AudiobookService._reconcile_gemini_operation(
-        bid, accepted[0], GeminiUsage(100, 100, "flex")
+    await AudiobookService._reconcile_llm_operation(
+        bid, accepted[0], LLMUsage(100, 100, "flex")
     )
     budget = AudiobookStore.read_meta(bid)["budget"]
     assert budget["actual_usd"] == pytest.approx(
-        GeminiCleaner.cost_for_tokens(100, 100, tier="flex")
+        LLMCleaner.cost_for_tokens(100, 100, tier="flex")
     )
     assert budget["reserved_usd"] == pytest.approx(0.06)
     assert budget["actual_usd"] + budget["reserved_usd"] <= budget["cap_usd"]
+
+
+@pytest.mark.asyncio
+async def test_section_receipts_are_priced_per_request():
+    bid = AudiobookStore.create_book("Long.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Long.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["budget"] = AudiobookService._new_budget(5.0)
+    AudiobookStore.write_meta(bid, meta)
+    receipt = await AudiobookService._reserve_llm_operation(
+        bid, operation="section_detection", reserved_usd=1.0
+    )
+    model = "grok-4.20-0309-non-reasoning"
+    chunk = LLMUsage(125_000, 0, "standard", "xai", model)
+
+    await AudiobookService._reconcile_llm_operation(bid, receipt, (chunk, chunk))
+
+    one = LLMCleaner.cost_for_tokens(
+        125_000, 0, tier="standard", provider="xai", model=model
+    )
+    budget = AudiobookStore.read_meta(bid)["budget"]
+    assert budget["actual_usd"] == pytest.approx(2 * one)
+    assert budget["ledger"][0]["input_tokens"] == 250_000
 
 
 @pytest.mark.asyncio
@@ -150,16 +175,16 @@ async def test_gemini_budget_keeps_ambiguous_reservation_after_restart():
     )
     meta["budget"] = AudiobookService._new_budget(0.10)
     AudiobookStore.write_meta(bid, meta)
-    receipt = await AudiobookService._reserve_gemini_operation(
+    receipt = await AudiobookService._reserve_llm_operation(
         bid, operation="ocr_page:1", reserved_usd=0.06
     )
     assert receipt is not None
-    await AudiobookService._reconcile_gemini_operation(bid, receipt, None)
+    await AudiobookService._reconcile_llm_operation(bid, receipt, None)
 
     # Simulate process restart: only durable SQLite metadata remains.
     AudiobookStore._reset_for_tests()
     assert (
-        await AudiobookService._reserve_gemini_operation(
+        await AudiobookService._reserve_llm_operation(
             bid, operation="ocr_page:2", reserved_usd=0.05
         )
         is None
@@ -176,18 +201,18 @@ async def test_released_gemini_reservation_returns_capacity_to_the_book():
     )
     meta["budget"] = AudiobookService._new_budget(0.10)
     AudiobookStore.write_meta(bid, meta)
-    receipt = await AudiobookService._reserve_gemini_operation(
+    receipt = await AudiobookService._reserve_llm_operation(
         bid, operation="clean_page:1", reserved_usd=0.08
     )
     assert receipt is not None
 
-    await AudiobookService._release_gemini_reservation(bid, receipt)
+    await AudiobookService._release_llm_reservation(bid, receipt)
 
     budget = AudiobookStore.read_meta(bid)["budget"]
     assert budget["reserved_usd"] == pytest.approx(0.0)
     assert budget["available_usd"] == pytest.approx(0.10)
     assert (
-        await AudiobookService._reserve_gemini_operation(
+        await AudiobookService._reserve_llm_operation(
             bid, operation="clean_page:2", reserved_usd=0.08
         )
         is not None
@@ -232,7 +257,7 @@ async def test_cost_approval_requires_shown_cap_or_finishes_locally(monkeypatch)
     assert after["status"] == "queued"
     assert after["uses_gemini_cleanup"] is False
     assert "cost_approval" not in after["budget"]
-    assert enqueued == [(bid, "")]
+    assert enqueued == [(bid, None)]
 
 
 def test_list_books_sorted_desc():
@@ -969,12 +994,10 @@ def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemi
     )
     starts: list[tuple[str, str, bool]] = []
 
-    async def fake_start(
-        book_id: str, api_key: str, *, uses_gemini_cleanup: bool
-    ) -> bool:
-        starts.append((book_id, api_key, uses_gemini_cleanup))
+    async def fake_start(book_id: str, credential, *, uses_llm_cleanup: bool) -> bool:
+        starts.append((book_id, credential, uses_llm_cleanup))
         await AudiobookStore.update_meta(
-            book_id, uses_gemini_cleanup=uses_gemini_cleanup, status="queued"
+            book_id, uses_gemini_cleanup=uses_llm_cleanup, status="queued"
         )
         return True
 
@@ -982,23 +1005,50 @@ def test_start_uses_local_processing_by_default_and_requires_a_key_only_for_gemi
         AudiobookService,
         "start",
         classmethod(
-            lambda cls, book_id, api_key, *, uses_gemini_cleanup: fake_start(
-                book_id, api_key, uses_gemini_cleanup=uses_gemini_cleanup
+            lambda cls, book_id, credential, *, uses_llm_cleanup: fake_start(
+                book_id, credential, uses_llm_cleanup=uses_llm_cleanup
             )
         ),
     )
 
     response = client.post(f"/audiobook/{bid}/start")
     assert response.status_code == 200
-    assert starts == [(bid, "", False)]
+    assert starts == [(bid, None, False)]
     assert AudiobookStore.read_meta(bid)["uses_gemini_cleanup"] is False
 
     response = client.post(
         f"/audiobook/{bid}/start",
-        headers={"X-Voqora-Gemini-Cleanup": "true"},
+        headers={"X-Voqora-LLM-Cleanup": "true"},
     )
     assert response.status_code == 400
-    assert "X-Gemini-Api-Key" in response.json()["detail"]
+    assert "AI provider" in response.json()["detail"]
+
+    response = client.post(
+        f"/audiobook/{bid}/start",
+        headers={
+            "X-Voqora-LLM-Cleanup": "true",
+            "X-Voqora-LLM-Provider": "anthropic",
+        },
+    )
+    assert response.status_code == 400
+    assert "Missing API key for Anthropic" in response.json()["detail"]
+
+    response = client.post(
+        f"/audiobook/{bid}/start",
+        headers={
+            "X-Voqora-LLM-Cleanup": "true",
+            "X-Voqora-LLM-Provider": "openai",
+            "X-Voqora-LLM-Key": "sk-test",
+            "X-Voqora-LLM-Model": "gpt-6-luna",
+        },
+    )
+    assert response.status_code == 200
+    credential = starts[-1][1]
+    assert (credential.provider, credential.api_key, credential.resolved_model) == (
+        "openai",
+        "sk-test",
+        "gpt-6-luna",
+    )
 
 
 def test_start_rejects_a_book_already_claimed_for_processing(monkeypatch):
@@ -1047,7 +1097,7 @@ async def test_concurrent_start_calls_for_same_book_claim_exactly_once():
         try:
             results = await asyncio.gather(
                 *(
-                    AudiobookService.start(bid, "", uses_gemini_cleanup=False)
+                    AudiobookService.start(bid, None, uses_llm_cleanup=False)
                     for _ in range(8)
                 )
             )
@@ -1084,14 +1134,14 @@ async def test_resume_in_progress_flips_cleaning_to_needs_key():
 
 
 def test_stitch_sections_basic_contiguity():
-    from app.services.gemini_cleaner import GeminiCleaner
+    from app.services.llm_cleaner import LLMCleaner
 
     raw = [
         {"title": "Intro", "start_page": 1, "end_page": 3},
         {"title": "Chapter 1", "start_page": 4, "end_page": 9},
         {"title": "Chapter 2", "start_page": 10, "end_page": 15},
     ]
-    out = GeminiCleaner._stitch_sections(raw, page_count=20)
+    out = LLMCleaner._stitch_sections(raw, page_count=20)
     # Last section's end_page extended to page_count.
     assert out[-1]["end_page"] == 20
     # Contiguous: each end == next start - 1.
@@ -1100,10 +1150,10 @@ def test_stitch_sections_basic_contiguity():
 
 
 def test_stitch_sections_inserts_front_matter():
-    from app.services.gemini_cleaner import GeminiCleaner
+    from app.services.llm_cleaner import LLMCleaner
 
     raw = [{"title": "Chapter 1", "start_page": 4, "end_page": 9}]
-    out = GeminiCleaner._stitch_sections(raw, page_count=12)
+    out = LLMCleaner._stitch_sections(raw, page_count=12)
     assert out[0]["title"] == "Front Matter"
     assert out[0]["start_page"] == 1
     assert out[0]["end_page"] == 3
@@ -1111,15 +1161,15 @@ def test_stitch_sections_inserts_front_matter():
 
 
 def test_parse_sections_json_strips_markdown_fence():
-    from app.services.gemini_cleaner import GeminiCleaner
+    from app.services.llm_cleaner import LLMCleaner
 
     fenced = '```json\n{"sections":[{"title":"A","start_page":1,"end_page":5}]}\n```'
-    out = GeminiCleaner._parse_sections_json(fenced, max_page=10)
+    out = LLMCleaner._parse_sections_json(fenced, max_page=10)
     assert out == [{"title": "A", "start_page": 1, "end_page": 5}]
 
 
 def test_parse_sections_json_drops_invalid_entries():
-    from app.services.gemini_cleaner import GeminiCleaner
+    from app.services.llm_cleaner import LLMCleaner
 
     bad = json.dumps(
         {
@@ -1131,7 +1181,7 @@ def test_parse_sections_json_drops_invalid_entries():
             ]
         }
     )
-    out = GeminiCleaner._parse_sections_json(bad, max_page=10)
+    out = LLMCleaner._parse_sections_json(bad, max_page=10)
     assert len(out) == 1
     assert out[0]["title"] == "Good"
 
@@ -1434,6 +1484,11 @@ def test_retry_endpoint_requires_api_key_only_for_a_gemini_book():
     AudiobookStore.write_meta(bid, meta)
     response = client.post(f"/audiobook/{bid}/retry")
     assert response.status_code == 400
+    response = client.post(
+        f"/audiobook/{bid}/retry",
+        headers={"X-Voqora-LLM-Provider": "nope", "X-Voqora-LLM-Key": "k"},
+    )
+    assert response.status_code == 400
 
 
 @pytest.mark.asyncio
@@ -1482,7 +1537,7 @@ async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkey
     (no return_exceptions, no explicit sibling cancellation) and pass once
     stragglers are actively cancelled instead.
     """
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     bid = AudiobookStore.create_book("Test.pdf")
     meta = AudiobookStore.initial_meta(
@@ -1505,10 +1560,12 @@ async def test_cancel_plus_immediate_delete_does_not_resurrect_zombie_row(monkey
         return "cleaned slowly"
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=slow_clean_page)
+        _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=slow_clean_page)
     )
 
-    clean_task = asyncio.create_task(AudiobookService._phase_clean(bid, "fake-key"))
+    clean_task = asyncio.create_task(
+        AudiobookService._phase_clean(bid, LLMCredential.gemini("fake-key"))
+    )
     await asyncio.sleep(0.05)  # let both pages' clean_one start + block on release
 
     AudiobookService.cancel(bid)
@@ -1556,7 +1613,7 @@ async def test_phase_clean_degrades_remaining_pages_when_actual_cost_exceeds_cap
     whose own call already completed and produced good text before the cap
     was crossed keeps that text; only pages processed *after* the cap was
     reached fall back to local cleanup."""
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
     from app.services.audiobook_service import AudiobookService
 
     monkeypatch.setattr(
@@ -1584,13 +1641,13 @@ async def test_phase_clean_degrades_remaining_pages_when_actual_cost_exceeds_cap
         return "cleaned " + text
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+        _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
     )
 
     # Must complete the book, not raise — the near-zero cap is crossed by
     # the very first page's own chars, so every subsequent page should be
     # locally cleaned instead of calling Gemini.
-    await AudiobookService._phase_clean(bid, "fake-key")
+    await AudiobookService._phase_clean(bid, LLMCredential.gemini("fake-key"))
 
     assert len(calls) < page_count, "pages after the cap was crossed must skip Gemini"
     final_meta = AudiobookStore.read_meta(bid)
@@ -1613,7 +1670,7 @@ async def test_phase_clean_seeds_running_cost_from_already_cleaned_pages(monkeyp
     chars must count toward the cap from the start of the phase, so a new
     page is immediately routed to local cleanup rather than calling Gemini
     at all."""
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
     from app.services.audiobook_service import AudiobookService
 
     monkeypatch.setattr(
@@ -1645,10 +1702,10 @@ async def test_phase_clean_seeds_running_cost_from_already_cleaned_pages(monkeyp
         return "cleaned " + text
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
+        _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=fake_clean_page)
     )
 
-    await AudiobookService._phase_clean(bid, "fake-key")
+    await AudiobookService._phase_clean(bid, LLMCredential.gemini("fake-key"))
 
     assert len(calls) == 0, "page 2 must be cost-capped immediately, no Gemini call"
     final_meta = AudiobookStore.read_meta(bid)
@@ -1663,7 +1720,7 @@ async def test_phase_section_check_cancel_prevents_zombie_row_after_delete(monke
     by this phase's own update_meta(sections=...) write after request_delete
     already deleted it — the same zombie-row bug class already fixed for
     _phase_clean (T-4), never applied to _phase_section."""
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     bid = AudiobookStore.create_book("Test.md")
     meta = AudiobookStore.initial_meta(
@@ -1680,13 +1737,15 @@ async def test_phase_section_check_cancel_prevents_zombie_row_after_delete(monke
         return [{"title": "Chapter One", "start_page": 1, "end_page": 2}]
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "detect_sections",
         AsyncMock(side_effect=slow_detect_sections),
     )
 
     section_task = asyncio.create_task(
-        AudiobookService._phase_section(bid, "fake-key", AudiobookStore.read_meta(bid))
+        AudiobookService._phase_section(
+            bid, LLMCredential.gemini("fake-key"), AudiobookStore.read_meta(bid)
+        )
     )
     await asyncio.sleep(0.05)  # let it enter the (slow) Gemini call
 
@@ -1815,14 +1874,14 @@ async def test_run_pipeline_marks_failed_on_transcript_write_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_local_markdown_sectioning_produces_real_chapters_no_gemini(monkeypatch):
-    """Regression: local-first (uses_gemini_cleanup=False, the actual
+    """Regression: local-first (uses_llm_cleanup=False, the actual
     default) Markdown books previously always collapsed to one giant
     section covering the whole book — TextExtractor.read_outline always
     returns None and the Gemini branch never runs when Gemini cleanup is
     off, so there was no local signal at all despite Markdown headings
     being a perfectly good one."""
     from app.services import audiobook_service as _svc
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     bid = AudiobookStore.create_book("book.md")
     md_source = (
@@ -1845,12 +1904,12 @@ async def test_local_markdown_sectioning_produces_real_chapters_no_gemini(monkey
     AudiobookStore.write_meta(bid, meta)
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "detect_sections",
         AsyncMock(side_effect=AssertionError("Gemini must not be called")),
     )
 
-    await _svc.AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+    await _svc.AudiobookService._phase_section(bid, None, AudiobookStore.read_meta(bid))
 
     final_meta = AudiobookStore.read_meta(bid)
     sections = final_meta["sections"]
@@ -1895,7 +1954,8 @@ def test_retry_endpoint_404_for_unknown_book():
 
     client = TestClient(app)
     response = client.post(
-        "/audiobook/" + ("c" * 32) + "/retry", headers={"X-Gemini-Api-Key": "x"}
+        "/audiobook/" + ("c" * 32) + "/retry",
+        headers={"X-Voqora-LLM-Provider": "google", "X-Voqora-LLM-Key": "x"},
     )
     assert response.status_code == 404
 
@@ -1930,41 +1990,37 @@ def test_estimate_uses_speed_for_audio_duration():
 
 @pytest.mark.asyncio
 async def test_gemini_clean_page_retries_then_succeeds(monkeypatch):
-    from app.services.gemini_cleaner import GeminiBadResponseError, GeminiCleaner
+    from app.services.llm_cleaner import LLMBadResponseError, LLMCleaner
 
     calls = {"n": 0}
 
     async def flaky_async(api_key, raw, tier=None):
         calls["n"] += 1
         if calls["n"] < 2:
-            raise GeminiBadResponseError("transient")
+            raise LLMBadResponseError("transient")
         return "cleaned text"
 
-    monkeypatch.setattr(
-        GeminiCleaner, "_async_clean", AsyncMock(side_effect=flaky_async)
-    )
+    monkeypatch.setattr(LLMCleaner, "_async_clean", AsyncMock(side_effect=flaky_async))
     monkeypatch.setattr("asyncio.sleep", AsyncMock(return_value=None))
-    out = await GeminiCleaner.clean_page("k", "raw")
+    out = await LLMCleaner.clean_page("k", "raw")
     assert out == "cleaned text"
     assert calls["n"] == 2
 
 
 @pytest.mark.asyncio
 async def test_gemini_auth_error_does_not_retry(monkeypatch):
-    from app.services.gemini_cleaner import GeminiAuthError, GeminiCleaner
+    from app.services.llm_cleaner import LLMAuthError, LLMCleaner
 
     calls = {"n": 0}
 
     async def auth_failing(api_key, raw, tier=None):
         calls["n"] += 1
-        raise GeminiAuthError("bad key")
+        raise LLMAuthError("bad key")
 
-    monkeypatch.setattr(
-        GeminiCleaner, "_async_clean", AsyncMock(side_effect=auth_failing)
-    )
+    monkeypatch.setattr(LLMCleaner, "_async_clean", AsyncMock(side_effect=auth_failing))
     monkeypatch.setattr("asyncio.sleep", AsyncMock(return_value=None))
-    with pytest.raises(GeminiAuthError):
-        await GeminiCleaner.clean_page("k", "raw")
+    with pytest.raises(LLMAuthError):
+        await LLMCleaner.clean_page("k", "raw")
     assert calls["n"] == 1  # no retry for auth errors
 
 
@@ -2314,7 +2370,7 @@ def test_estimate_response_includes_cost_warning(monkeypatch):
 @pytest.mark.asyncio
 async def test_clean_phase_uses_ocr_for_image_pages(monkeypatch):
     """Pages with fewer than 50 chars of extracted text are routed to
-    GeminiCleaner.ocr_page instead of clean_page."""
+    LLMCleaner.ocr_page instead of clean_page."""
     from app.services import audiobook_service as _svc
     from app.services import pdf_extractor as _pe
 
@@ -2351,18 +2407,117 @@ async def test_clean_phase_uses_ocr_for_image_pages(monkeypatch):
         classmethod(lambda cls, p, n, **kw: b"imgbytes"),
     )
 
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
-    monkeypatch.setattr(_gc.GeminiCleaner, "ocr_page", AsyncMock(side_effect=_fake_ocr))
+    monkeypatch.setattr(_gc.LLMCleaner, "ocr_page", AsyncMock(side_effect=_fake_ocr))
     monkeypatch.setattr(
-        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=_fake_clean)
+        _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=_fake_clean)
     )
 
     _svc.AudiobookService.initialize()
-    await _svc.AudiobookService._phase_clean(bid, api_key="test-key")
+    await _svc.AudiobookService._phase_clean(
+        bid, credential=LLMCredential.gemini("test-key")
+    )
 
     assert len(ocr_calls) == 1, "image page should route to OCR"
     assert len(clean_calls) == 1, "text page should route to clean_page"
+
+
+@pytest.mark.asyncio
+async def test_text_only_model_never_receives_a_scanned_page(monkeypatch):
+    from app.services import audiobook_service as _svc
+    from app.services import llm_cleaner as _gc
+
+    bid = AudiobookStore.create_book("Scan.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Scan.pdf", 2, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    AudiobookStore.save_source(bid, b"%PDF-1.4\n" + b"x" * 200, "pdf")
+    for n, content in [(1, ""), (2, "x" * 200)]:
+        path = AudiobookStore.page_raw_path(bid, n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            f.write(content)
+
+    ocr = AsyncMock(return_value="never")
+    clean = AsyncMock(return_value="Cleaned text.")
+    monkeypatch.setattr(_gc.LLMCleaner, "ocr_page", ocr)
+    monkeypatch.setattr(_gc.LLMCleaner, "clean_page", clean)
+
+    _svc.AudiobookService.initialize()
+    await _svc.AudiobookService._phase_clean(
+        bid, credential=LLMCredential("groq", api_key="gsk")
+    )
+
+    ocr.assert_not_called()
+    assert clean.await_count == 1
+    after = AudiobookStore.read_meta(bid)
+    assert after["failed_pages"] == [1]
+    assert after["page_status"]["1"] == "cleaning_failed"
+    ledger = after["budget"]["ledger"] if after.get("budget") else []
+    assert all(entry["operation"] != "ocr_page" for entry in ledger)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_without_a_provider_fails_with_a_settings_message():
+    from app.services import audiobook_service as _svc
+    from app.services.llm_providers import LLMAuthError
+
+    bid = AudiobookStore.create_book("Doc.pdf")
+    meta = AudiobookStore.initial_meta(
+        bid, "Doc.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+    )
+    meta["uses_gemini_cleanup"] = True
+    AudiobookStore.write_meta(bid, meta)
+    path = AudiobookStore.page_raw_path(bid, 1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write("text")
+
+    with pytest.raises(LLMAuthError, match="Add an AI provider"):
+        await _svc.AudiobookService._phase_clean(bid, credential=None)
+
+
+def test_upload_estimate_is_priced_for_the_chosen_provider(client_with_engine=None):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    body = ("word " * 4000).encode()
+    responses = {
+        provider: client.post(
+            "/audiobook",
+            files={"file": ("Doc.txt", body, "text/plain")},
+            data={"llm_provider": provider} if provider else {},
+        )
+        for provider in ("", "ollama", "openai")
+    }
+    if any(r.status_code != 200 for r in responses.values()):
+        pytest.skip("upload needs a loaded TTS engine in this environment")
+    default, local, openai = (responses[p].json() for p in ("", "ollama", "openai"))
+    assert local["estimated_cost_usd"] == 0 and local["maximum_cost_usd"] == 0
+    assert local["llm_provider"] == "ollama", local
+    assert openai["llm_model"] == "gpt-6-luna" and openai["pricing_known"] is True
+    assert default["llm_provider"] is None
+    assert openai["maximum_cost_usd"] != default["maximum_cost_usd"]
+    assert local["reads_images"] is None and openai["reads_images"] is True
+
+
+def test_verify_endpoint_reports_missing_key():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    response = TestClient(app).post("/llm/verify", json={"provider": "xai"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "verified": False,
+        "models": [],
+        "error": "Missing API key for xAI.",
+    }
 
 
 # ---------- duplicate page deduplication ----------
@@ -2837,7 +2992,7 @@ def test_transcript_backfills_timings_for_pages_narrated_before_they_were_record
 
 @pytest.mark.asyncio
 async def test_gemini_timeout_falls_back_to_locally_cleaned_text(monkeypatch):
-    """When GeminiCleaner.clean_page raises asyncio.TimeoutError the pipeline
+    """When LLMCleaner.clean_page raises asyncio.TimeoutError the pipeline
     must degrade gracefully -- no hang, no crash, no empty file -- by writing
     the *locally cleaned* text, never the raw source.
 
@@ -2845,7 +3000,7 @@ async def test_gemini_timeout_falls_back_to_locally_cleaned_text(monkeypatch):
     the fallback bypassed the Markdown strip that every other branch applied.
     """
     from app.services import audiobook_service as _svc
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     bid = AudiobookStore.create_book("Test.pdf")
     meta = AudiobookStore.initial_meta(
@@ -2868,12 +3023,14 @@ async def test_gemini_timeout_falls_back_to_locally_cleaned_text(monkeypatch):
         raise TimeoutError()
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=_timeout_clean)
+        _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=_timeout_clean)
     )
 
     _svc.AudiobookService.initialize()
     # Must complete without raising, even though Gemini timed out.
-    await _svc.AudiobookService._phase_clean(bid, api_key="test-key")
+    await _svc.AudiobookService._phase_clean(
+        bid, credential=LLMCredential.gemini("test-key")
+    )
 
     clean_path = AudiobookStore.page_clean_path(bid, 1)
     assert os.path.exists(clean_path), "clean file must exist after timeout fallback"
@@ -2898,7 +3055,7 @@ async def test_gemini_timeout_falls_back_to_locally_cleaned_text(monkeypatch):
 async def test_local_clean_phase_never_calls_gemini(monkeypatch):
     """The default audiobook path copies normal extracted text locally."""
     from app.services import audiobook_service as _svc
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     bid = AudiobookStore.create_book("Local.pdf")
     meta = AudiobookStore.initial_meta(
@@ -2912,18 +3069,18 @@ async def test_local_clean_phase_never_calls_gemini(monkeypatch):
         f.write(raw_text)
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "clean_page",
         AsyncMock(side_effect=AssertionError("Gemini must not be called")),
     )
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "ocr_page",
         AsyncMock(side_effect=AssertionError("Gemini OCR must not be called")),
     )
 
     _svc.AudiobookService.initialize()
-    await _svc.AudiobookService._phase_clean(bid, api_key="")
+    await _svc.AudiobookService._phase_clean(bid, credential=None)
 
     with open(AudiobookStore.page_clean_path(bid, 1), encoding="utf-8") as f:
         assert f.read() == raw_text
@@ -2938,11 +3095,11 @@ async def test_clean_phase_stops_spending_once_cost_cap_reached(monkeypatch):
     doesn't model per-page OCR cost for a mixed text/scanned PDF at all —
     real spend could exceed MAX_GEMINI_COST_USD_PER_BOOK with zero runtime
     check once processing started. With the cap set effectively to zero,
-    no page should ever reach GeminiCleaner.clean_page; every page must
+    no page should ever reach LLMCleaner.clean_page; every page must
     fall back to local cleanup, get marked "cost_capped", and surface via
     failed_pages/page_failed so the user knows why."""
     from app.services import audiobook_service as _svc
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     monkeypatch.setattr(_svc._settings, "MAX_GEMINI_COST_USD_PER_BOOK", 0.0)
 
@@ -2959,7 +3116,7 @@ async def test_clean_phase_stops_spending_once_cost_cap_reached(monkeypatch):
             f.write("# Heading\n\nSome **bold** page " + str(n) + " content. " * 20)
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "clean_page",
         AsyncMock(
             side_effect=AssertionError("Gemini must not be called once cost-capped")
@@ -2975,7 +3132,9 @@ async def test_clean_phase_stops_spending_once_cost_cap_reached(monkeypatch):
 
     with patch.object(AudiobookService, "_emit", classmethod(_capture_emit)):
         _svc.AudiobookService.initialize()
-        await _svc.AudiobookService._phase_clean(bid, api_key="fake-key")
+        await _svc.AudiobookService._phase_clean(
+            bid, credential=LLMCredential.gemini("fake-key")
+        )
 
     final_meta = AudiobookStore.read_meta(bid)
     assert set(final_meta["failed_pages"]) == {1, 2}
@@ -3088,7 +3247,7 @@ async def test_markdown_source_full_pipeline_produces_speakable_transcript():
         ),
     ):
         await _svc.AudiobookService._phase_extract(bid)
-        await _svc.AudiobookService._phase_clean(bid, api_key="")
+        await _svc.AudiobookService._phase_clean(bid, credential=None)
         current_meta = AudiobookStore.read_meta(bid)
         await _svc.AudiobookService._phase_tts(bid, current_meta)
         await _svc.AudiobookService._phase_concat(bid, current_meta)
@@ -3189,7 +3348,7 @@ async def test_no_clean_branch_ever_writes_raw_markdown(branch, monkeypatch):
     this kept coming back.
     """
     from app.services import audiobook_service as _svc
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     uses_gemini = branch != "local_only"
     bid = _seed_markdown_book(uses_gemini)
@@ -3198,30 +3357,32 @@ async def test_no_clean_branch_ever_writes_raw_markdown(branch, monkeypatch):
         # A well-behaved model returns clean prose; the shared strip must be a
         # no-op over it rather than mangling good output.
         monkeypatch.setattr(
-            _gc.GeminiCleaner,
+            _gc.LLMCleaner,
             "clean_page",
             AsyncMock(return_value="The one line I have to know cold.\n\nA quote."),
         )
     elif branch == "gemini_timeout":
         monkeypatch.setattr(
-            _gc.GeminiCleaner, "clean_page", AsyncMock(side_effect=TimeoutError())
+            _gc.LLMCleaner, "clean_page", AsyncMock(side_effect=TimeoutError())
         )
     elif branch == "gemini_error":
         monkeypatch.setattr(
-            _gc.GeminiCleaner,
+            _gc.LLMCleaner,
             "clean_page",
             AsyncMock(side_effect=RuntimeError("upstream exploded")),
         )
     elif branch == "cost_capped":
         monkeypatch.setattr(_svc._settings, "MAX_GEMINI_COST_USD_PER_BOOK", 0.0)
         monkeypatch.setattr(
-            _gc.GeminiCleaner,
+            _gc.LLMCleaner,
             "clean_page",
             AsyncMock(side_effect=AssertionError("must not call Gemini when capped")),
         )
 
     _svc.AudiobookService.initialize()
-    await _svc.AudiobookService._phase_clean(bid, api_key="test-key")
+    await _svc.AudiobookService._phase_clean(
+        bid, credential=LLMCredential.gemini("test-key")
+    )
 
     with open(AudiobookStore.page_clean_path(bid, 1), encoding="utf-8") as f:
         result = f.read()
@@ -3252,7 +3413,11 @@ def test_cost_approval_route_rejects_non_finite_or_out_of_range_caps(cap):
     response = TestClient(app).post(
         f"/audiobook/{bid}/cost-approval",
         content=f'{{"approve": true, "new_cap_usd": {cap if not isinstance(cap, str) else cap}}}',
-        headers={"Content-Type": "application/json", "X-Gemini-Api-Key": "k"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Voqora-LLM-Provider": "google",
+            "X-Voqora-LLM-Key": "k",
+        },
     )
     assert response.status_code == 422
     assert AudiobookStore.read_meta(bid)["budget"]["cap_usd"] == 0.10
@@ -3271,7 +3436,7 @@ async def test_restarting_a_book_keeps_its_gemini_spend(monkeypatch):
     AudiobookService.initialize()
     monkeypatch.setattr(AudiobookService._queue, "put", lambda _b: asyncio.sleep(0))
     try:
-        assert await AudiobookService.start(bid, "", uses_gemini_cleanup=False)
+        assert await AudiobookService.start(bid, None, uses_llm_cleanup=False)
     finally:
         AudiobookService._scheduled_book_ids.discard(bid)
     after = AudiobookStore.read_meta(bid)["budget"]
@@ -3283,10 +3448,10 @@ async def test_restarting_a_book_keeps_its_gemini_spend(monkeypatch):
 async def test_resumed_book_keeps_detected_chapters_and_never_calls_gemini_keyless(
     monkeypatch,
 ):
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     detect = AsyncMock(return_value=[])
-    monkeypatch.setattr(_gc.GeminiCleaner, "detect_sections", detect)
+    monkeypatch.setattr(_gc.LLMCleaner, "detect_sections", detect)
 
     bid = AudiobookStore.create_book("Kept.md")
     meta = AudiobookStore.initial_meta(
@@ -3301,7 +3466,7 @@ async def test_resumed_book_keeps_detected_chapters_and_never_calls_gemini_keyle
     meta["sections"] = chapters
     AudiobookStore.write_meta(bid, meta)
 
-    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+    await AudiobookService._phase_section(bid, None, AudiobookStore.read_meta(bid))
     assert AudiobookStore.read_meta(bid)["sections"] == chapters
 
     fresh = AudiobookStore.create_book("Fresh.md")
@@ -3311,7 +3476,7 @@ async def test_resumed_book_keeps_detected_chapters_and_never_calls_gemini_keyle
     fresh_meta["file_ext"] = "md"
     fresh_meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(fresh, fresh_meta)
-    await AudiobookService._phase_section(fresh, "", AudiobookStore.read_meta(fresh))
+    await AudiobookService._phase_section(fresh, None, AudiobookStore.read_meta(fresh))
     detect.assert_not_called()
     assert len(AudiobookStore.read_meta(fresh)["sections"]) == 1
 
@@ -3354,10 +3519,10 @@ def test_narration_limits_stop_before_the_wav_header_overflows(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fallback_chapters_are_redetected_once_a_key_is_available(monkeypatch):
-    from app.services import gemini_cleaner as _gc
+    from app.services import llm_cleaner as _gc
 
     monkeypatch.setattr(
-        _gc.GeminiCleaner,
+        _gc.LLMCleaner,
         "detect_sections",
         AsyncMock(return_value=[{"title": "Real", "start_page": 1, "end_page": 2}]),
     )
@@ -3369,10 +3534,12 @@ async def test_fallback_chapters_are_redetected_once_a_key_is_available(monkeypa
     meta["uses_gemini_cleanup"] = True
     AudiobookStore.write_meta(bid, meta)
 
-    await AudiobookService._phase_section(bid, "", AudiobookStore.read_meta(bid))
+    await AudiobookService._phase_section(bid, None, AudiobookStore.read_meta(bid))
     assert AudiobookStore.read_meta(bid)["sections_source"] == "fallback"
 
-    await AudiobookService._phase_section(bid, "key", AudiobookStore.read_meta(bid))
+    await AudiobookService._phase_section(
+        bid, LLMCredential.gemini("key"), AudiobookStore.read_meta(bid)
+    )
     after = AudiobookStore.read_meta(bid)
     assert after["sections_source"] == "detected"
     assert [s["title"] for s in after["sections"]] == ["Real"]

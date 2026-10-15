@@ -16,7 +16,7 @@ flowchart LR
     T --> A
     A --> P["Audio stream / audiobook files"]
     P --> M
-    O["Optional Gemini document cleanup"] -. explicit user choice .-> A
+    O["Optional AI provider document cleanup"] -. explicit user choice .-> A
     M -. usage analytics .-> H["Voqora API"]
 ```
 
@@ -50,8 +50,10 @@ of the next, rather than running unsafe concurrent inference.
 
 The audiobook service extracts a document, processes pages, creates audio, and
 persists local metadata needed for progress and resume. Local extraction is the
-default. Optional Gemini cleanup and OCR are invoked only with a user-supplied
-key and an explicit selection of that workflow.
+default. Optional LLM cleanup and OCR are invoked only with a user-connected
+provider and an explicit selection of that workflow. `llm_providers.py` holds
+the provider registry and the OpenAI-compatible and Anthropic transports;
+Gemini keeps its SDK path in `llm_cleaner.py` for the Flex service tier.
 
 ## Key directories
 

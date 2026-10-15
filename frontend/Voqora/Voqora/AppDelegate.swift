@@ -9,6 +9,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
             .filter { !$0.isTerminated }
         guard let original = others.first else { return false }
+        DistributedNotificationCenter.default().postNotificationName(
+            AppPresence.showDashboardNotification,
+            object: bundleID,
+            userInfo: nil,
+            deliverImmediately: true
+        )
 
         VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
             "existingPid": "\(original.processIdentifier)",
@@ -34,6 +40,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.disableSplitViewAutosave()
         }
         AppIconOption.applyStored()
+        if AppPresence.hidesFromDock(), UserDefaults.standard.bool(forKey: "hasOnboarded") {
+            NSApp.setActivationPolicy(.accessory)
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: AppPresence.showDashboardNotification,
+            object: Bundle.main.bundleIdentifier,
+            queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { WindowPresenter.shared.show() }
+        }
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        guard !hasVisibleWindows else { return true }
+        WindowPresenter.shared.show()
+        return false
     }
 
     private func disableSplitViewAutosave() {

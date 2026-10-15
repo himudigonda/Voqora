@@ -101,18 +101,32 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    func upload(document: URL, voice: String?, speed: Double?, engine: String?) async throws -> AudiobookEstimateResponse {
+    func upload(
+        document: URL,
+        voice: String?,
+        speed: Double?,
+        engine: String?,
+        cleanup: LLMCredential? = nil
+    ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
 
         let boundary = "Boundary-\(UUID().uuidString)"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        let bodyURL = try Self.makeMultipartUploadBody(
-            document: document,
-            boundary: boundary,
-            voice: voice,
-            speed: speed,
-            engine: engine
-        )
+        var fields: [(String, String)] = []
+        if let voice {
+            fields.append(("voice", voice))
+        }
+        if let speed {
+            fields.append(("speed", String(speed)))
+        }
+        if let engine {
+            fields.append(("engine", engine))
+        }
+        if let cleanup {
+            fields.append(("llm_provider", cleanup.provider.rawValue))
+            fields.append(("llm_model", cleanup.resolvedModel))
+        }
+        let bodyURL = try Self.makeMultipartUploadBody(document: document, boundary: boundary, fields: fields)
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
         let (data, response) = try await URLSession.shared.upload(for: req, fromFile: bodyURL)
@@ -126,9 +140,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
     private static func makeMultipartUploadBody(
         document: URL,
         boundary: String,
-        voice: String?,
-        speed: Double?,
-        engine: String?
+        fields: [(String, String)]
     ) throws -> URL {
         let maximumBytes = 100 * 1024 * 1024
         let documentSize = try document.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -153,14 +165,8 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
 
         do {
-            if let voice {
-                try appendField("voice", voice)
-            }
-            if let speed {
-                try appendField("speed", String(speed))
-            }
-            if let engine {
-                try appendField("engine", engine)
+            for (name, value) in fields {
+                try appendField(name, value)
             }
 
             let filename = document.lastPathComponent
@@ -193,14 +199,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    func retry(_ id: String, apiKey: String?) async throws -> Int {
+    func retry(_ id: String, cleanup: LLMCredential?) async throws -> Int {
         var req = try connection.request(path: "audiobook/\(id)/retry", method: "POST")
-        if let apiKey, !apiKey.isEmpty {
-            req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
-        }
+        cleanup?.apply(to: &req)
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
-            throw AudiobookServiceError.uploadFailed("Retry failed")
+            let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Retry failed"
+            throw AudiobookServiceError.uploadFailed(detail)
         }
         try? FileManager.default.removeItem(at: cacheDir.appendingPathComponent("\(id).wav"))
         let obj = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
@@ -211,13 +216,11 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         _ id: String,
         approve: Bool,
         newCapUSD: Double? = nil,
-        apiKey: String? = nil
+        cleanup: LLMCredential? = nil
     ) async throws {
         var request = try connection.request(path: "audiobook/\(id)/cost-approval", method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let apiKey, !apiKey.isEmpty {
-            request.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
-        }
+        cleanup?.apply(to: &request)
         var payload: [String: Any] = ["approve": approve]
         if let newCapUSD {
             payload["new_cap_usd"] = newCapUSD
@@ -230,13 +233,11 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
     }
 
-    func start(_ id: String, apiKey: String?, useGeminiCleanup: Bool) async throws {
+    func start(_ id: String, cleanup: LLMCredential?) async throws {
         var req = try connection.request(path: "audiobook/\(id)/start", method: "POST")
-        if useGeminiCleanup {
-            req.setValue("true", forHTTPHeaderField: "X-Voqora-Gemini-Cleanup")
-            if let apiKey, !apiKey.isEmpty {
-                req.setValue(apiKey, forHTTPHeaderField: "X-Gemini-Api-Key")
-            }
+        if let cleanup {
+            req.setValue("true", forHTTPHeaderField: "X-Voqora-LLM-Cleanup")
+            cleanup.apply(to: &req)
         }
         let (data, response) = try await URLSession.shared.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
@@ -365,16 +366,26 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return riff == "RIFF".data(using: .ascii) && wave == "WAVE".data(using: .ascii)
     }
 
-    func verifyKey(_ key: String) async -> Bool {
-        guard var req = try? connection.request(
-            path: "audiobook/verify_key", method: "POST", timeout: 15
-        ) else { return false }
+    func verifyProvider(_ credential: LLMCredential) async -> LLMVerification {
+        let unreachable = LLMVerification(verified: false, models: [], error: "Voqora's engine isn't running. Try again in a moment.")
+        guard var req = try? connection.request(path: "llm/verify", method: "POST", timeout: 30) else {
+            return unreachable
+        }
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["api_key": key])
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "provider": credential.provider.rawValue,
+            "api_key": credential.apiKey,
+            "model": credential.model,
+            "base_url": credential.serverURL,
+        ])
         guard let (data, _) = try? await URLSession.shared.data(for: req),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else { return false }
-        return (obj["verified"] as? Bool) ?? false
+        else { return unreachable }
+        return LLMVerification(
+            verified: (obj["verified"] as? Bool) ?? false,
+            models: (obj["models"] as? [String]) ?? [],
+            error: obj["error"] as? String
+        )
     }
 }
 

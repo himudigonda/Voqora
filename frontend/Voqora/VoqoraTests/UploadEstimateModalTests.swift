@@ -6,8 +6,8 @@ final class UploadEstimateModalTests: XCTestCase {
         XCTAssertFalse(UploadEstimateModal.isStartDisabled(
             startingProcessing: false,
             isImageOnly: false,
-            useGeminiCleanup: false,
-            hasStoredKey: false
+            useCleanup: false,
+            hasProvider: false
         ))
     }
 
@@ -15,44 +15,64 @@ final class UploadEstimateModalTests: XCTestCase {
         XCTAssertTrue(UploadEstimateModal.isStartDisabled(
             startingProcessing: true,
             isImageOnly: false,
-            useGeminiCleanup: false,
-            hasStoredKey: true
+            useCleanup: false,
+            hasProvider: true
         ))
     }
 
-    func test_isStartDisabled_trueForImageOnlyPDFWithoutGeminiCleanup() {
+    func test_isStartDisabled_trueForImageOnlyPDFWithoutCleanup() {
         XCTAssertTrue(UploadEstimateModal.isStartDisabled(
             startingProcessing: false,
             isImageOnly: true,
-            useGeminiCleanup: false,
-            hasStoredKey: true
+            useCleanup: false,
+            hasProvider: true
         ))
     }
 
-    func test_isStartDisabled_falseForImageOnlyPDFWithGeminiCleanupAndKey() {
+    func test_isStartDisabled_falseForImageOnlyPDFWithCleanupAndProvider() {
         XCTAssertFalse(UploadEstimateModal.isStartDisabled(
             startingProcessing: false,
             isImageOnly: true,
-            useGeminiCleanup: true,
-            hasStoredKey: true
+            useCleanup: true,
+            hasProvider: true
         ))
     }
 
-    func test_isStartDisabled_trueWhenGeminiCleanupOnWithoutStoredKey() {
+    func test_isStartDisabled_trueWhenCleanupOnWithoutProvider() {
         XCTAssertTrue(UploadEstimateModal.isStartDisabled(
             startingProcessing: false,
             isImageOnly: false,
-            useGeminiCleanup: true,
-            hasStoredKey: false
+            useCleanup: true,
+            hasProvider: false
         ))
     }
 
-    func test_isStartDisabled_falseWhenGeminiCleanupOnWithStoredKey() {
+    func test_isStartDisabled_falseWhenCleanupOnWithProvider() {
         XCTAssertFalse(UploadEstimateModal.isStartDisabled(
             startingProcessing: false,
             isImageOnly: false,
-            useGeminiCleanup: true,
-            hasStoredKey: true
+            useCleanup: true,
+            hasProvider: true
+        ))
+    }
+
+    func test_isStartDisabled_trueForImageOnlyPDFWithTextOnlyModel() {
+        XCTAssertTrue(UploadEstimateModal.isStartDisabled(
+            startingProcessing: false,
+            isImageOnly: true,
+            useCleanup: true,
+            hasProvider: true,
+            providerReadsImages: false
+        ))
+    }
+
+    func test_isStartDisabled_falseForImageOnlyPDFWhenVisionIsUnknown() {
+        XCTAssertFalse(UploadEstimateModal.isStartDisabled(
+            startingProcessing: false,
+            isImageOnly: true,
+            useCleanup: true,
+            hasProvider: true,
+            providerReadsImages: nil
         ))
     }
 }

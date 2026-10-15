@@ -290,7 +290,7 @@ final class DashboardViewModelTests: XCTestCase {
             engine: "kokoro",
             voice: "af_bella",
             speed: 1,
-            usesGeminiCleanup: false,
+            usesLLMCleanup: false,
             budget: nil,
             error: nil
         )

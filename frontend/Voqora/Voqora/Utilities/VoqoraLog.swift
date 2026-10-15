@@ -44,6 +44,8 @@ enum VoqoraLog {
         return encoder
     }()
 
+    private static let providerKeyMarkers = ["AIza", "sk-", "xai-", "gsk_", "csk-"]
+
     static func redactedContext(_ context: [String: String]) -> [String: String] {
         var safe: [String: String] = [:]
         for (key, value) in context {
@@ -52,9 +54,10 @@ enum VoqoraLog {
                 "error", "exception", "text", "content", "prompt", "path",
                 "key", "token", "authorization", "credential", "payload",
             ].contains { normalized.contains($0) }
-            let sensitiveValue = value.localizedCaseInsensitiveContains("AIza")
+            let sensitiveValue = providerKeyMarkers.contains { value.localizedCaseInsensitiveContains($0) }
                 || value.localizedCaseInsensitiveContains("bearer ")
                 || value.localizedCaseInsensitiveContains("x-voqora-ipc-token")
+                || value.localizedCaseInsensitiveContains("x-voqora-llm-key")
                 || containsLocalIdentity(value)
             if sensitiveKey || sensitiveValue {
                 safe["\(key)_redacted"] = "true"

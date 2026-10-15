@@ -20,9 +20,12 @@ use **Preferences -> Data -> Erase All Local Data**.
 
 ## Third-party services
 
-- **Gemini**: if you add your own Gemini API key and choose document cleanup,
-  the relevant page text and images of scanned pages are sent to Google under
-  Google's terms.
+- **AI cleanup providers**: if you connect a cloud provider (OpenAI,
+  Anthropic, xAI, Groq, Cerebras, Google Gemini, OpenRouter, or a custom
+  server) and choose document cleanup, the relevant page text and images of
+  scanned pages are sent to that provider under its terms, using your own key.
+  Local providers (Ollama, LM Studio) keep that text on your Mac. Keys are
+  stored in your macOS Keychain.
 - **GitHub**: Voqora checks GitHub for new releases and downloads updates from
   GitHub when you choose to.
 

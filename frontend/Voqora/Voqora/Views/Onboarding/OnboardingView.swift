@@ -8,14 +8,16 @@ struct OnboardingView: View {
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var vm: DashboardViewModel
+    @EnvironmentObject var providers: LLMProviderStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
     @State private var step: Int = 0
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
+    @State private var connecting: LLMProvider?
 
-    private let stepCount = 7
+    private let stepCount = 8
 
     var body: some View {
         ZStack {
@@ -24,7 +26,7 @@ struct OnboardingView: View {
                 progressBar
                 Spacer(minLength: 24)
                 content
-                    .frame(maxWidth: 560)
+                    .frame(maxWidth: step == 6 ? 640 : 560)
                     .padding(.horizontal, 40)
                 Spacer(minLength: 24)
                 footer
@@ -84,6 +86,7 @@ struct OnboardingView: View {
         case 3: stepNotifications
         case 4: stepIdentity
         case 5: stepCustomize
+        case 6: stepCleanup
         default: stepDone
         }
     }
@@ -109,11 +112,13 @@ struct OnboardingView: View {
                     .tint(accentColor)
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button(OnboardingCopy.nextButton) { advance() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentColor)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canAdvance)
+                Button(step == 6 && providers.connectedProviders.isEmpty ? OnboardingCopy.cleanupSkipButton : OnboardingCopy.nextButton) {
+                    advance()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(accentColor)
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAdvance)
             }
         }
         .padding(.horizontal, 40)
@@ -342,6 +347,32 @@ struct OnboardingView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var stepCleanup: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 40))
+                .foregroundStyle(accentColor)
+                .frame(width: 48, height: 48)
+            Text(OnboardingCopy.cleanupTitle)
+                .font(appFont(size: 24, weight: .bold))
+                .foregroundStyle(Palette.textPrimary)
+            Text(OnboardingCopy.cleanupBody)
+                .font(appFont(size: 14))
+                .foregroundStyle(Palette.textSecondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            ProviderPickerGrid(compact: true) { provider in
+                connecting = provider
+            }
+            .frame(width: 600)
+        }
+        .sheet(item: $connecting) { provider in
+            AddProviderSheet(provider: provider)
+                .environmentObject(vm)
+                .environmentObject(providers)
         }
     }
 

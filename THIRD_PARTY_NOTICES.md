@@ -35,6 +35,7 @@ source code.
 | lxml | DOCX parsing | BSD-3-Clause |
 | pypinyin | Chinese pronunciation | MIT |
 | google-genai | Optional Gemini cleanup | Apache-2.0 |
+| httpx | Optional AI provider cleanup | BSD-3-Clause |
 | huggingface-hub | Model download | Apache-2.0 |
 
 The app bundle also contains this notice, the Voqora license, and the

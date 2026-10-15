@@ -14,6 +14,7 @@ from typing import Any
 
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     Header,
@@ -29,7 +30,6 @@ from app.core.logging import get_logger
 from app.services.audiobook_service import AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.engine_manager import EngineManager
-from app.services.gemini_cleaner import GeminiCleaner
 from app.services.import_limits import (
     ImportLimitError,
     ensure_storage_capacity,
@@ -37,6 +37,8 @@ from app.services.import_limits import (
     validate_docx_archive,
     validate_magic,
 )
+from app.services.llm_cleaner import LLMCleaner
+from app.services.llm_providers import PROVIDERS, LLMCredential
 from app.services.pdf_extractor import PDFExtractor
 from app.services.text_extractor import TextExtractor
 
@@ -61,6 +63,10 @@ class AudiobookEstimate(BaseModel):
     estimated_token_count: int
     is_image_only: bool
     cost_warning: bool
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    pricing_known: bool = True
+    reads_images: bool | None = True
     # Set when this exact file content already exists as another book.
     # Uploads were previously silently duplicated with no dedupe check at
     # all — this flags it so the client can warn instead of proceeding
@@ -70,8 +76,42 @@ class AudiobookEstimate(BaseModel):
     duplicate_of_title: str | None = None
 
 
-class VerifyKeyRequest(BaseModel):
-    api_key: str
+class VerifyProviderRequest(BaseModel):
+    provider: str
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+
+
+def _provider_credential(
+    provider: str | None, api_key: str | None, model: str | None, base_url: str | None
+) -> LLMCredential | None:
+    if not provider:
+        return None
+    if provider not in PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unknown AI provider.")
+    return LLMCredential(provider, api_key or "", model or "", base_url or "")
+
+
+def llm_credential(
+    provider: str | None = Header(default=None, alias="X-Voqora-LLM-Provider"),
+    api_key: str | None = Header(default=None, alias="X-Voqora-LLM-Key"),
+    model: str | None = Header(default=None, alias="X-Voqora-LLM-Model"),
+    base_url: str | None = Header(default=None, alias="X-Voqora-LLM-Base-URL"),
+) -> LLMCredential | None:
+    return _provider_credential(provider, api_key, model, base_url)
+
+
+def _require_credential(credential: LLMCredential | None) -> LLMCredential:
+    if credential is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose an AI provider in Settings to clean up this audiobook.",
+        )
+    problem = credential.problem()
+    if problem:
+        raise HTTPException(status_code=400, detail=problem)
+    return credential
 
 
 class CostApprovalRequest(BaseModel):
@@ -209,6 +249,8 @@ async def upload_audiobook(
     voice: str | None = Form(default=None),
     speed: float | None = Form(default=None),
     engine: str | None = Form(default=None),
+    llm_provider: str | None = Form(default=None),
+    llm_model: str | None = Form(default=None),
 ):
     """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
 
@@ -228,6 +270,7 @@ async def upload_audiobook(
     book_voice, book_speed, book_engine = _validated_synthesis_settings(
         voice, speed, engine
     )
+    pricing_credential = _provider_credential(llm_provider, None, llm_model, None)
 
     # Stream straight to a private staging file. Keeping chunks in a list and
     # joining them later made a nominal 100 MB document occupy multiple large
@@ -354,14 +397,14 @@ async def upload_audiobook(
             sample_words=sample_words,
             sample_chars=sample_chars,
             speed=book_speed,
+            credential=pricing_credential,
         )
-        estimate["token_count"] = GeminiCleaner.estimate_tokens(
-            sample_chars * page_count
+        estimate["cleanup_chars"] = sample_chars * page_count
+        estimate["token_count"] = LLMCleaner.estimate_tokens(estimate["cleanup_chars"])
+        estimate["max_cost_usd"] = LLMCleaner.estimate_max_cost_usd(
+            estimate["cleanup_chars"], pricing_credential
         )
-        estimate["max_cost_usd"] = GeminiCleaner.estimate_max_cost_usd(
-            sample_chars * page_count
-        )
-        estimate["pricing_version"] = GeminiCleaner.PRICING_VERSION
+        estimate["pricing_version"] = LLMCleaner.PRICING_VERSION
         if estimate["audio_seconds"] > settings.MAX_AUDIOBOOK_DURATION_SECONDS:
             raise HTTPException(
                 status_code=413,
@@ -377,7 +420,7 @@ async def upload_audiobook(
         except ImportLimitError as exc:
             raise HTTPException(status_code=413, detail=str(exc)) from exc
 
-        # This is a transparent *optional* Gemini estimate. The cap is
+        # This is a transparent *optional* AI cleanup estimate. The cap is
         # enforced only if the user explicitly enables cleanup at /start;
         # local narration must never reject a document for a cloud cost it
         # will not incur.
@@ -411,6 +454,18 @@ async def upload_audiobook(
             estimated_cost_usd=estimate["cost_usd"],
             maximum_cost_usd=estimate["max_cost_usd"],
             is_image_only=is_image_only,
+            llm_provider=pricing_credential.provider if pricing_credential else None,
+            llm_model=(
+                pricing_credential.resolved_model if pricing_credential else None
+            ),
+            pricing_known=LLMCleaner.is_priced(pricing_credential),
+            reads_images=(
+                pricing_credential.spec.supports_vision(
+                    pricing_credential.resolved_model
+                )
+                if pricing_credential is not None
+                else True
+            ),
             duplicate_of_book_id=duplicate.get("book_id") if duplicate else None,
             duplicate_of_title=duplicate.get("title") if duplicate else None,
         )
@@ -446,35 +501,40 @@ async def upload_audiobook(
 @router.post("/audiobook/{book_id}/start")
 async def start_audiobook(
     book_id: str,
-    x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
-    x_voqora_gemini_cleanup: str | None = Header(
-        default=None, alias="X-Voqora-Gemini-Cleanup"
+    credential: LLMCredential | None = Depends(llm_credential),
+    x_voqora_llm_cleanup: str | None = Header(
+        default=None, alias="X-Voqora-LLM-Cleanup"
     ),
 ):
     _validate_book_id(book_id)
     meta = AudiobookStore.read_meta(book_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
-    uses_gemini_cleanup = (x_voqora_gemini_cleanup or "").lower() == "true"
-    if uses_gemini_cleanup and not x_gemini_api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
-    estimated_cost = float(
-        (meta.get("estimated") or {}).get("max_cost_usd")
-        or (meta.get("estimated") or {}).get("cost_usd")
-        or 0
-    )
-    if uses_gemini_cleanup and estimated_cost > settings.MAX_GEMINI_COST_USD_PER_BOOK:
+    uses_llm_cleanup = (x_voqora_llm_cleanup or "").lower() == "true"
+    if uses_llm_cleanup:
+        credential = _require_credential(credential)
+    estimated = meta.get("estimated") or {}
+    if "cleanup_chars" in estimated and credential is not None:
+        estimated_cost = LLMCleaner.estimate_max_cost_usd(
+            int(estimated["cleanup_chars"]), credential
+        )
+    else:
+        estimated_cost = float(
+            estimated.get("max_cost_usd") or estimated.get("cost_usd") or 0
+        )
+    if uses_llm_cleanup and estimated_cost > settings.MAX_GEMINI_COST_USD_PER_BOOK:
         raise HTTPException(
             status_code=413,
             detail=(
-                f"The conservative Gemini cost envelope ${estimated_cost:.2f} exceeds "
-                f"the ${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
+                f"The conservative {credential.name} cost envelope "
+                f"${estimated_cost:.2f} exceeds the "
+                f"${settings.MAX_GEMINI_COST_USD_PER_BOOK:.2f} per-book cap."
             ),
         )
     accepted = await AudiobookService.start(
         book_id,
-        x_gemini_api_key or "",
-        uses_gemini_cleanup=uses_gemini_cleanup,
+        credential if uses_llm_cleanup else None,
+        uses_llm_cleanup=uses_llm_cleanup,
     )
     if not accepted:
         raise HTTPException(
@@ -627,17 +687,16 @@ def cancel_audiobook(book_id: str):
 @router.post("/audiobook/{book_id}/retry")
 async def retry_audiobook(
     book_id: str,
-    x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+    credential: LLMCredential | None = Depends(llm_credential),
 ):
     """Re-process failed pages (or the whole book if state is `failed`)."""
     _validate_book_id(book_id)
     meta = AudiobookStore.read_meta(book_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
-    uses_gemini_cleanup = bool(meta.get("uses_gemini_cleanup", True))
-    if uses_gemini_cleanup and not x_gemini_api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
-    count = await AudiobookService.retry_failed(book_id, x_gemini_api_key or "")
+    if bool(meta.get("uses_gemini_cleanup", True)):
+        credential = _require_credential(credential)
+    count = await AudiobookService.retry_failed(book_id, credential)
     return {"status": "queued", "retried_pages": count, "book_id": book_id}
 
 
@@ -645,7 +704,7 @@ async def retry_audiobook(
 async def resolve_cost_approval(
     book_id: str,
     body: CostApprovalRequest,
-    x_gemini_api_key: str | None = Header(default=None, alias="X-Gemini-Api-Key"),
+    credential: LLMCredential | None = Depends(llm_credential),
 ):
     """Explicitly approve a higher Standard-tier ceiling or finish locally."""
     _validate_book_id(book_id)
@@ -656,8 +715,13 @@ async def resolve_cost_approval(
         raise HTTPException(
             status_code=409, detail="This book is not awaiting cost approval."
         )
-    if body.approve and not x_gemini_api_key:
-        raise HTTPException(status_code=400, detail="Missing X-Gemini-Api-Key header.")
+    if body.approve:
+        credential = _require_credential(credential)
+        if not credential.is_gemini:
+            raise HTTPException(
+                status_code=400,
+                detail="Standard-tier approval applies only to Google Gemini.",
+            )
     if body.new_cap_usd is not None and not (
         math.isfinite(body.new_cap_usd)
         and 0 <= body.new_cap_usd <= _MAX_APPROVED_CAP_USD
@@ -666,7 +730,7 @@ async def resolve_cost_approval(
     try:
         accepted = await AudiobookService.resolve_cost_approval(
             book_id,
-            x_gemini_api_key or "",
+            credential if body.approve else None,
             approve=body.approve,
             new_cap_usd=body.new_cap_usd,
         )
@@ -714,8 +778,10 @@ async def delete_audiobook(book_id: str):
     return {"status": "deleted", "book_id": book_id}
 
 
-@router.post("/audiobook/verify_key")
-async def verify_key(req: VerifyKeyRequest):
-    """Lightweight Gemini key verification (called from PreferencesView)."""
-    ok = await GeminiCleaner.verify_key(req.api_key)
-    return {"verified": ok}
+@router.post("/llm/verify")
+async def verify_provider(req: VerifyProviderRequest):
+    credential = _provider_credential(
+        req.provider, req.api_key, req.model, req.base_url
+    )
+    result = await LLMCleaner.verify(credential)
+    return {"verified": result.ok, "models": result.models, "error": result.error}

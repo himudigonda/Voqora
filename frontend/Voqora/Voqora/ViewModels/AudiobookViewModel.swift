@@ -12,6 +12,7 @@ private func sha256Hex(_ input: String) -> String {
 final class AudiobookViewModel: ObservableObject {
     private let service: AudiobookService
     let audio: AudioService
+    let providers: LLMProviderStore
     private let localAudioURL: @MainActor (String) async throws -> URL
 
     @Published var books: [Audiobook] = []
@@ -46,9 +47,6 @@ final class AudiobookViewModel: ObservableObject {
         enum Kind: Equatable { case error, info, success }
     }
 
-    @Published var draftKey: String = ""
-    @Published var keyVerified: Bool = false
-    @Published var verifyingKey: Bool = false
     @AppStorage("defaultBookSpeed") var defaultBookSpeed: Double = 1.0
     @AppStorage("audiobookPlaybackRate") private var playbackRate: Double = 1.0
     @AppStorage("defaultBookVoice") var defaultBookVoice: String = "af_bella"
@@ -103,6 +101,7 @@ final class AudiobookViewModel: ObservableObject {
     init(
         service: AudiobookService? = nil,
         audio: AudioService,
+        providers: LLMProviderStore? = nil,
         localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
         subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil,
         listBooks: (@MainActor () async throws -> [Audiobook])? = nil
@@ -110,24 +109,13 @@ final class AudiobookViewModel: ObservableObject {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
         self.audio = audio
+        self.providers = providers ?? LLMProviderStore()
         self.localAudioURL = localAudioURL ?? { bookID in
             try await resolvedService.ensureLocalAudio(for: bookID)
         }
         self.subscribeToEvents = subscribeToEvents ?? { bookID in resolvedService.subscribe(to: bookID) }
         self.listBooks = listBooks ?? { try await resolvedService.list() }
         follower = TranscriptFollower(audio: audio)
-        keyVerified = false
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let exists = KeychainService.has(.geminiAPIKey)
-            let stored = KeychainService.get(.geminiAPIKey)
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.keyVerified = exists
-                if let stored {
-                    self.draftKey = stored
-                }
-            }
-        }
         completionObserver = audio.$playbackCompleted
             .filter(\.self)
             .sink { [weak self] _ in
@@ -156,8 +144,8 @@ final class AudiobookViewModel: ObservableObject {
             }
     }
 
-    var hasStoredKey: Bool {
-        keyVerified
+    var cleanupCredential: LLMCredential? {
+        providers.activeCredential
     }
 
     func refresh() async {
@@ -224,7 +212,13 @@ final class AudiobookViewModel: ObservableObject {
             uploadInProgress = true
             defer { uploadInProgress = false }
             do {
-                let estimate = try await service.upload(document: document, voice: voice, speed: speed, engine: engine)
+                let estimate = try await service.upload(
+                    document: document,
+                    voice: voice,
+                    speed: speed,
+                    engine: engine,
+                    cleanup: cleanupCredential
+                )
                 pendingEstimate = estimate
                 MetricsService.shared.trackAudiobookUpload(
                     pages: estimate.pageCount,
@@ -285,12 +279,12 @@ final class AudiobookViewModel: ObservableObject {
         presentEstimate(for: next.document, voice: next.voice, speed: next.speed, engine: next.engine)
     }
 
-    func startProcessing(useGeminiCleanup: Bool) {
+    func startProcessing(useCleanup: Bool) {
         guard let est = pendingEstimate else { return }
         guard !startingProcessing else { return }
-        let key = KeychainService.get(.geminiAPIKey)
-        guard !useGeminiCleanup || key != nil else {
-            showToast("Set a Gemini API key in Preferences first.", kind: .error)
+        let cleanup = useCleanup ? cleanupCredential : nil
+        guard !useCleanup || cleanup != nil else {
+            showToast(Self.missingProviderMessage, kind: .error)
             return
         }
         let bookID = est.bookID
@@ -299,11 +293,7 @@ final class AudiobookViewModel: ObservableObject {
         Task {
             defer { startingProcessing = false }
             do {
-                try await service.start(
-                    bookID,
-                    apiKey: key,
-                    useGeminiCleanup: useGeminiCleanup
-                )
+                try await service.start(bookID, cleanup: cleanup)
                 pendingDocument = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
@@ -345,10 +335,12 @@ final class AudiobookViewModel: ObservableObject {
         toast = nil
     }
 
+    static let missingProviderMessage = "Add an AI provider in Preferences first."
+
     func retry(_ book: Audiobook) {
-        let key = KeychainService.get(.geminiAPIKey)
-        guard !book.requiresGeminiCleanup || key != nil else {
-            showToast("Set a Gemini API key in Preferences first.", kind: .error)
+        let cleanup = book.requiresLLMCleanup ? cleanupCredential : nil
+        guard !book.requiresLLMCleanup || cleanup != nil else {
+            showToast(Self.missingProviderMessage, kind: .error)
             return
         }
         if nowPlaying?.bookID == book.bookID || pendingPlaybackBookID == book.bookID {
@@ -356,7 +348,7 @@ final class AudiobookViewModel: ObservableObject {
         }
         Task {
             do {
-                let count = try await service.retry(book.bookID, apiKey: key)
+                let count = try await service.retry(book.bookID, cleanup: cleanup)
                 showToast(count > 0 ? "Retrying \(count) page(s)..." : "Restarting book...", kind: .info)
                 await refresh()
                 subscribe(to: book.bookID)
@@ -819,9 +811,9 @@ final class AudiobookViewModel: ObservableObject {
 
     func resolveCostApproval(_ book: Audiobook, approveStandard: Bool) {
         let requiredCap = book.budget?.costApproval?.requiredCapUsd
-        let key = approveStandard ? KeychainService.get(.geminiAPIKey) : nil
-        guard !approveStandard || key != nil else {
-            showToast("Set a Gemini API key in Preferences before approving Standard-tier work.", kind: .error)
+        let cleanup = approveStandard ? providers.credential(for: .google) : nil
+        guard !approveStandard || cleanup != nil else {
+            showToast("Connect Google in Preferences before approving Standard-tier work.", kind: .error)
             return
         }
         Task {
@@ -830,7 +822,7 @@ final class AudiobookViewModel: ObservableObject {
                     book.bookID,
                     approve: approveStandard,
                     newCapUSD: approveStandard ? requiredCap : nil,
-                    apiKey: key
+                    cleanup: cleanup
                 )
                 showToast(
                     approveStandard ? "Approved Standard-tier cleanup." : "Finishing remaining pages locally.",
@@ -873,36 +865,5 @@ final class AudiobookViewModel: ObservableObject {
             await refresh()
             return false
         }
-    }
-
-    func refreshKeyState() {
-        keyVerified = KeychainService.has(.geminiAPIKey)
-    }
-
-    func verifyAndSaveKey() {
-        let trimmed = draftKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        Task {
-            verifyingKey = true
-            defer { verifyingKey = false }
-            let ok = await service.verifyKey(trimmed)
-            if ok {
-                let saved = KeychainService.set(trimmed, for: .geminiAPIKey)
-                    && KeychainService.get(.geminiAPIKey) == trimmed
-                keyVerified = saved
-                if !saved {
-                    showToast("Gemini accepted the key, but Voqora couldn't save it to your Keychain.", kind: .error)
-                }
-            } else {
-                keyVerified = false
-                showToast("Could not verify that key. Double-check and retry.", kind: .error)
-            }
-        }
-    }
-
-    func removeKey() {
-        KeychainService.delete(.geminiAPIKey)
-        draftKey = ""
-        keyVerified = false
     }
 }

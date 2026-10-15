@@ -151,6 +151,7 @@ PYINSTALLER_FLAGS=(
     --hidden-import 'python_multipart'
     --hidden-import 'multipart'
     --hidden-import 'google.genai.types'
+    --hidden-import 'httpx'
     --hidden-import 'pdfminer.layout'
     --hidden-import 'pdfminer.high_level'
     app/main.py
