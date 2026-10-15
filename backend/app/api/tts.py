@@ -6,7 +6,6 @@ surface lives in `app/api/audiobook.py`.
 
 import os
 import time
-from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
 from fastapi.responses import StreamingResponse
@@ -16,6 +15,7 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
 from app.services.engine_manager import EngineManager
+from app.services.languages import DEFAULT_VOICE, LANGUAGES, is_valid_voice
 from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.tts import TTSEngine, interactive_tts_lock
 
@@ -23,26 +23,35 @@ router = APIRouter()
 log = get_logger(__name__)
 
 
-VoiceName = Literal[
-    "af_bella",
-    "af_sarah",
-    "am_adam",
-    "am_michael",
-    "bf_emma",
-    "bf_isabella",
-    "bm_george",
-    "bm_lewis",
-]
+_LANGUAGE_CODES = frozenset(language["code"] for language in LANGUAGES)
+
+
+def _require_known_voice(value: str | None) -> str | None:
+    if value is not None and not is_valid_voice(value):
+        raise ValueError(f"unknown voice: {value}")
+    return value
 
 
 class SpeakRequest(BaseModel):
     # Keep one request bounded. Long documents belong in the audiobook flow,
     # where progress, cancellation, and recovery are explicit.
     text: str = Field(min_length=1, max_length=50_000)
-    voice: VoiceName = "af_bella"
+    voice: str = DEFAULT_VOICE
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     volume: float = Field(default=1.0, ge=0.0, le=1.5)
-    lang: str = "en-us"
+    lang: str | None = None
+
+    @field_validator("voice")
+    @classmethod
+    def require_known_voice(cls, value: str) -> str:
+        return _require_known_voice(value)
+
+    @field_validator("lang")
+    @classmethod
+    def require_known_lang(cls, value: str | None) -> str | None:
+        if value is not None and value not in _LANGUAGE_CODES:
+            raise ValueError(f"unsupported language: {value}")
+        return value
 
     @field_validator("text")
     @classmethod
@@ -76,8 +85,13 @@ class PrewarmRequest(BaseModel):
             return None
         return strip_markdown_for_narration(value)
 
-    voice: VoiceName | None = None
+    voice: str | None = None
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
+
+    @field_validator("voice")
+    @classmethod
+    def require_known_voice(cls, value: str | None) -> str | None:
+        return _require_known_voice(value)
 
 
 class EngineRequest(BaseModel):

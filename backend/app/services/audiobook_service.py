@@ -713,22 +713,28 @@ class AudiobookService:
                 "concatenating",
             }:
                 continue
-            book_id = meta["book_id"]
-            # Books created before this flag existed used Gemini for every
-            # page, so preserve that historical behavior for a resumable old
-            # job. New books always persist an explicit false by default.
-            uses_llm_cleanup = bool(meta.get("uses_gemini_cleanup", True))
-            if status == "cleaning" and uses_llm_cleanup:
-                # Needs the API key the user re-supplies via Resume.
-                await AudiobookStore.update_meta(book_id, status="needs_key")
-            elif status in {"tts", "concatenating"} or not uses_llm_cleanup:
-                # No key needed; safe to auto-resume.
-                # Use empty key — TTS phase doesn't read it.
-                await cls.enqueue(book_id, None)
-            else:
-                # extracting / queued without key context: also flag needs_key
-                # to keep it transparent (extraction is fast but cleaning is next).
-                await AudiobookStore.update_meta(book_id, status="needs_key")
+            book_id = meta.get("book_id", "<unknown>")
+            try:
+                # Books created before this flag existed used Gemini for every
+                # page, so preserve that historical behavior for a resumable old
+                # job. New books always persist an explicit false by default.
+                uses_llm_cleanup = bool(meta.get("uses_gemini_cleanup", True))
+                if status == "cleaning" and uses_llm_cleanup:
+                    # Needs the API key the user re-supplies via Resume.
+                    await AudiobookStore.update_meta(book_id, status="needs_key")
+                elif status in {"tts", "concatenating"} or not uses_llm_cleanup:
+                    # No key needed; safe to auto-resume.
+                    # Use empty key — TTS phase doesn't read it.
+                    await cls.enqueue(book_id, None)
+                else:
+                    # extracting / queued without key context: also flag needs_key
+                    # to keep it transparent (extraction is fast but cleaning is next).
+                    await AudiobookStore.update_meta(book_id, status="needs_key")
+            except Exception:
+                log.exception(
+                    "audiobook.resume_failed",
+                    extra={"book_id": book_id, "status": status},
+                )
 
     # ---------- pipeline ----------
 
@@ -948,15 +954,25 @@ class AudiobookService:
         page_count = int(meta.get("page_count") or 0)
         loop = asyncio.get_running_loop()
 
-        # Path A: try the PDF's own outline first (no API call needed).
-        # For non-PDF files there is no outline; skip straight to the LLM.
+        # Path A: the source's own structure first (no API call needed): the
+        # PDF outline, DOCX Heading N styles, or Markdown '#'/'##' headers.
+        # A local-first Markdown book is left to Path B, which reads every
+        # heading level.
+        uses_llm_cleanup = bool(meta.get("uses_gemini_cleanup", True))
+        source_path = AudiobookStore.source_file_path(book_id, file_ext)
+        outline: list[dict] | None
         if file_ext == "pdf":
-            source_path = AudiobookStore.source_file_path(book_id, file_ext)
             outline = await loop.run_in_executor(
                 cls._executor, PDFExtractor.read_outline, source_path
             )
-        else:
+        elif file_ext == "md" and not uses_llm_cleanup:
             outline = None
+        else:
+            outline = await loop.run_in_executor(
+                cls._executor, TextExtractor.read_outline, source_path
+            )
+        if outline:
+            outline = [e for e in outline if 1 <= e["start_page"] <= page_count]
 
         sections: list[dict] = []
         if outline:
@@ -984,21 +1000,20 @@ class AudiobookService:
                         "end_page": sections[0]["start_page"] - 1,
                     },
                 )
-        elif not bool(meta.get("uses_gemini_cleanup", True)) and file_ext == "md":
+        elif not uses_llm_cleanup and file_ext == "md":
             # Path B (local-first, no LLM call): a Markdown source has real
             # '#'..'######' structural headings to key chapters off of.
             # Without this, every local-first (the actual default) Markdown
             # book fell straight through to the single-giant-section
             # fallback below — no chapter navigation ever, only LLM-cleaned
             # books or PDFs with an embedded outline got real sections.
-            source_path = AudiobookStore.source_file_path(book_id, file_ext)
             sections = await loop.run_in_executor(
                 cls._executor,
                 TextExtractor.detect_markdown_sections,
                 source_path,
                 page_count,
             )
-        elif bool(meta.get("uses_gemini_cleanup", True)) and credential:
+        elif uses_llm_cleanup and credential:
             # Path C: ask the configured LLM provider.
             cleaned_pages: list[str] = []
             for n in range(1, page_count + 1):
@@ -1078,13 +1093,7 @@ class AudiobookService:
         sections_source = "detected"
         if not sections:
             sections_source = "fallback"
-            sections = [
-                {
-                    "title": meta.get("title") or "Audiobook",
-                    "start_page": 1,
-                    "end_page": page_count,
-                }
-            ]
+            sections = cls._fallback_sections(page_count, meta.get("title"))
 
         # The LLM section-detection call above can run up to 120s. Without
         # this check, a book deleted mid-call has its directory/DB row
@@ -1114,6 +1123,31 @@ class AudiobookService:
         )
         cls._emit(book_id, "phase_finished", phase="sectioning")
 
+    _FALLBACK_SECTION_PAGES = 15
+
+    @classmethod
+    def _fallback_sections(
+        cls, page_count: int, title: str | None
+    ) -> list[dict[str, Any]]:
+        if page_count <= cls._FALLBACK_SECTION_PAGES:
+            return [
+                {
+                    "title": title or "Audiobook",
+                    "start_page": 1,
+                    "end_page": max(1, page_count),
+                }
+            ]
+        return [
+            {
+                "title": f"Part {part}",
+                "start_page": start,
+                "end_page": min(start + cls._FALLBACK_SECTION_PAGES - 1, page_count),
+            }
+            for part, start in enumerate(
+                range(1, page_count + 1, cls._FALLBACK_SECTION_PAGES), start=1
+            )
+        ]
+
     # ---------- phase: clean ----------
 
     @classmethod
@@ -1128,6 +1162,7 @@ class AudiobookService:
         gemini_tier = str(meta.get("gemini_tier") or "flex")
         page_count = int(meta.get("page_count") or 0)
         failed: list[int] = list(meta.get("failed_pages") or [])
+        text_layer_pdf = is_pdf and meta.get("is_image_only") is False
 
         # Pages still needing cleaning (skip already-done for resume).
         pending = [
@@ -1197,11 +1232,16 @@ class AudiobookService:
                 with open(raw_path, encoding="utf-8") as f:
                     raw_text = f.read()
 
-                is_ocr = is_pdf and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD
+                is_blank_text_page = text_layer_pdf and not raw_text.strip()
+                is_ocr = (
+                    is_pdf
+                    and not is_blank_text_page
+                    and len(raw_text.strip()) < _OCR_TEXT_THRESHOLD
+                )
                 local_text = strip_layout_noise(raw_text) if is_pdf else raw_text
                 receipt_id: str | None = None
                 cannot_read_scan = uses_llm_cleanup and is_ocr and reads_images is False
-                if uses_llm_cleanup and not cannot_read_scan:
+                if uses_llm_cleanup and not cannot_read_scan and not is_blank_text_page:
                     receipt_id = await cls._reserve_llm_operation(
                         book_id,
                         operation="ocr_page" if is_ocr else "clean_page",
@@ -1214,11 +1254,16 @@ class AudiobookService:
                         tier=gemini_tier,
                     )
                 cost_capped = (
-                    uses_llm_cleanup and not cannot_read_scan and receipt_id is None
+                    uses_llm_cleanup
+                    and not cannot_read_scan
+                    and not is_blank_text_page
+                    and receipt_id is None
                 )
 
                 try:
-                    if cannot_read_scan:
+                    if is_blank_text_page:
+                        cleaned = "-"
+                    elif cannot_read_scan:
                         cleaned = local_text
                         await mark_page_failed(
                             n,
@@ -1499,7 +1544,7 @@ class AudiobookService:
             book_id, "phase_started", phase="tts", page=page_done, total=page_count
         )
 
-        voice = meta.get("voice") or "af_bella"
+        voice = meta.get("voice") or EngineManager.default_voice()
         speed = float(meta.get("speed") or 1.0)
         failed: list[int] = list(
             (AudiobookStore.read_meta(book_id) or {}).get("failed_pages") or []
@@ -1542,7 +1587,7 @@ class AudiobookService:
 
                 # P3: blank-page marker is silence, never spoken aloud as "dash".
                 # LLMCleaner returns the literal "-" string for empty pages.
-                if text == "-" or text.startswith("[blank") and text.endswith("]"):
+                if text == "-":
                     cls._write_silence_wav(out_path, 0.3)
                 else:
                     try:
@@ -1871,7 +1916,7 @@ class AudiobookService:
                 samples = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
         except (OSError, EOFError, wave.Error):
             return []
-        if not text or text == "-" or text.startswith("[blank"):
+        if not text or text == "-":
             return []
         page_lines = _aligned_page_lines(text, samples, speed)
         try:
@@ -1936,7 +1981,7 @@ class AudiobookService:
     @staticmethod
     def _write_json_atomic(path: str, payload: dict[str, Any]) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False)
         os.replace(tmp, path)
@@ -1946,7 +1991,7 @@ class AudiobookService:
     @staticmethod
     def _write_wav_from_samples(path: str, samples: np.ndarray) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         clipped = np.clip(samples, -1.0, 1.0)
         pcm = (clipped * 32767).astype(np.int16).tobytes()
         with wave.open(tmp, "wb") as wf:
@@ -1961,7 +2006,7 @@ class AudiobookService:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         n_samples = int(duration_sec * SAMPLE_RATE)
         pcm = (np.zeros(n_samples, dtype=np.int16)).tobytes()
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with wave.open(tmp, "wb") as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)

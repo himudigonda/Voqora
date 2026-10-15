@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 
 from app.services.engine_manager import (
@@ -125,3 +126,39 @@ async def test_ensure_loaded_double_load_guard(monkeypatch):
     )
     assert initialize_calls == 1
     assert start_signal.is_set()
+
+
+def test_state_exposes_language_catalog():
+    state = EngineManager.state()
+    codes = [language["code"] for language in state["languages"]]
+    assert codes == ["en-us", "en-gb", "es", "fr-fr", "it", "pt-br", "hi", "cmn"]
+    assert len(state["voice_catalog"]) == len(state["voices"]) == 28
+
+
+@pytest.mark.asyncio
+async def test_generate_derives_language_from_voice(monkeypatch):
+    seen = []
+
+    async def fake_generate(text, voice, speed, lang):
+        seen.append(lang)
+        yield np.zeros(1, dtype=np.float32)
+
+    monkeypatch.setattr(TTSEngine, "generate", fake_generate)
+    for voice in ("ff_siwis", "hf_alpha", "zf_xiaoxiao", "bm_george"):
+        async for _ in EngineManager.generate("x", voice, 1.0):
+            pass
+    async for _ in EngineManager.generate("x", "ff_siwis", 1.0, "en-us"):
+        pass
+    assert seen == ["fr-fr", "hi", "cmn", "en-gb", "en-us"]
+
+
+@pytest.mark.asyncio
+async def test_prewarm_uses_voice_language(monkeypatch):
+    calls = []
+
+    async def fake_prewarm(text, voice, speed, lang="en-us"):
+        calls.append(lang)
+
+    monkeypatch.setattr(TTSEngine, "prewarm_with_lookahead", fake_prewarm)
+    await EngineManager.prewarm_with_lookahead("Hola", "ef_dora", 1.0)
+    assert calls == ["es"]

@@ -10,11 +10,15 @@ callers wrap in run_in_executor when called from async code.
 import io
 import os
 import re
+import uuid
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore
 from app.services.text_normalizer import strip_markdown_for_narration
+
+log = get_logger(__name__)
 
 COVER_VERSION = b"voqora-text-cover-2"
 COVER_FONTS = (
@@ -59,7 +63,12 @@ class TextExtractor:
 
     @classmethod
     def _read_docx_text(cls, source_path: str) -> str:
-        """Read a DOCX in document order, including table content.
+        return "\n\n".join(text for text, _ in cls._docx_blocks(source_path))
+
+    @classmethod
+    def _docx_blocks(cls, source_path: str) -> list[tuple[str, str]]:
+        """Read a DOCX in document order as (text, paragraph style name) blocks,
+        including table content (tables carry an empty style name).
 
         `doc.paragraphs` alone omits table cell text entirely — tables live
         in the separate `doc.tables` collection, unordered relative to
@@ -76,12 +85,18 @@ class TextExtractor:
         from docx.text.paragraph import Paragraph
 
         doc = Document(source_path)
-        blocks: list[str] = []
+        blocks: list[tuple[str, str]] = []
         for child in doc.element.body.iterchildren():
             if child.tag == qn("w:p"):
-                text = Paragraph(child, doc).text
-                if text.strip():
-                    blocks.append(text)
+                paragraph = Paragraph(child, doc)
+                if paragraph.text.strip():
+                    style = paragraph.style
+                    blocks.append(
+                        (
+                            paragraph.text,
+                            (style.name if style is not None else "") or "",
+                        )
+                    )
             elif child.tag == qn("w:tbl"):
                 table = Table(child, doc)
                 rows = [
@@ -92,8 +107,8 @@ class TextExtractor:
                 if rows:
                     width = rows[0].count("|") - 1
                     rule = "|" + " --- |" * width
-                    blocks.append("\n".join([rows[0], rule, *rows[1:]]))
-        return "\n\n".join(blocks)
+                    blocks.append(("\n".join([rows[0], rule, *rows[1:]]), ""))
+        return blocks
 
     # A fenced code block may legitimately contain blank lines, which the
     # paragraph splitter would otherwise treat as block boundaries -- cutting
@@ -164,9 +179,7 @@ class TextExtractor:
         return chunks
 
     @classmethod
-    def split_pages(cls, text: str) -> list[str]:
-        """Split text into ~_WORDS_PER_PAGE-word pages at paragraph boundaries."""
-        # Normalise line endings, then split on blank lines (fence-aware).
+    def _paragraphs(cls, text: str) -> list[str]:
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         raw_paras = cls._split_blocks(text)
         paragraphs: list[str] = []
@@ -177,8 +190,12 @@ class TextExtractor:
                 paragraphs.extend(c for c in cls._chunk_oversized(para) if c.strip())
             else:
                 paragraphs.append(para)
+        return paragraphs
 
+    @staticmethod
+    def _paginate(paragraphs: list[str]) -> tuple[list[str], list[int]]:
         pages: list[str] = []
+        start_pages: list[int] = []
         current: list[str] = []
         current_words = 0
 
@@ -186,16 +203,22 @@ class TextExtractor:
             wc = len(para.split())
             if current_words + wc > _WORDS_PER_PAGE and current:
                 pages.append("\n\n".join(current))
-                current = [para]
-                current_words = wc
-            else:
-                current.append(para)
-                current_words += wc
+                current = []
+                current_words = 0
+            start_pages.append(len(pages) + 1)
+            current.append(para)
+            current_words += wc
 
         if current:
             pages.append("\n\n".join(current))
 
-        return pages if pages else [""]
+        return (pages if pages else [""]), start_pages
+
+    @classmethod
+    def split_pages(cls, text: str) -> list[str]:
+        """Split text into ~_WORDS_PER_PAGE-word pages at paragraph boundaries."""
+        pages, _ = cls._paginate(cls._paragraphs(text))
+        return pages
 
     # ---------- PDFExtractor-compatible interface ----------
 
@@ -254,9 +277,97 @@ class TextExtractor:
                 cls._atomic_write(p, page_text)
 
     @classmethod
-    def read_outline(cls, source_path: str):
-        """Text files have no native outline; always fall through to Gemini."""
-        return
+    def read_outline(cls, source_path: str) -> list[dict] | None:
+        extension = os.path.splitext(source_path)[1].lower()
+        if extension == ".docx":
+            return cls._docx_headings(source_path)
+        if extension == ".md":
+            return cls._markdown_headings(source_path)
+        return None
+
+    @classmethod
+    def _docx_headings(cls, source_path: str) -> list[dict] | None:
+        try:
+            blocks = cls._docx_blocks(source_path)
+            paragraphs = cls._paragraphs("\n\n".join(text for text, _ in blocks))
+            if not paragraphs:
+                return None
+            _, start_pages = cls._paginate(paragraphs)
+
+            headings: list[dict] = []
+            paragraph_index = 0
+            for text, style_name in blocks:
+                if style_name.startswith("Heading"):
+                    title = " ".join(text.split())
+                    suffix = style_name[len("Heading") :].strip()
+                    if title:
+                        headings.append(
+                            {
+                                "title": title,
+                                "start_page": start_pages[
+                                    min(paragraph_index, len(start_pages) - 1)
+                                ],
+                                "level": int(suffix) if suffix.isdigit() else 1,
+                            }
+                        )
+                paragraph_index += len(cls._paragraphs(text))
+            return headings or None
+        except Exception:
+            log.warning(
+                "docx.heading_read_failed",
+                extra={"failure_code": "docx_heading_read_failed"},
+                exc_info=True,
+            )
+            return None
+
+    @classmethod
+    def _markdown_headings(cls, source_path: str) -> list[dict] | None:
+        try:
+            with open(source_path, encoding="utf-8", errors="replace") as file:
+                paragraphs = cls._paragraphs(file.read())
+        except OSError:
+            log.warning(
+                "markdown.heading_read_failed",
+                extra={"failure_code": "markdown_heading_read_failed"},
+                exc_info=True,
+            )
+            return None
+        if not paragraphs:
+            return None
+        _, start_pages = cls._paginate(paragraphs)
+        headings: list[dict] = []
+        for paragraph, start_page in zip(paragraphs, start_pages, strict=True):
+            in_fence = False
+            for line in paragraph.split("\n"):
+                if cls._FENCE_RE.match(line):
+                    in_fence = not in_fence
+                    continue
+                parsed = None if in_fence else cls._parse_md_header(line)
+                if parsed is not None:
+                    level, title = parsed
+                    headings.append(
+                        {"title": title, "start_page": start_page, "level": level}
+                    )
+        return headings or None
+
+    @staticmethod
+    def _parse_md_header(line: str) -> tuple[int, str] | None:
+        stripped = line.strip()
+        hashes = len(stripped) - len(stripped.lstrip("#"))
+        if (
+            hashes < 1
+            or hashes > 2
+            or hashes >= len(stripped)
+            or stripped[hashes] != " "
+        ):
+            return None
+        title = stripped[hashes:].strip()
+        without_closer = title.rstrip("#")
+        if without_closer != title and (
+            not without_closer or without_closer[-1] == " "
+        ):
+            title = without_closer.rstrip()
+        return (hashes, title) if title else None
 
     # ---------- local (no-LLM) section detection ----------
 
@@ -428,7 +539,7 @@ class TextExtractor:
     @staticmethod
     def _atomic_write(path: str, text: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
@@ -436,7 +547,7 @@ class TextExtractor:
     @staticmethod
     def _atomic_write_bytes(path: str, data: bytes) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, path)

@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.audiobook_service import AudiobookService
+from app.services.audiobook_service import WAV_HEADER_SIZE, AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.engine_manager import EngineManager
 from app.services.import_limits import (
@@ -364,6 +364,18 @@ async def upload_audiobook(
                 status_code=400,
                 detail="This file has no extractable content. Try a different file.",
             )
+        if not is_pdf and page_count == 1:
+            only_page_text = await loop.run_in_executor(
+                None, TextExtractor.read_text, source_path
+            )
+            only_pages = await loop.run_in_executor(
+                None, TextExtractor.split_pages, only_page_text
+            )
+            if not only_pages or not only_pages[0].strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="This file has no extractable content. Try a different file.",
+                )
         if page_count > settings.MAX_AUDIOBOOK_PAGES:
             raise HTTPException(
                 status_code=413,
@@ -435,6 +447,7 @@ async def upload_audiobook(
             estimated=estimate,
         )
         meta["file_ext"] = file_ext
+        meta["is_image_only"] = is_image_only
         meta["source_sha256"] = content_hash
         AudiobookStore.write_meta(book_id, meta)
 
@@ -607,6 +620,8 @@ def get_audiobook_audio(
         raise HTTPException(status_code=404, detail="Audio not ready.")
 
     file_size = os.path.getsize(path)
+    if file_size < WAV_HEADER_SIZE:
+        raise HTTPException(status_code=404, detail="Audio not ready.")
     if not range_header:
         return FileResponse(
             path,
@@ -694,6 +709,8 @@ async def retry_audiobook(
     meta = AudiobookStore.read_meta(book_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
+    if AudiobookService.is_processing(book_id):
+        raise HTTPException(status_code=409, detail="Book is already processing.")
     if bool(meta.get("uses_gemini_cleanup", True)):
         credential = _require_credential(credential)
     count = await AudiobookService.retry_failed(book_id, credential)

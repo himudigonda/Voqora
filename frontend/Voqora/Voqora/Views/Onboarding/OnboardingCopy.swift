@@ -2,7 +2,7 @@ import Foundation
 
 enum OnboardingCopy {
     static let welcomeTitle = "Welcome to Voqora"
-    static let welcomeBody = "Hear any text on your Mac read aloud with natural voices."
+    static let welcomeBody = "Hear any text on your Mac read aloud with natural voices in 8 languages."
     struct Feature {
         let systemImage: String
         let title: String
@@ -41,6 +41,10 @@ enum OnboardingCopy {
     static let customizeTitle = "Personalize"
     static let customizeAccentLabel = "Accent Color"
     static let customizeIconLabel = "App Icon"
+    static let customizeVoiceLabel = "Voice"
+    static let customizeSpeedLabel = "Speed"
+    static let customizeAutoDetectTitle = "Auto-detect Language"
+    static let customizeAutoDetectBody = "Switches to a voice in the text's language when it differs from your voice's language."
 
     static let cleanupTitle = "Clean Up Hard Documents"
     static let cleanupBody = "Optional. Connect an AI provider to tidy messy PDFs and read scanned pages. "

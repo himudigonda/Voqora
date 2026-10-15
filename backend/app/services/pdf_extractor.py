@@ -8,6 +8,7 @@ import io
 import os
 import re
 import threading
+import uuid
 from collections.abc import Iterable
 
 import pdfplumber
@@ -132,27 +133,36 @@ class PDFExtractor:
     def read_outline(cls, pdf_path: str) -> list[dict] | None:
         """Return a flat list of section dicts from the PDF outline if present.
 
-        Each entry: {"title": str, "start_page": int}. Returns None if the PDF
+        Each entry: {"title": str, "start_page": int, "level": int}, where
+        level is the zero-based bookmark nesting depth. Returns None if the PDF
         has no outline (so the caller falls back to LLM-based section detection).
         """
         try:
             with _PDFIUM_LOCK:
                 doc = pdfium.PdfDocument(pdf_path)
                 try:
-                    # Walk top-level bookmarks (outline). Children are flattened.
                     outline = list(doc.get_toc())
                     if not outline:
                         return None
                     page_count = len(doc)
                     sections: list[dict] = []
                     for entry in outline:
-                        title = (entry.title or "").strip()
+                        title = (entry.get_title() or "").strip()
                         if not title:
                             continue
-                        page_idx = entry.page_index
+                        destination = entry.get_dest()
+                        page_idx = (
+                            destination.get_index() if destination is not None else None
+                        )
                         if page_idx is None or page_idx < 0 or page_idx >= page_count:
                             continue
-                        sections.append({"title": title, "start_page": page_idx + 1})
+                        sections.append(
+                            {
+                                "title": title,
+                                "start_page": page_idx + 1,
+                                "level": entry.level,
+                            }
+                        )
                     return sections or None
                 finally:
                     doc.close()
@@ -214,7 +224,7 @@ class PDFExtractor:
     @staticmethod
     def _atomic_write(path: str, text: str) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(text)
         os.replace(tmp, path)
@@ -222,7 +232,7 @@ class PDFExtractor:
     @staticmethod
     def _atomic_write_bytes(path: str, data: bytes) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
+        tmp = f"{path}.{uuid.uuid4().hex}.tmp"
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, path)

@@ -12,6 +12,7 @@ struct OnboardingView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
+    @StateObject private var samplePlayer = VoiceSamplePlayer()
     @State private var step: Int = 0
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
@@ -43,10 +44,13 @@ struct OnboardingView: View {
         }
         .onDisappear {
             permissions.stopPolling()
+            samplePlayer.stop()
         }
         .onChange(of: step) { _, newValue in
             coordinator.recordStep(newValue)
+            samplePlayer.stop()
         }
+        .onChange(of: vm.selectedVoice) { _, _ in samplePlayer.stop() }
     }
 
     private var accentColor: Color {
@@ -313,37 +317,92 @@ struct OnboardingView: View {
     }
 
     private var stepCustomize: some View {
-        VStack(spacing: 22) {
+        ScrollView {
+            VStack(spacing: 18) {
+                customizeHeader
+                customizeVoice
+                customizeAccent
+                customizeIcon
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollIndicators(.hidden)
+    }
+
+    private var customizeHeader: some View {
+        VStack(spacing: 14) {
             Image(systemName: "paintpalette.fill")
-                .font(.system(size: 52))
+                .font(.system(size: 44))
                 .foregroundStyle(accentColor)
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
+                .frame(width: 48, height: 48)
             Text(OnboardingCopy.customizeTitle)
                 .font(appFont(size: 24, weight: .bold))
                 .foregroundStyle(Palette.textPrimary)
+        }
+    }
 
-            VStack(spacing: 10) {
-                Text(OnboardingCopy.customizeAccentLabel)
+    private var customizeVoice: some View {
+        VStack(spacing: 12) {
+            Text(OnboardingCopy.customizeVoiceLabel)
+                .font(appFont(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+            HStack(spacing: 12) {
+                GroupedVoicePicker(title: OnboardingCopy.customizeVoiceLabel, selection: $vm.selectedVoice)
+                VoiceSampleButton(player: samplePlayer, voice: vm.selectedVoice, speed: vm.speechSpeed)
+            }
+            HStack {
+                Text(OnboardingCopy.customizeSpeedLabel)
                     .font(appFont(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.textSecondary)
-                HStack(spacing: 14) {
-                    ForEach(AccentColorOption.allCases, id: \.self) { option in
-                        AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
-                            vm.accentColorID = option
-                        }
+                Spacer()
+                Text(PlayerSpeedMenu.label(vm.speechSpeed))
+                    .font(appFont(size: 13, weight: .bold).monospaced())
+                    .foregroundStyle(accentColor)
+            }
+            .frame(maxWidth: 320)
+            Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0, step: 0.05)
+                .tint(accentColor)
+                .frame(maxWidth: 320)
+            Toggle(isOn: $vm.autoDetectLanguage) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(OnboardingCopy.customizeAutoDetectTitle)
+                        .font(appFont(size: 13, weight: .semibold))
+                        .foregroundStyle(Palette.textPrimary)
+                    Text(OnboardingCopy.customizeAutoDetectBody)
+                        .font(appFont(size: 12))
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: 420)
+        }
+    }
+
+    private var customizeAccent: some View {
+        VStack(spacing: 10) {
+            Text(OnboardingCopy.customizeAccentLabel)
+                .font(appFont(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+            HStack(spacing: 14) {
+                ForEach(AccentColorOption.allCases, id: \.self) { option in
+                    AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
+                        vm.accentColorID = option
                     }
                 }
             }
+        }
+    }
 
-            VStack(spacing: 10) {
-                Text(OnboardingCopy.customizeIconLabel)
-                    .font(appFont(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                HStack(spacing: 16) {
-                    ForEach(AppIconOption.allCases) { option in
-                        AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
-                            vm.appIconID = option
-                        }
+    private var customizeIcon: some View {
+        VStack(spacing: 10) {
+            Text(OnboardingCopy.customizeIconLabel)
+                .font(appFont(size: 13, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+            HStack(spacing: 16) {
+                ForEach(AppIconOption.allCases) { option in
+                    AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
+                        vm.appIconID = option
                     }
                 }
             }
@@ -391,7 +450,7 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             Button {
-                Task { await vm.speak(text: OnboardingCopy.sampleText) }
+                Task { await vm.speak(text: doneSampleText) }
             } label: {
                 Label(OnboardingCopy.doneSampleButton, systemImage: "play.fill")
                     .padding(.vertical, 4)
@@ -399,6 +458,12 @@ struct OnboardingView: View {
             .buttonStyle(.bordered)
             .disabled(!vm.isBackendOnline)
         }
+    }
+
+    private var doneSampleText: String {
+        DashboardViewModel.langCode(forVoice: vm.selectedVoice).hasPrefix("en")
+            ? OnboardingCopy.sampleText
+            : DashboardViewModel.sampleSentence(forVoice: vm.selectedVoice)
     }
 
     private func advance() {

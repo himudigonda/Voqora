@@ -83,7 +83,7 @@ struct AudiobookLibraryView: View {
         .searchable(text: $searchText, placement: .toolbar, prompt: "Search Audiobooks")
         .toolbar { toolbarContent }
         .onDrop(of: [.fileURL], isTargeted: $hoveringDrop) { providers in
-            bookVM.importDroppedDocument(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
+            bookVM.importDroppedDocuments(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
         }
         .alert("Delete All Audiobooks?", isPresented: $showDeleteAllConfirmation) {
             Button("Delete All", role: .destructive) { bookVM.deleteAllBooks() }

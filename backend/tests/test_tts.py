@@ -388,3 +388,38 @@ def test_espeak_data_path_is_passed_through_unchanged_when_short(monkeypatch):
     )
 
     assert tts._resolve_espeak_data_path() == "/opt/espeak-ng-data"
+
+
+def test_speak_request_accepts_every_catalog_voice_and_rejects_unknown():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.tts import PrewarmRequest, SpeakRequest
+    from app.services.languages import VOICE_IDS
+
+    for voice in VOICE_IDS:
+        assert SpeakRequest(text="Hola", voice=voice).voice == voice
+        assert PrewarmRequest(text="Hola", voice=voice).voice == voice
+    with pytest.raises(ValidationError):
+        SpeakRequest(text="Hello", voice="jf_alpha")
+    with pytest.raises(ValidationError):
+        PrewarmRequest(text="Hello", voice="nope")
+
+
+def test_speak_request_rejects_unsupported_language():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.api.tts import SpeakRequest
+
+    assert SpeakRequest(text="Hola", voice="ef_dora").lang is None
+    assert SpeakRequest(text="Hola", lang="es").lang == "es"
+    with pytest.raises(ValidationError):
+        SpeakRequest(text="Hello", lang="ja")
+
+
+def test_split_segments_breaks_on_cjk_and_devanagari_sentence_marks():
+    zh = TTSEngine._split_segments("你好。今天天气很好！我们去公园吧？")
+    assert zh == ["你好。", "今天天气很好！", "我们去公园吧？"]
+    hi = TTSEngine._split_segments("नमस्ते। आप कैसे हैं।")
+    assert hi == ["नमस्ते।", "आप कैसे हैं।"]

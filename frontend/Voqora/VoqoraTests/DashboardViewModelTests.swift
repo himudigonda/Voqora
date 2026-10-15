@@ -21,7 +21,7 @@ final class DashboardViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_voiceDefaultsMigration_resetsLegacyVoiceAndRepairsUnsupportedValueAfterMigration() throws {
+    func test_voiceDefaultsMigration_resetsOldVersionAndUnknownVoicesButKeepsCatalogVoices() throws {
         let suiteName = "DashboardViewModelTests.voiceDefaultsMigration.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -34,12 +34,18 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
         XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
 
-        defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
-        defaults.set("zf_xiaoxiao", forKey: "defaultBookVoice")
+        defaults.set("xx_unknown", forKey: "selectedVoice")
+        defaults.set("jf_alpha", forKey: "defaultBookVoice")
         defaults.set(8, forKey: "voiceDefaultsMigrationVersion")
         XCTAssertTrue(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
         XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "af_bella")
         XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "af_bella")
+
+        defaults.set("zf_xiaoxiao", forKey: "selectedVoice")
+        defaults.set("hf_alpha", forKey: "defaultBookVoice")
+        XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "selectedVoice"), "zf_xiaoxiao")
+        XCTAssertEqual(defaults.string(forKey: "defaultBookVoice"), "hf_alpha")
 
         defaults.set("bf_emma", forKey: "selectedVoice")
         XCTAssertFalse(DashboardViewModel.applyVoiceDefaultsMigrationIfNeeded(defaults: defaults))
@@ -352,6 +358,72 @@ final class DashboardViewModelTests: XCTestCase {
         let restored = makeVM()
 
         XCTAssertEqual(restored.selectedVoice, "bf_emma")
+    }
+
+    func test_selectedNonEnglishVoice_survivesRelaunch() {
+        let initial = makeVM()
+        initial.selectedVoice = "hf_alpha"
+        let restored = makeVM()
+
+        XCTAssertEqual(restored.selectedVoice, "hf_alpha")
+        XCTAssertEqual(restored.currentVoiceDisplay, "Aanya")
+    }
+
+    func test_voiceName_usesCatalogNameWhenKnownAndHumanizesOtherwise() {
+        XCTAssertEqual(DashboardViewModel.voiceName(for: "hf_alpha"), "Aanya")
+        XCTAssertEqual(DashboardViewModel.voiceName(for: "zm_yunyang"), "Yunyang")
+        XCTAssertEqual(DashboardViewModel.voiceName(for: "xx_nobody"), "Nobody")
+    }
+
+    func test_voiceCatalog_hasTwentyEightVoicesInEightLanguages() {
+        XCTAssertEqual(DashboardViewModel.voiceCatalog.count, 28)
+        XCTAssertEqual(DashboardViewModel.availableVoices.count, 28)
+        let languages = Set(DashboardViewModel.voiceCatalog.map { DashboardViewModel.langCode(forVoice: $0.id) })
+        XCTAssertEqual(languages, ["en-us", "en-gb", "es", "fr-fr", "it", "pt-br", "hi", "cmn"])
+    }
+
+    func test_voiceCatalog_keepsOriginalEnglishVoices() {
+        let ids = Set(DashboardViewModel.voiceCatalog.map(\.id))
+        for id in ["af_bella", "af_sarah", "am_adam", "am_michael", "bf_emma", "bf_isabella", "bm_george", "bm_lewis"] {
+            XCTAssertTrue(ids.contains(id), "\(id) dropped")
+        }
+    }
+
+    func test_voiceCatalog_hasNoJapaneseVoices() {
+        for voice in DashboardViewModel.voiceCatalog {
+            XCTAssertFalse(voice.id.hasPrefix("j"), "\(voice.id) must not be exposed")
+        }
+    }
+
+    func test_voiceCatalog_idsAreUniqueAndLabelled() {
+        let ids = DashboardViewModel.voiceCatalog.map(\.id)
+        XCTAssertEqual(ids.count, Set(ids).count)
+        for voice in DashboardViewModel.voiceCatalog {
+            XCTAssertFalse(voice.name.isEmpty)
+            XCTAssertTrue(voice.id.contains("_"))
+        }
+    }
+
+    func test_languageGroups_coverEveryVoiceExactlyOnce() {
+        let grouped = DashboardViewModel.languageGroups.flatMap { $0.voices.map(\.id) }
+        XCTAssertEqual(grouped.sorted(), DashboardViewModel.voiceCatalog.map(\.id).sorted())
+        XCTAssertEqual(DashboardViewModel.languageGroups.map(\.id), [
+            "English (US)", "English (UK)", "Spanish", "French", "Italian", "Portuguese", "Hindi", "Mandarin",
+        ])
+    }
+
+    func test_onlyMandarinGroupIsBeta() {
+        for group in DashboardViewModel.languageGroups {
+            XCTAssertEqual(group.beta, group.id == "Mandarin", group.id)
+        }
+        XCTAssertEqual(DashboardViewModel.voicesByID["zf_xiaoxiao"]?.display, "🇨🇳 Xiaoxiao (Beta)")
+        XCTAssertEqual(DashboardViewModel.voicesByID["ff_siwis"]?.display, "🇫🇷 Siwis")
+    }
+
+    func test_sampleSentence_isNativeToTheVoiceLanguage() {
+        XCTAssertEqual(DashboardViewModel.sampleSentence(forVoice: "af_bella"), "The quick brown fox jumps over the lazy dog.")
+        XCTAssertTrue(DashboardViewModel.sampleSentence(forVoice: "ff_siwis").hasPrefix("Le vif renard"))
+        XCTAssertTrue(DashboardViewModel.sampleSentence(forVoice: "zf_xiaoxiao").contains("狐狸"))
     }
 
     func test_isOnline_reflects_isBackendOnline() {

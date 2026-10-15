@@ -19,6 +19,7 @@ struct PreferencesView: View {
     @AppStorage(AppPresence.showMenuBarIconKey) var showMenuBarIcon = true
     @AppStorage(AppPresence.hideFromDockKey) var hideFromDock = false
     @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = true
+    @StateObject private var samplePlayer = VoiceSamplePlayer()
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
     @State private var identitySubmitting = false
@@ -51,19 +52,25 @@ struct PreferencesView: View {
                             Label("Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
                             Spacer()
-                            Picker("Voice", selection: $vm.selectedVoice) {
-                                ForEach(vm.availableVoices, id: \.id) { voice in
-                                    Text(voice.display).tag(voice.id)
-                                }
-                            }
-                            .frame(width: 150)
-                            .labelsHidden()
+                            GroupedVoicePicker(title: "Voice", selection: $vm.selectedVoice)
+                            VoiceSampleButton(player: samplePlayer, voice: vm.selectedVoice, speed: vm.speechSpeed)
                         }
 
                         Text("Used when you speak selected text.")
                             .font(vm.font(.rowSubtitle))
                             .foregroundStyle(Palette.textSecondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Toggle(isOn: $vm.autoDetectLanguage) {
+                            VStack(alignment: .leading) {
+                                Text("Auto-detect Language")
+                                    .font(vm.font(.paneTitle))
+                                Text("Switches to a voice in the text's language when it differs from your voice's language.")
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
@@ -132,13 +139,7 @@ struct PreferencesView: View {
                             Label("Default Voice", systemImage: "person.wave.2")
                                 .font(vm.font(.rowTitle))
                             Spacer()
-                            Picker("Audiobook Voice", selection: $bookVM.defaultBookVoice) {
-                                ForEach(vm.availableVoices, id: \.id) { voice in
-                                    Text(voice.display).tag(voice.id)
-                                }
-                            }
-                            .frame(width: 150)
-                            .labelsHidden()
+                            GroupedVoicePicker(title: "Audiobook Voice", selection: $bookVM.defaultBookVoice)
                         }
 
                         Text("New audiobooks are narrated with this voice.")
@@ -590,6 +591,8 @@ struct PreferencesView: View {
             .padding(40)
             .frame(maxWidth: 800)
         }
+        .onChange(of: vm.selectedVoice) { _, _ in samplePlayer.stop() }
+        .onDisappear { samplePlayer.stop() }
         .alert("Erase all local Voqora data?", isPresented: $showEraseConfirmation) {
             Button("Erase and Quit", role: .destructive) { eraseAllLocalData() }
             Button("Cancel", role: .cancel) {}
@@ -764,6 +767,51 @@ struct AccentSwatchButton: View {
         .accessibilityLabel(option.displayName)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
         .help(option.displayName)
+    }
+}
+
+struct GroupedVoicePicker: View {
+    let title: String
+    @Binding var selection: String
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            ForEach(DashboardViewModel.languageGroups) { group in
+                Section(group.beta ? "\(group.id) (Beta)" : group.id) {
+                    ForEach(group.voices) { voice in
+                        Text(voice.display).tag(voice.id)
+                    }
+                }
+            }
+        }
+        .frame(width: 190)
+        .labelsHidden()
+    }
+}
+
+struct VoiceSampleButton: View {
+    @ObservedObject var player: VoiceSamplePlayer
+    let voice: String
+    let speed: Double
+
+    private var isPlayingThisVoice: Bool {
+        player.playingVoice == voice
+    }
+
+    var body: some View {
+        Button {
+            if isPlayingThisVoice {
+                player.stop()
+            } else {
+                player.play(voice: voice, speed: speed)
+            }
+        } label: {
+            Label(
+                isPlayingThisVoice ? "Stop" : "Hear Sample",
+                systemImage: isPlayingThisVoice ? "stop.fill" : "play.fill"
+            )
+        }
+        .accessibilityLabel(isPlayingThisVoice ? "Stop sample" : "Hear sample")
     }
 }
 

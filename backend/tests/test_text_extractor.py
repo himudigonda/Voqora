@@ -12,7 +12,7 @@ import tempfile
 
 from docx import Document
 
-from app.services.text_extractor import TextExtractor
+from app.services.text_extractor import _WORDS_PER_PAGE, TextExtractor
 
 
 def _write_docx(path: str) -> None:
@@ -211,3 +211,233 @@ def test_docx_table_is_narrated_with_its_headers():
         narration = strip_markdown_for_narration(TextExtractor.read_text(path))
 
         assert "Name is Ada, Role is Engineer." in narration
+
+
+def _big_paragraph(extra: int = 20) -> str:
+    return " ".join(f"word{i}" for i in range(_WORDS_PER_PAGE + extra))
+
+
+def test_read_outline_is_none_for_plain_text(tmp_path):
+    path = tmp_path / "plain.txt"
+    path.write_text("# Not a heading in a txt file.", encoding="utf-8")
+
+    assert TextExtractor.read_outline(str(path)) is None
+    assert TextExtractor.read_outline("/any/path") is None
+
+
+def test_read_outline_docx_detects_heading_styles(tmp_path):
+    doc = Document()
+    doc.add_heading("Chapter One", level=1)
+    doc.add_paragraph("Body text for chapter one.")
+    doc.add_heading("Section 1.1", level=2)
+    doc.add_paragraph("More body text here.")
+    doc.add_heading("Chapter Two", level=1)
+    doc.add_paragraph("Final body text.")
+    path = str(tmp_path / "headings.docx")
+    doc.save(path)
+
+    assert TextExtractor.read_outline(path) == [
+        {"title": "Chapter One", "start_page": 1, "level": 1},
+        {"title": "Section 1.1", "start_page": 1, "level": 2},
+        {"title": "Chapter Two", "start_page": 1, "level": 1},
+    ]
+
+
+def test_read_outline_docx_without_heading_styles_is_none(tmp_path):
+    doc = Document()
+    doc.add_paragraph("Just a plain paragraph.")
+    doc.add_paragraph("Another plain paragraph.")
+    path = str(tmp_path / "plain.docx")
+    doc.save(path)
+
+    assert TextExtractor.read_outline(path) is None
+
+
+def test_read_outline_docx_heading_position_matches_pagination(tmp_path):
+    doc = Document()
+    doc.add_paragraph(_big_paragraph())
+    doc.add_heading("Chapter Two Starts Here", level=1)
+    doc.add_paragraph("Body text.")
+    path = str(tmp_path / "page_two.docx")
+    doc.save(path)
+
+    assert TextExtractor.read_outline(path) == [
+        {"title": "Chapter Two Starts Here", "start_page": 2, "level": 1}
+    ]
+    pages = TextExtractor.split_pages(TextExtractor.read_text(path))
+    assert "Chapter Two Starts Here" in pages[1]
+    assert "Chapter Two Starts Here" not in pages[0]
+
+
+def test_read_outline_docx_heading_position_survives_embedded_double_break(tmp_path):
+    doc = Document()
+    paragraph = doc.add_paragraph()
+    paragraph.add_run(" ".join(f"a{i}" for i in range(50)))
+    break_run = paragraph.add_run()
+    break_run.add_break()
+    break_run.add_break()
+    paragraph.add_run(" ".join(f"b{i}" for i in range(400)))
+    assert "\n\n" in paragraph.text
+    doc.add_heading("Real Chapter Two", level=1)
+    doc.add_paragraph("Body text after the heading.")
+    path = str(tmp_path / "double_break.docx")
+    doc.save(path)
+
+    headings = TextExtractor.read_outline(path)
+    pages = TextExtractor.split_pages(TextExtractor.read_text(path))
+
+    assert headings == [{"title": "Real Chapter Two", "start_page": 3, "level": 1}]
+    assert "Real Chapter Two" in pages[2]
+
+
+def test_read_outline_docx_heading_position_accounts_for_tables(tmp_path):
+    doc = Document()
+    doc.add_paragraph(" ".join(f"w{i}" for i in range(_WORDS_PER_PAGE - 5)))
+    table = doc.add_table(rows=2, cols=2)
+    for row in table.rows:
+        for cell in row.cells:
+            cell.text = "alpha beta gamma"
+    doc.add_heading("After The Table", level=1)
+    doc.add_paragraph("Body.")
+    path = str(tmp_path / "table_then_heading.docx")
+    doc.save(path)
+
+    headings = TextExtractor.read_outline(path)
+    pages = TextExtractor.split_pages(TextExtractor.read_text(path))
+
+    assert headings == [{"title": "After The Table", "start_page": 2, "level": 1}]
+    assert "After The Table" in pages[1]
+    assert "After The Table" not in pages[0]
+
+
+def test_read_outline_docx_style_named_heading_defaults_to_level_one(tmp_path):
+    from docx.enum.style import WD_STYLE_TYPE
+
+    doc = Document()
+    style = doc.styles.add_style("Heading", WD_STYLE_TYPE.PARAGRAPH)
+    doc.add_paragraph("Untitled-level heading").style = style
+    path = str(tmp_path / "custom.docx")
+    doc.save(path)
+
+    assert TextExtractor.read_outline(path) == [
+        {"title": "Untitled-level heading", "start_page": 1, "level": 1}
+    ]
+
+
+def test_read_outline_docx_corrupt_or_missing_is_none(tmp_path):
+    corrupt = tmp_path / "corrupt.docx"
+    corrupt.write_bytes(b"not a real docx")
+
+    assert TextExtractor.read_outline(str(tmp_path / "missing.docx")) is None
+    assert TextExtractor.read_outline(str(corrupt)) is None
+
+
+def test_read_outline_md_detects_h1_and_h2(tmp_path):
+    path = tmp_path / "headers.md"
+    path.write_text(
+        "# Chapter One\n\nBody.\n\n## Section 1.1\n\nMore.\n\n"
+        "# Chapter Two\n\nFinal.\n",
+        encoding="utf-8",
+    )
+
+    assert TextExtractor.read_outline(str(path)) == [
+        {"title": "Chapter One", "start_page": 1, "level": 1},
+        {"title": "Section 1.1", "start_page": 1, "level": 2},
+        {"title": "Chapter Two", "start_page": 1, "level": 1},
+    ]
+
+
+def test_read_outline_md_without_h1_or_h2_is_none(tmp_path):
+    path = tmp_path / "deep.md"
+    path.write_text(
+        "Plain paragraph.\n\n### Level three only.\n\nAnother.\n", encoding="utf-8"
+    )
+
+    assert TextExtractor.read_outline(str(path)) is None
+
+
+def test_read_outline_md_heading_position_matches_pagination(tmp_path):
+    path = tmp_path / "page_two.md"
+    path.write_text(
+        f"{_big_paragraph()}\n\n# Chapter Two Starts Here\n\nBody.\n",
+        encoding="utf-8",
+    )
+
+    assert TextExtractor.read_outline(str(path)) == [
+        {"title": "Chapter Two Starts Here", "start_page": 2, "level": 1}
+    ]
+    pages = TextExtractor.split_pages(TextExtractor.read_text(str(path)))
+    assert "Chapter Two Starts Here" in pages[1]
+
+
+def test_read_outline_md_heading_inside_oversized_block_uses_its_chunk_page(tmp_path):
+    path = tmp_path / "oversized.md"
+    path.write_text(
+        f"# First\n{_big_paragraph(2 * _WORDS_PER_PAGE)}\n\n# Last\n\nEnd.\n",
+        encoding="utf-8",
+    )
+
+    headings = TextExtractor.read_outline(str(path))
+    pages = TextExtractor.split_pages(TextExtractor.read_text(str(path)))
+
+    assert headings[0] == {"title": "First", "start_page": 1, "level": 1}
+    assert headings[1]["title"] == "Last"
+    assert "# Last" in pages[headings[1]["start_page"] - 1]
+
+
+def test_read_outline_md_heading_directly_after_text_is_found(tmp_path):
+    path = tmp_path / "tight.md"
+    path.write_text("Intro line.\n# Tight Heading\nBody.\n", encoding="utf-8")
+
+    assert TextExtractor.read_outline(str(path)) == [
+        {"title": "Tight Heading", "start_page": 1, "level": 1}
+    ]
+
+
+def test_read_outline_md_ignores_headings_inside_fences(tmp_path):
+    path = tmp_path / "fenced.md"
+    path.write_text(
+        "Intro.\n\n```\n# not a heading\n\n## also not\n```\n\n# Real\n",
+        encoding="utf-8",
+    )
+
+    assert TextExtractor.read_outline(str(path)) == [
+        {"title": "Real", "start_page": 1, "level": 1}
+    ]
+
+
+def test_read_outline_md_missing_file_is_none(tmp_path):
+    assert TextExtractor.read_outline(str(tmp_path / "missing.md")) is None
+
+
+def test_parse_md_header_rules():
+    assert TextExtractor._parse_md_header("#nospace") is None
+    assert TextExtractor._parse_md_header("some #hashtag inline") is None
+    assert TextExtractor._parse_md_header("### too deep") is None
+    assert TextExtractor._parse_md_header("# Valid Header") == (1, "Valid Header")
+    assert TextExtractor._parse_md_header("## Valid H2 ##") == (2, "Valid H2")
+    assert TextExtractor._parse_md_header("# Learning F#") == (1, "Learning F#")
+    assert TextExtractor._parse_md_header("## C# and F#") == (2, "C# and F#")
+    assert TextExtractor._parse_md_header("# Single Closer #") == (1, "Single Closer")
+
+
+def test_paginate_start_pages_agree_with_split_pages():
+    paragraphs = TextExtractor._paragraphs(
+        f"{_big_paragraph()}\n\nsecond block\n\n{_big_paragraph(5)}\n\nlast"
+    )
+    pages, start_pages = TextExtractor._paginate(paragraphs)
+
+    assert pages == TextExtractor.split_pages(
+        f"{_big_paragraph()}\n\nsecond block\n\n{_big_paragraph(5)}\n\nlast"
+    )
+    assert len(start_pages) == len(paragraphs)
+    for paragraph, start_page in zip(paragraphs, start_pages, strict=True):
+        assert paragraph in pages[start_page - 1]
+
+
+def test_atomic_writes_leave_no_tmp_files(tmp_path):
+    target = str(tmp_path / "pages" / "001.txt")
+    TextExtractor._atomic_write(target, "text")
+    TextExtractor._atomic_write_bytes(target + ".bin", b"bytes")
+
+    assert sorted(os.listdir(tmp_path / "pages")) == ["001.txt", "001.txt.bin"]

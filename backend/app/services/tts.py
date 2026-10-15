@@ -33,7 +33,9 @@ _NO_BREAK_AFTER_RE = re.compile(
     r"^\(?\d{1,3}[.)]$|(?:^|\s)"
     r"(?:[Mm]rs?|[Mm]s|[Dd]r|[Pp]rof|[Ss]r|[Jj]r|[Ss]t|vs|cf|al|fig|approx|e\.g|i\.e)\.$"
 )
-_SEGMENT_SENTENCE_END_RE = re.compile(r"[.!?][\"'\u201d\u2019)\]]*$")
+_SEGMENT_SENTENCE_END_RE = re.compile(
+    r"[.!?\u3002\uff01\uff1f\u0964][\"'\u201d\u2019)\]]*$"
+)
 
 # espeak-ng stores the data directory handed to `espeak_Initialize()` in a
 # fixed 160-byte global (`char path_home[N_PATH_HOME]`). A longer path is NOT
@@ -395,7 +397,9 @@ class TTSEngine:
         raw_parts = [
             s.strip()
             for s in re.split(
-                r"(?:(?<=[.!?|:;,])|(?<=[.!?][\"'\u201d\u2019)\]])) +", raw_text
+                r"(?:(?<=[.!?|:;,])|(?<=[.!?][\"'\u201d\u2019)\]])) +"
+                r"|(?<=[\u3002\uff01\uff1f\uff0c\uff1b\uff1a\u0964])\s*",
+                raw_text,
             )
             if s.strip()
         ]

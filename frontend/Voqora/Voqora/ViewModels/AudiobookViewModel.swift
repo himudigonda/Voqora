@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import CryptoKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 private func sha256Hex(_ input: String) -> String {
     let digest = SHA256.hash(data: Data(input.utf8))
@@ -36,6 +37,11 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     private var uploadQueue: [QueuedUpload] = []
+    private var uploadGeneration = 0
+
+    var queuedUploadCount: Int {
+        uploadQueue.count
+    }
 
     @Published var toast: Toast? = nil
     private var toastDismissTask: Task<Void, Never>?
@@ -220,9 +226,15 @@ final class AudiobookViewModel: ObservableObject {
         pendingDocument = document
         pendingEstimate = nil
         loadingError = nil
+        uploadGeneration &+= 1
+        let generation = uploadGeneration
+        uploadInProgress = true
         Task {
-            uploadInProgress = true
-            defer { uploadInProgress = false }
+            defer {
+                if generation == uploadGeneration {
+                    uploadInProgress = false
+                }
+            }
             do {
                 let estimate = try await service.upload(
                     document: document,
@@ -231,12 +243,17 @@ final class AudiobookViewModel: ObservableObject {
                     engine: engine,
                     cleanup: cleanupCredential
                 )
+                guard generation == uploadGeneration else {
+                    try? await service.delete(estimate.bookID)
+                    return
+                }
                 pendingEstimate = estimate
                 MetricsService.shared.trackAudiobookUpload(
                     pages: estimate.pageCount,
                     fileKind: document.pathExtension.lowercased()
                 )
             } catch {
+                guard generation == uploadGeneration else { return }
                 loadingError = error.localizedDescription
                 showToast("Could not read this document. Check the file and try again.", kind: .error)
             }
@@ -261,20 +278,36 @@ final class AudiobookViewModel: ObservableObject {
         }
     }
 
-    func importDroppedDocument(_ providers: [NSItemProvider], defaultVoice: String, defaultSpeed: Double) -> Bool {
-        guard let provider = providers.first else { return false }
+    func importDroppedDocuments(_ providers: [NSItemProvider], defaultVoice: String, defaultSpeed: Double) -> Bool {
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
         Task {
-            guard let url = await AudiobookImportStaging.fileURL(from: provider) else {
-                showToast("Voqora could not read that dropped file.", kind: .error)
-                return
+            var unreadableCount = 0
+            var unsupportedCount = 0
+            for provider in fileProviders {
+                guard let url = await AudiobookImportStaging.fileURL(from: provider) else {
+                    unreadableCount += 1
+                    continue
+                }
+                guard AudiobookImportStaging.supports(url) else {
+                    unsupportedCount += 1
+                    continue
+                }
+                importDocument(url, defaultVoice: defaultVoice, defaultSpeed: defaultSpeed)
             }
-            importDocument(url, defaultVoice: defaultVoice, defaultSpeed: defaultSpeed)
+            if unsupportedCount > 0 {
+                showToast("Voqora audiobooks support \(AudiobookImportStaging.supportedFormatsDescription) files.", kind: .info)
+            } else if unreadableCount > 0 {
+                showToast("Voqora could not read that dropped file.", kind: .error)
+            }
         }
         return true
     }
 
     func cancelUpload() {
         let stagedDocument = pendingDocument
+        uploadGeneration &+= 1
+        uploadInProgress = false
         if let est = pendingEstimate {
             Task { try? await service.delete(est.bookID) }
         }
@@ -319,6 +352,7 @@ final class AudiobookViewModel: ObservableObject {
                 pendingDocument = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
+                flushUploadQueue()
             }
         }
     }

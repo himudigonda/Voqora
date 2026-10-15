@@ -8,19 +8,17 @@ from collections.abc import AsyncGenerator
 
 import numpy as np
 
+from app.services.languages import (
+    DEFAULT_VOICE,
+    VOICES,
+    espeak_lang_for_voice,
+    language_catalog,
+    voice_catalog,
+)
 from app.services.tts import TTSEngine
 
-KOKORO_VOICES = [
-    "af_bella",
-    "af_sarah",
-    "am_adam",
-    "am_michael",
-    "bf_emma",
-    "bf_isabella",
-    "bm_george",
-    "bm_lewis",
-]
-KOKORO_DEFAULT_VOICE = "af_bella"
+KOKORO_VOICES = [voice["id"] for voice in VOICES]
+KOKORO_DEFAULT_VOICE = DEFAULT_VOICE
 
 
 class EngineManager:
@@ -38,6 +36,8 @@ class EngineManager:
             "engine": "kokoro",
             "model": "",
             "voices": KOKORO_VOICES,
+            "voice_catalog": voice_catalog(),
+            "languages": language_catalog(),
         }
 
     @classmethod
@@ -50,9 +50,10 @@ class EngineManager:
 
     @classmethod
     async def generate(
-        cls, text: str, voice: str, speed: float, lang: str = "en-us"
+        cls, text: str, voice: str, speed: float, lang: str | None = None
     ) -> AsyncGenerator[np.ndarray, None]:
-        async for chunk in TTSEngine.generate(text, voice, speed, lang):
+        resolved = lang or espeak_lang_for_voice(voice)
+        async for chunk in TTSEngine.generate(text, voice, speed, resolved):
             yield chunk
 
     @classmethod
@@ -61,7 +62,9 @@ class EngineManager:
 
     @classmethod
     async def prewarm_with_lookahead(cls, text: str, voice: str, speed: float) -> None:
-        await TTSEngine.prewarm_with_lookahead(text, voice, speed)
+        await TTSEngine.prewarm_with_lookahead(
+            text, voice, speed, espeak_lang_for_voice(voice)
+        )
 
     @classmethod
     def is_loaded(cls) -> bool:

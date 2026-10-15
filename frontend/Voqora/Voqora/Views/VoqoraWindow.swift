@@ -89,7 +89,7 @@ struct VoqoraWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering) { providers in
-                        guard bookVM.importDroppedDocument(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed) else { return false }
+                        guard bookVM.importDroppedDocuments(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed) else { return false }
                         vm.showLibrary()
                         return true
                     }

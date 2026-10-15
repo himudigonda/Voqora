@@ -9,10 +9,7 @@ class DashboardViewModel: ObservableObject {
     private static let voiceDefaultsMigrationVersion = 7
     private static let voiceDefaultsMigrationKey = "voiceDefaultsMigrationVersion"
 
-    private static let supportedVoiceIDs: Set<String> = [
-        "af_bella", "af_sarah", "am_adam", "am_michael",
-        "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
-    ]
+    private static let supportedVoiceIDs: Set<String> = Set(voiceCatalog.map(\.id))
 
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
         let needsReleaseMigration = defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion
@@ -66,6 +63,7 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
+    @AppStorage("autoDetectLanguage") var autoDetectLanguage = false
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     private(set) var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
@@ -119,12 +117,107 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    static let availableVoices: [(id: String, display: String)] = [
-        ("af_bella", "🇺🇸 Bella"), ("af_sarah", "🇺🇸 Sarah"),
-        ("am_adam", "🇺🇸 Adam"), ("am_michael", "🇺🇸 Michael"),
-        ("bf_emma", "🇬🇧 Emma"), ("bf_isabella", "🇬🇧 Isabella"),
-        ("bm_george", "🇬🇧 George"), ("bm_lewis", "🇬🇧 Lewis"),
+    struct VoiceOption: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let flag: String
+        let language: String
+        let beta: Bool
+
+        var display: String {
+            beta ? "\(flag) \(name) (Beta)" : "\(flag) \(name)"
+        }
+    }
+
+    struct LanguageGroup: Identifiable, Hashable {
+        let id: String
+        let flag: String
+        let beta: Bool
+        let voices: [VoiceOption]
+    }
+
+    nonisolated static let voiceCatalog: [VoiceOption] = [
+        .init(id: "af_bella", name: "Bella", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_sarah", name: "Sarah", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_adam", name: "Adam", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_michael", name: "Michael", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_heart", name: "Heart", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_nicole", name: "Nicole", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_aoede", name: "Aoede", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "af_kore", name: "Kore", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_fenrir", name: "Fenrir", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "am_puck", name: "Puck", flag: "🇺🇸", language: "English (US)", beta: false),
+        .init(id: "bf_emma", name: "Emma", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bf_isabella", name: "Isabella", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_george", name: "George", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_lewis", name: "Lewis", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "bm_fable", name: "Fable", flag: "🇬🇧", language: "English (UK)", beta: false),
+        .init(id: "ef_dora", name: "Dora", flag: "🇪🇸", language: "Spanish", beta: false),
+        .init(id: "em_alex", name: "Alex", flag: "🇪🇸", language: "Spanish", beta: false),
+        .init(id: "ff_siwis", name: "Siwis", flag: "🇫🇷", language: "French", beta: false),
+        .init(id: "if_sara", name: "Sara", flag: "🇮🇹", language: "Italian", beta: false),
+        .init(id: "im_nicola", name: "Nicola", flag: "🇮🇹", language: "Italian", beta: false),
+        .init(id: "pf_dora", name: "Dora", flag: "🇧🇷", language: "Portuguese", beta: false),
+        .init(id: "pm_alex", name: "Alex", flag: "🇧🇷", language: "Portuguese", beta: false),
+        .init(id: "hf_alpha", name: "Aanya", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hf_beta", name: "Diya", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hm_omega", name: "Arjun", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "hm_psi", name: "Kabir", flag: "🇮🇳", language: "Hindi", beta: false),
+        .init(id: "zf_xiaoxiao", name: "Xiaoxiao", flag: "🇨🇳", language: "Mandarin", beta: true),
+        .init(id: "zm_yunyang", name: "Yunyang", flag: "🇨🇳", language: "Mandarin", beta: true),
     ]
+
+    static let languageGroups: [LanguageGroup] = {
+        var order: [String] = []
+        var byLanguage: [String: [VoiceOption]] = [:]
+        for voice in voiceCatalog {
+            if byLanguage[voice.language] == nil {
+                order.append(voice.language)
+            }
+            byLanguage[voice.language, default: []].append(voice)
+        }
+        return order.map { language in
+            let voices = byLanguage[language] ?? []
+            return LanguageGroup(
+                id: language,
+                flag: voices.first?.flag ?? "",
+                beta: voices.first?.beta ?? false,
+                voices: voices
+            )
+        }
+    }()
+
+    static let availableVoices: [(id: String, display: String)] =
+        voiceCatalog.map { ($0.id, $0.display) }
+
+    static let voicesByID: [String: VoiceOption] =
+        Dictionary(uniqueKeysWithValues: voiceCatalog.map { ($0.id, $0) })
+
+    nonisolated static let voicePrefixToLang: [Character: String] = [
+        "a": "en-us", "b": "en-gb", "e": "es", "f": "fr-fr",
+        "h": "hi", "i": "it", "p": "pt-br", "z": "cmn",
+    ]
+
+    nonisolated static func langCode(forVoice id: String) -> String {
+        guard let first = id.first else { return "en-us" }
+        return voicePrefixToLang[first] ?? "en-us"
+    }
+
+    nonisolated static func defaultVoice(forLang code: String) -> String? {
+        voiceCatalog.first { langCode(forVoice: $0.id) == code }?.id
+    }
+
+    nonisolated static func sampleSentence(forVoice id: String) -> String {
+        switch langCode(forVoice: id) {
+        case "es": "El veloz zorro marrón salta sobre el perro perezoso."
+        case "fr-fr": "Le vif renard brun saute par-dessus le chien paresseux."
+        case "it": "La rapida volpe marrone salta sopra il cane pigro."
+        case "pt-br": "A rápida raposa marrom salta sobre o cão preguiçoso."
+        case "hi": "तेज़ भूरी लोमड़ी आलसी कुत्ते के ऊपर कूद जाती है।"
+        case "cmn": "敏捷的棕色狐狸跳过了那只懒狗。"
+        default: "The quick brown fox jumps over the lazy dog."
+        }
+    }
 
     var availableVoices: [(id: String, display: String)] {
         Self.availableVoices
@@ -135,6 +228,9 @@ class DashboardViewModel: ObservableObject {
     }
 
     static func voiceName(for id: String) -> String {
+        if let option = voicesByID[id] {
+            return option.name
+        }
         let name = id.split(separator: "_").last.map(String.init) ?? id
         return name.prefix(1).uppercased() + name.dropFirst()
     }
@@ -303,10 +399,13 @@ class DashboardViewModel: ObservableObject {
                     self.currentSpeakTask = nil
                 }
             }
-            VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": selectedVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             status = .thinking
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
+            let effectiveVoice = autoDetectLanguage
+                ? LanguageDetector.voiceForText(cleaned, fallback: selectedVoice)
+                : selectedVoice
+            VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": effectiveVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
             audio.prepareForStream()
@@ -317,7 +416,7 @@ class DashboardViewModel: ObservableObject {
             do {
                 let stream = backend.streamAudio(
                     text: cleaned,
-                    voice: selectedVoice,
+                    voice: effectiveVoice,
                     speed: speechSpeed,
                     volume: speechVolume
                 )
@@ -336,7 +435,7 @@ class DashboardViewModel: ObservableObject {
 
                 guard !Task.isCancelled, generation == speakGeneration else { return }
                 guard receivedAudio else {
-                    VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": selectedVoice])
+                    VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": effectiveVoice])
                     audio.stop()
                     showTransientError("Voqora could not generate audio. Try again.")
                     return
@@ -351,22 +450,22 @@ class DashboardViewModel: ObservableObject {
                         speed: speechSpeed
                     ))
                 }
-                history.log(text: spokenText ?? cleaned, voice: selectedVoice)
+                history.log(text: spokenText ?? cleaned, voice: effectiveVoice)
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
-                    voice: selectedVoice,
+                    voice: effectiveVoice,
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
                 UsageStatsStore.shared.recordSpeech(
                     text: spokenText ?? cleaned,
-                    voice: selectedVoice,
+                    voice: effectiveVoice,
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
             } catch {
                 guard !Task.isCancelled, generation == speakGeneration else { return }
-                VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": selectedVoice, "chars": "\(cleaned.count)"])
+                VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": effectiveVoice, "chars": "\(cleaned.count)"])
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error))
             }

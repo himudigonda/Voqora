@@ -1229,7 +1229,7 @@ def test_audio_no_range_returns_full_file_with_accept_ranges_header():
             bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
         ),
     )
-    payload = b"hello-wav-bytes"
+    payload = b"RIFF" + b"\x00" * 60
     with open(AudiobookStore.audio_path(bid), "wb") as f:
         f.write(payload)
 
@@ -1237,6 +1237,25 @@ def test_audio_no_range_returns_full_file_with_accept_ranges_header():
     assert response.status_code == 200
     assert response.headers["Accept-Ranges"] == "bytes"
     assert response.content == payload
+
+
+def test_audio_subheader_file_returns_404_not_ready():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    client = TestClient(app)
+    bid = AudiobookStore.create_book("Test.pdf")
+    AudiobookStore.write_meta(
+        bid,
+        AudiobookStore.initial_meta(
+            bid, "Test.pdf", 1, "kokoro", "af_bella", 1.0, {"cost_usd": 0.0}
+        ),
+    )
+    with open(AudiobookStore.audio_path(bid), "wb") as f:
+        f.write(b"\x00" * 43)
+
+    assert client.get(f"/audiobook/{bid}/audio").status_code == 404
 
 
 def test_audio_range_invalid_returns_416():
@@ -2297,6 +2316,9 @@ def test_upload_accepts_every_supported_text_document_kind(
 
     monkeypatch.setattr(_te.TextExtractor, "page_count", classmethod(lambda cls, _: 1))
     monkeypatch.setattr(
+        _te.TextExtractor, "read_text", classmethod(lambda cls, _: "document content")
+    )
+    monkeypatch.setattr(
         _te.TextExtractor, "sample_word_count", classmethod(lambda cls, _: 10)
     )
     monkeypatch.setattr(
@@ -2347,6 +2369,36 @@ def test_upload_accepts_image_only_pdf(monkeypatch):
     assert body["is_image_only"] is True
     # Cost estimate uses the per-page OCR default (not zero).
     assert body["estimated_cost_usd"] > 0
+    assert AudiobookStore.read_meta(body["book_id"])["is_image_only"] is True
+
+
+def test_upload_persists_is_image_only_false_for_a_text_pdf(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services import pdf_extractor as _pe
+
+    monkeypatch.setattr(_pe.PDFExtractor, "page_count", classmethod(lambda cls, p: 1))
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "is_image_only", classmethod(lambda cls, p: False)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_word_count", classmethod(lambda cls, p: 100)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "sample_char_count", classmethod(lambda cls, p: 600)
+    )
+    monkeypatch.setattr(
+        _pe.PDFExtractor, "render_cover", classmethod(lambda cls, bid, **kw: None)
+    )
+
+    files = {"file": ("text.pdf", b"%PDF-1.4\n" + b"x" * 200, "application/pdf")}
+    response = TestClient(app).post("/audiobook", files=files)
+
+    assert response.status_code == 200
+    assert (
+        AudiobookStore.read_meta(response.json()["book_id"])["is_image_only"] is False
+    )
 
 
 def test_estimate_response_includes_cost_warning(monkeypatch):
