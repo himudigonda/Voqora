@@ -73,7 +73,7 @@ rm -f backend/VoqoraServer.spec
 
 cd backend
 # Ensure venv exists and is up to date
-uv sync --frozen
+uv sync --frozen --python "${VOQORA_BACKEND_PYTHON:-3.13}"
 
 # The speech model and voice pack are intentionally not committed to Git.
 # Fetch the exact Voqora v1 assets on a clean checkout and verify their
