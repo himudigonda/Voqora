@@ -90,16 +90,16 @@ final class MetricsServiceTests: XCTestCase {
         XCTAssertNil(MetricsService.Event.fromSerialized(payload))
     }
 
-    func test_analyticsDefaultsOnAndHonorsOptOut() throws {
+    func test_analyticsDefaultsOffAndHonorsOptIn() throws {
         let suiteName = "MetricsServiceTests.analytics.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        XCTAssertTrue(MetricsService.userAllowsAnalytics(defaults))
-        defaults.set(false, forKey: MetricsService.analyticsEnabledKey)
         XCTAssertFalse(MetricsService.userAllowsAnalytics(defaults))
         defaults.set(true, forKey: MetricsService.analyticsEnabledKey)
         XCTAssertTrue(MetricsService.userAllowsAnalytics(defaults))
+        defaults.set(false, forKey: MetricsService.analyticsEnabledKey)
+        XCTAssertFalse(MetricsService.userAllowsAnalytics(defaults))
     }
 
     func test_flushBackoffGrowsAndCaps() {

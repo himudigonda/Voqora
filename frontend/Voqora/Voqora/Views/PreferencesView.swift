@@ -18,7 +18,7 @@ struct PreferencesView: View {
 
     @AppStorage(AppPresence.showMenuBarIconKey) var showMenuBarIcon = true
     @AppStorage(AppPresence.hideFromDockKey) var hideFromDock = false
-    @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = true
+    @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = false
     @StateObject private var samplePlayer = VoiceSamplePlayer()
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""

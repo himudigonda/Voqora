@@ -20,7 +20,7 @@ value() { /usr/libexec/PlistBuddy -c "Print :$1" "$INFO_PLIST" 2>/dev/null || tr
 BUILD_SETTINGS="$(xcodebuild -project "$PROJECT" -scheme "$APP_NAME" -showBuildSettings 2>/dev/null)"
 project_setting() {
     local key="$1"
-    printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' -v key="$key" '$1 ~ "^[[:space:]]*" key "$" { print $2; exit }'
+    printf '%s\n' "$BUILD_SETTINGS" | awk -F ' = ' -v key="$key" '!found && $1 ~ "^[[:space:]]*" key "$" { print $2; found = 1 }'
 }
 
 PUBLIC_KEY="$(value SUPublicEDKey)"
