@@ -296,6 +296,9 @@ struct OnboardingView: View {
                     .disableAutocorrection(true)
                     .frame(maxWidth: 280)
             }
+            Text(OnboardingCopy.identityOptionalNote)
+                .font(appFont(size: 12, weight: .regular))
+                .foregroundStyle(Palette.textSecondary)
             Link(OnboardingCopy.privacyPolicyTitle, destination: OnboardingCopy.privacyPolicyURL)
                 .font(appFont(size: 12, weight: .regular))
                 .foregroundStyle(Palette.textSecondary)
@@ -303,8 +306,10 @@ struct OnboardingView: View {
     }
 
     private var canSaveIdentity: Bool {
-        IdentityService.looksLikeName(nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)) &&
-            IdentityService.looksLikeEmail(emailDraft.trimmingCharacters(in: .whitespacesAndNewlines))
+        let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty, email.isEmpty { return true }
+        return IdentityService.looksLikeName(name) && IdentityService.looksLikeEmail(email)
     }
 
     private var stepCustomize: some View {

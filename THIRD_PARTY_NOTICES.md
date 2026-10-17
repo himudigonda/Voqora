@@ -1,8 +1,8 @@
 # Third-party notices
 
 Voqora is distributed with third-party software and assets. Those components
-are not relicensed by the PolyForm Noncommercial license for Voqora's own
-source code.
+keep their own licenses and are not relicensed by Voqora's licenses. Thank you
+to every author and maintainer below; Voqora would not exist without them.
 
 ## App
 
@@ -41,3 +41,21 @@ The app bundle also contains this notice, the Voqora license, and the
 commercial-license notice. Before redistributing a modified bundle, review the
 licenses and notices shipped by each bundled dependency and preserve all terms
 that apply to it.
+
+## GPL components and source code
+
+The local speech server bundles phonemizer-fork 3.3.2 (GPL-3.0) and
+espeakng-loader 0.2.4 with the espeak-ng library and data (GPL-3.0-or-later).
+For that reason the speech server (`backend/`) is itself licensed under
+GPL-3.0-or-later (see `backend/LICENSE`). Its complete source, including the
+build scripts in `scripts/`, is in this repository at the tag matching each
+release: <https://github.com/himudigonda/Voqora>.
+
+The GPL components are unmodified upstream releases. Their source is available
+from the projects listed above and from PyPI (`phonemizer-fork==3.3.2`,
+`espeakng-loader==0.2.4`). If you cannot get any source you are entitled to
+under the GPL from those locations, open an issue in this repository and it
+will be provided.
+
+The Voqora app is a separate program. It starts the speech server as a separate
+process and communicates with it only over a private local HTTP connection.

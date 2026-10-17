@@ -165,6 +165,7 @@ echo "   ✓ Backend zip bundled ($(du -sh "$ZIP_SRC" | cut -f1))."
 for NOTICE in LICENSE COMMERCIAL-LICENSE.md THIRD_PARTY_NOTICES.md; do
     cp "$NOTICE" "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/$NOTICE"
 done
+cp backend/LICENSE "$STAGING_DIR/${APP_NAME}.app/Contents/Resources/SPEECH-SERVER-GPL-3.0.txt"
 echo "   ✓ License and third-party notices bundled."
 
 # Fonts and notices are added after Xcode archives the application, so the

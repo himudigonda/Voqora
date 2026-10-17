@@ -17,7 +17,7 @@ struct PreferencesView: View {
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
-    @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = true
+    @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = false
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
     @State private var identitySubmitting = false

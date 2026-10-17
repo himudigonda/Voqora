@@ -179,9 +179,19 @@ update-feed check against the exact archive being shipped. See the
 
 ## License
 
-Voqora is source-available under [PolyForm Noncommercial 1.0.0](LICENSE).
-You may use, study, modify, and share it for non-commercial purposes.
-Commercial use requires a separate agreement; see
-[COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+Voqora has two parts with two licenses:
+
+- **The macOS app** (`frontend/`) is source-available under
+  [PolyForm Noncommercial 1.0.0](LICENSE). You may use, study, modify, and
+  share it for non-commercial purposes. Commercial use requires a separate
+  agreement; see [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
+- **The local speech server** (`backend/`) is free software under
+  [GPL-3.0-or-later](backend/LICENSE), because it bundles GPL-licensed speech
+  components. It runs as its own process and talks to the app over a private
+  local connection.
+
+Third-party components keep their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Policies:
+[Privacy](PRIVACY.md), [Terms](TERMS.md), [Security](SECURITY.md).
 
 Copyright 2026 Himansh Mudigonda.

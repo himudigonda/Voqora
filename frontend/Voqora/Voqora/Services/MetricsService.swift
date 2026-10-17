@@ -19,7 +19,7 @@ actor MetricsService {
     private var nextFlushAllowed = Date.distantPast
 
     nonisolated static func userAllowsAnalytics(_ defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: analyticsEnabledKey) as? Bool ?? true
+        defaults.object(forKey: analyticsEnabledKey) as? Bool ?? false
     }
 
     private var isActive: Bool {

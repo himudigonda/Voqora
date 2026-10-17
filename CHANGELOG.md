@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Privacy
+
+- Usage analytics are now off until you turn them on in Preferences.
+- Name and email in setup are optional; leave both blank to skip.
+- New Privacy Policy, Terms of Use, and Security Policy.
+
+### Licensing
+
+- The local speech server is now licensed GPL-3.0-or-later because it bundles
+  GPL speech components. The app keeps its PolyForm Noncommercial license.
+  Third-party notices now credit those projects and explain where to get the
+  source.
+
 ## [1.2.6] - 2026-10-12
 
 ### Fixed
