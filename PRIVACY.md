@@ -1,6 +1,6 @@
 # Privacy Policy
 
-Last updated: 2026-10-17. Applies to Voqora 1.2.7 and later.
+Last updated: 2026-10-17. Applies to Voqora 2.0.0 and later.
 
 Voqora is a free Mac app by Himansh Mudigonda ("I", "me"), the controller of
 the data described here. Speech is generated on your Mac. I collect as little
