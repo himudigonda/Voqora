@@ -308,7 +308,9 @@ struct OnboardingView: View {
     private var canSaveIdentity: Bool {
         let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty, email.isEmpty { return true }
+        if name.isEmpty, email.isEmpty {
+            return true
+        }
         return IdentityService.looksLikeName(name) && IdentityService.looksLikeEmail(email)
     }
 
