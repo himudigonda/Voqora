@@ -40,6 +40,11 @@
   shows the book, chapter, and cover. Turn this off with "Respond to media
   keys" in Preferences -> Shortcuts. Playback pauses when headphones
   disconnect.
+- More ways to start speech: press `Command + Shift + 8` and drag over any
+  part of the screen to hear the text in it, assign a shortcut to Speak
+  Clipboard, use Speak with Voqora or Add to Voqora Library from the Services
+  menu, and run Speak Text, Speak Clipboard, Pause or Resume Speech, and Stop
+  Speech from the Shortcuts app.
 
 ### Changed
 

@@ -89,6 +89,14 @@ struct VoqoraApp: App {
         _providers = StateObject(wrappedValue: providersInstance)
 
         vmInstance.audiobookVM = audiobookInstance
+        let inputsInstance = SpeechInputCoordinator(
+            speaker: vmInstance,
+            library: audiobookInstance,
+            presentLibrary: { [weak vmInstance] in
+                vmInstance?.showLibrary()
+                WindowPresenter.shared.show()
+            }
+        )
 
         backend = backendInstance
         systemMedia = runningTests ? nil : SystemMediaSession.live(dashboard: vmInstance, audiobooks: audiobookInstance)
@@ -97,7 +105,9 @@ struct VoqoraApp: App {
         }
 
         if !runningTests {
-            setupShortcuts(vm: vmInstance)
+            inputsInstance.activate()
+            appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance)
+            setupShortcuts(vm: vmInstance, inputs: inputsInstance)
             systemMedia?.start()
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
@@ -133,7 +143,7 @@ struct VoqoraApp: App {
         }
     }
 
-    private func setupShortcuts(vm: DashboardViewModel) {
+    private func setupShortcuts(vm: DashboardViewModel, inputs: SpeechInputCoordinator) {
         VoqoraLog.info("KeyboardShortcuts", "Initializing registration")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
@@ -165,6 +175,22 @@ struct VoqoraApp: App {
                 guard Self.shortcutAllowed("exportAudio") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
                 vm.exportLastClip()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .speakScreenText) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("speakScreenText") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "speakScreenText triggered")
+                await inputs.speakScreenText()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .speakClipboard) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("speakClipboard") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "speakClipboard triggered")
+                await inputs.speakClipboard()
             }
         }
 
