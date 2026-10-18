@@ -27,7 +27,7 @@ struct SystemPasteboard: PasteboardAccessing {
     private let pasteboard: NSPasteboard
 
     init(pasteboard: NSPasteboard = .general) {
-        self.pasteboard = pasteboard
+        self.pasteboard = pasteboard ?? SystemPasteboard()
     }
 
     var changeCount: Int {
@@ -81,8 +81,8 @@ struct TranscriptInserter: TranscriptInserting {
     private let wait: (TimeInterval) async -> Void
 
     init(
-        pasteboard: any PasteboardAccessing = SystemPasteboard(),
-        pasteCommand: any PasteCommandSending = SystemPasteCommand(),
+        pasteboard: (any PasteboardAccessing)? = nil,
+        pasteCommand: (any PasteCommandSending)? = nil,
         isAccessibilityTrusted: @escaping () -> Bool = { AXIsProcessTrusted() },
         restoreDelay: TimeInterval = TranscriptInserter.defaultRestoreDelay,
         wait: @escaping (TimeInterval) async -> Void = { seconds in
@@ -90,7 +90,7 @@ struct TranscriptInserter: TranscriptInserting {
         }
     ) {
         self.pasteboard = pasteboard
-        self.pasteCommand = pasteCommand
+        self.pasteCommand = pasteCommand ?? SystemPasteCommand()
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.restoreDelay = restoreDelay
         self.wait = wait

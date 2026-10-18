@@ -65,9 +65,9 @@ final class SpeechInputCoordinator {
         speaker: any SpeechInputSpeaking,
         library: any LibraryTextImporting,
         presentLibrary: @escaping @MainActor () -> Void,
-        capturer: any ScreenRegionCapturing = SystemScreenRegionCapturer(),
-        recognizer: any ScreenTextRecognizing = VisionScreenTextRecognizer(),
-        permission: any ScreenCapturePermissionHandling = SystemScreenCapturePermission(),
+        capturer: (any ScreenRegionCapturing)? = nil,
+        recognizer: (any ScreenTextRecognizing)? = nil,
+        permission: (any ScreenCapturePermissionHandling)? = nil,
         readPasteboardText: @escaping @MainActor () -> String? = { NSPasteboard.general.string(forType: .string) },
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
@@ -76,9 +76,9 @@ final class SpeechInputCoordinator {
         self.speaker = speaker
         self.library = library
         self.presentLibrary = presentLibrary
-        self.capturer = capturer
-        self.recognizer = recognizer
-        self.permission = permission
+        self.capturer = capturer ?? SystemScreenRegionCapturer()
+        self.recognizer = recognizer ?? VisionScreenTextRecognizer()
+        self.permission = permission ?? SystemScreenCapturePermission()
         self.readPasteboardText = readPasteboardText
         self.defaults = defaults
         self.fileManager = fileManager
