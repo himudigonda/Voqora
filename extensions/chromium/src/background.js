@@ -57,7 +57,7 @@ async function perform(message) {
   try {
     status = await runAction(reader, message);
   } catch (error) {
-    status = errorStatus(error);
+    status = errorStatus(error, await reader.currentProgress().catch(() => null));
     console.warn("Voqora action failed", { action: message?.type, code: status.code });
   }
   try {

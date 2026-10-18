@@ -30,6 +30,8 @@ test("errorStatus exposes the user message and code only", () => {
   const status = errorStatus(new VoqoraError(ErrorCode.unauthorized, "Wrong key"));
   assert.deepEqual(status, { kind: "error", text: "Wrong key", badge: "!", code: "unauthorized", progress: null });
   assert.equal(errorStatus(new Error("boom")).text, "Something went wrong. Try again.");
+  assert.deepEqual(errorStatus(new Error("boom"), { part: 1, total: 3 }).progress, { part: 1, total: 3 });
+  assert.equal(errorStatus(new Error("boom"), { part: 3, total: 3 }).progress, null);
 });
 
 test("badgeText fits the toolbar badge", () => {

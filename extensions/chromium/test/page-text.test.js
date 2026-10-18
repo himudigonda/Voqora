@@ -174,3 +174,9 @@ test("selectedText reads text field selections and the page selection", () => {
   assert.equal(pageText.selectedText(win), "Selected\n\ntext");
   assert.equal(pageText.selectedText({ document: {}, getSelection: () => null }), "");
 });
+
+test("selectedText never reads a password field", () => {
+  const field = { tagName: "INPUT", type: "Password", value: "hunter2 secret", selectionStart: 0, selectionEnd: 14 };
+  const win = { document: { activeElement: field }, getSelection: () => ({ toString: () => "hunter2 secret" }) };
+  assert.equal(pageText.selectedText(win), "");
+});

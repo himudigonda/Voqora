@@ -102,6 +102,24 @@ test("a failed speak keeps no new session", async () => {
   assert.equal(sessionArea.data[SESSION_KEY], undefined);
 });
 
+test("a new reading replaces an unfinished one even when it fails", async () => {
+  const long = `${"a ".repeat(30000)}\n\n${"b ".repeat(30000)}`;
+  const first = setup({ page: long });
+  await first.reader.readPage({ tabId: 1 });
+  const failing = createReader({
+    settingsArea: new MemoryArea({ port: 51851, apiKey: VALID_KEY }),
+    sessionArea: first.sessionArea,
+    createClient: () => ({
+      speak: async () => {
+        throw new VoqoraError(ErrorCode.rateLimited, "busy");
+      },
+    }),
+    pageAccess: { selection: async () => "new text", pageText: async () => "" },
+  });
+  await assert.rejects(failing.readSelection({ tabId: 1 }), { code: ErrorCode.rateLimited });
+  assert.equal(await failing.currentProgress(), null);
+});
+
 test("stop clears the session and tells Voqora to stop", async () => {
   const { reader, stops } = setup({ page: `${"a ".repeat(30000)}\n\n${"b ".repeat(30000)}` });
   await reader.readPage({ tabId: 1 });

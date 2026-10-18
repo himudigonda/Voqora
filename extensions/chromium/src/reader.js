@@ -48,7 +48,8 @@ export function createReader({ settingsArea, sessionArea, createClient, pageAcce
     return progress(session);
   }
 
-  function readText(text) {
+  async function readText(text) {
+    await sessionArea.remove(SESSION_KEY);
     return speakPart({ parts: splitIntoChunks(text), index: 0 });
   }
 

@@ -30,8 +30,9 @@ export function idleStatus(progress) {
   return { kind: "idle", text: "", badge: "", progress: null };
 }
 
-export function errorStatus(error) {
-  return { kind: "error", text: userMessage(error), badge: "!", code: error?.code ?? "unknown", progress: null };
+export function errorStatus(error, progress = null) {
+  const remaining = progress && progress.part < progress.total ? progress : null;
+  return { kind: "error", text: userMessage(error), badge: "!", code: error?.code ?? "unknown", progress: remaining };
 }
 
 export function badgeText(text) {

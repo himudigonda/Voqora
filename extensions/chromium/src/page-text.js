@@ -327,6 +327,9 @@
     const doc = win?.document;
     const active = doc?.activeElement;
     const tag = active ? tagOf(active) : "";
+    if (tag === "input" && String(active.type ?? "").toLowerCase() === "password") {
+      return "";
+    }
     if ((tag === "textarea" || tag === "input") && typeof active.value === "string") {
       const start = active.selectionStart;
       const end = active.selectionEnd;
