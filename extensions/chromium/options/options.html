@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Voqora Options</title>
+    <link rel="stylesheet" href="../ui/theme.css">
+    <link rel="stylesheet" href="options.css">
+    <script type="module" src="options.js"></script>
+  </head>
+  <body>
+    <main class="options">
+      <header class="options-header">
+        <img src="../icons/icon-48.png" width="32" height="32" alt="">
+        <div>
+          <h1>Voqora for Chrome and Edge</h1>
+          <p class="secondary">Read web pages aloud with the Voqora app on this Mac.</p>
+        </div>
+      </header>
+
+      <section class="card" aria-labelledby="connection-heading">
+        <h2 id="connection-heading">Connection</h2>
+        <form id="settings" novalidate>
+          <div class="field">
+            <label for="port">Port</label>
+            <input id="port" name="port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+              aria-describedby="port-error port-hint" required>
+            <p class="hint secondary" id="port-hint">The port shown in Voqora. The default is 51851.</p>
+            <p class="field-error" id="port-error" aria-live="polite"></p>
+          </div>
+          <div class="field">
+            <label for="api-key">API key</label>
+            <div class="key-row">
+              <input id="api-key" name="apiKey" type="password" autocomplete="off" spellcheck="false"
+                aria-describedby="api-key-error" required>
+              <button type="button" class="button" id="toggle-key" aria-pressed="false" aria-controls="api-key">Show</button>
+            </div>
+            <p class="field-error" id="api-key-error" aria-live="polite"></p>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="button primary" id="save">Save</button>
+            <button type="button" class="button" id="test">Test Connection</button>
+          </div>
+          <p class="status" id="status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="setup-heading">
+        <h2 id="setup-heading">Turn on the local API in Voqora</h2>
+        <ol class="steps">
+          <li>Open Voqora and choose <strong>Preferences -&gt; Integrations</strong>.</li>
+          <li>Turn on <strong>Local API</strong>.</li>
+          <li>Copy the port and the API key into the fields above, then choose <strong>Test Connection</strong>.</li>
+        </ol>
+        <p class="secondary">
+          <a href="https://github.com/himudigonda/Voqora/blob/main/docs/USER_GUIDE.md#read-web-pages-in-chrome-or-edge"
+            target="_blank" rel="noopener noreferrer">Learn more in the Voqora user guide</a>
+        </p>
+      </section>
+
+      <section class="card" aria-labelledby="privacy-heading">
+        <h2 id="privacy-heading">Privacy</h2>
+        <p class="secondary">
+          The extension sends the text you choose only to Voqora at 127.0.0.1 on this Mac. Nothing goes to the
+          internet. Your API key stays in this browser's extension storage.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

@@ -46,9 +46,133 @@ name and email, and lets you pick an accent color and app icon.
 | Play / pause | `Command + Shift + /` |
 | Stop | `Command + Shift + ,` |
 | Export the latest clip | `Command + Shift + M` |
+| Speak text on screen | `Command + Shift + 8` |
+| Speak clipboard | Not set |
+| Start or finish dictation | `Control + Option + Space` |
 
 Change any shortcut in Preferences. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
+
+### Media keys and headphones
+
+The play/pause, next, and previous keys on your keyboard, AirPods and
+headphone controls, and the Now Playing control in Control Center all work
+with Voqora:
+
+- Play and pause the selection or audiobook that is playing.
+- Skip forward or back 15 seconds.
+- Next and previous move to the next or previous sentence of a selection, or
+  to the next or previous chapter of an audiobook.
+- Drag the Control Center progress bar to jump anywhere in the clip.
+
+Now Playing shows the audiobook title, the current chapter, and the cover, or
+"Selected text" while a selection is read. Voqora clears it when you stop.
+Playback pauses when the headphones you were listening on disconnect, so a
+book never starts playing out loud by surprise.
+
+To leave media keys to Music or another app, turn off "Respond to media keys"
+in Preferences -> Shortcuts.
+
+## More ways to start speech
+
+- **Text on screen.** Press `Command + Shift + 8`, then drag over the part of
+  the screen you want to hear, such as an image, a video frame, or an app that
+  does not allow selecting text. Voqora reads the text in that area, joining
+  words split across lines and keeping paragraphs together. Press Escape to
+  cancel. The first time, macOS asks you to allow Screen Recording for Voqora.
+  Turn it on in **System Settings -> Privacy & Security -> Screen Recording**,
+  then reopen Voqora. The capture is deleted as soon as the text is read.
+- **Clipboard.** Assign a shortcut to **Speak Clipboard** in Preferences to
+  hear whatever text you last copied.
+- **Services menu.** Select text in any app, then choose **Speak with Voqora**
+  or **Add to Voqora Library** from the app menu under **Services**, or from
+  the right-click menu. Add to Voqora Library turns the selection into a text
+  audiobook, named after its first line. If the items are missing, turn them
+  on in **System Settings -> Keyboard -> Keyboard Shortcuts -> Services**.
+- **Shortcuts app.** Voqora adds **Speak Text** (with an optional voice),
+  **Speak Clipboard**, **Pause or Resume Speech**, and **Stop Speech** actions
+  for your own shortcuts and for Siri.
+
+## Read web pages in Chrome or Edge
+
+The Voqora extension for Chrome and Edge sends text from web pages to Voqora,
+which reads it aloud with your current voice. It talks only to Voqora on this
+Mac and never sends page text anywhere else.
+
+1. In Voqora, open **Preferences -> Integrations** and turn on **Local API**.
+   Note the port and copy the API key.
+2. In the browser, open `chrome://extensions` (or `edge://extensions`), turn on
+   **Developer mode**, choose **Load unpacked**, and pick the
+   `extensions/chromium` folder from the Voqora source code.
+3. On the options page that opens, enter the port and the key, then choose
+   **Test Connection**.
+
+To listen, select text and right-click **Read selection with Voqora**, or press
+`Option + Shift + R`. Right-click elsewhere on the page and choose **Read this
+page with Voqora** to hear the main article without menus, sidebars, or
+footers. The toolbar button has **Read Selection**, **Read Page**, and **Stop**,
+and `Option + Shift + S` stops speech. Pages longer than 50,000 characters are
+read in parts: choose **Next Part** in the toolbar button when a part ends.
+
+If the extension says it can't reach Voqora, make sure Voqora is open, Local
+API is on, and the port matches. If it says the key was not accepted, copy the
+key again; regenerating it in Voqora replaces the old one. Browsers do not let
+extensions read their own pages, such as `chrome://` pages and the Web Store.
+See `extensions/chromium/README.md` for more detail.
+
+## Save articles to your Inbox
+
+Open **Inbox** in the sidebar to keep web articles for later. Voqora saves the
+readable text of each article on this Mac, without menus, ads, or cookie
+banners.
+
+- **Add an article.** Paste a link into the field at the top and press Return.
+  When the Inbox is empty, you can also press `Command + V` anywhere on the
+  page. Dropping a link from your browser or a `.webloc` file works too.
+- **From any app.** Select a link or text that contains one, then choose
+  **Save to Voqora Inbox** from the Services menu. Voqora lets you know when
+  the article is saved. If the item is missing, turn it on in **System
+  Settings -> Keyboard -> Keyboard Shortcuts -> Services**.
+- **Listen.** Choose the play button to hear the article with the transcript,
+  using your voice and speed. Long articles are read in parts without a break.
+  Voqora remembers how far you got, and finished articles leave the Unread
+  list.
+- **Make an audiobook.** Choose the books button to add the article to Library
+  as an audiobook, using your audiobook voice and speed. If it is already
+  there, Voqora offers to open it instead. Links to PDFs can only become
+  audiobooks.
+- **More actions.** Open the original page, copy the text, archive, or delete
+  from the row's menu or by right-clicking it.
+
+Each row shows the estimated listening time at your current speed. Switch
+between **Unread**, **Archived**, and **All**, or search by title or site. The
+Inbox keeps up to 500 articles. When it is full, the oldest archived articles
+are removed first. Voqora only opens public websites and tells you when a page
+is paywalled, too large, or not readable. **Erase All Local Data** removes the
+Inbox too.
+
+## Dictate into any app
+
+1. Click where you want the text to go, in any app.
+2. Press `Control + Option + Space` and start speaking. A small panel at the
+   top of the screen shows a level meter and the words as Voqora hears them.
+   Any Voqora speech pauses while you dictate.
+3. Press the shortcut again, or stop talking for two seconds. Voqora pastes
+   the transcript where your cursor is and then puts your previous clipboard
+   back.
+
+The first time, macOS asks for microphone and Speech Recognition access. If you
+said no, the panel offers **Open System Settings** so you can turn them on.
+Pasting uses the same Accessibility access as speaking a selection; without it,
+Voqora copies the transcript so you can paste it yourself.
+
+Open **Dictation** in the sidebar to change the shortcut, the language, whether
+Voqora pastes or only copies, and how long a pause ends dictation (or turn
+auto-stop off). Recognition runs on your Mac. If a language has no on-device
+support, Voqora tells you instead of sending audio anywhere; turn on **Allow
+Server Recognition** only if you are comfortable with Apple transcribing that
+audio. The page also keeps your last 200 transcripts on this Mac, with search,
+copy, and delete. **Erase All Local Data** removes them too.
 
 ## Choose a voice and speed
 
@@ -75,15 +199,87 @@ text's language when it differs from your voice's language.
 There is no universally right voice or speed. Voqora starts with Bella. Adjust
 the voice and speed until you can follow a paragraph without wanting to rewind it.
 
+## Voices, pronunciations, and pacing
+
+The **Voices** section of the sidebar is the one place to explore and shape
+how Voqora sounds.
+
+### Voice Catalog
+
+**Voice Catalog** lists all 28 built-in voices, grouped by language. Choose the
+play button to hear a sample, then use **Use** to make a voice your speech
+voice or your audiobook voice.
+
+### My Voices
+
+Mix two to four built-in voices into a voice of your own.
+
+1. Open **My Voices** and choose **New Voice** (`Shift + Command + N`).
+2. Name the voice, pick the voices to mix, and drag each weight slider. Weights
+   are relative, so the percentage next to each slider shows how much of that
+   voice you hear.
+3. Choose **Save Voice**, then the play button to preview it.
+
+Your voices appear at the top of every voice picker under **My Voices**,
+including Preferences and the New Audiobook sheet. Voices in the same language
+blend most naturally. You can save up to 50. If you delete a voice that is in
+use, Voqora switches to the first voice in its mix.
+
+### Pronunciations
+
+Teach Voqora how to say names, acronyms, and jargon. Open **Pronunciations**
+and choose **Add**. Enter the text Voqora sees and what it should say, for
+example "SQL" as "sequel". Leave **Say** empty to skip the text. **Whole word
+only** stops "cat" from matching inside "concatenate", and **Match case** keeps
+"US" separate from "us".
+
+- **Applies to** chooses whether an entry is used everywhere or only for one
+  audiobook. In the player, the **More** menu has **Pronunciations for This
+  Book** for entries that only one book needs. A book's entry wins over an
+  everyday entry for the same text.
+- Type a sentence under **Test** to see what Voqora will say and hear it read.
+- Use **Import or Export** to save your list as a JSON file or bring one in.
+  Imported entries go to the scope you are viewing, and entries you already
+  have are skipped.
+- Changes apply to speech and to audiobook pages narrated from then on.
+  Pages that are already narrated keep their audio.
+
+### Pause length
+
+**Preferences -> Speech -> Pause Length** makes the pauses between sentences
+and paragraphs shorter or longer, from 0.5x to 2x. The New Audiobook sheet has
+the same slider for a book, next to its voice, and remembers your last choice.
+
 ## Turn a document into an audiobook
 
 1. Open **Library** in the sidebar.
-2. Add the PDF, TXT, DOCX, or Markdown file you want to finish, or drop it on
-   the window. You can drop several files at once.
+2. Add the PDF, EPUB, DOCX, HTML, TXT, or Markdown file you want to finish,
+   or drop it on the window. You can drop several files at once. EPUB books
+   bring their own title, author, cover, and chapters; DRM-protected EPUBs
+   can't be opened.
 3. Review the page count, word count, and expected length, then choose
    **Create Audiobook**.
 4. When the book is ready, choose **Listen Now**. Later, use **Continue
    Listening** in the sidebar to pick up where you left off.
+
+Book cards and the player show the author when the document names one, and
+the Library search matches titles and authors.
+
+### Add a web article
+
+1. In **Library**, choose **Add from URL** in the toolbar, or press
+   `Command + Shift + U`.
+2. Paste the link to an article or a PDF. A link without `http://` or
+   `https://` is opened with `https://`.
+3. Pick the voice and narration speed, then choose **Continue**. Voqora
+   fetches the page, keeps the article text and its headings, and shows the
+   same estimate and cleanup choices as a file.
+
+Voqora explains why a page can't be added. It doesn't open links to your Mac
+or your local network, pages over its size limit, or pages without readable
+text. For a page behind a subscription or sign-in, save it from your browser
+as a web page and add the HTML file instead. Choose **Edit Link** to try
+another address.
 
 ### Listening to a book
 
@@ -99,7 +295,20 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
   set a sleep timer. **End of Section** follows your position, so it still
   stops in the right place if you pause, skip, or change speed.
 - When you leave the player, a mini player stays at the bottom of the window.
-- Export the finished audiobook as a WAV file with the export button.
+- Export a finished audiobook from the export button in the player, or
+  right-click the book in the Library and choose **Export**. Pick
+  **Audiobook (M4B)** for a file with chapters, cover art, and title that
+  Apple Books and other audiobook players understand, **Audio (MP3)** for a
+  file that plays almost anywhere, or **Audio Only (WAV)** for the raw
+  narration. The M4B chapters start exactly where each chapter's narration
+  starts. **Subtitles (SRT)** and **Subtitles (WebVTT)** save timed captions of
+  the transcript for video editors and web players. While an export runs, the
+  export button shows its progress and the same menu offers **Cancel Export**.
+  Long books can take a minute to encode as MP3 before the progress moves.
+- Set the M4B quality in **Preferences -> Audiobooks -> Export Quality**.
+  64 kbps keeps narration clear and files small; 128 kbps is the largest.
+  **MP3 Quality** sets the MP3 bitrate from 64 to 192 kbps; 96 kbps suits
+  spoken word.
 
 Voqora stores the source document, extracted text, generated audio, transcript,
 and audiobook state locally until you delete that book. Close the app and return later without
@@ -112,7 +321,7 @@ can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic,
 xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or a Custom
 OpenAI-compatible server.
 
-1. Open **Preferences -> AI Cleanup -> Add Provider**, pick a provider, enter
+1. Open **Preferences -> AI -> Add Provider**, pick a provider, enter
    its API key (Ollama and LM Studio need none) and model, and choose
    **Connect**. Voqora checks the connection before saving. You can also
    connect a provider during setup.
@@ -146,6 +355,113 @@ connection, then **Resume** to continue where it stopped. Pages already cleaned
 stay as they are. To continue without AI, choose **Finish Without AI**; the
 remaining pages are narrated from local text.
 
+## AI reading tools
+
+With an AI provider connected in **Preferences -> AI**, the audiobook player
+shows an **Assistant** panel next to **Transcript** and **Sections**. If no
+provider is connected, the panel offers to connect one. The tools send the
+book's text to the provider used for audiobooks; Ollama, LM Studio, and local
+Custom servers keep it on your Mac.
+
+- **Summary**: choose Short, Medium, or Detailed and an output language, then
+  choose **Summarize Book**. Long books can take a few minutes.
+- **Ask**: type a question about the book and press Return. Answers list the
+  passages they come from; select a citation to play the book from that
+  sentence.
+- **Quiz**: pick a difficulty and how many questions, then answer each one to
+  see whether you were right and why. Your score appears at the top.
+- **Flashcards**: click a card to flip it, use **Previous** and **Next**
+  (Command-Left and Command-Right), and choose **Mark Known** (Command-K) to
+  skip cards you already know.
+
+Every result can be copied or spoken aloud with your speech voice, switched to
+a voice in the result's language when needed. Speaking stops the audiobook;
+press Play to continue where you left off. Switching away from the Assistant
+panel or closing the player cancels any request that is still running.
+
+Two global shortcuts work in any app. They have no keys at first, so assign
+them in **Preferences -> Shortcuts**:
+
+- **Summarize Selection and Speak** reads the selected text, asks your provider
+  for a short summary, and speaks it.
+- **Translate Selection and Speak** translates the selection and speaks it with
+  a voice for that language. Choose the language under **Translate Selection
+  Into** in **Preferences -> AI**. It starts as the first non-English language
+  in your Mac's language list that Voqora has a voice for, or Spanish.
+
+If Voqora is already busy with other AI requests, the provider is rate limiting
+your key, or a text is over the size or cost limit for one request, Voqora says
+so and nothing is spoken. Selections can be up to 20,000 characters for
+translation.
+
+## Make a podcast in Studio
+
+Studio turns something you want to understand into a conversation, and lets
+you write scripts for several voices yourself.
+
+1. Open **Podcasts** under **Studio** in the sidebar and choose **New Podcast**
+   (`Shift + Command + N`).
+2. Pick the source: an item from your Library, or text. Paste text, choose
+   **Paste from Clipboard**, or choose **Use Last Spoken Text** to reuse what
+   Voqora just read aloud.
+3. Choose a style. **Deep Dive** and **Brief** use one or two hosts,
+   **Debate** uses two, and **Lecture** uses one. Set the length (2 to 30
+   minutes) and the language, then name the hosts and pick their voices. Your
+   voice blends are listed too. Use the play button to hear a voice.
+4. Choose **Generate Script** (`Command + Return`). Writing the script uses the
+   AI provider you connected in **Preferences -> AI Cleanup**, and sends the
+   source text to it. Without a provider, Studio shows where to add one, or
+   you can start a blank script instead.
+
+### Edit the script
+
+- Each turn has a speaker, its text (up to 2,000 characters), and the pause
+  after it. Drag turns to reorder them, or use the turn menu to insert a turn
+  below, move it, start a chapter there, or delete it.
+- The speakers table sets each speaker's name and voice, with a preview for
+  each. A script can have up to four speakers and 600 turns. Removing a speaker
+  moves their turns to the first speaker.
+- Scripts save on your Mac as you edit (`Command + S` saves right away). Find
+  them under **Scripts** on the Studio page.
+- **New Blank Script** (`Shift + Command + B`) starts an empty script you
+  write yourself. Rendering it needs no AI provider.
+
+### Render and listen
+
+Choose **Render Podcast** (`Command + R`). Voqora narrates each turn with its
+speaker's voice on your Mac, and the podcast appears in the Library with a
+**Podcast** badge and the usual progress. The transcript shows who is talking.
+
+To change a podcast later, right-click it in the Library and choose **Edit
+Script in Studio**, or choose **Edit Script** under **Rendered Podcasts**.
+You edit a copy, and rendering it adds a new podcast while the original stays
+in the Library. Right-click any finished audiobook and choose **Make a
+Podcast** to start from it.
+
+## Reading Mode
+
+Reading Mode shows the text being read, from a selection or an audiobook, in a
+window of its own. It is built for focus, dyslexia, and low vision.
+
+- Open it with the page button next to the transcript in the player, or choose
+  **Reading Mode** from the menu bar icon. Use the green window button or the
+  full screen button in the control bar to fill the screen. Press Escape to
+  close it.
+- The sentence being read is highlighted. Turn on **Reading Ruler** to dim
+  everything else. When word timing is available, **Word-by-Word Emphasis**
+  marks each word as it is spoken; otherwise the whole sentence is highlighted.
+  Audiobooks include word timing.
+- Click any sentence to play from it. Press Space to pause or resume.
+- Use the text size buttons in the control bar, or open the settings button to
+  choose a font (System, Rounded, Serif, or Mono), text size from 14 to 48 pt,
+  line height, letter spacing, and word spacing.
+- Pick a Paper, Sepia, Dark, or High Contrast theme, and add a soft tint if a
+  colored page is easier on your eyes.
+
+The same settings live in **Preferences -> Reading**, with a live preview, and
+are remembered between sessions. Reading Mode follows the macOS Reduce Motion
+and Increase Contrast settings.
+
 ## Stats
 
 Open **Stats** in the sidebar to see your listening time, voices, streaks, and
@@ -164,6 +480,54 @@ hidden.
 **The Vault** keeps a local history of spoken selections. Search it, star the
 passages you want to keep, and play any of them again. Use
 `Command + Shift + M` to save the latest clip to your Desktop as a WAV file.
+
+## Integrations
+
+Open **Preferences -> Integrations** to connect Voqora to other apps.
+
+### Local API for apps and AI tools
+
+Turn on **Local API** to let apps and AI tools on this Mac use Voqora's voices.
+It is off until you turn it on and only accepts connections from this Mac.
+
+- **Port.** Voqora listens on port 51851 by default. Enter any port from 1024
+  to 65535 and press Return. If another app already uses the port, the status
+  line says so; choose a different one.
+- **API key.** Voqora creates a random key the first time you turn the API on
+  and keeps it in your Keychain. Use the eye button to show it, **Copy** to
+  copy it, and **Regenerate** to replace it. Apps using the old key stop
+  working until you give them the new one.
+- **Setup snippets.** Copy a ready-made `curl` command for the OpenAI-compatible
+  speech endpoint, a `claude mcp add` command for Claude Code, or an
+  `mcpServers` entry for other MCP clients. Each one includes your port and key.
+
+When a tool asks Voqora to speak, the text plays through Voqora like a spoken
+selection, with your current voice unless the tool names one. A new request
+replaces the one playing, and a stop request stops it. If the tool sends its
+name, a short note says which app asked.
+
+### Audiobookshelf
+
+Send finished audiobooks to your own Audiobookshelf server.
+
+1. Enter the server address, such as `https://abs.example.com`. Plain `http`
+   works only for servers on your own network, and Voqora warns you that the
+   connection is not encrypted.
+2. In Audiobookshelf, create an API key (under **Settings -> API Keys**), then
+   paste it into **API Token** and choose **Save**. The account needs
+   permission to upload. Voqora keeps the token in your Keychain.
+3. Choose **Test Connection**, then pick the library (and folder, if it has more
+   than one) that should receive uploads.
+
+Then open a finished book's **Export** menu and choose **Upload to
+Audiobookshelf**. Voqora makes an M4B with chapters and cover art, uploads it,
+and shows progress on the export button. Choose **Cancel Upload** from the same
+menu to stop. **Disconnect** removes the address and deletes the token.
+
+### Shortcuts and Services
+
+The Integrations pane also lists the Shortcuts actions and the Services menu
+items described in [More ways to start speech](#more-ways-to-start-speech).
 
 ## Updates
 

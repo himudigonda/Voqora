@@ -36,6 +36,11 @@ private struct SpeechPlayerView: View {
                         vm.playSpokenText(from: line)
                     }
                     .padding(.top, 24)
+                    .overlay(alignment: .topTrailing) {
+                        ReadingModeButton()
+                            .padding(.top, DesignTokens.Spacing.md)
+                            .padding(.trailing, DesignTokens.Spacing.md)
+                    }
                 }
                 .focusable()
                 .focusEffectDisabled()

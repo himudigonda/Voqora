@@ -2,6 +2,7 @@ import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var stopOwnedBackend: (() -> Void)?
+    var servicesProvider: NSObject?
 
     static func standDownIfAlreadyRunning() -> Bool {
         guard let bundleID = Bundle.main.bundleIdentifier else { return false }
@@ -40,6 +41,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self?.disableSplitViewAutosave()
         }
         AppIconOption.applyStored()
+        if let servicesProvider {
+            NSApp.servicesProvider = servicesProvider
+            NSUpdateDynamicServices()
+        }
         if AppPresence.hidesFromDock(), UserDefaults.standard.bool(forKey: "hasOnboarded") {
             NSApp.setActivationPolicy(.accessory)
         }

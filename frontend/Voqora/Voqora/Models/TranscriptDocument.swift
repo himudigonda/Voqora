@@ -11,12 +11,19 @@ nonisolated struct TranscriptLine: Identifiable, Equatable, Sendable {
     let isHeading: Bool
     let isNarrated: Bool
     let isExactlyTimed: Bool
+    var speaker: String?
 }
 
 nonisolated struct TranscriptDocument: Equatable, Sendable {
     let lines: [TranscriptLine]
+    let wordTimings: [Int: [ReadingWordTiming]]
 
     static let empty = TranscriptDocument(lines: [])
+
+    init(lines: [TranscriptLine], wordTimings: [Int: [ReadingWordTiming]] = [:]) {
+        self.lines = lines
+        self.wordTimings = wordTimings
+    }
 
     var isEmpty: Bool {
         lines.isEmpty
@@ -39,6 +46,12 @@ nonisolated struct TranscriptDocument: Equatable, Sendable {
         return result
     }
 
+    func speakerLabel(at index: Int) -> String? {
+        guard lines.indices.contains(index), let speaker = lines[index].speaker else { return nil }
+        guard index > 0 else { return speaker }
+        return lines[index - 1].speaker == speaker ? nil : speaker
+    }
+
     func progress(of index: Int, at time: TimeInterval) -> Double {
         guard lines.indices.contains(index) else { return 0 }
         let line = lines[index]
@@ -48,11 +61,19 @@ nonisolated struct TranscriptDocument: Equatable, Sendable {
 }
 
 nonisolated extension TranscriptDocument {
+    struct TimedWord: Codable, Equatable, Sendable {
+        let text: String
+        let start: Double
+        let end: Double
+    }
+
     struct TimedLine: Codable, Equatable, Sendable {
         let paragraph: Int
         let text: String
         let start: Double
         let end: Double
+        var words: [TimedWord]? = nil
+        var speaker: String? = nil
     }
 
     init(transcript: AudiobookService.Transcript) {
@@ -76,7 +97,7 @@ nonisolated extension TranscriptDocument {
                 )
             }
         }
-        self.init(lines: builder.lines)
+        self.init(lines: builder.lines, wordTimings: builder.wordTimings)
     }
 
     init(spokenText: String, duration: TimeInterval) {
@@ -98,6 +119,7 @@ nonisolated extension TranscriptDocument {
 
     private struct Builder {
         private(set) var lines: [TranscriptLine] = []
+        private(set) var wordTimings: [Int: [ReadingWordTiming]] = [:]
         private var block = -1
 
         mutating func appendTimed(_ timed: [TimedLine], page: Int) {
@@ -109,6 +131,9 @@ nonisolated extension TranscriptDocument {
                 }
                 let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
+                if let words = line.words, !words.isEmpty {
+                    wordTimings[lines.count] = words.map { ReadingWordTiming(text: $0.text, start: $0.start, end: $0.end) }
+                }
                 lines.append(
                     TranscriptLine(
                         id: lines.count,
@@ -119,7 +144,8 @@ nonisolated extension TranscriptDocument {
                         block: block,
                         isHeading: TranscriptText.isHeadingLike(text) && isSoleLine(of: line, in: timed),
                         isNarrated: true,
-                        isExactlyTimed: true
+                        isExactlyTimed: true,
+                        speaker: line.speaker
                     )
                 )
             }
@@ -240,7 +266,8 @@ nonisolated enum PauseAligner {
                 block: line.block,
                 isHeading: line.isHeading,
                 isNarrated: line.isNarrated,
-                isExactlyTimed: anchors[index] != nil && anchors[index + 1] != nil
+                isExactlyTimed: anchors[index] != nil && anchors[index + 1] != nil,
+                speaker: line.speaker
             )
         }
     }

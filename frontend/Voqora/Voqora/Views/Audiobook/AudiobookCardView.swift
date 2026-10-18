@@ -4,6 +4,7 @@ import SwiftUI
 struct AudiobookCardView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var studio: StudioViewModel
     let book: Audiobook
     @State private var hovering = false
     @State private var showDeleteConfirmation = false
@@ -54,6 +55,14 @@ struct AudiobookCardView: View {
                     .foregroundStyle(Palette.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+                if let author = book.displayAuthor {
+                    Text(author)
+                        .font(vm.appFont(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .help(author)
+                        .accessibilityLabel("By \(author)")
+                }
                 caption
             }
             .padding(.horizontal, 2)
@@ -119,6 +128,31 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
+            if status.isReady {
+                Menu {
+                    AudiobookExportMenuItems(exports: bookVM.exports, book: book)
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                Divider()
+            }
+            if book.isPodcast {
+                Button {
+                    studio.openRenderedPodcast(bookID: book.bookID)
+                    vm.selectedTab = StudioView.tab
+                } label: {
+                    Label("Edit Script in Studio", systemImage: "pencil")
+                }
+                Divider()
+            } else if status.isReady {
+                Button {
+                    studio.startNewPodcast(source: .book(book.bookID))
+                    vm.selectedTab = StudioView.tab
+                } label: {
+                    Label("Make a Podcast…", systemImage: "waveform.and.mic")
+                }
+                Divider()
+            }
             Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -176,6 +210,11 @@ struct AudiobookCardView: View {
                 )
                 .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
                 .overlay(stateOverlay)
+                .overlay(alignment: .topLeading) {
+                    if book.isPodcast {
+                        podcastBadge
+                    }
+                }
                 .overlay(alignment: .bottom) { listeningProgress }
 
             if hovering, status.isReady {
@@ -192,6 +231,18 @@ struct AudiobookCardView: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
+    }
+
+    private var podcastBadge: some View {
+        Label("Podcast", systemImage: "waveform.and.mic")
+            .font(vm.appFont(size: 10, weight: .semibold))
+            .foregroundStyle(Palette.textPrimary)
+            .padding(.horizontal, DesignTokens.Spacing.sm)
+            .padding(.vertical, DesignTokens.Spacing.xs)
+            .voqoraSurface(.floating, in: Capsule())
+            .padding(10)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Podcast")
     }
 
     @ViewBuilder
@@ -338,13 +389,20 @@ struct AudiobookCardView: View {
                 .multilineTextAlignment(.leading)
                 .help(failureHelp)
         default:
-            Text(status.caption)
+            Text(statusCaption)
                 .font(vm.appFont(size: 11))
                 .monospacedDigit()
                 .foregroundStyle(captionColor)
                 .contentTransition(.numericText())
                 .lineLimit(1)
         }
+    }
+
+    private var statusCaption: String {
+        if book.isPodcast, case let .generating(turn, total) = status, total > 0 {
+            return "Narrating turn \(min(turn + 1, total)) of \(total)"
+        }
+        return status.caption
     }
 
     private var failureHelp: String {
@@ -362,7 +420,9 @@ struct AudiobookCardView: View {
     }
 
     private var readyCaption: String {
-        let pages = "\(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")"
+        let pages = book.isPodcast
+            ? "\(book.pageCount) \(book.pageCount == 1 ? "turn" : "turns")"
+            : "\(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")"
         let listened = bookVM.listenedFraction(for: book)
         guard listened > 0.005 else {
             return "\(DurationFormatter.listing(book.totalAudioSeconds)) · \(pages)"

@@ -26,6 +26,31 @@
   auto-detect.
 - A local Stats page, and an option to hide Voqora from the Dock.
 
+## Shipped in v2.0.0
+
+Everything in 2.0.0 is free, with no paid tier.
+
+- Audiobooks from EPUB, HTML, and web links, with the book's author, MP3 and
+  M4B (with chapters and cover) export, and SRT and WebVTT subtitles.
+- Reading Mode with word-by-word highlighting.
+- Voices: a Voice Catalog, My Voices blends, a pronunciation dictionary
+  (global and per book), and Pause Length.
+- AI reading tools: summaries, questions with citations, quizzes, flashcards,
+  and Summarize or Translate Selection and Speak.
+- Studio: two-voice podcasts from any text, with an editable script.
+- An Inbox for saving articles to listen to later.
+- Speak Text on Screen (OCR), Speak Clipboard, macOS Services, Shortcuts app
+  actions, media keys, and Now Playing.
+- On-device Dictation into any app.
+- An optional local API (OpenAI speech API compatible, plus MCP) for other
+  apps and AI agents, Audiobookshelf upload, and a Chrome and Edge extension.
+
+## Next
+
+1. **More speech engines** - Chatterbox, Qwen3-TTS, Dia2, and Supertonic as
+   optional downloads, and Parakeet for dictation.
+2. **Safari extension and an iPhone companion.**
+
 ## Next public-quality work
 
 1. **Developer ID signing and notarization** - remove the first-launch

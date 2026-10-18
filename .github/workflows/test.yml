@@ -49,6 +49,17 @@ jobs:
         # level should be investigated before merging.
         run: uv run pytest --cov=app --cov-report=term --cov-fail-under=74
 
+  extension:
+    name: Browser extension (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Tests
+        working-directory: extensions/chromium
+        run: |
+          node --version
+          npm test
+
   swift:
     name: Swift (serial xcodebuild)
     # project.pbxproj uses Xcode 26's project format. macos-14 ships Xcode

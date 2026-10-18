@@ -4,11 +4,11 @@ import UniformTypeIdentifiers
 enum AudiobookImportStaging {
     static let directoryPrefix = "VoqoraImport-"
 
-    nonisolated static let supportedExtensions: Set<String> = ["pdf", "txt", "docx", "md"]
-    nonisolated static let supportedFormatsDescription = "PDF, Word, text, and Markdown"
+    nonisolated static let supportedExtensions: Set<String> = ["pdf", "epub", "txt", "docx", "md", "html", "htm"]
+    nonisolated static let supportedFormatsDescription = "PDF, EPUB, Word, HTML, text, and Markdown"
 
     static var documentTypes: [UTType] {
-        [.pdf, .plainText, UTType(importedAs: "org.openxmlformats.wordprocessingml.document")]
+        [.pdf, .epub, .html, .plainText, UTType(importedAs: "org.openxmlformats.wordprocessingml.document")]
             + [UTType(filenameExtension: "md")].compactMap(\.self)
     }
 

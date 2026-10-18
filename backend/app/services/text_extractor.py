@@ -1,4 +1,4 @@
-"""TextExtractor — TXT / DOCX / Markdown → audiobook page pipeline.
+"""TextExtractor — TXT / DOCX / Markdown / EPUB / HTML → audiobook page pipeline.
 
 Mirrors the PDFExtractor interface so audiobook_service.py can route to
 either class based on meta["file_ext"] without branching everywhere.
@@ -7,15 +7,20 @@ All file-system writes are atomic (tmp+rename). All methods are sync;
 callers wrap in run_in_executor when called from async code.
 """
 
+import functools
 import io
 import os
 import re
 import uuid
+from collections.abc import Iterable, Sequence
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore
+from app.services.epub_reader import read_epub_document, read_epub_member
+from app.services.markup_text import MarkupDocument, read_html_document, table_block
 from app.services.text_normalizer import strip_markdown_for_narration
 
 log = get_logger(__name__)
@@ -28,6 +33,17 @@ COVER_FONTS = (
 
 # Target words per synthetic page. 400 words ≈ 2-3 minutes of audio.
 _WORDS_PER_PAGE = 400
+
+MARKUP_EXTENSIONS = frozenset({".epub", ".html", ".htm"})
+_COVER_IMAGE_FORMATS = ("JPEG", "PNG", "GIF", "WEBP")
+_COVER_IMAGE_MAX_SIZE = (1200, 1680)
+
+
+@functools.lru_cache(maxsize=2)
+def _load_markup_document(path: str, _mtime_ns: int, _size: int) -> MarkupDocument:
+    if path.lower().endswith(".epub"):
+        return read_epub_document(path)
+    return read_html_document(path)
 
 
 class TextExtractor:
@@ -46,10 +62,12 @@ class TextExtractor:
 
     @classmethod
     def read_text(cls, source_path: str) -> str:
-        """Return the full plain-text content of a TXT, MD, or DOCX file."""
+        """Return the full plain-text content of a TXT, MD, DOCX, EPUB, or HTML file."""
         ext = os.path.splitext(source_path)[1].lower()
         if ext == ".docx":
             return cls._read_docx_text(source_path)
+        if ext in MARKUP_EXTENSIONS:
+            return "\n\n".join(cls._markup_document(source_path).blocks)
         with open(source_path, encoding="utf-8", errors="replace") as f:
             text = f.read()
         if text:
@@ -60,6 +78,19 @@ class TextExtractor:
                     "binary or corrupted file with a .txt/.md extension."
                 )
         return text
+
+    @staticmethod
+    def _markup_document(source_path: str) -> MarkupDocument:
+        stat = os.stat(source_path)
+        return _load_markup_document(source_path, stat.st_mtime_ns, stat.st_size)
+
+    @classmethod
+    def read_metadata(cls, source_path: str) -> tuple[str | None, str | None]:
+        """Return the (title, author) a document declares about itself."""
+        if os.path.splitext(source_path)[1].lower() not in MARKUP_EXTENSIONS:
+            return None, None
+        document = cls._markup_document(source_path)
+        return document.title, document.author
 
     @classmethod
     def _read_docx_text(cls, source_path: str) -> str:
@@ -99,14 +130,13 @@ class TextExtractor:
             elif child.tag == qn("w:tbl"):
                 table = Table(child, doc)
                 rows = [
-                    "| " + " | ".join(c.text.strip() for c in row.cells) + " |"
+                    [c.text.strip() for c in row.cells]
                     for row in table.rows
                     if any(c.text.strip() for c in row.cells)
                 ]
-                if rows:
-                    width = rows[0].count("|") - 1
-                    rule = "|" + " --- |" * width
-                    blocks.append(("\n".join([rows[0], rule, *rows[1:]]), ""))
+                block = table_block(rows)
+                if block:
+                    blocks.append((block, ""))
         return blocks
 
     # A fenced code block may legitimately contain blank lines, which the
@@ -282,35 +312,64 @@ class TextExtractor:
             return cls._docx_headings(source_path)
         if extension == ".md":
             return cls._markdown_headings(source_path)
+        if extension in MARKUP_EXTENSIONS:
+            return cls._markup_headings(source_path)
         return None
+
+    @classmethod
+    def _outline_at_blocks(
+        cls, blocks: Sequence[str], marks: Iterable[tuple[int, str, int]]
+    ) -> list[dict] | None:
+        paragraphs = cls._paragraphs("\n\n".join(blocks))
+        if not paragraphs:
+            return None
+        _, start_pages = cls._paginate(paragraphs)
+        offsets: list[int] = []
+        paragraph_index = 0
+        for block in blocks:
+            offsets.append(paragraph_index)
+            paragraph_index += len(cls._paragraphs(block))
+        headings: list[dict] = []
+        for block_index, title, level in marks:
+            position = (
+                offsets[block_index] if block_index < len(offsets) else paragraph_index
+            )
+            headings.append(
+                {
+                    "title": title,
+                    "start_page": start_pages[min(position, len(start_pages) - 1)],
+                    "level": level,
+                }
+            )
+        return headings or None
+
+    @classmethod
+    def _markup_headings(cls, source_path: str) -> list[dict] | None:
+        try:
+            document = cls._markup_document(source_path)
+        except Exception:
+            log.warning(
+                "markup.heading_read_failed",
+                extra={"failure_code": "markup_heading_read_failed"},
+                exc_info=True,
+            )
+            return None
+        return cls._outline_at_blocks(
+            document.blocks,
+            ((h.block_index, h.title, h.level) for h in document.chapters),
+        )
 
     @classmethod
     def _docx_headings(cls, source_path: str) -> list[dict] | None:
         try:
             blocks = cls._docx_blocks(source_path)
-            paragraphs = cls._paragraphs("\n\n".join(text for text, _ in blocks))
-            if not paragraphs:
-                return None
-            _, start_pages = cls._paginate(paragraphs)
-
-            headings: list[dict] = []
-            paragraph_index = 0
-            for text, style_name in blocks:
-                if style_name.startswith("Heading"):
-                    title = " ".join(text.split())
+            marks: list[tuple[int, str, int]] = []
+            for index, (text, style_name) in enumerate(blocks):
+                title = " ".join(text.split())
+                if style_name.startswith("Heading") and title:
                     suffix = style_name[len("Heading") :].strip()
-                    if title:
-                        headings.append(
-                            {
-                                "title": title,
-                                "start_page": start_pages[
-                                    min(paragraph_index, len(start_pages) - 1)
-                                ],
-                                "level": int(suffix) if suffix.isdigit() else 1,
-                            }
-                        )
-                paragraph_index += len(cls._paragraphs(text))
-            return headings or None
+                    marks.append((index, title, int(suffix) if suffix.isdigit() else 1))
+            return cls._outline_at_blocks([text for text, _ in blocks], marks)
         except Exception:
             log.warning(
                 "docx.heading_read_failed",
@@ -436,6 +495,11 @@ class TextExtractor:
 
         meta = AudiobookStore.read_meta(book_id) or {}
         ext = (meta.get("file_ext") or "txt").lstrip(".")
+        if ext.lower() == "epub":
+            image = cls._epub_cover_jpeg(AudiobookStore.source_file_path(book_id, ext))
+            if image is not None:
+                cls._atomic_write_bytes(out, image)
+                return
         title = (meta.get("title") or "").strip()
         if title.lower().endswith(f".{ext.lower()}"):
             title = title[: -len(ext) - 1]
@@ -486,6 +550,42 @@ class TextExtractor:
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=88, optimize=True, comment=COVER_VERSION)
         cls._atomic_write_bytes(out, buf.getvalue())
+
+    @classmethod
+    def _epub_cover_jpeg(cls, source_path: str) -> bytes | None:
+        try:
+            member = cls._markup_document(source_path).cover_member
+            if member is None:
+                return None
+            data = read_epub_member(source_path, member, settings.MAX_EPUB_COVER_BYTES)
+            return cls._cover_image_jpeg(data)
+        except Exception:
+            log.warning(
+                "epub.cover_read_failed",
+                extra={"failure_code": "epub_cover_read_failed"},
+                exc_info=True,
+            )
+            return None
+
+    @staticmethod
+    def _cover_image_jpeg(data: bytes) -> bytes | None:
+        with Image.open(io.BytesIO(data), formats=_COVER_IMAGE_FORMATS) as source:
+            if source.width * source.height > settings.MAX_COVER_IMAGE_PIXELS:
+                log.warning(
+                    "epub.cover_too_large",
+                    extra={"failure_code": "epub_cover_too_large"},
+                )
+                return None
+            source.draft("RGB", _COVER_IMAGE_MAX_SIZE)
+            source.thumbnail(_COVER_IMAGE_MAX_SIZE)
+            rgba = source.convert("RGBA")
+        image = Image.new("RGB", rgba.size, color=(255, 255, 255))
+        image.paste(rgba, mask=rgba.getchannel("A"))
+        buffer = io.BytesIO()
+        image.save(
+            buffer, format="JPEG", quality=88, optimize=True, comment=COVER_VERSION
+        )
+        return buffer.getvalue()
 
     @staticmethod
     def cover_is_current(path: str) -> bool:

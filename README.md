@@ -66,6 +66,12 @@ a screen.
 | Find your place in a long book | Sections, scrub previews with the chapter name, and a sleep timer that stops at the end of a section. |
 | Tune the experience | Voice, speed, volume, The Vault (local history), and WAV export. |
 | Listen as much as you want | An on-device speech engine for Apple silicon, with no usage limits. |
+| Turn books and web pages into audio | EPUB, PDF, Word, HTML, text, and web links, exported as M4B with chapters, MP3, or subtitles. |
+| Make it sound like yours | Voice blends, a pronunciation dictionary, and pause length. |
+| Understand what you read | AI summaries, questions with citations, quizzes, flashcards, and two-voice podcasts in Studio. |
+| Read anything on screen | Speak Text on Screen, Speak Clipboard, Services, Shortcuts actions, and media keys. |
+| Talk instead of type | On-device dictation into any app. |
+| Plug Voqora into other tools | An optional local API for apps and AI agents, Audiobookshelf upload, and a Chrome and Edge extension. |
 
 ### Shortcuts
 

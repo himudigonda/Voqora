@@ -162,7 +162,7 @@ def test_speak_truncates_cleanly_on_midstream_failure(_mock_gen, _mock_load) -> 
       - NOT contain a stack trace or any /Users/... filesystem path
       - NOT contain the raw exception class name
 
-    Without the _guarded_wav_stream wrapper, the exception would bubble
+    Without the lock-releasing stream wrapper, the exception would bubble
     through to ASGI which appends a 500 error body to a 200 response.
     """
     response = _client().post(

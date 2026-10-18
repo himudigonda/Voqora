@@ -13,12 +13,15 @@ struct PreferencesView: View {
     @EnvironmentObject var installer: GuidedInstallerService
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var updater: AppUpdater
+    @EnvironmentObject var dictationTranscripts: DictationTranscriptStore
+    @EnvironmentObject var inbox: InboxViewModel
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
     @AppStorage(AppPresence.showMenuBarIconKey) var showMenuBarIcon = true
     @AppStorage(AppPresence.hideFromDockKey) var hideFromDock = false
     @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = false
+    @AppStorage(NowPlayingPreferences.respondToMediaKeysKey) var respondToMediaKeys = true
     @StateObject private var samplePlayer = VoiceSamplePlayer()
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
@@ -86,6 +89,8 @@ struct PreferencesView: View {
                                 .tint(accentColor)
                         }
 
+                        PauseLengthControl(value: $vm.speechPauseScale, accentColor: accentColor)
+
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Volume", systemImage: "speaker.wave.3")
@@ -111,6 +116,30 @@ struct PreferencesView: View {
                         ShortcutRow(title: "Stop Playback", name: .stopText)
                         Divider().padding(.vertical, 8)
                         ShortcutRow(title: "Export to Desktop", name: .exportAudio)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Speak Text on Screen", name: .speakScreenText)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Speak Clipboard", name: .speakClipboard)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Start / Finish Dictation", name: .toggleDictation)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Summarize Selection and Speak", name: .summarizeSelection)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Translate Selection and Speak", name: .translateSelection)
+
+                        Divider().padding(.vertical, 16)
+
+                        Toggle(isOn: $respondToMediaKeys) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Respond to media keys")
+                                    .font(vm.font(.rowTitle))
+                                Text("Play, pause and skip Voqora from your keyboard's media keys, headphone controls and Control Center.")
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         Divider().padding(.vertical, 16)
 
@@ -129,8 +158,12 @@ struct PreferencesView: View {
                     }
                 }
 
-                PreferenceSection(title: "AI Cleanup", icon: "sparkles") {
-                    AICleanupSettings()
+                PreferenceSection(title: "AI", icon: "sparkles") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        AICleanupSettings()
+                        Divider()
+                        AIReadingSettings()
+                    }
                 }
 
                 PreferenceSection(title: "Audiobooks", icon: "books.vertical") {
@@ -166,6 +199,10 @@ struct PreferencesView: View {
                         )
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textSecondary)
+
+                        Divider()
+
+                        AudiobookExportQualityPicker()
                     }
                 }
 
@@ -286,6 +323,14 @@ struct PreferencesView: View {
                             }
                         }
                     }
+                }
+
+                PreferenceSection(title: "Reading", icon: "textformat.size") {
+                    ReadingSettingsForm(preferences: ReadingPreferences.shared)
+                }
+
+                PreferenceSection(title: "Integrations", icon: "puzzlepiece.extension") {
+                    IntegrationsSettings()
                 }
 
                 PreferenceSection(title: "General", icon: "gearshape") {
@@ -564,7 +609,7 @@ struct PreferencesView: View {
                             Text("Erase All Local Data")
                                 .font(vm.font(.sectionTitle))
                             Text(
-                                "Permanently removes every audiobook and source document, generated audio, history, caches, " +
+                                "Permanently removes every audiobook and source document, generated audio, history, dictation transcripts, Inbox articles, caches, " +
                                     "settings, your name and email, telemetry outbox, anonymous identifier, and saved AI provider keys " +
                                     "from this Mac. Voqora will quit when complete."
                             )
@@ -598,7 +643,7 @@ struct PreferencesView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This cannot be undone. All local books, sources, audio, history, settings, caches, telemetry outbox, " +
+                "This cannot be undone. All local books, sources, audio, history, dictation transcripts, Inbox articles, settings, caches, telemetry outbox, " +
                     "your name and email, anonymous identifier, and AI provider keys will be permanently removed. Voqora " +
                     "will quit after the erase finishes."
             )
@@ -680,6 +725,16 @@ struct PreferencesView: View {
                 try UsageStatsStore.shared.eraseAll()
             } catch {
                 failures.append("stats")
+            }
+            do {
+                try dictationTranscripts.eraseAll()
+            } catch {
+                failures.append("dictation transcripts")
+            }
+            do {
+                try inbox.eraseAll()
+            } catch {
+                failures.append("inbox articles")
             }
             for key in KeychainKey.allCases where !KeychainService.delete(key) {
                 failures.append("saved credential")
@@ -774,9 +829,25 @@ struct AccentSwatchButton: View {
 struct GroupedVoicePicker: View {
     let title: String
     @Binding var selection: String
+    var includesBlends = true
+    @ObservedObject private var blendStore = VoiceBlendStore.shared
+
+    private var showsUnknownBlend: Bool {
+        includesBlends && VoiceBlendRules.isBlendID(selection) && blendStore.blend(id: selection) == nil
+    }
 
     var body: some View {
         Picker(title, selection: $selection) {
+            if includesBlends, !blendStore.blends.isEmpty || showsUnknownBlend {
+                Section("My Voices") {
+                    ForEach(blendStore.blends) { blend in
+                        Text(blend.name).tag(blend.id)
+                    }
+                    if showsUnknownBlend {
+                        Text(blendStore.displayName(for: selection)).tag(selection)
+                    }
+                }
+            }
             ForEach(DashboardViewModel.languageGroups) { group in
                 Section(group.beta ? "\(group.id) (Beta)" : group.id) {
                     ForEach(group.voices) { voice in
@@ -791,6 +862,7 @@ struct GroupedVoicePicker: View {
 }
 
 struct VoiceSampleButton: View {
+    @EnvironmentObject var vm: DashboardViewModel
     @ObservedObject var player: VoiceSamplePlayer
     let voice: String
     let speed: Double
@@ -801,7 +873,10 @@ struct VoiceSampleButton: View {
 
     var body: some View {
         Button {
-            if isPlayingThisVoice {
+            if VoiceBlendRules.isBlendID(voice) {
+                player.stop()
+                Task { await vm.speak(text: DashboardViewModel.sampleSentence(forVoice: voice), voice: voice) }
+            } else if isPlayingThisVoice {
                 player.stop()
             } else {
                 player.play(voice: voice, speed: speed)

@@ -11,12 +11,16 @@ class DashboardViewModel: ObservableObject {
 
     private static let supportedVoiceIDs: Set<String> = Set(voiceCatalog.map(\.id))
 
+    private static func isSupportedVoice(_ id: String) -> Bool {
+        supportedVoiceIDs.contains(id) || VoiceBlendRules.isBlendID(id)
+    }
+
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
         let needsReleaseMigration = defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion
-        let hasUnsupportedSelectedVoice = !supportedVoiceIDs.contains(
+        let hasUnsupportedSelectedVoice = !isSupportedVoice(
             defaults.string(forKey: "selectedVoice") ?? "af_bella"
         )
-        let hasUnsupportedBookVoice = !supportedVoiceIDs.contains(
+        let hasUnsupportedBookVoice = !isSupportedVoice(
             defaults.string(forKey: "defaultBookVoice") ?? "af_bella"
         )
 
@@ -67,6 +71,7 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     private(set) var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
+    @AppStorage("speechPauseScale") var speechPauseScale = PauseScale.standard
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
@@ -199,6 +204,9 @@ class DashboardViewModel: ObservableObject {
     ]
 
     nonisolated static func langCode(forVoice id: String) -> String {
+        if VoiceBlendRules.isBlendID(id) {
+            return langCode(forVoice: VoiceBlendDirectory.shared.fallbackVoice(for: id) ?? VoiceBlendRules.fallbackVoice)
+        }
         guard let first = id.first else { return "en-us" }
         return voicePrefixToLang[first] ?? "en-us"
     }
@@ -230,6 +238,9 @@ class DashboardViewModel: ObservableObject {
     static func voiceName(for id: String) -> String {
         if let option = voicesByID[id] {
             return option.name
+        }
+        if VoiceBlendRules.isBlendID(id) {
+            return VoiceBlendDirectory.shared.name(for: id) ?? "Custom Voice"
         }
         let name = id.split(separator: "_").last.map(String.init) ?? id
         return name.prefix(1).uppercased() + name.dropFirst()
@@ -373,7 +384,7 @@ class DashboardViewModel: ObservableObject {
         await speak(text: text)
     }
 
-    func speak(text: String) async {
+    func speak(text: String, voice: String? = nil) async {
         clearActionFeedback()
         guard isBackendOnline else {
             backend.start()
@@ -409,9 +420,10 @@ class DashboardViewModel: ObservableObject {
             awaitingFirstChunk = true
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
-            let effectiveVoice = autoDetectLanguage
+            let preferredVoice = autoDetectLanguage
                 ? LanguageDetector.voiceForText(cleaned, fallback: selectedVoice)
                 : selectedVoice
+            let effectiveVoice = voice ?? preferredVoice
             VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": effectiveVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -421,12 +433,18 @@ class DashboardViewModel: ObservableObject {
             speechFollower.follow(spokenText: spokenText)
 
             do {
-                let stream = backend.streamAudio(
-                    text: cleaned,
-                    voice: effectiveVoice,
-                    speed: speechSpeed,
-                    volume: speechVolume
-                )
+                let speed = speechSpeed
+                let volume = speechVolume
+                let pauseScale = speechPauseScale
+                let stream = ChunkedSpeechStream.make(chunks: SpeechTextChunker.chunks(of: cleaned)) { [backend] chunk in
+                    backend.streamAudio(
+                        text: chunk,
+                        voice: effectiveVoice,
+                        speed: speed,
+                        volume: volume,
+                        pauseScale: pauseScale
+                    )
+                }
                 var receivedAudio = false
 
                 for try await chunk in stream {
@@ -461,7 +479,7 @@ class DashboardViewModel: ObservableObject {
                 history.log(text: spokenText ?? cleaned, voice: effectiveVoice)
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
-                    voice: effectiveVoice,
+                    voice: VoiceBlendRules.telemetryVoice(effectiveVoice),
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
@@ -476,14 +494,20 @@ class DashboardViewModel: ObservableObject {
                 VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": effectiveVoice, "chars": "\(cleaned.count)"])
                 awaitingFirstChunk = false
                 audio.stop()
-                showTransientError(Self.speechFailureMessage(for: error))
+                showTransientError(Self.speechFailureMessage(for: error, voice: effectiveVoice))
+                if Self.isMissingBlendFailure(error, voice: effectiveVoice) {
+                    Task { await VoiceBlendStore.shared.refresh() }
+                }
             }
         }
     }
 
-    static func speechFailureMessage(for error: Error) -> String {
+    static func speechFailureMessage(for error: Error, voice: String? = nil) -> String {
         guard let streamError = error as? BackendService.StreamError else {
             return "Voqora could not reach the local speech engine. Try again."
+        }
+        if isMissingBlendFailure(streamError, voice: voice) {
+            return "That custom voice is no longer available. Choose another voice in Voices."
         }
         switch streamError {
         case let .rejectedResponse(statusCode) where statusCode == 422:
@@ -495,6 +519,11 @@ class DashboardViewModel: ObservableObject {
         default:
             return "Voqora could not reach the local speech engine. Try again."
         }
+    }
+
+    static func isMissingBlendFailure(_ error: Error, voice: String?) -> Bool {
+        guard let voice, VoiceBlendRules.isBlendID(voice) else { return false }
+        return (error as? BackendService.StreamError) == .rejectedResponse(statusCode: 422)
     }
 
     func playSpokenText(from line: TranscriptLine) {
@@ -564,7 +593,7 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    private func showTransientError(_ message: String) {
+    func showTransientError(_ message: String) {
         clearActionFeedback()
         status = .error(message)
         errorResetTask?.cancel()
@@ -720,8 +749,7 @@ class DashboardViewModel: ObservableObject {
         isModelLoaded: Bool,
         hasReadableStringContent: Bool
     ) -> Bool {
-        guard isBackendOnline, !isModelLoaded else { return false }
-        guard currentChangeCount != lastChangeCount else { return false }
+        guard isBackendOnline, !isModelLoaded, currentChangeCount != lastChangeCount else { return false }
         return hasReadableStringContent
     }
 
@@ -741,14 +769,14 @@ class DashboardViewModel: ObservableObject {
                     hasReadableStringContent: pasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.string.rawValue])
                 )
                 guard shouldPrewarm else { return }
-                Task { await self.backend.prewarm() }
+                Task { await self.backend.prewarm(pauseScale: self.speechPauseScale) }
             }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 guard let self, isBackendOnline, !self.isModelLoaded else { return }
-                Task { await self.backend.prewarm() }
+                Task { await self.backend.prewarm(pauseScale: self.speechPauseScale) }
             }
             .store(in: &cancellables)
     }

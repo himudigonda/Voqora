@@ -9,10 +9,11 @@ struct UploadEstimateModal: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    let documentURL: URL
+    let source: AudiobookImportSource
 
     @State private var useCleanup = false
     @State private var addingProvider = false
+    @State private var pauseDraft = PauseScale.standard
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -27,6 +28,7 @@ struct UploadEstimateModal: View {
                         cover
                         statsGrid(for: est)
                         notices(for: est)
+                        narrationOptions
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 1)
@@ -63,6 +65,12 @@ struct UploadEstimateModal: View {
                     .font(vm.appFont(size: 18, weight: .bold))
                     .foregroundStyle(Palette.textPrimary)
                     .lineLimit(1)
+                if let byline {
+                    Text(byline)
+                        .font(vm.appFont(size: 12))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             Button { cancel() } label: {
@@ -81,7 +89,9 @@ struct UploadEstimateModal: View {
             Color.clear
                 .frame(width: 140, height: 196)
                 .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            if let pdf = PDFDocument(url: documentURL),
+            if let documentURL = source.documentURL,
+               documentURL.pathExtension.lowercased() == "pdf",
+               let pdf = PDFDocument(url: documentURL),
                let page = pdf.page(at: 0)
             {
                 let nsImage = page.thumbnail(of: NSSize(width: 280, height: 392), for: .cropBox)
@@ -91,7 +101,7 @@ struct UploadEstimateModal: View {
                     .frame(width: 140, height: 196)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             } else {
-                Image(systemName: "doc.fill")
+                Image(systemName: placeholderSymbol)
                     .font(.system(size: 40))
                     .foregroundStyle(accentColor.opacity(0.5))
             }
@@ -159,7 +169,8 @@ struct UploadEstimateModal: View {
                 notice("doc.viewfinder", "This scanned PDF needs AI cleanup to read its text.")
             }
             if let duplicateTitle = est.duplicateOfTitle {
-                notice("doc.on.doc.fill", "You already imported this exact file as \"\(duplicateTitle)\".")
+                let kind = source.webPageURL == nil ? "file" : "page"
+                notice("doc.on.doc.fill", "You already imported this exact \(kind) as \"\(duplicateTitle)\".")
             }
         }
     }
@@ -224,6 +235,28 @@ struct UploadEstimateModal: View {
         .padding(12)
         .background(accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var narrationOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Label("Voice", systemImage: "person.wave.2")
+                    .font(vm.appFont(size: 11))
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: 8)
+                GroupedVoicePicker(title: "Narration Voice", selection: Binding(
+                    get: { bookVM.pendingNarrationVoice ?? bookVM.defaultBookVoice },
+                    set: { bookVM.updatePendingNarration(voice: $0) }
+                ))
+            }
+            PauseLengthControl(value: $pauseDraft, accentColor: accentColor, compact: true, onCommit: { scale in
+                bookVM.updatePendingNarration(pauseScale: scale)
+            })
+        }
+        .padding(12)
+        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
+        .disabled(bookVM.startingProcessing)
+        .onAppear { pauseDraft = bookVM.pendingPauseScale ?? bookVM.defaultBookPauseScale }
     }
 
     private var cleanupSubtitle: String {
@@ -333,10 +366,21 @@ struct UploadEstimateModal: View {
     }
 
     private var actionsCancelOnly: some View {
-        Button { cancel() } label: {
-            Text("Close").frame(maxWidth: .infinity).padding(.vertical, 8)
+        HStack(spacing: 12) {
+            Button { cancel() } label: {
+                Text("Close").frame(maxWidth: .infinity).padding(.vertical, 8)
+            }
+            .buttonStyle(.voqoraSecondary)
+            if source.webPageURL != nil {
+                Button { bookVM.editWebPageLink() } label: {
+                    Label("Edit Link", systemImage: "link")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+                .buttonStyle(.voqoraPrimary)
+                .keyboardShortcut(.defaultAction)
+            }
         }
-        .buttonStyle(.voqoraSecondary)
     }
 
     static func isStartDisabled(
@@ -364,7 +408,7 @@ struct UploadEstimateModal: View {
     private var loadingState: some View {
         VStack(spacing: 16) {
             ProgressView().tint(accentColor)
-            Text("Reading File…")
+            Text(source.webPageURL == nil ? "Reading File…" : "Fetching Page…")
                 .font(vm.appFont(size: 13))
                 .foregroundStyle(Palette.textSecondary)
         }
@@ -376,7 +420,7 @@ struct UploadEstimateModal: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 32))
                 .foregroundStyle(Palette.danger)
-            Text(bookVM.loadingError ?? "Could not read this file.")
+            Text(bookVM.loadingError ?? (source.webPageURL == nil ? "Could not read this file." : WebPageImportMessage.generic))
                 .font(vm.appFont(size: 13))
                 .foregroundStyle(Palette.textSecondary)
                 .multilineTextAlignment(.center)
@@ -386,7 +430,23 @@ struct UploadEstimateModal: View {
     }
 
     private var prettyTitle: String {
-        AudiobookImportStaging.displayName(from: documentURL.lastPathComponent)
+        guard let title = bookVM.pendingEstimate?.title, !title.isEmpty else { return source.displayName }
+        return AudiobookImportStaging.displayName(from: title)
+    }
+
+    private var byline: String? {
+        if let author = bookVM.pendingEstimate?.displayAuthor {
+            return "by \(author)"
+        }
+        guard bookVM.pendingEstimate != nil, let url = source.webPageURL else { return nil }
+        return WebPageLink.siteName(of: url)
+    }
+
+    private var placeholderSymbol: String {
+        if source.webPageURL != nil {
+            return "globe"
+        }
+        return source.documentURL?.pathExtension.lowercased() == "epub" ? "book.closed.fill" : "doc.fill"
     }
 
     private func numberFormat(_ n: Int) -> String {

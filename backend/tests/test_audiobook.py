@@ -731,7 +731,7 @@ async def test_tts_missing_clean_text_still_advances_progress_and_emits_page_don
 
 
 async def _mock_generate_page_2_fails(
-    text, voice, speed, lang=None, failed_segments=None
+    text, voice, speed, lang=None, failed_segments=None, **_options
 ):
     """Fails TTS for whatever page's clean text is "Page 2 content." —
     used to simulate a single forced per-page TTS failure among several."""
@@ -824,7 +824,7 @@ async def test_transcript_reflects_tts_failure_via_page_status(monkeypatch):
 
 
 async def _mock_generate_reporting_failed_segment(
-    text, voice, speed, lang=None, failed_segments=None
+    text, voice, speed, lang=None, failed_segments=None, **_options
 ):
     yield np.ones(2400, dtype=np.float32)
     if failed_segments is not None:
@@ -854,7 +854,7 @@ async def test_generate_full_page_raises_when_a_segment_fails():
 
 @pytest.mark.asyncio
 async def test_generate_full_page_all_segments_fail_raises():
-    async def all_fail(text, voice, speed, lang=None, failed_segments=None):
+    async def all_fail(text, voice, speed, lang=None, failed_segments=None, **_options):
         failed_segments.append(text)
         return
         yield
@@ -879,7 +879,7 @@ async def test_tts_phase_flags_partial_segment_failure(monkeypatch):
     _write_clean_pages(bid, ["Page 1 content.", "Page 2 content."])
 
     async def fail_page_2_partially(
-        text, voice, speed, lang=None, failed_segments=None
+        text, voice, speed, lang=None, failed_segments=None, **_options
     ):
         yield np.ones(2400, dtype=np.float32)
         if text == "Page 2 content.":

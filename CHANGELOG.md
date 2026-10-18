@@ -4,15 +4,60 @@
 
 ### New
 
+- Voices: a new sidebar section with the Voice Catalog of all 28 voices and
+  their samples, My Voices for blending two to four voices into your own, and
+  a Pronunciations dictionary with search, a Test field, JSON import and
+  export, and per-book entries from the player's More menu. Your voices appear
+  in every voice picker under My Voices.
+- Pause Length in Preferences -> Speech and in the New Audiobook sheet makes
+  pauses between sentences shorter or longer, from 0.5x to 2x.
+- AI reading tools: the audiobook player has an Assistant panel next to
+  Transcript and Sections. Summarize the book (short, medium, or detailed, in
+  any app language), ask questions with citations that jump to the passage,
+  take a multiple choice quiz, or study flip-card flashcards. Results can be
+  copied or spoken aloud. Two new shortcuts, Summarize Selection and Speak and
+  Translate Selection and Speak, work in any app; assign them in Preferences ->
+  Shortcuts and choose the translation language in Preferences -> AI. They use
+  the AI provider you connected.
+- Studio: turn a Library item or pasted text into a podcast. Pick Deep Dive,
+  Brief, Debate, or Lecture, a length from 2 to 30 minutes, the language, and
+  one or two hosts with their own voices. Your AI provider writes the script,
+  you edit every turn, and Voqora renders it on your Mac. Podcasts appear in
+  the Library with a Podcast badge and a transcript that names each speaker.
+  You can also write a script for up to four voices yourself with New Blank
+  Script.
+- Dictation: press `Control + Option + Space` in any app, speak, and press it
+  again (or pause for two seconds). Voqora transcribes on your Mac, pastes the
+  text where your cursor is, and puts your clipboard back. Choose the language,
+  paste or copy only, and the auto-stop pause on the new Dictation page, where
+  your last 200 transcripts are kept. Audio is sent to Apple only if you allow
+  server recognition for a language without on-device support.
+- Other apps and AI agents can use Voqora's voices through an optional local
+  API. It is off until you turn it on, listens only on this Mac, and needs the
+  key you set. It speaks the OpenAI speech API, can ask Voqora to read text
+  aloud, and includes an MCP server with speak, stop, and list voices tools.
+- Voqora for Chrome and Edge: a browser extension in `extensions/chromium`
+  reads the selection or the main text of a page aloud through Voqora, from
+  the right-click menu, its toolbar button, or `Option + Shift + R` (stop with
+  `Option + Shift + S`). It talks only to the local API on your Mac.
+- Preferences -> Integrations turns the local API on and off, sets its port,
+  and creates, shows, copies, or replaces its key in your Keychain. It shows
+  ready-to-copy setup for OpenAI-compatible clients, Claude Code, and other
+  MCP clients. Speech those tools request plays through Voqora with your
+  current voice, and a short note names the app that asked when it says so.
+- Upload to Audiobookshelf: connect your server and pick a library in
+  Preferences -> Integrations, then choose Upload to Audiobookshelf from a
+  finished book's Export menu. Voqora makes the M4B and uploads it with
+  progress. The API token stays in your Keychain.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
-  OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or
+  OpenAI-compatible server). Connect them in Preferences -> AI or
   during setup. Voqora checks each connection before saving it. Existing
   Gemini keys move to Google automatically.
 - Keys are stored in your macOS login Keychain, one per provider. They go only
   to the Voqora service on your Mac, with each request, and from there to the
   provider you connected. Ollama and LM Studio keep page text on your Mac.
-- Preferences -> AI Cleanup has a "Used for audiobooks" chooser, and the New
+- Preferences -> AI has a "Used for audiobooks" chooser, and the New
   Audiobook sheet has a provider menu. Removing a provider asks first and says
   what will happen to audiobooks that use it.
 - When cleanup fails, the book shows the reason. Choose Fix Provider to correct
@@ -35,6 +80,63 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Media keys, AirPods and headphone controls, and Control Center now play,
+  pause, skip 15 seconds, and jump between sentences or chapters. Now Playing
+  shows the book, chapter, and cover. Turn this off with "Respond to media
+  keys" in Preferences -> Shortcuts. Playback pauses when headphones
+  disconnect.
+- More ways to start speech: press `Command + Shift + 8` and drag over any
+  part of the screen to hear the text in it, assign a shortcut to Speak
+  Clipboard, use Speak with Voqora or Add to Voqora Library from the Services
+  menu, and run Speak Text, Speak Clipboard, Pause or Resume Speech, and Stop
+  Speech from the Shortcuts app.
+- Reading Mode opens the current transcript in its own window with large,
+  adjustable text, Paper, Sepia, Dark, and High Contrast themes, soft tints,
+  and a reading ruler that dims everything but the sentence being read. Open
+  it from the player or the menu bar, and set it up in Preferences -> Reading.
+- Export a finished audiobook as an M4B file with chapters, cover art, title,
+  and narrator, ready for Apple Books and other audiobook players. Choose
+  Export from the book's right-click menu or the player. WAV export is still
+  there, and Preferences -> Audiobooks sets the M4B quality.
+- Library imports EPUB books and HTML pages. EPUB chapters come from the
+  book's table of contents, and the title, author, and cover come from the
+  book itself. DRM-protected EPUBs are refused with a clear message.
+- Voice blends: mix two to four voices into a named custom voice and use it
+  anywhere you pick a voice, including audiobooks.
+- Pronunciation dictionary: tell Voqora how to say a word, for all reading or
+  for one audiobook. Transcripts keep the original words.
+- Pause length setting for reading and audiobooks makes the breaks between
+  phrases shorter or longer.
+- The speech server can export a finished audiobook as SRT or WebVTT
+  subtitles, as an MP3 (64 to 192 kbps), and as a chapter list for M4B files.
+  It can also convert a single WAV clip to MP3.
+- Transcripts can include estimated per-word timings.
+- Add from URL in the Library (`Command + Shift + U`): paste a link to an
+  article or a PDF and Voqora turns it into an audiobook with the same voice,
+  speed, estimate, and cleanup choices as a file. Blocked, paywalled, and
+  unreadable pages are refused with a clear reason.
+- The Library's open panel and drag and drop accept EPUB and HTML files, and
+  book cards and the player show the author. Search matches authors too.
+- Export a finished audiobook as MP3, with the quality set in Preferences ->
+  Audiobooks, or as SRT or WebVTT subtitles. M4B chapters now start exactly
+  where each chapter's narration starts.
+- Reading Mode marks each word as an audiobook reads it when Word-by-Word
+  Emphasis is on.
+- AI reading tools use the provider you connected to summarize, translate,
+  answer questions about a book with page citations, and make quizzes and
+  flashcards. Each result shows its token count and estimated cost.
+- Read web articles: paste a link to hear the article without menus, ads, or
+  cookie banners, or add it to Library as an audiobook with its headings as
+  sections. Links to PDFs are added like a PDF file. Voqora only opens public
+  websites and tells you when a page is paywalled, too large, or not readable.
+- AI podcasts: turn a document or pasted text into a deep dive, brief, debate
+  or lecture with one or two hosts, then listen to it in Library. You can also
+  write your own script for up to four voices. Podcasts show who is speaking
+  in the transcript and can be cancelled and resumed like audiobooks.
+- Inbox in the sidebar saves articles to listen to later. Paste or drop a link
+  or a .webloc file, or choose Save to Voqora Inbox from the Services menu.
+  Listen now, make an audiobook, filter by Unread or Archived, and see how long
+  each article takes at your speed. Up to 500 articles stay on this Mac.
 
 ### Changed
 

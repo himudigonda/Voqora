@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Caps the body size of /audiobook uploads so a huge file can't OOM the
     # backend. Enforced via stream-reading the upload. See HARD-017.
     MAX_AUDIOBOOK_UPLOAD_MB: int = 100
+    MAX_WAV_CONVERT_MB: int = 200
 
     # Import and storage limits are deliberately independent. A small
     # compressed DOCX or a short source file can otherwise expand into a
@@ -44,6 +45,14 @@ class Settings(BaseSettings):
     MAX_DOCX_DOCUMENT_XML_BYTES: int = 64 * 1024 * 1024
     MAX_DOCX_COMPRESSION_RATIO: int = 100
     DOCX_RATIO_CHECK_MIN_BYTES: int = 1024 * 1024
+    MAX_EPUB_MEMBERS: int = 5000
+    MAX_EPUB_EXPANDED_BYTES: int = 300 * 1024 * 1024
+    MAX_EPUB_MEMBER_BYTES: int = 64 * 1024 * 1024
+    MAX_EPUB_COMPRESSION_RATIO: int = 100
+    MAX_EPUB_COVER_BYTES: int = 20 * 1024 * 1024
+    MAX_HTML_SOURCE_BYTES: int = 64 * 1024 * 1024
+    MAX_EXTRACTED_TEXT_CHARS: int = 20_000_000
+    MAX_COVER_IMAGE_PIXELS: int = 25_000_000
     MAX_PDF_RASTER_PIXELS: int = 16_000_000
     MAX_AUDIOBOOK_DURATION_SECONDS: int = 24 * 60 * 60
     MAX_AUDIOBOOK_LIBRARY_BYTES: int = 20 * 1024 * 1024 * 1024
@@ -66,6 +75,9 @@ class Settings(BaseSettings):
     # run up a multi-dollar bill on a 2,000-page book. See HARD-072.
     MAX_GEMINI_COST_USD_PER_BOOK: float = 5.0
 
+    MAX_AI_REQUEST_COST_USD: float = 2.0
+    MAX_AI_REQUEST_TOKENS: int = 600_000
+
     # Yield between audiobook TTS segments so audiobook synthesis doesn't
     # monopolize the CPU. Applies to every audiobook TTS pass — the backend
     # has no signal to distinguish a foreground user-initiated job from a
@@ -73,6 +85,18 @@ class Settings(BaseSettings):
     # to interactive /speak — only AudiobookService._generate_full_page. See
     # jira-cpu-ram-optimization.md.
     AUDIOBOOK_TTS_SEGMENT_PACING_S: float = 0.05
+
+    # Opt-in local API for other apps and agents. It binds to loopback only,
+    # requires its own key, and is bounded on body size, request rate,
+    # concurrent connections, and queued "speak on this Mac" commands.
+    LOCAL_API_MAX_BODY_BYTES: int = 1024 * 1024
+    LOCAL_API_RATE_LIMIT_BURST: int = 60
+    LOCAL_API_RATE_LIMIT_PER_SECOND: float = 2.0
+    LOCAL_API_MAX_CONNECTIONS: int = 32
+    LOCAL_API_START_TIMEOUT_S: float = 5.0
+    LOCAL_API_STOP_TIMEOUT_S: float = 5.0
+    SPEECH_RELAY_QUEUE_SIZE: int = 16
+    SPEECH_RELAY_MAX_SUBSCRIBERS: int = 4
 
     # Paths
     BASE_DIR: str = os.path.dirname(
@@ -114,6 +138,14 @@ class Settings(BaseSettings):
         return os.path.expanduser(
             "~/Library/Application Support/com.himudigonda.Voqora"
         )
+
+    @property
+    def VOICE_BLENDS_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "voice_blends.json")
+
+    @property
+    def PRONUNCIATIONS_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "pronunciations.json")
 
     @property
     def AUDIOBOOKS_DIR(self) -> str:

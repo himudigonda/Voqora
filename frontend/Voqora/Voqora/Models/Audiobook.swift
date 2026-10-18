@@ -22,6 +22,11 @@ struct Audiobook: Identifiable, Codable, Hashable {
     var errorCode: String? = nil
     var llmProvider: String? = nil
     var llmModel: String? = nil
+    var author: String? = nil
+    var kind: String? = nil
+    var speakers: [PodcastSpeaker]? = nil
+
+    static let podcastKind = "podcast"
 
     static let providerFailureCodes: Set<String> = [
         "llm_auth_failed",
@@ -61,6 +66,20 @@ struct Audiobook: Identifiable, Codable, Hashable {
         DashboardViewModel.voiceName(for: voice)
     }
 
+    var displayAuthor: String? {
+        AudiobookAuthor.display(author)
+    }
+
+    var isPodcast: Bool {
+        kind == Self.podcastKind
+    }
+
+    var creditLine: String {
+        guard isPodcast else { return "Narrated by \(narratorName)" }
+        let names = (speakers ?? []).map(\.name)
+        return names.isEmpty ? "Podcast" : "With \(ListFormatter.localizedString(byJoining: names))"
+    }
+
     var sortedSections: [AudiobookSection] {
         sections.sorted { $0.startTime < $1.startTime }
     }
@@ -68,10 +87,10 @@ struct Audiobook: Identifiable, Codable, Hashable {
     func subtitle(at time: TimeInterval, chapters: [AudiobookSection]? = nil) -> String {
         let chapters = chapters ?? sortedSections
         guard chapters.count > 1, let section = chapters.section(at: time) else {
-            return "Narrated by \(narratorName)"
+            return creditLine
         }
         let title = AudiobookImportStaging.displayName(from: section.title)
-        return title.caseInsensitiveCompare(displayTitle) == .orderedSame ? "Narrated by \(narratorName)" : title
+        return title.caseInsensitiveCompare(displayTitle) == .orderedSame ? creditLine : title
     }
 
     var progressFraction: Double {
@@ -126,6 +145,19 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case errorCode = "error_code"
         case llmProvider = "llm_provider"
         case llmModel = "llm_model"
+        case author
+        case kind, speakers
+    }
+}
+
+nonisolated enum AudiobookAuthor {
+    static let maximumLength = 200
+
+    static func display(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let collapsed = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return String(collapsed.prefix(maximumLength))
     }
 }
 
@@ -241,6 +273,11 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     var llmModel: String?
     var pricingKnown: Bool?
     var readsImages: Bool?
+    var author: String?
+
+    var displayAuthor: String? {
+        AudiobookAuthor.display(author)
+    }
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -260,6 +297,7 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case llmModel = "llm_model"
         case pricingKnown = "pricing_known"
         case readsImages = "reads_images"
+        case author
     }
 }
 

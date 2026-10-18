@@ -3,15 +3,25 @@ import Foundation
 
 final class AudiobookService: NSObject, @unchecked Sendable {
     private let connection: BackendConnection
+    private let session: URLSession
+    private let eventSession: URLSession
 
-    init(connection: BackendConnection = .shared) {
+    init(
+        connection: BackendConnection = .shared,
+        session: URLSession = .shared,
+        eventSession: URLSession = EventStreamSession.shared
+    ) {
         self.connection = connection
+        self.session = session
+        self.eventSession = eventSession
         super.init()
     }
 
     static func mimeType(forFileExtension fileExtension: String) -> String {
         switch fileExtension.lowercased() {
         case "pdf": "application/pdf"
+        case "epub": "application/epub+zip"
+        case "html", "htm": "text/html; charset=utf-8"
         case "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         case "txt", "md": "text/plain; charset=utf-8"
         default: "application/octet-stream"
@@ -29,7 +39,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
     func list() async throws -> [Audiobook] {
         let req = try connection.request(path: "audiobook", timeout: 10)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await session.data(for: req)
         guard let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
             return try JSONDecoder().decode([Audiobook].self, from: data)
         }
@@ -48,20 +58,20 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
     func get(_ id: String) async throws -> Audiobook {
         let req = try connection.request(path: "audiobook/\(id)", timeout: 10)
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, _) = try await session.data(for: req)
         return try JSONDecoder().decode(Audiobook.self, from: data)
     }
 
     func delete(_ id: String) async throws {
         let req = try connection.request(path: "audiobook/\(id)", method: "DELETE", timeout: 10)
-        _ = try await URLSession.shared.data(for: req)
+        _ = try await session.data(for: req)
         let cached = cacheDir.appendingPathComponent("\(id).wav")
         try? FileManager.default.removeItem(at: cached)
     }
 
     func deleteAll() async throws {
         let request = try connection.request(path: "audiobook", method: "DELETE", timeout: 30)
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             throw AudiobookServiceError.libraryDeletionFailed
         }
@@ -70,17 +80,94 @@ final class AudiobookService: NSObject, @unchecked Sendable {
 
     func cancel(_ id: String) async throws {
         let req = try connection.request(path: "audiobook/\(id)/cancel", method: "POST")
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Could not stop processing."
             throw AudiobookServiceError.uploadFailed(detail)
         }
     }
 
-    func transcript(for id: String) async throws -> Transcript {
-        let req = try connection.request(path: "audiobook/\(id)/transcript", timeout: 15)
-        let (data, _) = try await URLSession.shared.data(for: req)
-        return try JSONDecoder().decode(Transcript.self, from: data)
+    func transcript(for id: String, includingWords: Bool = false) async throws -> Transcript {
+        if includingWords, let timed = try? await fetchTranscript(id, query: [URLQueryItem(name: "words", value: "true")]) {
+            return timed
+        }
+        return try await fetchTranscript(id, query: [])
+    }
+
+    private func fetchTranscript(_ id: String, query: [URLQueryItem]) async throws -> Transcript {
+        let req = try request(path: "audiobook/\(id)/transcript", query: query, timeout: 30)
+        let (data, response) = try await session.data(for: req)
+        try AudiobookAPIFailure.check(response, body: data)
+        return try await Task.detached(priority: .userInitiated) {
+            try JSONDecoder().decode(Transcript.self, from: data)
+        }.value
+    }
+
+    func chapters(for id: String) async throws -> AudiobookChapterList {
+        let req = try connection.request(path: "audiobook/\(id)/chapters", timeout: 15)
+        let (data, response) = try await session.data(for: req)
+        try AudiobookAPIFailure.check(response, body: data)
+        return try JSONDecoder().decode(AudiobookChapterList.self, from: data)
+    }
+
+    func importWebPage(
+        _ url: URL,
+        voice: String?,
+        speed: Double?,
+        engine: String?,
+        pauseScale: Double? = nil,
+        cleanup: LLMCredential? = nil
+    ) async throws -> AudiobookEstimateResponse {
+        var req = try connection.request(path: "audiobook/url", method: "POST", timeout: Self.webPageTimeout)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONEncoder().encode(
+            WebPageImportBody(url: url, voice: voice, speed: speed, engine: engine, pauseScale: pauseScale, cleanup: cleanup)
+        )
+        let (data, response) = try await session.data(for: req)
+        try AudiobookAPIFailure.check(response, body: data)
+        return try JSONDecoder().decode(AudiobookEstimateResponse.self, from: data)
+    }
+
+    func exportSubtitles(_ id: String, as format: AudiobookSubtitleFormat, to destination: URL) async throws {
+        let req = try connection.request(path: "audiobook/\(id)/export/\(format.rawValue)", timeout: 60)
+        try await BackendFileDownload.save(req, using: session, to: destination)
+    }
+
+    func exportMP3(
+        _ id: String,
+        bitrateKbps: Int,
+        to destination: URL,
+        progress: @escaping @Sendable (Double) -> Void
+    ) async throws {
+        let req = try request(
+            path: "audiobook/\(id)/export/mp3",
+            query: [URLQueryItem(name: "bitrate", value: String(bitrateKbps))],
+            timeout: Self.mp3ExportTimeout
+        )
+        try await BackendFileDownload.save(req, using: session, to: destination, progress: progress)
+    }
+
+    nonisolated static let webPageTimeout: TimeInterval = 90
+    nonisolated static let mp3ExportTimeout: TimeInterval = 1800
+
+    private func request(path: String, query: [URLQueryItem], timeout: TimeInterval) throws -> URLRequest {
+        var req = try connection.request(path: path, timeout: timeout)
+        guard !query.isEmpty, let url = req.url,
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        else { return req }
+        components.queryItems = query
+        req.url = components.url ?? url
+        return req
+    }
+
+    func coverImageData(for id: String) async -> Data? {
+        guard let request = try? connection.request(path: "audiobook/\(id)/cover", timeout: 10),
+              let (data, response) = try? await session.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200 ..< 300).contains(http.statusCode),
+              !data.isEmpty
+        else { return nil }
+        return data
     }
 
     nonisolated struct Transcript: Codable, Sendable {
@@ -108,6 +195,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         voice: String?,
         speed: Double?,
         engine: String?,
+        pauseScale: Double? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
@@ -124,6 +212,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         if let engine {
             fields.append(("engine", engine))
         }
+        if let pauseScale {
+            fields.append(("pause_scale", String(PauseScale.clamped(pauseScale))))
+        }
         if let cleanup {
             fields.append(("llm_provider", cleanup.provider.rawValue))
             fields.append(("llm_model", cleanup.resolvedModel))
@@ -134,7 +225,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let bodyURL = try Self.makeMultipartUploadBody(document: document, boundary: boundary, fields: fields)
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
-        let (data, response) = try await URLSession.shared.upload(for: req, fromFile: bodyURL)
+        let (data, response) = try await session.upload(for: req, fromFile: bodyURL)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Upload failed"
             throw AudiobookServiceError.uploadFailed(detail)
@@ -211,7 +302,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         } else {
             cleanup?.apply(to: &req)
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Retry failed"
             throw AudiobookServiceError.uploadFailed(detail)
@@ -235,7 +326,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             payload["new_cap_usd"] = newCapUSD
         }
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Could not apply the cost choice."
             throw AudiobookServiceError.uploadFailed(detail)
@@ -248,7 +339,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             req.setValue("true", forHTTPHeaderField: "X-Voqora-LLM-Cleanup")
             cleanup.apply(to: &req)
         }
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
             let detail = (try? JSONDecoder().decode([String: String].self, from: data))?["detail"] ?? "Failed to start processing"
             throw AudiobookServiceError.uploadFailed(detail)
@@ -270,7 +361,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                     var sawTerminal = false
                     var bookGone = false
                     do {
-                        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+                        let (bytes, response) = try await self.eventSession.bytes(for: req)
                         if let http = response as? HTTPURLResponse,
                            http.statusCode == 404 || http.statusCode == 410
                         {
@@ -326,7 +417,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         try? FileManager.default.removeItem(at: local)
 
         let request = try connection.request(path: "audiobook/\(id)/audio", timeout: 60)
-        let (downloadedURL, response) = try await URLSession.shared.download(for: request)
+        let (downloadedURL, response) = try await session.download(for: request)
         defer { try? FileManager.default.removeItem(at: downloadedURL) }
 
         guard let http = response as? HTTPURLResponse else {
@@ -395,7 +486,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
             "model": credential.model,
             "base_url": credential.serverURL,
         ])
-        guard let (data, response) = try? await URLSession.shared.data(for: req) else { return unreachable }
+        guard let (data, response) = try? await session.data(for: req) else { return unreachable }
         return Self.decodeVerification(data: data, statusCode: (response as? HTTPURLResponse)?.statusCode) ?? unreachable
     }
 

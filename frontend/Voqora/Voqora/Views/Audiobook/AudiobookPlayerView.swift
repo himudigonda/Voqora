@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AudiobookPlayerView: View {
@@ -8,10 +7,18 @@ struct AudiobookPlayerView: View {
     let book: Audiobook
     @State private var panel: Panel = .transcript
     @State private var tint: Color?
+    @StateObject private var assistant: AIAssistantViewModel
+    @State private var pendingCitation: AICitation?
+
+    init(book: Audiobook) {
+        self.book = book
+        _assistant = StateObject(wrappedValue: AIAssistantViewModel.restoring(bookID: book.bookID))
+    }
 
     enum Panel: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
         case sections = "Sections"
+        case assistant = "Assistant"
 
         var id: String {
             rawValue
@@ -39,11 +46,19 @@ struct AudiobookPlayerView: View {
         } content: { fontSize in
             VStack(spacing: 0) {
                 PlayerSegmentedHeader(selection: $panel)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        ReadingModeButton()
+                            .padding(.top, DesignTokens.Spacing.sm)
+                            .padding(.trailing, DesignTokens.Spacing.md)
+                    }
                 switch panel {
                 case .transcript:
                     transcript(fontSize: fontSize)
                 case .sections:
                     PlayerSectionsList(book: book)
+                case .assistant:
+                    AIAssistantPanel(model: assistant, onCitation: open(_:))
                 }
             }
         }
@@ -59,6 +74,7 @@ struct AudiobookPlayerView: View {
         .onKeyPress("[") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) - 0.25); return .handled }
         .onKeyPress("]") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) + 0.25); return .handled }
         .onAppear {
+            assistant.connect(bookVM.providers)
             bookVM.isPlayerViewActive = true
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
@@ -68,6 +84,16 @@ struct AudiobookPlayerView: View {
         }
         .onDisappear {
             bookVM.isPlayerViewActive = false
+            assistant.cancelAll()
+        }
+        .onChange(of: panel) { old, _ in
+            if old == .assistant {
+                assistant.cancelAll()
+            }
+        }
+        .onChange(of: bookVM.transcriptState) { _, state in
+            guard let citation = pendingCitation, isCurrentBook, state == .loaded || state == .unavailable else { return }
+            jump(to: citation)
         }
         .task(id: book.bookID) {
             let color = await CoverColorExtractor.shared.dominantColor(forBackendPath: "audiobook/\(book.bookID)/cover")
@@ -79,6 +105,35 @@ struct AudiobookPlayerView: View {
 
     private var isCurrentBook: Bool {
         bookVM.nowPlaying?.bookID == book.bookID
+    }
+
+    private func open(_ citation: AICitation) {
+        if isCurrentBook, bookVM.transcriptState == .loaded || bookVM.transcriptState == .unavailable {
+            jump(to: citation)
+            return
+        }
+        pendingCitation = citation
+        if !isCurrentBook {
+            bookVM.play(book)
+        } else if bookVM.transcriptState == .idle {
+            bookVM.loadTranscript(for: book.bookID)
+        }
+    }
+
+    private func jump(to citation: AICitation) {
+        pendingCitation = nil
+        if let line = AICitationLocator.line(for: citation, in: bookVM.follower.document) {
+            bookVM.play(fromLine: line)
+        } else if let start = book.pageToTime[String(citation.page)] {
+            bookVM.seek(toSeconds: start)
+            if !bookVM.audio.isPlaying {
+                bookVM.audio.resume()
+            }
+        } else {
+            bookVM.showToast("Voqora could not find that passage in the audio.")
+            return
+        }
+        panel = .transcript
     }
 
     private func chapterTitle(at time: TimeInterval) -> String? {
@@ -125,7 +180,8 @@ private struct AudiobookTitle: View {
         PlayerTitle(
             title: book.displayTitle,
             subtitle: book.subtitle(at: audio.currentTime, chapters: bookVM.chapters(for: book)),
-            alignment: alignment
+            alignment: alignment,
+            byline: book.displayAuthor.map { "by \($0)" }
         )
     }
 }
@@ -228,7 +284,7 @@ private struct PlayerSecondaryControls: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
-    @State private var isExporting = false
+    @State private var showingPronunciations = false
 
     private var accent: Color {
         vm.accentColor(scheme: colorScheme, contrast: contrast)
@@ -241,12 +297,19 @@ private struct PlayerSecondaryControls: View {
             PlayerVolumeControl()
             Spacer(minLength: 0)
             sleepMenu
-            PlayerCircleButton(
-                systemName: "square.and.arrow.down",
-                label: "Export Audio…",
-                isEnabled: !isExporting && book.status == "done",
-                action: export
-            )
+            AudiobookExportButton(exports: bookVM.exports, book: book, tint: accent)
+            moreMenu
+        }
+        .sheet(isPresented: $showingPronunciations) {
+            BookPronunciationsSheet(book: book)
+                .environmentObject(vm)
+                .environmentObject(bookVM)
+        }
+    }
+
+    private var moreMenu: some View {
+        PlayerCircleMenu(systemName: "ellipsis", label: "More") {
+            Button("Pronunciations for This Book…") { showingPronunciations = true }
         }
     }
 
@@ -292,29 +355,6 @@ private struct PlayerSecondaryControls: View {
         .fixedSize()
         .help("Sleep Timer")
         .accessibilityLabel("Sleep Timer")
-    }
-
-    private func export() {
-        guard !isExporting else { return }
-        isExporting = true
-        Task { @MainActor in
-            defer { isExporting = false }
-            do {
-                let source = try await bookVM.validatedAudioURL(for: book)
-                let panel = NSSavePanel()
-                panel.title = "Export Audio"
-                panel.nameFieldStringValue = "\(book.displayTitle).wav"
-                panel.canCreateDirectories = true
-                guard panel.runModal() == .OK, let destination = panel.url else { return }
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: source, to: destination)
-                bookVM.showToast("Exported \(destination.lastPathComponent)", kind: .success)
-            } catch {
-                bookVM.showToast("Couldn't export this audiobook.", kind: .error)
-            }
-        }
     }
 }
 

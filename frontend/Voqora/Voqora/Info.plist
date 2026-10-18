@@ -29,8 +29,73 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Voqora connects to your Audiobookshelf server on your local network when you upload an audiobook.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voqora listens through your microphone only while you dictate, so it can type what you say into the app you are using.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Voqora transcribes your dictation on this Mac. Audio is sent to Apple only if you turn on server recognition for a language without on-device support.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Voqora needs to control other apps to adjust music volume while speaking.</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Speak with Voqora</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>speakWithVoqora</string>
+			<key>NSPortName</key>
+			<string>$(PRODUCT_NAME)</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.utf8-plain-text</string>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Add to Voqora Library</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>addToVoqoraLibrary</string>
+			<key>NSPortName</key>
+			<string>$(PRODUCT_NAME)</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.utf8-plain-text</string>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Save to Voqora Inbox</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>saveToVoqoraInbox</string>
+			<key>NSPortName</key>
+			<string>$(PRODUCT_NAME)</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.url</string>
+				<string>NSURLPboardType</string>
+				<string>public.utf8-plain-text</string>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
 	<key>SUEnableAutomaticChecks</key>

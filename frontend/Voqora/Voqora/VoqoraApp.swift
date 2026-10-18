@@ -1,3 +1,4 @@
+import Combine
 import KeyboardShortcuts
 import Sparkle
 import SwiftUI
@@ -24,8 +25,16 @@ struct VoqoraApp: App {
 
     @StateObject private var installer: GuidedInstallerService
     @StateObject private var providers: LLMProviderStore
+    @StateObject private var dictation: DictationController
+    @StateObject private var dictationTranscripts: DictationTranscriptStore
+    @StateObject private var inbox: InboxViewModel
+    @StateObject private var studio: StudioViewModel
+    @StateObject private var localAPI: LocalAPIController
+    @StateObject private var shelfSettings: AudiobookshelfSettingsStore
+    @StateObject private var shelfUploads: AudiobookshelfUploadController
 
     private let backend: BackendService
+    private let systemMedia: SystemMediaSession?
 
     init() {
         let runningTests = RuntimeEnvironment.isRunningTests
@@ -75,6 +84,27 @@ struct VoqoraApp: App {
 
         let providersInstance = LLMProviderStore(defaults: testDefaults ?? .standard)
         let audiobookInstance = AudiobookViewModel(audio: audioInstance, providers: providersInstance)
+        let inboxInstance = InboxViewModel(
+            store: InboxStore(),
+            dependencies: .live(dashboard: vmInstance, library: audiobookInstance)
+        )
+        let localAPIInstance = LocalAPIController.live(
+            speaker: vmInstance,
+            announce: { [weak audiobookInstance] message in audiobookInstance?.showToast(message, kind: .info) },
+            defaults: testDefaults ?? .standard
+        )
+        let shelfClient = AudiobookshelfClient()
+        let shelfSettingsInstance = AudiobookshelfSettingsStore(client: shelfClient, secrets: .keychain, defaults: testDefaults ?? .standard)
+        let shelfUploadsInstance = AudiobookshelfUploadController(dependencies: .live(
+            renderer: .live(service: AudiobookService(), viewModel: audiobookInstance),
+            settings: shelfSettingsInstance,
+            client: shelfClient,
+            notify: { [weak audiobookInstance] message, kind in audiobookInstance?.showToast(message, kind: kind) }
+        ))
+        let dictationInstance = DictationController(
+            transcripts: DictationTranscriptStore(),
+            dependencies: .system(defaults: testDefaults ?? .standard)
+        )
 
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
@@ -86,16 +116,45 @@ struct VoqoraApp: App {
         _updater = StateObject(wrappedValue: updaterInstance)
         _installer = StateObject(wrappedValue: installerInstance)
         _providers = StateObject(wrappedValue: providersInstance)
+        _dictation = StateObject(wrappedValue: dictationInstance)
+        _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
+        _inbox = StateObject(wrappedValue: inboxInstance)
+        _studio = StateObject(wrappedValue: StudioViewModel(providers: providersInstance, library: .live(audiobookInstance)))
+        _localAPI = StateObject(wrappedValue: localAPIInstance)
+        _shelfSettings = StateObject(wrappedValue: shelfSettingsInstance)
+        _shelfUploads = StateObject(wrappedValue: shelfUploadsInstance)
 
         vmInstance.audiobookVM = audiobookInstance
+        let inputsInstance = SpeechInputCoordinator(
+            speaker: vmInstance,
+            library: audiobookInstance,
+            presentLibrary: { [weak vmInstance] in
+                vmInstance?.showLibrary()
+                WindowPresenter.shared.show()
+            }
+        )
 
         backend = backendInstance
+        systemMedia = runningTests ? nil : SystemMediaSession.live(dashboard: vmInstance, audiobooks: audiobookInstance)
         appDelegate.stopOwnedBackend = { [backendInstance] in
             backendInstance.stop()
         }
 
         if !runningTests {
-            setupShortcuts(vm: vmInstance)
+            inputsInstance.activate()
+            appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance, inbox: inboxInstance)
+            let aiSelection = AISelectionCoordinator(
+                speaker: vmInstance,
+                credential: { [weak providersInstance] in providersInstance?.activeCredential },
+                dependencies: .live(openAIPreferences: { [weak vmInstance] in
+                    vmInstance?.selectedTab = "preferences"
+                    WindowPresenter.shared.show()
+                })
+            )
+            setupShortcuts(vm: vmInstance, inputs: inputsInstance, aiSelection: aiSelection)
+            systemMedia?.start()
+            dictationInstance.installSystemIntegrations(dashboard: vmInstance)
+            localAPIInstance.observeEngine(vmInstance.$isBackendOnline.eraseToAnyPublisher())
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
 
@@ -130,7 +189,7 @@ struct VoqoraApp: App {
         }
     }
 
-    private func setupShortcuts(vm: DashboardViewModel) {
+    private func setupShortcuts(vm: DashboardViewModel, inputs: SpeechInputCoordinator, aiSelection: AISelectionCoordinator) {
         VoqoraLog.info("KeyboardShortcuts", "Initializing registration")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
@@ -162,6 +221,38 @@ struct VoqoraApp: App {
                 guard Self.shortcutAllowed("exportAudio") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "exportAudio triggered")
                 vm.exportLastClip()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .speakScreenText) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("speakScreenText") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "speakScreenText triggered")
+                await inputs.speakScreenText()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .speakClipboard) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("speakClipboard") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "speakClipboard triggered")
+                await inputs.speakClipboard()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .summarizeSelection) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("summarizeSelection") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "summarizeSelection triggered")
+                await aiSelection.summarizeSelection()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .translateSelection) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("translateSelection") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "translateSelection triggered")
+                await aiSelection.translateSelection()
             }
         }
 
@@ -213,11 +304,32 @@ struct VoqoraApp: App {
                         .environmentObject(installer)
                         .environmentObject(providers)
                         .environmentObject(UsageStatsStore.shared)
+                        .environmentObject(dictation)
+                        .environmentObject(dictationTranscripts)
+                        .environmentObject(inbox)
+                        .environmentObject(studio)
+                        .environmentObject(localAPI)
+                        .environmentObject(shelfSettings)
+                        .environmentObject(shelfUploads)
                 }
             }
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])
+
+        Window(ReadingModeWindow.title, id: ReadingModeWindow.id) {
+            Group {
+                if RuntimeEnvironment.isRunningTests {
+                    EmptyView()
+                } else {
+                    ReadingModeView()
+                        .environmentObject(dashboardVM)
+                        .environmentObject(audio)
+                        .environmentObject(audiobookVM)
+                }
+            }
+        }
+        .defaultSize(width: 900, height: 720)
 
         MenuBarExtra(isInserted: Binding(
             get: { showMenuBarIcon },
@@ -302,6 +414,8 @@ struct VoqoraApp: App {
             } label: {
                 Label("Open Audiobooks", systemImage: "books.vertical")
             }
+
+            ReadingModeMenuButton()
 
             Divider()
 

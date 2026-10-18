@@ -1,0 +1,13 @@
+{
+  "name": "voqora-chromium-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Voqora browser extension for Chrome and Edge.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

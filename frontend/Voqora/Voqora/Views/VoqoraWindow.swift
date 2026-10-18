@@ -6,6 +6,7 @@ struct VoqoraWindow: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var launchManager: LaunchManager
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var inbox: InboxViewModel
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var permissions: PermissionsService
@@ -102,12 +103,15 @@ struct VoqoraWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering) { providers in
+                        if vm.selectedTab == "inbox" {
+                            return inbox.handleDrop(providers)
+                        }
                         guard bookVM.importDroppedDocuments(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed) else { return false }
                         vm.showLibrary()
                         return true
                     }
 
-                if globalDropHovering, vm.selectedTab != "books" {
+                if globalDropHovering, vm.selectedTab != "books", vm.selectedTab != "inbox" {
                     globalDropOverlay
                         .transition(.opacity)
                 }
@@ -167,6 +171,7 @@ struct VoqoraWindow: View {
                 await bookVM.refresh()
             }
         }
+        .syncsVoiceBlends()
         .onChange(of: onboarding.version) { _, _ in
             AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
             if !onboarding.needsOnboarding {
@@ -253,6 +258,10 @@ private extension VoqoraWindow {
         case "preferences": PreferencesView()
         case "about": AboutView()
         case "feedback": FeedbackView()
+        case "dictation": DictationView()
+        case let tab? where VoicesPage(tab: tab) != nil: VoicesView(page: VoicesPage(tab: tab) ?? .myVoices)
+        case "inbox": InboxView()
+        case StudioView.tab: StudioView()
         default: MainDashboardView()
         }
     }
@@ -271,6 +280,28 @@ private extension VoqoraWindow {
                     sidebarLink("Library", icon: "books.vertical.fill", value: "books")
                     if let resume = bookVM.continueListeningBook {
                         continueListeningButton(for: resume)
+                    }
+                }
+            }
+            PaneSection("Studio") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Podcasts", icon: "waveform.and.mic", value: StudioView.tab)
+                }
+            }
+            PaneSection("Read Later") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Inbox", icon: "tray.full.fill", value: "inbox")
+                }
+            }
+            PaneSection("Dictation") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Transcripts", icon: "mic.fill", value: "dictation")
+                }
+            }
+            PaneSection("Voices") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    ForEach(VoicesPage.allCases) { page in
+                        sidebarLink(page.title, icon: page.icon, value: page.tab)
                     }
                 }
             }
