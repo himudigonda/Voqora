@@ -35,6 +35,11 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- More ways to start speech: press `Command + Shift + 8` and drag over any
+  part of the screen to hear the text in it, assign a shortcut to Speak
+  Clipboard, use Speak with Voqora or Add to Voqora Library from the Services
+  menu, and run Speak Text, Speak Clipboard, Pause or Resume Speech, and Stop
+  Speech from the Shortcuts app.
 
 ### Changed
 

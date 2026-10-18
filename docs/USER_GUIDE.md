@@ -46,9 +46,31 @@ name and email, and lets you pick an accent color and app icon.
 | Play / pause | `Command + Shift + /` |
 | Stop | `Command + Shift + ,` |
 | Export the latest clip | `Command + Shift + M` |
+| Speak text on screen | `Command + Shift + 8` |
+| Speak clipboard | Not set |
 
 Change any shortcut in Preferences. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
+
+## More ways to start speech
+
+- **Text on screen.** Press `Command + Shift + 8`, then drag over the part of
+  the screen you want to hear, such as an image, a video frame, or an app that
+  does not allow selecting text. Voqora reads the text in that area, joining
+  words split across lines and keeping paragraphs together. Press Escape to
+  cancel. The first time, macOS asks you to allow Screen Recording for Voqora.
+  Turn it on in **System Settings -> Privacy & Security -> Screen Recording**,
+  then reopen Voqora. The capture is deleted as soon as the text is read.
+- **Clipboard.** Assign a shortcut to **Speak Clipboard** in Preferences to
+  hear whatever text you last copied.
+- **Services menu.** Select text in any app, then choose **Speak with Voqora**
+  or **Add to Voqora Library** from the app menu under **Services**, or from
+  the right-click menu. Add to Voqora Library turns the selection into a text
+  audiobook, named after its first line. If the items are missing, turn them
+  on in **System Settings -> Keyboard -> Keyboard Shortcuts -> Services**.
+- **Shortcuts app.** Voqora adds **Speak Text** (with an optional voice),
+  **Speak Clipboard**, **Pause or Resume Speech**, and **Stop Speech** actions
+  for your own shortcuts and for Siri.
 
 ## Choose a voice and speed
 
