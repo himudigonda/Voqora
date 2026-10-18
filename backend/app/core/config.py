@@ -74,6 +74,18 @@ class Settings(BaseSettings):
     # jira-cpu-ram-optimization.md.
     AUDIOBOOK_TTS_SEGMENT_PACING_S: float = 0.05
 
+    # Opt-in local API for other apps and agents. It binds to loopback only,
+    # requires its own key, and is bounded on body size, request rate,
+    # concurrent connections, and queued "speak on this Mac" commands.
+    LOCAL_API_MAX_BODY_BYTES: int = 1024 * 1024
+    LOCAL_API_RATE_LIMIT_BURST: int = 60
+    LOCAL_API_RATE_LIMIT_PER_SECOND: float = 2.0
+    LOCAL_API_MAX_CONNECTIONS: int = 32
+    LOCAL_API_START_TIMEOUT_S: float = 5.0
+    LOCAL_API_STOP_TIMEOUT_S: float = 5.0
+    SPEECH_RELAY_QUEUE_SIZE: int = 16
+    SPEECH_RELAY_MAX_SUBSCRIBERS: int = 4
+
     # Paths
     BASE_DIR: str = os.path.dirname(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

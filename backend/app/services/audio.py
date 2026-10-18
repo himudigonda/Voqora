@@ -1,6 +1,9 @@
+import asyncio
 import struct
+import tempfile
 
 import numpy as np
+import soundfile as sf
 
 from app.core.config import settings
 
@@ -33,6 +36,8 @@ _FADE_OUT_CURVE = np.linspace(1.0, 0.6, _FADE_SAMPLES, dtype=np.float32)
 # (speed-scaled) durations.
 _SILENCE_CACHE: dict[tuple[float, int], np.ndarray] = {}
 _SILENCE_CACHE_CAP = 64
+
+_FLAC_READ_CHUNK_BYTES = 64 * 1024
 
 
 class AudioService:
@@ -90,15 +95,38 @@ class AudioService:
         return arr
 
     @staticmethod
+    def to_pcm16(samples: np.ndarray, volume: float = 1.0) -> bytes:
+        clipped = np.clip(samples * volume, -1.0, 1.0)
+        return (clipped * 32767).astype("<i2").tobytes()
+
+    @staticmethod
+    async def stream_samples_to_pcm(sample_generator, volume: float = 1.0):
+        async for samples in sample_generator:
+            yield AudioService.to_pcm16(samples, volume)
+
+    @staticmethod
     async def stream_samples_to_wav(sample_generator, volume: float):
         """
         Takes an async generator of raw float samples and yields WAV chunks,
         starting with a pre-computed header for streaming.
         """
-        # 1. Yield pre-computed WAV header immediately (no per-request construction)
         yield _WAV_HEADER_BYTES
+        async for chunk in AudioService.stream_samples_to_pcm(sample_generator, volume):
+            yield chunk
 
-        # 2. Stream PCM data chunks
-        async for samples in sample_generator:
-            samples = np.clip(samples * volume, -1.0, 1.0)
-            yield (samples * 32767).astype(np.int16).tobytes()
+    @staticmethod
+    async def stream_samples_to_flac(sample_generator, volume: float = 1.0):
+        with tempfile.TemporaryFile() as spool:
+            await AudioService._encode_flac(sample_generator, volume, spool)
+            spool.seek(0)
+            while chunk := await asyncio.to_thread(spool.read, _FLAC_READ_CHUNK_BYTES):
+                yield chunk
+
+    @staticmethod
+    async def _encode_flac(sample_generator, volume: float, spool) -> None:
+        with sf.SoundFile(
+            spool, mode="w", samplerate=_SR, channels=1, format="FLAC", subtype="PCM_16"
+        ) as encoder:
+            async for samples in sample_generator:
+                clipped = np.clip(samples * volume, -1.0, 1.0)
+                await asyncio.to_thread(encoder.write, clipped)

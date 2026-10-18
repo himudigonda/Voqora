@@ -16,8 +16,14 @@ from app.core.logging import get_logger
 from app.services.audio import AudioService
 from app.services.engine_manager import EngineManager
 from app.services.languages import DEFAULT_VOICE, LANGUAGES, is_valid_voice
+from app.services.speech_stream import (
+    MAX_ENGINE_SPEED,
+    MAX_SPEECH_CHARS,
+    MIN_ENGINE_SPEED,
+    open_speech_samples,
+)
 from app.services.text_normalizer import strip_markdown_for_narration
-from app.services.tts import TTSEngine, interactive_tts_lock
+from app.services.tts import TTSEngine
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -35,9 +41,9 @@ def _require_known_voice(value: str | None) -> str | None:
 class SpeakRequest(BaseModel):
     # Keep one request bounded. Long documents belong in the audiobook flow,
     # where progress, cancellation, and recovery are explicit.
-    text: str = Field(min_length=1, max_length=50_000)
+    text: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
     voice: str = DEFAULT_VOICE
-    speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    speed: float = Field(default=1.0, ge=MIN_ENGINE_SPEED, le=MAX_ENGINE_SPEED)
     volume: float = Field(default=1.0, ge=0.0, le=1.5)
     lang: str | None = None
 
@@ -71,7 +77,7 @@ class SpeakRequest(BaseModel):
 class PrewarmRequest(BaseModel):
     # Same bound as SpeakRequest.text — unbounded here would make this an
     # easier DoS amplifier than /speak for the same cost.
-    text: str | None = Field(default=None, max_length=50_000)
+    text: str | None = Field(default=None, max_length=MAX_SPEECH_CHARS)
 
     @field_validator("text")
     @classmethod
@@ -86,7 +92,7 @@ class PrewarmRequest(BaseModel):
         return strip_markdown_for_narration(value)
 
     voice: str | None = None
-    speed: float | None = Field(default=None, ge=0.5, le=2.0)
+    speed: float | None = Field(default=None, ge=MIN_ENGINE_SPEED, le=MAX_ENGINE_SPEED)
 
     @field_validator("voice")
     @classmethod
@@ -157,53 +163,13 @@ async def prewarm(
     return {"status": "warming"}
 
 
-async def _guarded_wav_stream(wav_generator, lock_holder=None):
-    """Wrap WAV streaming with error handling and release the preemption lock
-    when the stream finishes (so audiobook generation can resume)."""
-    try:
-        async for chunk in wav_generator:
-            yield chunk
-    except Exception:
-        log.error(
-            "speak.stream_error",
-            extra={"failure_code": "stream_generation_failed"},
-            exc_info=True,
-        )
-    finally:
-        if lock_holder is not None and lock_holder.locked():
-            lock_holder.release()
-
-
 @router.post("/speak")
 async def speak(req: SpeakRequest):
     try:
-        # Acquire preemption lock so any in-flight audiobook TTS phase pauses
+        # Hold the preemption lock so any in-flight audiobook TTS phase pauses
         # at its next inter-page checkpoint until this stream finishes.
-        await interactive_tts_lock.acquire()
-
-        # If the model was idle-unloaded, reload it now (~1.3 s warm-up).
-        await EngineManager.ensure_loaded()
-        EngineManager.touch()
-
-        raw_samples_generator = EngineManager.generate(
-            req.text, req.voice, req.speed, req.lang
-        )
-        wav_chunk_generator = AudioService.stream_samples_to_wav(
-            raw_samples_generator, req.volume
-        )
-        guarded_stream = _guarded_wav_stream(
-            wav_chunk_generator, lock_holder=interactive_tts_lock
-        )
-
-        return StreamingResponse(
-            guarded_stream,
-            media_type="audio/wav",
-        )
-
+        samples = await open_speech_samples(req.text, req.voice, req.speed, req.lang)
     except Exception:
-        # If we acquired the lock but bombed before returning the stream, release.
-        if interactive_tts_lock.locked():
-            interactive_tts_lock.release()
         log.error(
             "speak.request_error",
             extra={
@@ -220,6 +186,10 @@ async def speak(req: SpeakRequest):
             status_code=500,
             content="Speech generation failed. Check that the voice model is available and try again.",
         )
+    return StreamingResponse(
+        AudioService.stream_samples_to_wav(samples, req.volume),
+        media_type="audio/wav",
+    )
 
 
 @router.get("/debug/state")
