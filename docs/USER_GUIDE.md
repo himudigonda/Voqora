@@ -212,6 +212,29 @@ connection, then **Resume** to continue where it stopped. Pages already cleaned
 stay as they are. To continue without AI, choose **Finish Without AI**; the
 remaining pages are narrated from local text.
 
+## Reading Mode
+
+Reading Mode shows the text being read, from a selection or an audiobook, in a
+window of its own. It is built for focus, dyslexia, and low vision.
+
+- Open it with the page button next to the transcript in the player, or choose
+  **Reading Mode** from the menu bar icon. Use the green window button or the
+  full screen button in the control bar to fill the screen. Press Escape to
+  close it.
+- The sentence being read is highlighted. Turn on **Reading Ruler** to dim
+  everything else. When word timing is available, **Word-by-Word Emphasis**
+  marks each word as it is spoken; otherwise the whole sentence is highlighted.
+- Click any sentence to play from it. Press Space to pause or resume.
+- Use the text size buttons in the control bar, or open the settings button to
+  choose a font (System, Rounded, Serif, or Mono), text size from 14 to 48 pt,
+  line height, letter spacing, and word spacing.
+- Pick a Paper, Sepia, Dark, or High Contrast theme, and add a soft tint if a
+  colored page is easier on your eyes.
+
+The same settings live in **Preferences -> Reading**, with a live preview, and
+are remembered between sessions. Reading Mode follows the macOS Reduce Motion
+and Increase Contrast settings.
+
 ## Stats
 
 Open **Stats** in the sidebar to see your listening time, voices, streaks, and

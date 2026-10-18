@@ -51,6 +51,10 @@
   Clipboard, use Speak with Voqora or Add to Voqora Library from the Services
   menu, and run Speak Text, Speak Clipboard, Pause or Resume Speech, and Stop
   Speech from the Shortcuts app.
+- Reading Mode opens the current transcript in its own window with large,
+  adjustable text, Paper, Sepia, Dark, and High Contrast themes, soft tints,
+  and a reading ruler that dims everything but the sentence being read. Open
+  it from the player or the menu bar, and set it up in Preferences -> Reading.
 
 ### Changed
 

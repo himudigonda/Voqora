@@ -39,6 +39,12 @@ struct AudiobookPlayerView: View {
         } content: { fontSize in
             VStack(spacing: 0) {
                 PlayerSegmentedHeader(selection: $panel)
+                    .frame(maxWidth: .infinity)
+                    .overlay(alignment: .trailing) {
+                        ReadingModeButton()
+                            .padding(.top, DesignTokens.Spacing.sm)
+                            .padding(.trailing, DesignTokens.Spacing.md)
+                    }
                 switch panel {
                 case .transcript:
                     transcript(fontSize: fontSize)

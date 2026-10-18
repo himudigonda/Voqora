@@ -310,6 +310,10 @@ struct PreferencesView: View {
                     }
                 }
 
+                PreferenceSection(title: "Reading", icon: "textformat.size") {
+                    ReadingSettingsForm(preferences: ReadingPreferences.shared)
+                }
+
                 PreferenceSection(title: "General", icon: "gearshape") {
                     VStack(alignment: .leading, spacing: 16) {
                         Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {
