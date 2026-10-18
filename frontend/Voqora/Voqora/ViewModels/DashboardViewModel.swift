@@ -720,8 +720,7 @@ class DashboardViewModel: ObservableObject {
         isModelLoaded: Bool,
         hasReadableStringContent: Bool
     ) -> Bool {
-        guard isBackendOnline, !isModelLoaded else { return false }
-        guard currentChangeCount != lastChangeCount else { return false }
+        guard isBackendOnline, !isModelLoaded, currentChangeCount != lastChangeCount else { return false }
         return hasReadableStringContent
     }
 

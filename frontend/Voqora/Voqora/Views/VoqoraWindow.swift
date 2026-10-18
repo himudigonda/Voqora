@@ -6,6 +6,7 @@ struct VoqoraWindow: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var launchManager: LaunchManager
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @EnvironmentObject var inbox: InboxViewModel
     @EnvironmentObject var onboarding: OnboardingCoordinator
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var permissions: PermissionsService
@@ -102,12 +103,15 @@ struct VoqoraWindow: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .safeAreaInset(edge: .bottom, spacing: 0) { miniPlayer }
                     .onDrop(of: [.fileURL], isTargeted: $globalDropHovering) { providers in
+                        if vm.selectedTab == "inbox" {
+                            return inbox.handleDrop(providers)
+                        }
                         guard bookVM.importDroppedDocuments(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed) else { return false }
                         vm.showLibrary()
                         return true
                     }
 
-                if globalDropHovering, vm.selectedTab != "books" {
+                if globalDropHovering, vm.selectedTab != "books", vm.selectedTab != "inbox" {
                     globalDropOverlay
                         .transition(.opacity)
                 }

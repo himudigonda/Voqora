@@ -135,6 +135,7 @@ final class InboxViewModel: ObservableObject {
     private let noticeDismissDelay: UInt64
     private var listening: ListeningSession?
     private var extractionTask: Task<Void, Never>?
+    private var extractionGeneration = 0
     private var speakTask: Task<Void, Never>?
     private var audiobookTasks: [String: Task<Void, Never>] = [:]
     private var noticeTask: Task<Void, Never>?
@@ -281,6 +282,7 @@ final class InboxViewModel: ObservableObject {
     func eraseAll() throws {
         extractionTask?.cancel()
         extractionTask = nil
+        extractionGeneration &+= 1
         pendingLinks.removeAll()
         endListening()
         try store.eraseAll()
@@ -310,12 +312,17 @@ final class InboxViewModel: ObservableObject {
 
     private func drainQueue() {
         guard extractionTask == nil else { return }
+        extractionGeneration &+= 1
+        let generation = extractionGeneration
         extractionTask = Task {
             while let next = pendingLinks.first, !Task.isCancelled {
                 await extract(next)
+                guard generation == extractionGeneration else { return }
                 pendingLinks.removeAll { $0.id == next.id }
             }
-            extractionTask = nil
+            if generation == extractionGeneration {
+                extractionTask = nil
+            }
         }
     }
 
