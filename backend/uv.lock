@@ -135,7 +135,7 @@ requires-dist = [
     { name = "pypinyin", specifier = ">=0.55.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "soundfile", specifier = ">=0.12.1" },
+    { name = "soundfile", specifier = ">=0.13.0" },
     { name = "uvicorn", specifier = ">=0.27.0" },
 ]
 

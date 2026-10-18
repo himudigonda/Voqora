@@ -19,10 +19,11 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Query,
     Response,
     UploadFile,
 )
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -43,6 +44,7 @@ from app.services.llm_providers import PROVIDERS, LLMCredential, api_key_problem
 from app.services.pdf_extractor import PDFExtractor
 from app.services.pronunciation import pronunciations
 from app.services.text_extractor import TextExtractor
+from app.services.transcript_export import with_word_timings
 from app.services.tts import MAX_PAUSE_SCALE, MIN_PAUSE_SCALE
 from app.services.voices import resolve_voice
 
@@ -747,10 +749,33 @@ def get_audiobook_audio(
     )
 
 
+def _load_transcript(book_id: str) -> dict[str, Any]:
+    AudiobookService.backfill_transcript_lines(book_id)
+    try:
+        transcript = AudiobookStore.read_transcript(book_id)
+    except (OSError, ValueError):
+        log.warning(
+            "audiobook.transcript_read_failed",
+            extra={"book_id": book_id, "failure_code": "transcript_read_failed"},
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=500, detail="The transcript could not be read."
+        ) from None
+    if transcript is None:
+        raise HTTPException(status_code=404, detail="Transcript not ready.")
+    return transcript
+
+
 @router.get("/audiobook/{book_id}/transcript")
-def get_audiobook_transcript(book_id: str):
-    """Return the per-page transcript + section timing map (for live highlighting)."""
+def get_audiobook_transcript(book_id: str, words: bool = Query(default=False)):
+    """Return the per-page transcript + section timing map (for live highlighting).
+
+    `words=true` adds an estimated `words` list to every timed line.
+    """
     _validate_book_id(book_id)
+    if words:
+        return JSONResponse(with_word_timings(_load_transcript(book_id)))
     path = AudiobookStore.transcript_path(book_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Transcript not ready.")

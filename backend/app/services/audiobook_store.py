@@ -204,6 +204,27 @@ class AudiobookStore:
         return os.path.join(cls.book_dir(book_id), "transcript.json")
 
     @classmethod
+    def exports_dir(cls) -> str:
+        path = os.path.join(cls.root_dir(), ".exports")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    @classmethod
+    def clear_exports(cls) -> None:
+        shutil.rmtree(os.path.join(cls.root_dir(), ".exports"), ignore_errors=True)
+
+    @classmethod
+    def read_transcript(cls, book_id: str) -> dict[str, Any] | None:
+        try:
+            with open(cls.transcript_path(book_id), encoding="utf-8") as f:
+                transcript = json.load(f)
+        except FileNotFoundError:
+            return None
+        if not isinstance(transcript, dict):
+            raise ValueError("transcript is not an object")
+        return transcript
+
+    @classmethod
     def audio_path(cls, book_id: str) -> str:
         return os.path.join(cls.book_dir(book_id), "audio.wav")
 

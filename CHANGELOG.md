@@ -68,6 +68,10 @@
   for one audiobook. Transcripts keep the original words.
 - Pause length setting for reading and audiobooks makes the breaks between
   phrases shorter or longer.
+- The speech server can export a finished audiobook as SRT or WebVTT
+  subtitles, as an MP3 (64 to 192 kbps), and as a chapter list for M4B files.
+  It can also convert a single WAV clip to MP3.
+- Transcripts can include estimated per-word timings.
 
 ### Changed
 

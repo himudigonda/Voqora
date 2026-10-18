@@ -19,6 +19,8 @@ from app.core.logging import get_logger, set_correlation_id
 
 log = get_logger("voqora.http")
 
+WAV_CONVERT_PATH = "/audio/mp3"
+
 
 class IPCAuthenticationMiddleware(BaseHTTPMiddleware):
     """Reject every request that is not from the app-owned local client.
@@ -45,18 +47,19 @@ class IPCAuthenticationMiddleware(BaseHTTPMiddleware):
             provided.encode(), expected.encode()
         ):
             return PlainTextResponse("Unauthorized local client.", status_code=401)
-        if self._declared_length(request) > self._max_body_bytes():
+        limit_mb = self._body_limit_mb(request.url.path)
+        if self._declared_length(request) > (limit_mb + 1) * 1024 * 1024:
             return JSONResponse(
-                {
-                    "detail": f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit."
-                },
+                {"detail": f"File exceeds {limit_mb} MB limit."},
                 status_code=413,
             )
         return await call_next(request)
 
     @staticmethod
-    def _max_body_bytes() -> int:
-        return (settings.MAX_AUDIOBOOK_UPLOAD_MB + 1) * 1024 * 1024
+    def _body_limit_mb(path: str) -> int:
+        if path == WAV_CONVERT_PATH:
+            return settings.MAX_WAV_CONVERT_MB
+        return settings.MAX_AUDIOBOOK_UPLOAD_MB
 
     @staticmethod
     def _declared_length(request: Request) -> int:

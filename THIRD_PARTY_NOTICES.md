@@ -26,7 +26,7 @@ to every author and maintainer below; Voqora would not exist without them.
 | Starlette, Uvicorn | Local HTTP service | BSD-3-Clause |
 | python-multipart, aiofiles | Upload handling | Apache-2.0 |
 | NumPy | Audio processing | BSD-3-Clause and bundled notices |
-| soundfile (libsndfile) | Audio encoding | BSD-3-Clause; libsndfile is LGPL-2.1 |
+| soundfile (libsndfile, LAME, mpg123) | Audio encoding and MP3 export | BSD-3-Clause; libsndfile is LGPL-2.1; LAME is LGPL-2.0; mpg123 is LGPL-2.1 |
 | psutil | Resource checks | BSD-3-Clause |
 | pdfplumber, pdfminer.six | PDF text extraction | MIT |
 | pypdfium2 (PDFium) | PDF rendering | BSD-3-Clause, Apache-2.0 |

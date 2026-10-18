@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.audiobook import router as audiobook_router
+from app.api.export import router as export_router
 from app.api.middleware import (
     CorrelationMiddleware,
     IPCAuthenticationMiddleware,
@@ -96,7 +97,9 @@ async def lifespan(app: FastAPI):
 
     # Audiobook orchestrator + crash-recovery (fast, no I/O blocking)
     from app.services.audiobook_service import AudiobookService
+    from app.services.audiobook_store import AudiobookStore
 
+    AudiobookStore.clear_exports()
     AudiobookService.initialize()
     _spawn_bg(AudiobookService.resume_in_progress())
 
@@ -125,6 +128,7 @@ app.include_router(tts_router)
 app.include_router(audiobook_router)
 app.include_router(voices_router)
 app.include_router(pronunciations_router)
+app.include_router(export_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:
