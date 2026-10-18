@@ -35,6 +35,9 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Library imports EPUB books and HTML pages. EPUB chapters come from the
+  book's table of contents, and the title, author, and cover come from the
+  book itself. DRM-protected EPUBs are refused with a clear message.
 
 ### Changed
 

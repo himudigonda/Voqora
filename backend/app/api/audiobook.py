@@ -35,6 +35,7 @@ from app.services.import_limits import (
     ensure_storage_capacity,
     estimated_pcm_bytes,
     validate_docx_archive,
+    validate_epub_archive,
     validate_magic,
 )
 from app.services.llm_cleaner import LLMCleaner
@@ -74,6 +75,7 @@ class AudiobookEstimate(BaseModel):
     # same document with a different voice).
     duplicate_of_book_id: str | None = None
     duplicate_of_title: str | None = None
+    author: str | None = None
 
 
 class VerifyProviderRequest(BaseModel):
@@ -162,7 +164,7 @@ COST_WARNING_THRESHOLD_USD = 1.00
 _MAX_APPROVED_CAP_USD = 10_000.0
 
 # File types accepted at upload.
-_ALLOWED_EXTENSIONS = {"pdf", "txt", "docx", "md"}
+_ALLOWED_EXTENSIONS = {"pdf", "txt", "docx", "md", "epub", "html", "htm"}
 
 # Per-page OCR character estimate used when sample chars are unavailable.
 _OCR_CHARS_PER_PAGE = 1500  # ~250 words × 6 chars/word
@@ -267,7 +269,7 @@ async def upload_audiobook(
 ):
     """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
 
-    Accepts PDF, TXT, DOCX, and MD files. Optional `voice`, `speed`, `engine`
+    Accepts PDF, EPUB, TXT, DOCX, MD, and HTML files. Optional `voice`, `speed`, `engine`
     form fields snapshot the user's current selection for this book.
     """
     filename = file.filename or "Untitled"
@@ -275,7 +277,7 @@ async def upload_audiobook(
     if file_ext not in _ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail="Only PDF, TXT, DOCX, and MD files are supported.",
+            detail="Only PDF, EPUB, TXT, DOCX, MD, and HTML files are supported.",
         )
 
     # Validate before allocating a book directory or buffering a potentially
@@ -323,6 +325,8 @@ async def upload_audiobook(
         validate_magic(staged_path, file_ext)
         if file_ext == "docx":
             validate_docx_archive(staged_path)
+        if file_ext == "epub":
+            validate_epub_archive(staged_path)
 
         title = filename
         content_hash = digest.hexdigest()
@@ -357,6 +361,8 @@ async def upload_audiobook(
                     None, TextExtractor.page_count, source_path
                 )
                 is_image_only = False
+        except ImportLimitError:
+            raise
         except Exception as exc:
             # Not curated: the raw exception can be a library-internal
             # message (parser jargon, occasionally an internal path
@@ -389,6 +395,15 @@ async def upload_audiobook(
                     status_code=400,
                     detail="This file has no extractable content. Try a different file.",
                 )
+        declared_title, author = (
+            (None, None)
+            if is_pdf
+            else await loop.run_in_executor(
+                None, TextExtractor.read_metadata, source_path
+            )
+        )
+        if declared_title and file_ext == "epub":
+            title = declared_title
         if page_count > settings.MAX_AUDIOBOOK_PAGES:
             raise HTTPException(
                 status_code=413,
@@ -462,6 +477,8 @@ async def upload_audiobook(
         meta["file_ext"] = file_ext
         meta["is_image_only"] = is_image_only
         meta["source_sha256"] = content_hash
+        if author:
+            meta["author"] = author
         AudiobookStore.write_meta(book_id, meta)
 
         # Render cover off the request path. Pulled out of an inline closure
@@ -494,6 +511,7 @@ async def upload_audiobook(
             ),
             duplicate_of_book_id=duplicate.get("book_id") if duplicate else None,
             duplicate_of_title=duplicate.get("title") if duplicate else None,
+            author=author,
         )
 
     except ImportLimitError as exc:

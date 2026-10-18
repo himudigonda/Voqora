@@ -15,6 +15,25 @@ not a hosted Voqora API.
 - Use an AI provider only for optional document cleanup and scanned-page OCR.
   The provider and key come from the request headers and are never stored.
 
+## API
+
+Every route requires the per-launch `X-Voqora-IPC-Token` header and listens
+only on loopback.
+
+- `POST /audiobook` (multipart `file`, optional `voice`, `speed`, `engine`,
+  `llm_provider`, `llm_model`, `llm_base_url`) stores a document and returns
+  its estimate. Accepted types: `.pdf`, `.epub`, `.txt`, `.docx`, `.md`,
+  `.html`, and `.htm`. For EPUB the returned `title` is the book's own title
+  (the file name when it has none) and `author` is its author, or `null`.
+  Rejections are `400` with a `detail` the app can show as is, for example a
+  DRM-protected EPUB, an unsafe or oversized archive, or a damaged package.
+- EPUB chapters come from the EPUB 3 navigation document or the EPUB 2 NCX,
+  falling back to `h1` and `h2` headings. HTML chapters come from `h1` and
+  `h2`. The EPUB cover image becomes the book cover served by
+  `GET /audiobook/{book_id}/cover`.
+- `GET /audiobook` and `GET /audiobook/{book_id}` include `author` when the
+  document declares one.
+
 ## Local development
 
 From the repository root:
