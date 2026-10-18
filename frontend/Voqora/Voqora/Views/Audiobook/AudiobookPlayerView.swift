@@ -12,7 +12,7 @@ struct AudiobookPlayerView: View {
 
     init(book: Audiobook) {
         self.book = book
-        _assistant = StateObject(wrappedValue: AIAssistantViewModel(bookID: book.bookID))
+        _assistant = StateObject(wrappedValue: AIAssistantViewModel.restoring(bookID: book.bookID))
     }
 
     enum Panel: String, CaseIterable, Identifiable {

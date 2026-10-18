@@ -114,8 +114,16 @@ private struct AIQuizQuestionCard: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
+                AIResultActions(text: resultText, language: nil)
             }
         }
+    }
+
+    private var resultText: String {
+        let answer = question.choices.indices.contains(question.answerIndex) ? question.choices[question.answerIndex] : ""
+        return [question.question, answer, question.explanation]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     private func choiceRow(index: Int, text: String) -> some View {

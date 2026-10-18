@@ -23,6 +23,16 @@ final class AIAssistantViewModel: ObservableObject {
     let quiz: AIQuizModel
     let flashcards: AIFlashcardsModel
     private let credentials: AICredentialBox
+    private static var retained: AIAssistantViewModel?
+
+    static func restoring(bookID: String) -> AIAssistantViewModel {
+        if let retained, retained.bookID == bookID {
+            return retained
+        }
+        let model = AIAssistantViewModel(bookID: bookID)
+        retained = model
+        return model
+    }
 
     init(bookID: String, client: (any AIReadingServing)? = nil, credential: AICredentialSource? = nil) {
         let resolved = client ?? AIReadingClient()
@@ -138,13 +148,13 @@ final class AIAskModel: ObservableObject {
     }
 
     var canSend: Bool {
-        !isSending && !trimmedDraft.isEmpty && trimmedDraft.count <= AIReadingLimits.questionCharacters
+        !isSending && !trimmedDraft.isEmpty && AIReadingLimits.length(of: trimmedDraft) <= AIReadingLimits.questionCharacters
     }
 
     func send() {
         let question = trimmedDraft
         guard !isSending, !question.isEmpty else { return }
-        guard question.count <= AIReadingLimits.questionCharacters else {
+        guard AIReadingLimits.length(of: question) <= AIReadingLimits.questionCharacters else {
             error = .tooLong("Questions can be up to \(AIReadingLimits.questionCharacters) characters.")
             return
         }
@@ -201,7 +211,7 @@ final class AIAskModel: ObservableObject {
     static func history(from messages: [Message]) -> [AIChatTurn] {
         messages
             .suffix(AIReadingLimits.historyTurns)
-            .map { AIChatTurn(role: $0.role, content: String($0.text.prefix(AIReadingLimits.historyTurnCharacters))) }
+            .map { AIChatTurn(role: $0.role, content: AIReadingLimits.truncated($0.text, to: AIReadingLimits.historyTurnCharacters)) }
             .filter { !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 }

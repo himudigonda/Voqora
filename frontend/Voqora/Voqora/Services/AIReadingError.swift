@@ -81,7 +81,7 @@ nonisolated struct AIReadingError: LocalizedError, Equatable, Sendable {
 nonisolated enum AIReadingErrorMapper {
     static func error(statusCode: Int, data: Data) -> AIReadingError {
         let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let detail = (body?["detail"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let detail = (body?["detail"] as? String).flatMap { $0.isEmpty ? nil : preferencesWording($0) }
         let code = body?["code"] as? String
         if let code {
             return error(code: code, detail: detail)
@@ -95,7 +95,8 @@ nonisolated enum AIReadingErrorMapper {
         }
         switch code {
         case "ai_provider_required":
-            return .providerRequired
+            guard let detail, !detail.hasPrefix(missingProviderPrefix) else { return .providerRequired }
+            return make(.providerSettings, detail)
         case "llm_config_failed":
             return make(.providerSettings, "Check your AI provider in Preferences > AI.")
         case "ai_busy":
@@ -125,6 +126,12 @@ nonisolated enum AIReadingErrorMapper {
         default:
             return make(.failed, "The AI request failed. Try again.")
         }
+    }
+
+    private static let missingProviderPrefix = "Choose an AI provider"
+
+    private static func preferencesWording(_ detail: String) -> String {
+        detail.replacingOccurrences(of: " in Settings", with: " in Preferences > AI")
     }
 
     private static func error(statusCode: Int, detail: String?) -> AIReadingError {

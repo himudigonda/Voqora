@@ -68,6 +68,7 @@ private struct AIFlashcardDeckView: View {
             }
             if let card = session.current {
                 cardFace(card, flipped: session.isFlipped, known: session.isCurrentKnown)
+                AIResultActions(text: session.isFlipped ? card.back : card.front, language: nil)
             }
             HStack(spacing: DesignTokens.Spacing.sm) {
                 Button {

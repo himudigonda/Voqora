@@ -1,16 +1,21 @@
 import Foundation
 
 nonisolated enum AICitationLocator {
+    private static let probeLength = 48
+
     static func line(for citation: AICitation, in document: TranscriptDocument) -> TranscriptLine? {
         let candidates = document.lines.filter { $0.page == citation.page && $0.isNarrated }
         guard !candidates.isEmpty else { return nil }
         let quote = normalized(citation.quote)
         guard !quote.isEmpty else { return candidates.first }
 
-        let probe = String(quote.prefix(48))
+        let paddedQuote = " \(quote) "
+        let probe = quote.count > probeLength ? " \(quote.prefix(probeLength))" : paddedQuote
         if let match = candidates.first(where: { line in
             let text = normalized(line.text)
-            return !text.isEmpty && (text.contains(probe) || quote.contains(text))
+            guard !text.isEmpty else { return false }
+            let paddedText = " \(text) "
+            return paddedText.contains(probe) || paddedQuote.contains(paddedText)
         }) {
             return match
         }

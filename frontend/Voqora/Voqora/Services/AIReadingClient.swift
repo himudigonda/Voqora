@@ -21,6 +21,14 @@ nonisolated enum AIReadingLimits {
     static let flashcardCounts = 5 ... 40
     static let summaryTimeout: TimeInterval = 660
     static let toolTimeout: TimeInterval = 330
+
+    static func length(of text: String) -> Int {
+        text.unicodeScalars.count
+    }
+
+    static func truncated(_ text: String, to limit: Int) -> String {
+        String(text.unicodeScalars.prefix(limit))
+    }
 }
 
 @MainActor

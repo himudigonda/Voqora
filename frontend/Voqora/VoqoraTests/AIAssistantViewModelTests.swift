@@ -68,6 +68,32 @@ final class AIAssistantViewModelTests: XCTestCase {
         XCTAssertEqual(model.summary.state.error?.kind, .failed)
     }
 
+    func test_cancellationNotRequestedByTheUserShowsAnError() async {
+        service.summaryResult = .failure(CancellationError())
+        let model = makeModel()
+        model.summary.generate()
+
+        await aiWaitUntil { !model.summary.state.isLoading }
+
+        XCTAssertEqual(model.summary.state.error?.kind, .failed)
+    }
+
+    func test_restoringKeepsResultsForTheSameBook() {
+        let first = AIAssistantViewModel.restoring(bookID: AIReadingFixtures.bookID)
+        XCTAssertTrue(AIAssistantViewModel.restoring(bookID: AIReadingFixtures.bookID) === first)
+        XCTAssertFalse(AIAssistantViewModel.restoring(bookID: String(repeating: "b", count: 32)) === first)
+    }
+
+    func test_questionLimitCountsUnicodeScalarsLikeTheBackend() {
+        let syllable = "\u{0928}\u{094D}"
+        let model = makeModel()
+        model.ask.draft = String(repeating: syllable, count: AIReadingLimits.questionCharacters / 2 + 1)
+        XCTAssertFalse(model.ask.canSend)
+        let long = AIAskModel.Message(role: .assistant, text: String(repeating: syllable, count: AIReadingLimits.historyTurnCharacters))
+        let history = AIAskModel.history(from: [long])
+        XCTAssertEqual(history.first.map { AIReadingLimits.length(of: $0.content) }, AIReadingLimits.historyTurnCharacters)
+    }
+
     func test_cancelAllStopsInFlightWorkAndReturnsToIdle() async {
         service.suspends = true
         let model = makeModel()

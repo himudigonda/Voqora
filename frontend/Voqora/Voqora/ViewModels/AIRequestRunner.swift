@@ -44,7 +44,7 @@ final class AIRequestRunner {
             let result: Result<Value, AIReadingError>
             do {
                 result = try await .success(operation())
-            } catch is CancellationError {
+            } catch is CancellationError where Task.isCancelled {
                 return
             } catch {
                 result = .failure(AIReadingError.wrapping(error))

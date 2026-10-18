@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct AIAssistantPanel: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var providers: LLMProviderStore
     @ObservedObject var model: AIAssistantViewModel
     let onCitation: (AICitation) -> Void

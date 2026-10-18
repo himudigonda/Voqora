@@ -98,7 +98,7 @@ final class AISelectionCoordinator {
         }
         switch action {
         case .summarize:
-            guard text.count <= AIReadingLimits.sourceCharacters else {
+            guard AIReadingLimits.length(of: text) <= AIReadingLimits.sourceCharacters else {
                 speaker.showTransientError(Message.selectionTooLong)
                 return
             }
@@ -107,7 +107,7 @@ final class AISelectionCoordinator {
                 return (summary.summary, nil)
             }
         case .translate:
-            guard text.count <= AIReadingLimits.translateCharacters else {
+            guard AIReadingLimits.length(of: text) <= AIReadingLimits.translateCharacters else {
                 speaker.showTransientError(Message.translationTooLong)
                 return
             }

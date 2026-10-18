@@ -13,6 +13,17 @@ final class AIReadingErrorMapperTests: XCTestCase {
         XCTAssertTrue(error.message.contains("Preferences > AI"))
     }
 
+    func test_providerProblemKeepsTheBackendReason() {
+        let error = map(400, #"{"detail": "Enter a server URL for Ollama.", "code": "ai_provider_required"}"#)
+        XCTAssertEqual(error.kind, .providerSettings)
+        XCTAssertEqual(error.message, "Enter a server URL for Ollama.")
+    }
+
+    func test_settingsWordingPointsToPreferences() {
+        let error = map(502, #"{"detail": "OpenAI has no model named x. Choose another model in Settings.", "code": "llm_model_not_found"}"#)
+        XCTAssertEqual(error.message, "OpenAI has no model named x. Choose another model in Preferences > AI.")
+    }
+
     func test_sizeAndBudgetLimitsMapToTooLarge() {
         for code in ["book_too_long", "text_too_long", "ai_budget_exceeded"] {
             let error = map(413, #"{"detail": "Too big.", "code": "\#(code)"}"#)
@@ -148,6 +159,15 @@ final class AICitationLocatorTests: XCTestCase {
         XCTAssertEqual(AICitationLocator.line(for: overlap, in: document)?.id, 3)
         let unknown = AICitation(sectionTitle: nil, page: 2, passageIndex: 0, quote: "zzz")
         XCTAssertEqual(AICitationLocator.line(for: unknown, in: document)?.id, 1)
+    }
+
+    func test_shortLinesOnlyMatchWholeWords() {
+        let lines = TranscriptDocument(lines: [
+            line(0, "I.", page: 5, start: 0),
+            line(1, "It rained all week.", page: 5, start: 2),
+        ])
+        let citation = AICitation(sectionTitle: nil, page: 5, passageIndex: 0, quote: "it rained")
+        XCTAssertEqual(AICitationLocator.line(for: citation, in: lines)?.id, 1)
     }
 
     func test_returnsNilWhenThePageIsNotInTheTranscript() {
