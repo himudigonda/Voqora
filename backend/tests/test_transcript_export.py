@@ -381,3 +381,14 @@ def test_chapter_titles_are_bounded():
     }
 
     assert len(chapter_markers(transcript, "B")[0]["title"]) == 200
+
+
+def test_sections_starting_at_the_end_still_give_one_chapter():
+    transcript = {
+        "total_audio_seconds": 30.0,
+        "sections": [{"title": "Appendix", "start_time": 45.0}],
+    }
+
+    assert chapter_markers(transcript, "Book") == [
+        {"title": "Appendix", "start_seconds": 0.0, "end_seconds": 30.0}
+    ]

@@ -95,7 +95,9 @@ async def lifespan(app: FastAPI):
 
     # Audiobook orchestrator + crash-recovery (fast, no I/O blocking)
     from app.services.audiobook_service import AudiobookService
+    from app.services.audiobook_store import AudiobookStore
 
+    AudiobookStore.clear_exports()
     AudiobookService.initialize()
     _spawn_bg(AudiobookService.resume_in_progress())
 

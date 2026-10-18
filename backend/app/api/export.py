@@ -32,6 +32,7 @@ from app.services.transcript_export import (
     chapter_markers,
     format_srt,
     format_vtt,
+    total_audio_seconds,
     transcript_lines,
 )
 
@@ -143,10 +144,9 @@ def get_audiobook_chapters(book_id: str):
     """Chapter markers aligned to audio.wav, for M4B chapter tracks."""
     meta = _exportable_meta(book_id)
     transcript = _load_transcript(book_id)
-    total = float(transcript.get("total_audio_seconds") or 0.0)
     return {
         "book_id": book_id,
-        "total_audio_seconds": round(total, 3),
+        "total_audio_seconds": round(total_audio_seconds(transcript), 3),
         "chapters": chapter_markers(
             transcript, book_title(meta.get("title"), "Audiobook")
         ),

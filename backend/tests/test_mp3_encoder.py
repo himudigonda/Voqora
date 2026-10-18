@@ -190,3 +190,18 @@ def test_wav_header_sniffing():
     assert not has_wav_header(b"RIFF\x24\x00\x00\x00AVI ")
     assert not has_wav_header(b"ID3\x04")
     assert not has_wav_header(b"RIFF")
+
+
+def test_non_finite_float_samples_are_sanitised_before_encoding(tmp_path):
+    samples = np.zeros(24000, dtype=np.float32)
+    samples[100:200] = np.nan
+    samples[300:400] = np.inf
+    samples[500:600] = -np.inf
+    source = tmp_path / "nan.wav"
+    sf.write(source, samples, 24000, subtype="FLOAT", format="WAV")
+    destination = tmp_path / "out.mp3"
+
+    encode_wav_to_mp3(str(source), str(destination), 96)
+
+    decoded, _ = sf.read(destination, dtype="float32")
+    assert np.isfinite(decoded).all()

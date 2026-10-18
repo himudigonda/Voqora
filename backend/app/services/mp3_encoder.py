@@ -80,7 +80,11 @@ def encode_wav_to_mp3(
             ):
                 if cancel is not None and cancel.is_set():
                     raise Mp3EncodeCancelled
-                block = np.clip(block, -1.0, 1.0)
+                block = np.clip(
+                    np.nan_to_num(block, nan=0.0, posinf=1.0, neginf=-1.0),
+                    -1.0,
+                    1.0,
+                )
                 if upsample:
                     block, previous = _upsample_2x(block, previous)
                 mp3.write(block)

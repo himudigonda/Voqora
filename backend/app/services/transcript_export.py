@@ -84,8 +84,8 @@ def format_vtt(cues: list[Cue]) -> str:
 def chapter_markers(
     transcript: dict[str, Any], fallback_title: str
 ) -> list[dict[str, Any]]:
-    total = _non_negative(transcript.get("total_audio_seconds"))
-    if total is None or total <= 0:
+    total = total_audio_seconds(transcript)
+    if total <= 0:
         return []
     page_to_time = transcript.get("page_to_time")
     if not isinstance(page_to_time, dict):
@@ -102,8 +102,6 @@ def chapter_markers(
         ),
         key=lambda entry: entry[0],
     )
-    if not starts:
-        starts = [(0.0, _clean_title(fallback_title))]
     markers: list[dict[str, Any]] = []
     for index, (start, title) in enumerate(starts):
         end = starts[index + 1][0] if index + 1 < len(starts) else total
@@ -116,7 +114,16 @@ def chapter_markers(
                 "end_seconds": round(end, 3),
             }
         )
+    if not markers:
+        title = starts[-1][1] if starts else _clean_title(fallback_title)
+        markers.append(
+            {"title": title, "start_seconds": 0.0, "end_seconds": round(total, 3)}
+        )
     return markers
+
+
+def total_audio_seconds(transcript: dict[str, Any]) -> float:
+    return _non_negative(transcript.get("total_audio_seconds")) or 0.0
 
 
 def word_timings(

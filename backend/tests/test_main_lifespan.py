@@ -5,6 +5,7 @@ import pytest
 
 from app.main import _bg_tasks, _spawn_bg, app, lifespan
 from app.services.audiobook_service import AudiobookService
+from app.services.audiobook_store import AudiobookStore
 from app.services.engine_manager import EngineManager
 
 
@@ -36,6 +37,7 @@ async def test_lifespan_holds_all_background_tasks():
     with (
         patch.object(EngineManager, "ensure_loaded", new=AsyncMock()),
         patch.object(AudiobookService, "initialize"),
+        patch.object(AudiobookStore, "clear_exports") as clear_exports,
         patch.object(AudiobookService, "resume_in_progress", new=AsyncMock()),
     ):
         async with lifespan(app):
@@ -45,6 +47,7 @@ async def test_lifespan_holds_all_background_tasks():
             # have already completed (and been discarded) since they're
             # mocked to return instantly — that's expected, not a failure.
             assert len(_bg_tasks) >= 2
+            clear_exports.assert_called_once_with()
             for task in _bg_tasks:
                 assert not task.done()
 

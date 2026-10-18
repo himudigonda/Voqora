@@ -655,3 +655,24 @@ async def test_exports_follow_the_pipeline_transcript():
     ]
     assert mp3.status_code == 200
     assert sf.info(io.BytesIO(mp3.content)).duration == pytest.approx(3.0, abs=0.1)
+
+
+def test_chapters_report_a_malformed_total_as_zero(client):
+    bid = _book(total="soon")
+
+    response = client.get(f"/audiobook/{bid}/chapters")
+
+    assert response.status_code == 200
+    assert response.json()["total_audio_seconds"] == 0.0
+    assert response.json()["chapters"] == []
+
+
+def test_startup_sweep_removes_exports_left_by_a_killed_process():
+    leftover = os.path.join(AudiobookStore.exports_dir(), "export-x.mp3.tmp")
+    with open(leftover, "wb") as f:
+        f.write(b"partial")
+
+    AudiobookStore.clear_exports()
+
+    assert not os.path.exists(leftover)
+    assert _exports_left() == []

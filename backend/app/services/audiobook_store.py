@@ -210,6 +210,10 @@ class AudiobookStore:
         return path
 
     @classmethod
+    def clear_exports(cls) -> None:
+        shutil.rmtree(os.path.join(cls.root_dir(), ".exports"), ignore_errors=True)
+
+    @classmethod
     def read_transcript(cls, book_id: str) -> dict[str, Any] | None:
         try:
             with open(cls.transcript_path(book_id), encoding="utf-8") as f:
