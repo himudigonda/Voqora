@@ -233,6 +233,7 @@ private struct PlayerSecondaryControls: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
+    @State private var showingPronunciations = false
 
     private var accent: Color {
         vm.accentColor(scheme: colorScheme, contrast: contrast)
@@ -246,7 +247,32 @@ private struct PlayerSecondaryControls: View {
             Spacer(minLength: 0)
             sleepMenu
             AudiobookExportButton(exports: bookVM.exports, book: book, tint: accent)
+            moreMenu
         }
+        .sheet(isPresented: $showingPronunciations) {
+            BookPronunciationsSheet(book: book)
+                .environmentObject(vm)
+                .environmentObject(bookVM)
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button("Pronunciations for This Book…") { showingPronunciations = true }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Palette.textPrimary)
+                .frame(width: 30, height: 30)
+                .background(Circle().fill(Palette.controlFill))
+                .contentShape(Circle())
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More")
+        .accessibilityLabel("More")
     }
 
     private var sleepIsArmed: Bool {

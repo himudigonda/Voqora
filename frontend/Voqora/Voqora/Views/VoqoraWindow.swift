@@ -167,6 +167,7 @@ struct VoqoraWindow: View {
                 await bookVM.refresh()
             }
         }
+        .syncsVoiceBlends()
         .onChange(of: onboarding.version) { _, _ in
             AppPresence.applyActivationPolicy(onboarding: onboarding.needsOnboarding)
             if !onboarding.needsOnboarding {
@@ -254,6 +255,7 @@ private extension VoqoraWindow {
         case "about": AboutView()
         case "feedback": FeedbackView()
         case "dictation": DictationView()
+        case let tab? where VoicesPage(tab: tab) != nil: VoicesView(page: VoicesPage(tab: tab) ?? .myVoices)
         default: MainDashboardView()
         }
     }
@@ -278,6 +280,13 @@ private extension VoqoraWindow {
             PaneSection("Dictation") {
                 VStack(spacing: DesignTokens.Spacing.xxs) {
                     sidebarLink("Transcripts", icon: "mic.fill", value: "dictation")
+                }
+            }
+            PaneSection("Voices") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    ForEach(VoicesPage.allCases) { page in
+                        sidebarLink(page.title, icon: page.icon, value: page.tab)
+                    }
                 }
             }
         }

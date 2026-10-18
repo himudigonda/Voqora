@@ -11,12 +11,16 @@ class DashboardViewModel: ObservableObject {
 
     private static let supportedVoiceIDs: Set<String> = Set(voiceCatalog.map(\.id))
 
+    private static func isSupportedVoice(_ id: String) -> Bool {
+        supportedVoiceIDs.contains(id) || VoiceBlendRules.isBlendID(id)
+    }
+
     static func applyVoiceDefaultsMigrationIfNeeded(defaults: UserDefaults = .standard) -> Bool {
         let needsReleaseMigration = defaults.integer(forKey: voiceDefaultsMigrationKey) < voiceDefaultsMigrationVersion
-        let hasUnsupportedSelectedVoice = !supportedVoiceIDs.contains(
+        let hasUnsupportedSelectedVoice = !isSupportedVoice(
             defaults.string(forKey: "selectedVoice") ?? "af_bella"
         )
-        let hasUnsupportedBookVoice = !supportedVoiceIDs.contains(
+        let hasUnsupportedBookVoice = !isSupportedVoice(
             defaults.string(forKey: "defaultBookVoice") ?? "af_bella"
         )
 
@@ -67,6 +71,7 @@ class DashboardViewModel: ObservableObject {
     @AppStorage("speechSpeed") var speechSpeed = 1.0
     private(set) var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
+    @AppStorage("speechPauseScale") var speechPauseScale = PauseScale.standard
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
@@ -199,6 +204,9 @@ class DashboardViewModel: ObservableObject {
     ]
 
     nonisolated static func langCode(forVoice id: String) -> String {
+        if VoiceBlendRules.isBlendID(id) {
+            return langCode(forVoice: VoiceBlendDirectory.shared.fallbackVoice(for: id) ?? VoiceBlendRules.fallbackVoice)
+        }
         guard let first = id.first else { return "en-us" }
         return voicePrefixToLang[first] ?? "en-us"
     }
@@ -230,6 +238,9 @@ class DashboardViewModel: ObservableObject {
     static func voiceName(for id: String) -> String {
         if let option = voicesByID[id] {
             return option.name
+        }
+        if VoiceBlendRules.isBlendID(id) {
+            return VoiceBlendDirectory.shared.name(for: id) ?? "Custom Voice"
         }
         let name = id.split(separator: "_").last.map(String.init) ?? id
         return name.prefix(1).uppercased() + name.dropFirst()
@@ -426,7 +437,8 @@ class DashboardViewModel: ObservableObject {
                     text: cleaned,
                     voice: effectiveVoice,
                     speed: speechSpeed,
-                    volume: speechVolume
+                    volume: speechVolume,
+                    pauseScale: speechPauseScale
                 )
                 var receivedAudio = false
 
@@ -462,7 +474,7 @@ class DashboardViewModel: ObservableObject {
                 history.log(text: spokenText ?? cleaned, voice: effectiveVoice)
                 MetricsService.shared.trackGeneration(
                     chars: cleaned.count,
-                    voice: effectiveVoice,
+                    voice: VoiceBlendRules.telemetryVoice(effectiveVoice),
                     speed: speechSpeed,
                     audioSeconds: audio.renderedAudioSeconds
                 )
@@ -477,14 +489,17 @@ class DashboardViewModel: ObservableObject {
                 VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": effectiveVoice, "chars": "\(cleaned.count)"])
                 awaitingFirstChunk = false
                 audio.stop()
-                showTransientError(Self.speechFailureMessage(for: error))
+                showTransientError(Self.speechFailureMessage(for: error, voice: effectiveVoice))
             }
         }
     }
 
-    static func speechFailureMessage(for error: Error) -> String {
+    static func speechFailureMessage(for error: Error, voice: String? = nil) -> String {
         guard let streamError = error as? BackendService.StreamError else {
             return "Voqora could not reach the local speech engine. Try again."
+        }
+        if streamError == .rejectedResponse(statusCode: 422), let voice, VoiceBlendRules.isBlendID(voice) {
+            return "That custom voice is no longer available. Choose another voice in Voices."
         }
         switch streamError {
         case let .rejectedResponse(statusCode) where statusCode == 422:
@@ -742,14 +757,14 @@ class DashboardViewModel: ObservableObject {
                     hasReadableStringContent: pasteboard.canReadItem(withDataConformingToTypes: [NSPasteboard.PasteboardType.string.rawValue])
                 )
                 guard shouldPrewarm else { return }
-                Task { await self.backend.prewarm() }
+                Task { await self.backend.prewarm(pauseScale: self.speechPauseScale) }
             }
             .store(in: &cancellables)
 
         NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 guard let self, isBackendOnline, !self.isModelLoaded else { return }
-                Task { await self.backend.prewarm() }
+                Task { await self.backend.prewarm(pauseScale: self.speechPauseScale) }
             }
             .store(in: &cancellables)
     }

@@ -13,6 +13,7 @@ struct UploadEstimateModal: View {
 
     @State private var useCleanup = false
     @State private var addingProvider = false
+    @State private var pauseDraft = PauseScale.standard
 
     private var accentColor: Color {
         vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
@@ -27,6 +28,7 @@ struct UploadEstimateModal: View {
                         cover
                         statsGrid(for: est)
                         notices(for: est)
+                        narrationOptions
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.horizontal, 1)
@@ -224,6 +226,28 @@ struct UploadEstimateModal: View {
         .padding(12)
         .background(accentColor.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var narrationOptions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Label("Voice", systemImage: "person.wave.2")
+                    .font(vm.appFont(size: 11))
+                    .foregroundStyle(Palette.textSecondary)
+                Spacer(minLength: 8)
+                GroupedVoicePicker(title: "Narration Voice", selection: Binding(
+                    get: { bookVM.pendingNarrationVoice ?? bookVM.defaultBookVoice },
+                    set: { bookVM.updatePendingNarration(voice: $0) }
+                ))
+            }
+            PauseLengthControl(value: $pauseDraft, accentColor: accentColor, compact: true, onCommit: { scale in
+                bookVM.updatePendingNarration(pauseScale: scale)
+            })
+        }
+        .padding(12)
+        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
+        .disabled(bookVM.startingProcessing)
+        .onAppear { pauseDraft = bookVM.pendingPauseScale ?? bookVM.defaultBookPauseScale }
     }
 
     private var cleanupSubtitle: String {

@@ -118,6 +118,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         voice: String?,
         speed: Double?,
         engine: String?,
+        pauseScale: Double? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
@@ -133,6 +134,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
         if let engine {
             fields.append(("engine", engine))
+        }
+        if let pauseScale {
+            fields.append(("pause_scale", String(PauseScale.clamped(pauseScale))))
         }
         if let cleanup {
             fields.append(("llm_provider", cleanup.provider.rawValue))
