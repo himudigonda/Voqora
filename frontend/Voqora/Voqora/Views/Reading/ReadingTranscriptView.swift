@@ -35,8 +35,16 @@ struct ReadingTranscriptView: View {
                 .onChange(of: follower.revision, initial: true) { _, _ in
                     document = ReadingDocument(transcript: follower.document)
                     scroll(proxy, animated: false)
+                    settle(proxy)
                 }
-                .onChange(of: follower.activeIndex) { _, _ in scroll(proxy, animated: true) }
+                .onChange(of: follower.activeIndex) { old, new in
+                    activeSentenceChanged(proxy, from: old, to: new)
+                }
+                .onChange(of: follower.isScrubbing) { _, scrubbing in
+                    if scrubbing {
+                        resumeFollowing()
+                    }
+                }
                 .onChange(of: preferences.typography) { _, _ in scroll(proxy, animated: false) }
                 .onChange(of: isFollowing) { _, following in
                     if following {
@@ -94,6 +102,21 @@ struct ReadingTranscriptView: View {
         resumeTask?.cancel()
         resumeTask = nil
         isFollowing = true
+    }
+
+    private func activeSentenceChanged(_ proxy: ScrollViewProxy, from old: Int?, to new: Int?) {
+        if let old, let new, abs(new - old) > 1 {
+            resumeFollowing()
+        }
+        scroll(proxy, animated: true)
+    }
+
+    private func settle(_ proxy: ScrollViewProxy) {
+        guard isFollowing, let index = follower.activeIndex else { return }
+        let anchor = Self.anchor
+        DispatchQueue.main.async {
+            proxy.scrollTo(index, anchor: anchor)
+        }
     }
 
     private func scroll(_ proxy: ScrollViewProxy, animated: Bool) {

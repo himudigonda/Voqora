@@ -205,7 +205,7 @@ enum ReadingThemeResolver {
     static let increasedContrastDimmedOpacity = 0.6
 
     static func palette(theme: ReadingTheme, tint: ReadingTint, increaseContrast: Bool) -> ReadingPalette {
-        let base = base(for: theme)
+        let base = definition(for: theme)
         let strength = increaseContrast ? base.tintStrength / 2 : base.tintStrength
         let background = tint.hex.map { blend(color(base.background), toward: color($0), amount: strength) } ?? color(base.background)
         let text = color(increaseContrast ? base.contrastText : base.text)
@@ -220,7 +220,7 @@ enum ReadingThemeResolver {
         )
     }
 
-    private static func base(for theme: ReadingTheme) -> Base {
+    private static func definition(for theme: ReadingTheme) -> Base {
         switch theme {
         case .paper:
             Base(

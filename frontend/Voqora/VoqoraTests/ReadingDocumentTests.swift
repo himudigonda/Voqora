@@ -95,6 +95,22 @@ final class ReadingDocumentTests: XCTestCase {
         XCTAssertNil(ranges[5])
     }
 
+    func test_followerReportsTimeInTheTranscriptsOwnUnits() {
+        let audio = AudioService(startingEngine: false)
+        let follower = TranscriptFollower(audio: audio)
+        audio.duration = 10
+        audio.currentTime = 4
+
+        follower.follow(spokenText: "First part here. Second part here.")
+        XCTAssertEqual(follower.documentTime, 0.4, accuracy: 0.0001)
+
+        follower.load(TranscriptDocument(spokenText: "One. Two.", duration: 30))
+        XCTAssertEqual(follower.documentTime, 4, accuracy: 0.0001)
+
+        follower.scrub(to: 6)
+        XCTAssertEqual(follower.documentTime, 6, accuracy: 0.0001)
+    }
+
     private func makeDocument(words: [Int: [ReadingWordTiming]]) -> ReadingDocument {
         let lines = [
             makeLine(id: 0, text: "Chapter One", start: 0, end: 1, block: 0, heading: true),

@@ -120,14 +120,33 @@ private struct ReadingThemeMenu: View {
 struct ReadingWindowAppearance: NSViewRepresentable {
     let isDark: Bool
 
-    func makeNSView(context _: Context) -> NSView {
-        NSView(frame: .zero)
+    func makeNSView(context _: Context) -> ReadingAppearanceView {
+        let view = ReadingAppearanceView(frame: .zero)
+        view.isDark = isDark
+        return view
     }
 
-    func updateNSView(_ view: NSView, context _: Context) {
-        let appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
-        DispatchQueue.main.async {
-            view.window?.appearance = appearance
+    func updateNSView(_ view: ReadingAppearanceView, context _: Context) {
+        view.isDark = isDark
+    }
+}
+
+final class ReadingAppearanceView: NSView {
+    var isDark = false {
+        didSet {
+            guard isDark != oldValue else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.applyAppearance()
+            }
         }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        window?.appearance = NSAppearance(named: isDark ? .darkAqua : .aqua)
     }
 }

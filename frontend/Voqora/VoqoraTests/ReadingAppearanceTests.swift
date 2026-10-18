@@ -1,5 +1,5 @@
-@testable import Voqora
 import SwiftUI
+@testable import Voqora
 import XCTest
 
 @MainActor
