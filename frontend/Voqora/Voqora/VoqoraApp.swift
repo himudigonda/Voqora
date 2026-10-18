@@ -26,6 +26,7 @@ struct VoqoraApp: App {
     @StateObject private var providers: LLMProviderStore
     @StateObject private var dictation: DictationController
     @StateObject private var dictationTranscripts: DictationTranscriptStore
+    @StateObject private var inbox: InboxViewModel
 
     private let backend: BackendService
     private let systemMedia: SystemMediaSession?
@@ -78,6 +79,10 @@ struct VoqoraApp: App {
 
         let providersInstance = LLMProviderStore(defaults: testDefaults ?? .standard)
         let audiobookInstance = AudiobookViewModel(audio: audioInstance, providers: providersInstance)
+        let inboxInstance = InboxViewModel(
+            store: InboxStore(),
+            dependencies: .live(dashboard: vmInstance, library: audiobookInstance)
+        )
         let dictationInstance = DictationController(
             transcripts: DictationTranscriptStore(),
             dependencies: .system(defaults: testDefaults ?? .standard)
@@ -95,6 +100,7 @@ struct VoqoraApp: App {
         _providers = StateObject(wrappedValue: providersInstance)
         _dictation = StateObject(wrappedValue: dictationInstance)
         _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
+        _inbox = StateObject(wrappedValue: inboxInstance)
 
         vmInstance.audiobookVM = audiobookInstance
         let inputsInstance = SpeechInputCoordinator(
@@ -114,7 +120,7 @@ struct VoqoraApp: App {
 
         if !runningTests {
             inputsInstance.activate()
-            appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance)
+            appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance, inbox: inboxInstance)
             setupShortcuts(vm: vmInstance, inputs: inputsInstance)
             systemMedia?.start()
             dictationInstance.installSystemIntegrations(dashboard: vmInstance)
@@ -253,6 +259,7 @@ struct VoqoraApp: App {
                         .environmentObject(UsageStatsStore.shared)
                         .environmentObject(dictation)
                         .environmentObject(dictationTranscripts)
+                        .environmentObject(inbox)
                 }
             }
         }

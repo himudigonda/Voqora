@@ -73,6 +73,26 @@
 				<string>NSStringPboardType</string>
 			</array>
 		</dict>
+		<dict>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>Save to Voqora Inbox</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>saveToVoqoraInbox</string>
+			<key>NSPortName</key>
+			<string>$(PRODUCT_NAME)</string>
+			<key>NSRequiredContext</key>
+			<dict/>
+			<key>NSSendTypes</key>
+			<array>
+				<string>public.url</string>
+				<string>NSURLPboardType</string>
+				<string>public.utf8-plain-text</string>
+				<string>NSStringPboardType</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>

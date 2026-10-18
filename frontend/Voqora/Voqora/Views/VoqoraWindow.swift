@@ -254,6 +254,7 @@ private extension VoqoraWindow {
         case "about": AboutView()
         case "feedback": FeedbackView()
         case "dictation": DictationView()
+        case "inbox": InboxView()
         default: MainDashboardView()
         }
     }
@@ -273,6 +274,11 @@ private extension VoqoraWindow {
                     if let resume = bookVM.continueListeningBook {
                         continueListeningButton(for: resume)
                     }
+                }
+            }
+            PaneSection("Read Later") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Inbox", icon: "tray.full.fill", value: "inbox")
                 }
             }
             PaneSection("Dictation") {

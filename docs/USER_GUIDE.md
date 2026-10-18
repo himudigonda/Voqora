@@ -93,6 +93,37 @@ in Preferences -> Shortcuts.
   **Speak Clipboard**, **Pause or Resume Speech**, and **Stop Speech** actions
   for your own shortcuts and for Siri.
 
+## Save articles to your Inbox
+
+Open **Inbox** in the sidebar to keep web articles for later. Voqora saves the
+readable text of each article on this Mac, without menus, ads, or cookie
+banners.
+
+- **Add an article.** Paste a link into the field at the top and press Return.
+  When the Inbox is empty, you can also press `Command + V` anywhere on the
+  page. Dropping a link from your browser or a `.webloc` file works too.
+- **From any app.** Select a link or text that contains one, then choose
+  **Save to Voqora Inbox** from the Services menu. Voqora lets you know when
+  the article is saved. If the item is missing, turn it on in **System
+  Settings -> Keyboard -> Keyboard Shortcuts -> Services**.
+- **Listen.** Choose the play button to hear the article with the transcript,
+  using your voice and speed. Long articles are read in parts without a break.
+  Voqora remembers how far you got, and finished articles leave the Unread
+  list.
+- **Make an audiobook.** Choose the books button to add the article to Library
+  as an audiobook, using your audiobook voice and speed. If it is already
+  there, Voqora offers to open it instead. Links to PDFs can only become
+  audiobooks.
+- **More actions.** Open the original page, copy the text, archive, or delete
+  from the row's menu or by right-clicking it.
+
+Each row shows the estimated listening time at your current speed. Switch
+between **Unread**, **Archived**, and **All**, or search by title or site. The
+Inbox keeps up to 500 articles. When it is full, the oldest archived articles
+are removed first. Voqora only opens public websites and tells you when a page
+is paywalled, too large, or not readable. **Erase All Local Data** removes the
+Inbox too.
+
 ## Dictate into any app
 
 1. Click where you want the text to go, in any app.
