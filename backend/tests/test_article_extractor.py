@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import codecs
 from pathlib import Path
 
 import pytest
@@ -276,6 +277,8 @@ def test_markdown_escapes_text_that_would_become_structure() -> None:
         "<p>- not a list</p><p>12. not ordered</p>"
         "<p>&gt; not a quote</p><p>| not | a table</p><p>``` not a fence</p>"
         "<pre>uses ``` inside</pre>"
+        "<pre>```python\nprint(1)\n```\n~~~</pre>"
+        "<p>NARRATED_AFTER_CODE</p>"
         "</article>"
     )
     markdown = extract_html(_page(body), "https://a/").markdown
@@ -285,8 +288,11 @@ def test_markdown_escapes_text_that_would_become_structure() -> None:
     assert "\n\\> not a quote" in markdown
     assert "\n\\| not | a table" in markdown
     assert "\n\\``` not a fence" in markdown
-    assert "~~~\nuses ``` inside\n~~~" in markdown
+    assert "```\nuses ``` inside\n```" in markdown
+    assert "```\n    ```python\nprint(1)\n    ```\n    ~~~\n```" in markdown
     narrated = strip_markdown_for_narration(markdown)
+    assert "print(1)" not in narrated
+    assert "NARRATED_AFTER_CODE" in narrated
     assert "not a heading but a hashtag line" in narrated
     assert "12. not ordered" in narrated
 
@@ -362,6 +368,41 @@ def test_plain_text_documents() -> None:
     assert article.text.count("\n\n") == 1
     assert "\\# looks like a heading" in article.markdown
     assert article.markdown.startswith("# field notes 2026\n\n")
+
+
+@pytest.mark.parametrize(
+    ("encoding", "bom", "charset"),
+    [
+        ("utf-8", b"", None),
+        ("cp1252", b"", None),
+        ("cp1252", b"", "us-ascii"),
+        ("utf-8", codecs.BOM_UTF8, "cp1251"),
+        ("utf-16-le", codecs.BOM_UTF16_LE, None),
+        ("utf-8", b"", "no-such-codec"),
+        ("utf-8", b"", "rot13"),
+    ],
+)
+def test_undeclared_or_odd_charsets_decode_like_a_browser(
+    encoding: str, bom: bytes, charset: str | None
+) -> None:
+    page = bom + f"<p>Caf\u00e9 cr\u00e8me. {PROSE * 3}</p>".encode(encoding)
+    assert "Caf\u00e9 cr\u00e8me." in extract_html(page, "https://a/", charset).text
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "<meta charset='windows-1252'>",
+        '<meta http-equiv="Content-Type" content="text/html; charset=windows-1252">',
+    ],
+)
+def test_meta_charset_is_sniffed_and_xml_declaration_tolerated(head: str) -> None:
+    document = (
+        "<?xml version='1.0' encoding='windows-1252'?>"
+        f"<html><head>{head}</head><body><p>Na\u00efve caf\u00e9. {PROSE * 3}</p>"
+        "</body></html>"
+    ).encode("cp1252")
+    assert "Na\u00efve caf\u00e9." in extract_html(document, "https://a/").text
 
 
 def test_plain_text_charset_and_short_text() -> None:

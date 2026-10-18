@@ -415,6 +415,19 @@ def test_compression_bomb_is_bounded() -> None:
     assert _failure(fetcher, "https://a.example/").code is ArticleFailure.TOO_LARGE
 
 
+def test_bytes_after_the_gzip_stream_still_count_toward_the_limit() -> None:
+    padded = gzip.compress(HTML) + b"\0" * (2 * 1024 * 1024)
+    fetcher, _, _ = _fetcher(
+        lambda _r: httpx.Response(
+            200,
+            content=padded,
+            headers={"content-type": "text/html", "content-encoding": "gzip"},
+        ),
+        max_bytes=1024 * 1024,
+    )
+    assert _failure(fetcher, "https://a.example/").code is ArticleFailure.TOO_LARGE
+
+
 def test_corrupt_gzip_is_an_error() -> None:
     fetcher, _, _ = _fetcher(
         lambda _r: httpx.Response(

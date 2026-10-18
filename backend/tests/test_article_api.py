@@ -438,6 +438,18 @@ def test_audiobook_url_failures_create_no_book(
     assert _staged_leftovers(isolated_audiobooks_dir) == []
 
 
+def test_audiobook_url_respects_the_upload_size_limit(
+    monkeypatch, isolated_audiobooks_dir
+) -> None:
+    monkeypatch.setattr("app.api.audiobook.settings.MAX_AUDIOBOOK_UPLOAD_MB", 0)
+    _serve(lambda _r: _respond(NEWS))
+    response = _client().post("/audiobook/url", json={"url": "https://a.example/b"})
+    assert response.status_code == 413
+    assert response.json()["detail"] == "File exceeds 0 MB limit."
+    assert AudiobookStore.list_books() == []
+    assert _staged_leftovers(isolated_audiobooks_dir) == []
+
+
 def test_audiobook_url_unreadable_article_creates_no_book() -> None:
     _serve(lambda _r: _respond(b"<html><body><p>Too short.</p></body></html>"))
     response = _client().post("/audiobook/url", json={"url": "https://a.example/"})

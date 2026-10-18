@@ -173,8 +173,20 @@ _LAYOUT_ROW_XPATH = (
     ".//p|.//div|.//br|.//table|.//ul|.//ol|.//pre|.//blockquote"
     "|.//h1|.//h2|.//h3|.//h4|.//h5|.//h6"
 )
+_FENCE_LINE_RE = re.compile(r"^ {0,3}(?:```|~~~)")
 _LINE_BREAK = "\x00"
 _PARAGRAPH_BREAK_RE = re.compile(r"(?:\x00\s*){2,}")
+_META_SNIFF_BYTES = 4096
+_META_CHARSET_RE = re.compile(
+    rb"<meta[^>]+charset\s*=\s*[\"']?\s*([A-Za-z0-9._:-]{1,40})", re.I
+)
+_XML_DECLARATION_RE = re.compile(r"^\s*<\?xml[^>]*\?>")
+_BOMS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+_WEB_CODEC_ALIASES = {"ascii": "cp1252", "iso8859-1": "cp1252"}
 _TITLE_SEPARATORS = (" | ", " - ", " \u2013 ", " \u2014 ", " :: ", " \u00b7 ")
 
 BlockKind = Literal["heading", "paragraph", "item", "quote", "code"]
@@ -221,7 +233,7 @@ def extract_html(document: bytes, url: str, charset: str | None = None) -> Artic
 
 
 def extract_text(document: bytes, url: str, charset: str | None = None) -> Article:
-    text = document.decode(_codec(charset) or "utf-8", errors="replace")
+    text = _decode(document, _codec(charset))
     blocks = [
         _Block("paragraph", paragraph)
         for paragraph in (
@@ -251,20 +263,46 @@ def _codec(charset: str | None) -> str | None:
     if not charset:
         return None
     try:
-        return codecs.lookup(charset).name
+        name = codecs.lookup(charset).name
     except LookupError:
         return None
+    return _WEB_CODEC_ALIASES.get(name, name)
+
+
+def _meta_codec(document: bytes) -> str | None:
+    match = _META_CHARSET_RE.search(document[:_META_SNIFF_BYTES])
+    if match is None:
+        return None
+    name = _codec(match.group(1).decode("ascii"))
+    return "utf-8" if name and name.startswith("utf-16") else name
+
+
+def _decode(document: bytes, codec: str | None) -> str:
+    for bom, name in _BOMS:
+        if document.startswith(bom):
+            return document[len(bom) :].decode(name, errors="replace")
+    if codec is not None:
+        try:
+            return document.decode(codec, errors="replace")
+        except LookupError:
+            pass
+    try:
+        return document.decode("utf-8")
+    except UnicodeDecodeError:
+        return document.decode("cp1252", errors="replace")
 
 
 def _parse(document: bytes, charset: str | None) -> lxml_html.HtmlElement:
+    text = _decode(document, _codec(charset) or _meta_codec(document))
     parser = lxml_html.HTMLParser(
-        encoding=_codec(charset),
         remove_comments=True,
         remove_pis=True,
         no_network=True,
     )
     try:
-        return lxml_html.document_fromstring(document, parser=parser)
+        return lxml_html.document_fromstring(
+            _XML_DECLARATION_RE.sub("", text, count=1), parser=parser
+        )
     except (etree.ParserError, ValueError) as exc:
         raise _no_content(False) from exc
 
@@ -729,8 +767,12 @@ def _escape_lines(text: str) -> Iterator[str]:
 
 
 def _fenced(code: str) -> str:
-    fence = "~~~" if "```" in code else "```"
-    return f"{fence}\n{code}\n{fence}"
+    lines = (
+        f"    {line}" if _FENCE_LINE_RE.match(line) else line
+        for line in code.split("\n")
+    )
+    body = "\n".join(lines)
+    return f"```\n{body}\n```"
 
 
 def _markdown_block(block: _Block) -> str:

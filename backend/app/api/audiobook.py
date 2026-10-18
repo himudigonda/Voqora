@@ -606,6 +606,11 @@ async def create_audiobook_from_url(
         source = await run_reader(audiobook_source, page)
     except ArticleError as error:
         return article_error_response(error)
+    if len(source.content) > settings.MAX_AUDIOBOOK_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit.",
+        )
 
     staged_path: str | None = None
     try:

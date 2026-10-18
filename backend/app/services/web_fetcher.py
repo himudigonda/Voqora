@@ -87,6 +87,7 @@ class _BoundedDecoder:
     def __init__(self, encoding: str, limit: int) -> None:
         self._limit = limit
         self._size = 0
+        self._received = 0
         self._chunks: list[bytes] = []
         self._inflater = self._inflater_for(encoding)
 
@@ -102,6 +103,9 @@ class _BoundedDecoder:
         if self._inflater is None:
             self._append(data)
             return
+        self._received += len(data)
+        if self._received > self._limit:
+            raise ArticleError(ArticleFailure.TOO_LARGE, _TOO_LARGE)
         pending = data
         while pending:
             try:

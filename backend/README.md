@@ -34,7 +34,10 @@ markdown, word_count}`. `url` is the final address after redirects, without
 the fragment. `text` is the article body as plain paragraphs, and code blocks
 stay in it. `markdown` starts with `# title`, then the byline, then the body
 with `##` and `###` headings, lists, quotes, and fenced code. `language` is the
-page's lowercased `lang` tag, such as `en-gb`, or `null`.
+page's lowercased `lang` tag, such as `en-gb`, or `null`. The text encoding
+comes from a byte order mark, the `Content-Type` charset, or a `<meta charset>`
+tag, in that order; an undeclared page is read as UTF-8, or Windows-1252 if it
+is not valid UTF-8.
 
 `POST /audiobook/url` stores an article as Markdown, so its headings become
 sections. A plain-text page is stored as TXT and a PDF link goes through the PDF
