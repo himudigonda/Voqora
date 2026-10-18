@@ -165,7 +165,15 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
   set a sleep timer. **End of Section** follows your position, so it still
   stops in the right place if you pause, skip, or change speed.
 - When you leave the player, a mini player stays at the bottom of the window.
-- Export the finished audiobook as a WAV file with the export button.
+- Export a finished audiobook from the export button in the player, or
+  right-click the book in the Library and choose **Export**. Pick
+  **Audiobook (M4B)** for a file with chapters, cover art, and title that
+  Apple Books and other audiobook players understand, or **Audio Only (WAV)**
+  for the raw narration. The chapters match the **Sections** list. While an
+  export runs, the export button shows its progress and the same menu offers
+  **Cancel Export**.
+- Set the M4B quality in **Preferences -> Audiobooks -> Export Quality**.
+  64 kbps keeps narration clear and files small; 128 kbps is the largest.
 
 Voqora stores the source document, extracted text, generated audio, transcript,
 and audiobook state locally until you delete that book. Close the app and return later without

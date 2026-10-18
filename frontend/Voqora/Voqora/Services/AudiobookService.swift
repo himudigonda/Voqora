@@ -83,6 +83,16 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         return try JSONDecoder().decode(Transcript.self, from: data)
     }
 
+    func coverImageData(for id: String) async -> Data? {
+        guard let request = try? connection.request(path: "audiobook/\(id)/cover", timeout: 10),
+              let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse,
+              (200 ..< 300).contains(http.statusCode),
+              !data.isEmpty
+        else { return nil }
+        return data
+    }
+
     nonisolated struct Transcript: Codable, Sendable {
         let bookID: String
         let sections: [AudiobookSection]

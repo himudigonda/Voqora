@@ -55,6 +55,10 @@
   adjustable text, Paper, Sepia, Dark, and High Contrast themes, soft tints,
   and a reading ruler that dims everything but the sentence being read. Open
   it from the player or the menu bar, and set it up in Preferences -> Reading.
+- Export a finished audiobook as an M4B file with chapters, cover art, title,
+  and narrator, ready for Apple Books and other audiobook players. Choose
+  Export from the book's right-click menu or the player. WAV export is still
+  there, and Preferences -> Audiobooks sets the M4B quality.
 
 ### Changed
 
