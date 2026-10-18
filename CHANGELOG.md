@@ -35,6 +35,10 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Read web articles: paste a link to hear the article without menus, ads, or
+  cookie banners, or add it to Library as an audiobook with its headings as
+  sections. Links to PDFs are added like a PDF file. Voqora only opens public
+  websites and tells you when a page is paywalled, too large, or not readable.
 
 ### Changed
 

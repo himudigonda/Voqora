@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 import uvicorn
 from fastapi import FastAPI
 
+from app.api.article import router as article_router
 from app.api.audiobook import router as audiobook_router
 from app.api.middleware import (
     CorrelationMiddleware,
@@ -121,6 +122,7 @@ app.add_middleware(IPCAuthenticationMiddleware)
 
 app.include_router(tts_router)
 app.include_router(audiobook_router)
+app.include_router(article_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:

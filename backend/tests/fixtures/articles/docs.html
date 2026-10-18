@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Configuring retries - Widget SDK</title>
+  <meta property="og:site_name" content="Widget SDK">
+</head>
+<body>
+  <div class="navbar"><a href="/">NAVBAR_TEXT Widget SDK</a> <a href="/docs">Docs</a> <a href="/api">API</a></div>
+  <div class="docs-layout">
+    <nav class="toc-sidebar">
+      <ul><li><a href="/docs/install">NAV_TEXT Installation</a></li><li><a href="/docs/retries">Retries</a></li></ul>
+    </nav>
+    <div role="main" class="docs-content">
+      <div class="breadcrumbs"><a href="/docs">BREADCRUMB_TEXT Docs</a> / <a href="/docs/retries">Retries</a></div>
+      <h1>Configuring retries</h1>
+      <p>The client retries failed requests automatically, using exponential backoff with jitter, so that transient network errors do not surface to your application.</p>
+      <h2>Basic usage</h2>
+      <p>Pass a retry policy when you construct the client, and every request made through that client will follow it.</p>
+      <pre><code>client = Client(retries=3)
+client.get("/status")</code></pre>
+      <h3>Options</h3>
+      <ul>
+        <li><code>retries</code>: the maximum number of attempts, including the first one.</li>
+        <li><code>backoff</code>: the base delay in seconds between attempts.</li>
+      </ul>
+      <table>
+        <tr><th>Option</th><th>Default</th></tr>
+        <tr><td>retries</td><td>3</td></tr>
+        <tr><td>backoff</td><td>0.5</td></tr>
+      </table>
+      <p>Retries are never attempted for requests that are not idempotent unless you opt in explicitly, because repeating them could duplicate side effects on the server.</p>
+      <div class="pagination"><a href="/docs/install">PAGINATION_TEXT Previous</a> <a href="/docs/timeouts">Next</a></div>
+    </div>
+  </div>
+  <footer>FOOTER_TEXT Built with a static site generator.</footer>
+</body>
+</html>
