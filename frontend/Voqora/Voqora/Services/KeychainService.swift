@@ -6,6 +6,8 @@ nonisolated struct KeychainKey: Hashable, Sendable {
 
     static let sessionToken = KeychainKey(rawValue: "com.himudigonda.Voqora.session_token")
     static let refreshToken = KeychainKey(rawValue: "com.himudigonda.Voqora.refresh_token")
+    static let localAPIKey = KeychainKey(rawValue: "com.himudigonda.Voqora.local_api_key")
+    static let audiobookshelfToken = KeychainKey(rawValue: "com.himudigonda.Voqora.audiobookshelf_token")
 
     static func llmAPIKey(_ provider: LLMProvider) -> KeychainKey {
         if provider == .google {
@@ -15,7 +17,7 @@ nonisolated struct KeychainKey: Hashable, Sendable {
     }
 
     static var allCases: [KeychainKey] {
-        [.sessionToken, .refreshToken] + LLMProvider.allCases.map(llmAPIKey)
+        [.sessionToken, .refreshToken, .localAPIKey, .audiobookshelfToken] + LLMProvider.allCases.map(llmAPIKey)
     }
 }
 

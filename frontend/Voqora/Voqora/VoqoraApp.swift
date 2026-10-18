@@ -1,3 +1,4 @@
+import Combine
 import KeyboardShortcuts
 import Sparkle
 import SwiftUI
@@ -28,6 +29,9 @@ struct VoqoraApp: App {
     @StateObject private var dictationTranscripts: DictationTranscriptStore
     @StateObject private var inbox: InboxViewModel
     @StateObject private var studio: StudioViewModel
+    @StateObject private var localAPI: LocalAPIController
+    @StateObject private var shelfSettings: AudiobookshelfSettingsStore
+    @StateObject private var shelfUploads: AudiobookshelfUploadController
 
     private let backend: BackendService
     private let systemMedia: SystemMediaSession?
@@ -84,6 +88,19 @@ struct VoqoraApp: App {
             store: InboxStore(),
             dependencies: .live(dashboard: vmInstance, library: audiobookInstance)
         )
+        let localAPIInstance = LocalAPIController.live(
+            speaker: vmInstance,
+            announce: { [weak audiobookInstance] message in audiobookInstance?.showToast(message, kind: .info) },
+            defaults: testDefaults ?? .standard
+        )
+        let shelfClient = AudiobookshelfClient()
+        let shelfSettingsInstance = AudiobookshelfSettingsStore(client: shelfClient, secrets: .keychain, defaults: testDefaults ?? .standard)
+        let shelfUploadsInstance = AudiobookshelfUploadController(dependencies: .live(
+            renderer: .live(service: AudiobookService(), viewModel: audiobookInstance),
+            settings: shelfSettingsInstance,
+            client: shelfClient,
+            notify: { [weak audiobookInstance] message, kind in audiobookInstance?.showToast(message, kind: kind) }
+        ))
         let dictationInstance = DictationController(
             transcripts: DictationTranscriptStore(),
             dependencies: .system(defaults: testDefaults ?? .standard)
@@ -103,6 +120,9 @@ struct VoqoraApp: App {
         _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
         _inbox = StateObject(wrappedValue: inboxInstance)
         _studio = StateObject(wrappedValue: StudioViewModel(providers: providersInstance, library: .live(audiobookInstance)))
+        _localAPI = StateObject(wrappedValue: localAPIInstance)
+        _shelfSettings = StateObject(wrappedValue: shelfSettingsInstance)
+        _shelfUploads = StateObject(wrappedValue: shelfUploadsInstance)
 
         vmInstance.audiobookVM = audiobookInstance
         let inputsInstance = SpeechInputCoordinator(
@@ -134,6 +154,7 @@ struct VoqoraApp: App {
             setupShortcuts(vm: vmInstance, inputs: inputsInstance, aiSelection: aiSelection)
             systemMedia?.start()
             dictationInstance.installSystemIntegrations(dashboard: vmInstance)
+            localAPIInstance.observeEngine(vmInstance.$isBackendOnline.eraseToAnyPublisher())
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
 
@@ -287,6 +308,9 @@ struct VoqoraApp: App {
                         .environmentObject(dictationTranscripts)
                         .environmentObject(inbox)
                         .environmentObject(studio)
+                        .environmentObject(localAPI)
+                        .environmentObject(shelfSettings)
+                        .environmentObject(shelfUploads)
                 }
             }
         }

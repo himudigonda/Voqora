@@ -234,19 +234,15 @@ final class AudiobookExportController: ObservableObject {
     }
 
     private func exportM4B(_ book: Audiobook, source: URL, to destination: URL) async throws {
-        let markers = await chapters(for: book)
-        try Task.checkCancellation()
-        let cover = await dependencies.cover(book.bookID)
-        let request = M4BExportRequest(
-            sources: [source],
-            chapters: markers,
-            title: book.displayTitle,
-            author: book.displayAuthor ?? book.narratorName,
-            cover: cover,
-            bitrate: AudiobookExportSettings.clampedKbps(dependencies.bitrateKbps()) * 1000,
-            outputURL: destination
+        let renderer = AudiobookM4BRenderer(
+            audioURL: dependencies.audioURL,
+            transcript: dependencies.transcript,
+            chapterList: dependencies.chapters,
+            cover: dependencies.cover,
+            exporter: dependencies.exporter,
+            bitrateKbps: dependencies.bitrateKbps
         )
-        try await dependencies.exporter.export(request, progress: progressHandler(for: book.bookID))
+        try await renderer.render(book, source: source, to: destination, progress: progressHandler(for: book.bookID))
     }
 
     private func progressHandler(for bookID: String) -> @Sendable (Double) -> Void {
@@ -255,21 +251,6 @@ final class AudiobookExportController: ObservableObject {
                 self.updateProgress(fraction, for: bookID)
             }
         }
-    }
-
-    private func chapters(for book: Audiobook) async -> [M4BChapter] {
-        if let list = try? await dependencies.chapters(book.bookID), let exact = Self.chapters(from: list) {
-            return exact
-        }
-        let document = await transcriptDocument(for: book.bookID)
-        return Self.chapters(from: AudiobookViewModel.chapters(for: book, document: document))
-    }
-
-    private func transcriptDocument(for bookID: String) async -> TranscriptDocument {
-        guard let transcript = try? await dependencies.transcript(bookID) else { return .empty }
-        return await Task.detached(priority: .userInitiated) {
-            TranscriptDocument(transcript: transcript)
-        }.value
     }
 
     private func updateProgress(_ fraction: Double, for bookID: String) {

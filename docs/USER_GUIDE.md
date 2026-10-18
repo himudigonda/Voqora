@@ -481,6 +481,54 @@ hidden.
 passages you want to keep, and play any of them again. Use
 `Command + Shift + M` to save the latest clip to your Desktop as a WAV file.
 
+## Integrations
+
+Open **Preferences -> Integrations** to connect Voqora to other apps.
+
+### Local API for apps and AI tools
+
+Turn on **Local API** to let apps and AI tools on this Mac use Voqora's voices.
+It is off until you turn it on and only accepts connections from this Mac.
+
+- **Port.** Voqora listens on port 51851 by default. Enter any port from 1024
+  to 65535 and press Return. If another app already uses the port, the status
+  line says so; choose a different one.
+- **API key.** Voqora creates a random key the first time you turn the API on
+  and keeps it in your Keychain. Use the eye button to show it, **Copy** to
+  copy it, and **Regenerate** to replace it. Apps using the old key stop
+  working until you give them the new one.
+- **Setup snippets.** Copy a ready-made `curl` command for the OpenAI-compatible
+  speech endpoint, a `claude mcp add` command for Claude Code, or an
+  `mcpServers` entry for other MCP clients. Each one includes your port and key.
+
+When a tool asks Voqora to speak, the text plays through Voqora like a spoken
+selection, with your current voice unless the tool names one. A new request
+replaces the one playing, and a stop request stops it. If the tool sends its
+name, a short note says which app asked.
+
+### Audiobookshelf
+
+Send finished audiobooks to your own Audiobookshelf server.
+
+1. Enter the server address, such as `https://abs.example.com`. Plain `http`
+   works only for servers on your own network, and Voqora warns you that the
+   connection is not encrypted.
+2. In Audiobookshelf, create an API key (under **Settings -> API Keys**), then
+   paste it into **API Token** and choose **Save**. The account needs
+   permission to upload. Voqora keeps the token in your Keychain.
+3. Choose **Test Connection**, then pick the library (and folder, if it has more
+   than one) that should receive uploads.
+
+Then open a finished book's **Export** menu and choose **Upload to
+Audiobookshelf**. Voqora makes an M4B with chapters and cover art, uploads it,
+and shows progress on the export button. Choose **Cancel Upload** from the same
+menu to stop. **Disconnect** removes the address and deletes the token.
+
+### Shortcuts and Services
+
+The Integrations pane also lists the Shortcuts actions and the Services menu
+items described in [More ways to start speech](#more-ways-to-start-speech).
+
 ## Updates
 
 Voqora checks for a new release when it launches, at most once every six hours,
