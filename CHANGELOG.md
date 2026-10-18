@@ -62,6 +62,12 @@
 - Library imports EPUB books and HTML pages. EPUB chapters come from the
   book's table of contents, and the title, author, and cover come from the
   book itself. DRM-protected EPUBs are refused with a clear message.
+- Voice blends: mix two to four voices into a named custom voice and use it
+  anywhere you pick a voice, including audiobooks.
+- Pronunciation dictionary: tell Voqora how to say a word, for all reading or
+  for one audiobook. Transcripts keep the original words.
+- Pause length setting for reading and audiobooks makes the breaks between
+  phrases shorter or longer.
 
 ### Changed
 

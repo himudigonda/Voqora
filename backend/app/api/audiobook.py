@@ -41,7 +41,10 @@ from app.services.import_limits import (
 from app.services.llm_cleaner import LLMCleaner
 from app.services.llm_providers import PROVIDERS, LLMCredential, api_key_problem
 from app.services.pdf_extractor import PDFExtractor
+from app.services.pronunciation import pronunciations
 from app.services.text_extractor import TextExtractor
+from app.services.tts import MAX_PAUSE_SCALE, MIN_PAUSE_SCALE
+from app.services.voices import resolve_voice
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -187,13 +190,41 @@ def _validate_book_id(book_id: str) -> None:
         raise HTTPException(status_code=400, detail="Invalid book_id.")
 
 
+def _forget_book_pronunciations(book_id: str | None) -> None:
+    try:
+        if book_id is None:
+            pronunciations.delete_orphaned_scopes(
+                lambda scope: AudiobookStore.read_meta(scope) is not None
+            )
+        else:
+            pronunciations.delete_scope(book_id)
+    except OSError:
+        log.warning(
+            "audiobook.pronunciation_cleanup_failed",
+            extra={"book_id": book_id, "failure_code": "pronunciation_cleanup_failed"},
+            exc_info=True,
+        )
+
+
+def _validated_pause_scale(pause_scale: float | None) -> float:
+    scale = 1.0 if pause_scale is None else float(pause_scale)
+    if not math.isfinite(scale) or not MIN_PAUSE_SCALE <= scale <= MAX_PAUSE_SCALE:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Pause length must be between {MIN_PAUSE_SCALE} and "
+                f"{MAX_PAUSE_SCALE}."
+            ),
+        )
+    return scale
+
+
 def _validated_synthesis_settings(
     voice: str | None, speed: float | None, engine: str | None
-) -> tuple[str, float, str]:
-    state = EngineManager.state()
-    available_voices = set(state.get("voices") or [])
+) -> tuple[str, float, str, str]:
     book_voice = voice or EngineManager.default_voice()
-    if book_voice not in available_voices:
+    spec = resolve_voice(book_voice)
+    if spec is None:
         raise HTTPException(status_code=422, detail="Unknown narration voice.")
 
     book_speed = 1.0 if speed is None else float(speed)
@@ -209,10 +240,10 @@ def _validated_synthesis_settings(
             ),
         )
 
-    book_engine = engine or state.get("engine", "kokoro")
+    book_engine = engine or EngineManager.state().get("engine", "kokoro")
     if book_engine != "kokoro":
         raise HTTPException(status_code=422, detail="Unknown narration engine.")
-    return book_voice, book_speed, book_engine
+    return book_voice, book_speed, book_engine, spec.fallback_voice
 
 
 # ---------------------------------------------------------------------------
@@ -263,14 +294,16 @@ async def upload_audiobook(
     voice: str | None = Form(default=None),
     speed: float | None = Form(default=None),
     engine: str | None = Form(default=None),
+    pause_scale: float | None = Form(default=None),
     llm_provider: str | None = Form(default=None),
     llm_model: str | None = Form(default=None),
     llm_base_url: str | None = Form(default=None),
 ):
     """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
 
-    Accepts PDF, EPUB, TXT, DOCX, MD, and HTML files. Optional `voice`, `speed`, `engine`
-    form fields snapshot the user's current selection for this book.
+    Accepts PDF, EPUB, TXT, DOCX, MD, and HTML files. Optional `voice` (a built-in
+    voice or blend id), `speed`, `engine` and `pause_scale` form fields snapshot the
+    user's current selection for this book.
     """
     filename = file.filename or "Untitled"
     file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -282,9 +315,10 @@ async def upload_audiobook(
 
     # Validate before allocating a book directory or buffering a potentially
     # large upload. These fields are persisted settings, not client hints.
-    book_voice, book_speed, book_engine = _validated_synthesis_settings(
+    book_voice, book_speed, book_engine, voice_fallback = _validated_synthesis_settings(
         voice, speed, engine
     )
+    book_pause_scale = _validated_pause_scale(pause_scale)
     pricing_credential = _pricing_credential(llm_provider, llm_model, llm_base_url)
 
     # Stream straight to a private staging file. Keeping chunks in a list and
@@ -479,6 +513,8 @@ async def upload_audiobook(
         meta["source_sha256"] = content_hash
         if author:
             meta["author"] = author
+        meta["voice_fallback"] = voice_fallback
+        meta["pause_scale"] = book_pause_scale
         AudiobookStore.write_meta(book_id, meta)
 
         # Render cover off the request path. Pulled out of an inline closure
@@ -627,6 +663,7 @@ def list_audiobooks() -> list[dict[str, Any]]:
 async def delete_all_audiobooks():
     """Remove every local book, source document, transcript, and audio file."""
     deleted = await AudiobookService.request_delete_all()
+    _forget_book_pronunciations(None)
     return {"status": "deleted", "deleted_books": deleted}
 
 
@@ -827,6 +864,7 @@ async def delete_audiobook(book_id: str):
     ok = await AudiobookService.request_delete(book_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Book not found.")
+    _forget_book_pronunciations(book_id)
     return {"status": "deleted", "book_id": book_id}
 
 

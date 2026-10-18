@@ -124,6 +124,14 @@ class Settings(BaseSettings):
         )
 
     @property
+    def VOICE_BLENDS_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "voice_blends.json")
+
+    @property
+    def PRONUNCIATIONS_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "pronunciations.json")
+
+    @property
     def AUDIOBOOKS_DIR(self) -> str:
         path = os.path.join(self.USER_DATA_DIR, "audiobooks")
         os.makedirs(path, exist_ok=True)
