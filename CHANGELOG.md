@@ -4,6 +4,13 @@
 
 ### New
 
+- Voices: a new sidebar section with the Voice Catalog of all 28 voices and
+  their samples, My Voices for blending two to four voices into your own, and
+  a Pronunciations dictionary with search, a Test field, JSON import and
+  export, and per-book entries from the player's More menu. Your voices appear
+  in every voice picker under My Voices.
+- Pause Length in Preferences -> Speech and in the New Audiobook sheet makes
+  pauses between sentences shorter or longer, from 0.5x to 2x.
 - Dictation: press `Control + Option + Space` in any app, speak, and press it
   again (or pause for two seconds). Voqora transcribes on your Mac, pastes the
   text where your cursor is, and puts your clipboard back. Choose the language,
