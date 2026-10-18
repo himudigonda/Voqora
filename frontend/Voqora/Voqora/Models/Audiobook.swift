@@ -22,6 +22,7 @@ struct Audiobook: Identifiable, Codable, Hashable {
     var errorCode: String? = nil
     var llmProvider: String? = nil
     var llmModel: String? = nil
+    var author: String? = nil
 
     static let providerFailureCodes: Set<String> = [
         "llm_auth_failed",
@@ -59,6 +60,10 @@ struct Audiobook: Identifiable, Codable, Hashable {
 
     var narratorName: String {
         DashboardViewModel.voiceName(for: voice)
+    }
+
+    var displayAuthor: String? {
+        AudiobookAuthor.display(author)
     }
 
     var sortedSections: [AudiobookSection] {
@@ -126,6 +131,18 @@ struct Audiobook: Identifiable, Codable, Hashable {
         case errorCode = "error_code"
         case llmProvider = "llm_provider"
         case llmModel = "llm_model"
+        case author
+    }
+}
+
+nonisolated enum AudiobookAuthor {
+    static let maximumLength = 200
+
+    static func display(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let collapsed = raw.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return String(collapsed.prefix(maximumLength))
     }
 }
 
@@ -241,6 +258,11 @@ struct AudiobookEstimateResponse: Codable, Hashable {
     var llmModel: String?
     var pricingKnown: Bool?
     var readsImages: Bool?
+    var author: String?
+
+    var displayAuthor: String? {
+        AudiobookAuthor.display(author)
+    }
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -260,6 +282,7 @@ struct AudiobookEstimateResponse: Codable, Hashable {
         case llmModel = "llm_model"
         case pricingKnown = "pricing_known"
         case readsImages = "reads_images"
+        case author
     }
 }
 

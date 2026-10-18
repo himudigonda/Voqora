@@ -171,12 +171,33 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 ## Turn a document into an audiobook
 
 1. Open **Library** in the sidebar.
-2. Add the PDF, TXT, DOCX, or Markdown file you want to finish, or drop it on
-   the window. You can drop several files at once.
+2. Add the PDF, EPUB, DOCX, HTML, TXT, or Markdown file you want to finish,
+   or drop it on the window. You can drop several files at once. EPUB books
+   bring their own title, author, cover, and chapters; DRM-protected EPUBs
+   can't be opened.
 3. Review the page count, word count, and expected length, then choose
    **Create Audiobook**.
 4. When the book is ready, choose **Listen Now**. Later, use **Continue
    Listening** in the sidebar to pick up where you left off.
+
+Book cards and the player show the author when the document names one, and
+the Library search matches titles and authors.
+
+### Add a web article
+
+1. In **Library**, choose **Add from URL** in the toolbar, or press
+   `Command + Shift + U`.
+2. Paste the link to an article or a PDF. A link without `http://` or
+   `https://` is opened with `https://`.
+3. Pick the voice and narration speed, then choose **Continue**. Voqora
+   fetches the page, keeps the article text and its headings, and shows the
+   same estimate and cleanup choices as a file.
+
+Voqora explains why a page can't be added. It doesn't open links to your Mac
+or your local network, pages over its size limit, or pages without readable
+text. For a page behind a subscription or sign-in, save it from your browser
+as a web page and add the HTML file instead. Choose **Edit Link** to try
+another address.
 
 ### Listening to a book
 
@@ -195,12 +216,17 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 - Export a finished audiobook from the export button in the player, or
   right-click the book in the Library and choose **Export**. Pick
   **Audiobook (M4B)** for a file with chapters, cover art, and title that
-  Apple Books and other audiobook players understand, or **Audio Only (WAV)**
-  for the raw narration. The chapters match the **Sections** list. While an
-  export runs, the export button shows its progress and the same menu offers
-  **Cancel Export**.
+  Apple Books and other audiobook players understand, **Audio (MP3)** for a
+  file that plays almost anywhere, or **Audio Only (WAV)** for the raw
+  narration. The M4B chapters start exactly where each chapter's narration
+  starts. **Subtitles (SRT)** and **Subtitles (WebVTT)** save timed captions of
+  the transcript for video editors and web players. While an export runs, the
+  export button shows its progress and the same menu offers **Cancel Export**.
+  Long books can take a minute to encode as MP3 before the progress moves.
 - Set the M4B quality in **Preferences -> Audiobooks -> Export Quality**.
   64 kbps keeps narration clear and files small; 128 kbps is the largest.
+  **MP3 Quality** sets the MP3 bitrate from 64 to 192 kbps; 96 kbps suits
+  spoken word.
 
 Voqora stores the source document, extracted text, generated audio, transcript,
 and audiobook state locally until you delete that book. Close the app and return later without
@@ -259,6 +285,7 @@ window of its own. It is built for focus, dyslexia, and low vision.
 - The sentence being read is highlighted. Turn on **Reading Ruler** to dim
   everything else. When word timing is available, **Word-by-Word Emphasis**
   marks each word as it is spoken; otherwise the whole sentence is highlighted.
+  Audiobooks include word timing.
 - Click any sentence to play from it. Press Space to pause or resume.
 - Use the text size buttons in the control bar, or open the settings button to
   choose a font (System, Rounded, Serif, or Mono), text size from 14 to 48 pt,

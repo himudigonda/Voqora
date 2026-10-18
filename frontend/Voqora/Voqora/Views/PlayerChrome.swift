@@ -79,6 +79,7 @@ struct PlayerTitle: View {
     let title: String
     let subtitle: String
     let alignment: HorizontalAlignment
+    var byline: String?
 
     var body: some View {
         VStack(alignment: alignment, spacing: 4) {
@@ -88,6 +89,13 @@ struct PlayerTitle: View {
                 .lineLimit(2)
                 .multilineTextAlignment(alignment == .center ? .center : .leading)
                 .help(title)
+            if let byline {
+                Text(byline)
+                    .font(vm.appFont(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.textPrimary.opacity(0.8))
+                    .lineLimit(1)
+                    .help(byline)
+            }
             Text(subtitle)
                 .font(vm.appFont(size: 13, weight: .medium))
                 .foregroundStyle(Palette.textSecondary)

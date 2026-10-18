@@ -130,7 +130,8 @@ private struct AudiobookTitle: View {
         PlayerTitle(
             title: book.displayTitle,
             subtitle: book.subtitle(at: audio.currentTime, chapters: bookVM.chapters(for: book)),
-            alignment: alignment
+            alignment: alignment,
+            byline: book.displayAuthor.map { "by \($0)" }
         )
     }
 }

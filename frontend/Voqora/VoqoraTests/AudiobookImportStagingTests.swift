@@ -1,3 +1,4 @@
+import UniformTypeIdentifiers
 @testable import Voqora
 import XCTest
 
@@ -48,11 +49,27 @@ final class AudiobookImportStagingTests: XCTestCase {
     }
 
     func test_supportedFormatsAreOneExplicitProductContract() {
-        for ext in ["pdf", "txt", "docx", "md"] {
+        for ext in ["pdf", "epub", "txt", "docx", "md", "html", "htm", "EPUB", "HTML"] {
             XCTAssertTrue(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.\(ext)")))
         }
-        XCTAssertFalse(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.epub")))
+        XCTAssertFalse(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.rtf")))
+        XCTAssertFalse(AudiobookImportStaging.supports(URL(fileURLWithPath: "/tmp/book.mobi")))
         XCTAssertTrue(AudiobookImportStaging.supportedFormatsDescription.contains("Markdown"))
+        XCTAssertTrue(AudiobookImportStaging.supportedFormatsDescription.contains("EPUB"))
+        XCTAssertTrue(AudiobookImportStaging.supportedFormatsDescription.contains("HTML"))
+    }
+
+    func test_openPanelOffersEPUBAndWebPages() {
+        let types = AudiobookImportStaging.documentTypes
+        XCTAssertTrue(types.contains(.epub))
+        XCTAssertTrue(types.contains(.html))
+        XCTAssertTrue(types.contains(.pdf))
+    }
+
+    func test_displayNameStripsTheNewExtensions() {
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "Moby_Dick.epub"), "Moby Dick")
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "Saved Article.HTML"), "Saved Article")
+        XCTAssertEqual(AudiobookImportStaging.displayName(from: "page.htm"), "page")
     }
 
     func test_displayName_turnsFilenamesIntoReadableTitles() {

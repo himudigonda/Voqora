@@ -80,6 +80,17 @@
   subtitles, as an MP3 (64 to 192 kbps), and as a chapter list for M4B files.
   It can also convert a single WAV clip to MP3.
 - Transcripts can include estimated per-word timings.
+- Add from URL in the Library (`Command + Shift + U`): paste a link to an
+  article or a PDF and Voqora turns it into an audiobook with the same voice,
+  speed, estimate, and cleanup choices as a file. Blocked, paywalled, and
+  unreadable pages are refused with a clear reason.
+- The Library's open panel and drag and drop accept EPUB and HTML files, and
+  book cards and the player show the author. Search matches authors too.
+- Export a finished audiobook as MP3, with the quality set in Preferences ->
+  Audiobooks, or as SRT or WebVTT subtitles. M4B chapters now start exactly
+  where each chapter's narration starts.
+- Reading Mode marks each word as an audiobook reads it when Word-by-Word
+  Emphasis is on.
 - AI reading tools use the provider you connected to summarize, translate,
   answer questions about a book with page citations, and make quizzes and
   flashcards. Each result shows its token count and estimated cost.

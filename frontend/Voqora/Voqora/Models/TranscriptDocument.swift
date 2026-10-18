@@ -15,8 +15,14 @@ nonisolated struct TranscriptLine: Identifiable, Equatable, Sendable {
 
 nonisolated struct TranscriptDocument: Equatable, Sendable {
     let lines: [TranscriptLine]
+    let wordTimings: [Int: [ReadingWordTiming]]
 
     static let empty = TranscriptDocument(lines: [])
+
+    init(lines: [TranscriptLine], wordTimings: [Int: [ReadingWordTiming]] = [:]) {
+        self.lines = lines
+        self.wordTimings = wordTimings
+    }
 
     var isEmpty: Bool {
         lines.isEmpty
@@ -48,11 +54,18 @@ nonisolated struct TranscriptDocument: Equatable, Sendable {
 }
 
 nonisolated extension TranscriptDocument {
+    struct TimedWord: Codable, Equatable, Sendable {
+        let text: String
+        let start: Double
+        let end: Double
+    }
+
     struct TimedLine: Codable, Equatable, Sendable {
         let paragraph: Int
         let text: String
         let start: Double
         let end: Double
+        var words: [TimedWord]? = nil
     }
 
     init(transcript: AudiobookService.Transcript) {
@@ -76,7 +89,7 @@ nonisolated extension TranscriptDocument {
                 )
             }
         }
-        self.init(lines: builder.lines)
+        self.init(lines: builder.lines, wordTimings: builder.wordTimings)
     }
 
     init(spokenText: String, duration: TimeInterval) {
@@ -98,6 +111,7 @@ nonisolated extension TranscriptDocument {
 
     private struct Builder {
         private(set) var lines: [TranscriptLine] = []
+        private(set) var wordTimings: [Int: [ReadingWordTiming]] = [:]
         private var block = -1
 
         mutating func appendTimed(_ timed: [TimedLine], page: Int) {
@@ -109,6 +123,9 @@ nonisolated extension TranscriptDocument {
                 }
                 let text = line.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
+                if let words = line.words, !words.isEmpty {
+                    wordTimings[lines.count] = words.map { ReadingWordTiming(text: $0.text, start: $0.start, end: $0.end) }
+                }
                 lines.append(
                     TranscriptLine(
                         id: lines.count,
