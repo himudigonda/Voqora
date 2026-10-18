@@ -52,6 +52,8 @@ async def validation_exception_handler(
     if not errors:
         return error_response(400, "Invalid request body.")
     first = errors[0]
+    if first.get("type") == "json_invalid":
+        return error_response(400, "Request body is not valid JSON.")
     loc = [str(part) for part in first.get("loc", ()) if part != "body"]
     param = ".".join(loc) or None
     return error_response(400, _describe(first, param), param=param)

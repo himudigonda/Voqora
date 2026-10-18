@@ -152,13 +152,13 @@ async def create_speech(req: SpeechRequest) -> Response:
 
 
 @router.post("/v1/voqora/speak", status_code=202)
-def relay_speak(req: RelaySpeakRequest) -> JSONResponse:
+async def relay_speak(req: RelaySpeakRequest) -> JSONResponse:
     """Ask the Voqora app to speak text aloud on this Mac."""
     return _relay(lambda: speech_relay.speak(req.text, req.voice))
 
 
 @router.post("/v1/voqora/stop", status_code=202)
-def relay_stop() -> JSONResponse:
+async def relay_stop() -> JSONResponse:
     """Ask the Voqora app to stop speaking and drop queued speech."""
     return _relay(speech_relay.stop)
 

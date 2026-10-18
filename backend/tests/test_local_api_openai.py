@@ -226,6 +226,9 @@ def test_malformed_json_is_400(client: TestClient, engine) -> None:
         headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 400
+    error = response.json()["error"]
+    assert error["message"] == "Request body is not valid JSON."
+    assert error["param"] is None
 
 
 def test_input_at_limit_is_accepted(client: TestClient, engine) -> None:

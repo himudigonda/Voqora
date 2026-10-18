@@ -228,6 +228,26 @@ def test_relay_stop_queues_for_app(public: TestClient) -> None:
     assert queue.get_nowait() == {"type": "stop", "id": response.json()["id"]}
 
 
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("speak", "/v1/voqora/speak", {"text": "hello"}),
+        ("stop", "/v1/voqora/stop", None),
+    ],
+)
+def test_relay_routes_touch_queues_on_the_event_loop(
+    public: TestClient, method: str, path: str, body: dict | None
+) -> None:
+    def require_event_loop(*_args: object) -> str:
+        asyncio.get_running_loop()
+        return "event-id"
+
+    with patch.object(speech_relay, method, side_effect=require_event_loop):
+        response = public.post(path, json=body)
+    assert response.status_code == 202
+    assert response.json()["id"] == "event-id"
+
+
 def test_relay_speak_returns_429_when_queue_full(public: TestClient) -> None:
     speech_relay.subscribe()
     statuses = [
