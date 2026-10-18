@@ -19,6 +19,8 @@ from app.services.tts import TTSEngine
 class _MockKokoro:
     """Mock Kokoro model: returns 1s of mid-amplitude noise at 24 kHz."""
 
+    voices = {"af_bella": np.zeros((510, 1, 256), dtype=np.float32)}
+
     def create(self, text, voice, speed, lang):
         return np.random.uniform(-0.5, 0.5, 24000).astype(np.float32), None
 
