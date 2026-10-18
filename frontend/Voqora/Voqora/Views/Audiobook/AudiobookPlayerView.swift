@@ -7,10 +7,18 @@ struct AudiobookPlayerView: View {
     let book: Audiobook
     @State private var panel: Panel = .transcript
     @State private var tint: Color?
+    @StateObject private var assistant: AIAssistantViewModel
+    @State private var pendingCitation: AICitation?
+
+    init(book: Audiobook) {
+        self.book = book
+        _assistant = StateObject(wrappedValue: AIAssistantViewModel.restoring(bookID: book.bookID))
+    }
 
     enum Panel: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
         case sections = "Sections"
+        case assistant = "Assistant"
 
         var id: String {
             rawValue
@@ -49,6 +57,8 @@ struct AudiobookPlayerView: View {
                     transcript(fontSize: fontSize)
                 case .sections:
                     PlayerSectionsList(book: book)
+                case .assistant:
+                    AIAssistantPanel(model: assistant, onCitation: open(_:))
                 }
             }
         }
@@ -64,6 +74,7 @@ struct AudiobookPlayerView: View {
         .onKeyPress("[") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) - 0.25); return .handled }
         .onKeyPress("]") { bookVM.setSpeed(Double(bookVM.audio.playbackRate) + 0.25); return .handled }
         .onAppear {
+            assistant.connect(bookVM.providers)
             bookVM.isPlayerViewActive = true
             if bookVM.nowPlaying?.bookID != book.bookID {
                 bookVM.play(book)
@@ -73,6 +84,16 @@ struct AudiobookPlayerView: View {
         }
         .onDisappear {
             bookVM.isPlayerViewActive = false
+            assistant.cancelAll()
+        }
+        .onChange(of: panel) { old, _ in
+            if old == .assistant {
+                assistant.cancelAll()
+            }
+        }
+        .onChange(of: bookVM.transcriptState) { _, state in
+            guard let citation = pendingCitation, isCurrentBook, state == .loaded || state == .unavailable else { return }
+            jump(to: citation)
         }
         .task(id: book.bookID) {
             let color = await CoverColorExtractor.shared.dominantColor(forBackendPath: "audiobook/\(book.bookID)/cover")
@@ -84,6 +105,35 @@ struct AudiobookPlayerView: View {
 
     private var isCurrentBook: Bool {
         bookVM.nowPlaying?.bookID == book.bookID
+    }
+
+    private func open(_ citation: AICitation) {
+        if isCurrentBook, bookVM.transcriptState == .loaded || bookVM.transcriptState == .unavailable {
+            jump(to: citation)
+            return
+        }
+        pendingCitation = citation
+        if !isCurrentBook {
+            bookVM.play(book)
+        } else if bookVM.transcriptState == .idle {
+            bookVM.loadTranscript(for: book.bookID)
+        }
+    }
+
+    private func jump(to citation: AICitation) {
+        pendingCitation = nil
+        if let line = AICitationLocator.line(for: citation, in: bookVM.follower.document) {
+            bookVM.play(fromLine: line)
+        } else if let start = book.pageToTime[String(citation.page)] {
+            bookVM.seek(toSeconds: start)
+            if !bookVM.audio.isPlaying {
+                bookVM.audio.resume()
+            }
+        } else {
+            bookVM.showToast("Voqora could not find that passage in the audio.")
+            return
+        }
+        panel = .transcript
     }
 
     private func chapterTitle(at time: TimeInterval) -> String? {

@@ -121,6 +121,10 @@ struct PreferencesView: View {
                         ShortcutRow(title: "Speak Clipboard", name: .speakClipboard)
                         Divider().padding(.vertical, 8)
                         ShortcutRow(title: "Start / Finish Dictation", name: .toggleDictation)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Summarize Selection and Speak", name: .summarizeSelection)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Translate Selection and Speak", name: .translateSelection)
 
                         Divider().padding(.vertical, 16)
 
@@ -153,8 +157,12 @@ struct PreferencesView: View {
                     }
                 }
 
-                PreferenceSection(title: "AI Cleanup", icon: "sparkles") {
-                    AICleanupSettings()
+                PreferenceSection(title: "AI", icon: "sparkles") {
+                    VStack(alignment: .leading, spacing: 16) {
+                        AICleanupSettings()
+                        Divider()
+                        AIReadingSettings()
+                    }
                 }
 
                 PreferenceSection(title: "Audiobooks", icon: "books.vertical") {

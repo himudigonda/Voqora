@@ -290,7 +290,7 @@ can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic,
 xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or a Custom
 OpenAI-compatible server.
 
-1. Open **Preferences -> AI Cleanup -> Add Provider**, pick a provider, enter
+1. Open **Preferences -> AI -> Add Provider**, pick a provider, enter
    its API key (Ollama and LM Studio need none) and model, and choose
    **Connect**. Voqora checks the connection before saving. You can also
    connect a provider during setup.
@@ -323,6 +323,45 @@ model, the book shows the reason. Choose **Fix Provider** to correct the
 connection, then **Resume** to continue where it stopped. Pages already cleaned
 stay as they are. To continue without AI, choose **Finish Without AI**; the
 remaining pages are narrated from local text.
+
+## AI reading tools
+
+With an AI provider connected in **Preferences -> AI**, the audiobook player
+shows an **Assistant** panel next to **Transcript** and **Sections**. If no
+provider is connected, the panel offers to connect one. The tools send the
+book's text to the provider used for audiobooks; Ollama, LM Studio, and local
+Custom servers keep it on your Mac.
+
+- **Summary**: choose Short, Medium, or Detailed and an output language, then
+  choose **Summarize Book**. Long books can take a few minutes.
+- **Ask**: type a question about the book and press Return. Answers list the
+  passages they come from; select a citation to play the book from that
+  sentence.
+- **Quiz**: pick a difficulty and how many questions, then answer each one to
+  see whether you were right and why. Your score appears at the top.
+- **Flashcards**: click a card to flip it, use **Previous** and **Next**
+  (Command-Left and Command-Right), and choose **Mark Known** (Command-K) to
+  skip cards you already know.
+
+Every result can be copied or spoken aloud with your speech voice, switched to
+a voice in the result's language when needed. Speaking stops the audiobook;
+press Play to continue where you left off. Switching away from the Assistant
+panel or closing the player cancels any request that is still running.
+
+Two global shortcuts work in any app. They have no keys at first, so assign
+them in **Preferences -> Shortcuts**:
+
+- **Summarize Selection and Speak** reads the selected text, asks your provider
+  for a short summary, and speaks it.
+- **Translate Selection and Speak** translates the selection and speaks it with
+  a voice for that language. Choose the language under **Translate Selection
+  Into** in **Preferences -> AI**. It starts as the first non-English language
+  in your Mac's language list that Voqora has a voice for, or Spanish.
+
+If Voqora is already busy with other AI requests, the provider is rate limiting
+your key, or a text is over the size or cost limit for one request, Voqora says
+so and nothing is spoken. Selections can be up to 20,000 characters for
+translation.
 
 ## Reading Mode
 

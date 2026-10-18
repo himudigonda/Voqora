@@ -115,7 +115,15 @@ struct VoqoraApp: App {
         if !runningTests {
             inputsInstance.activate()
             appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance)
-            setupShortcuts(vm: vmInstance, inputs: inputsInstance)
+            let aiSelection = AISelectionCoordinator(
+                speaker: vmInstance,
+                credential: { [weak providersInstance] in providersInstance?.activeCredential },
+                dependencies: .live(openAIPreferences: { [weak vmInstance] in
+                    vmInstance?.selectedTab = "preferences"
+                    WindowPresenter.shared.show()
+                })
+            )
+            setupShortcuts(vm: vmInstance, inputs: inputsInstance, aiSelection: aiSelection)
             systemMedia?.start()
             dictationInstance.installSystemIntegrations(dashboard: vmInstance)
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
@@ -152,7 +160,7 @@ struct VoqoraApp: App {
         }
     }
 
-    private func setupShortcuts(vm: DashboardViewModel, inputs: SpeechInputCoordinator) {
+    private func setupShortcuts(vm: DashboardViewModel, inputs: SpeechInputCoordinator, aiSelection: AISelectionCoordinator) {
         VoqoraLog.info("KeyboardShortcuts", "Initializing registration")
 
         KeyboardShortcuts.onKeyUp(for: .playText) {
@@ -200,6 +208,22 @@ struct VoqoraApp: App {
                 guard Self.shortcutAllowed("speakClipboard") else { return }
                 VoqoraLog.info("KeyboardShortcuts", "speakClipboard triggered")
                 await inputs.speakClipboard()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .summarizeSelection) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("summarizeSelection") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "summarizeSelection triggered")
+                await aiSelection.summarizeSelection()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .translateSelection) {
+            Task { @MainActor in
+                guard Self.shortcutAllowed("translateSelection") else { return }
+                VoqoraLog.info("KeyboardShortcuts", "translateSelection triggered")
+                await aiSelection.translateSelection()
             }
         }
 

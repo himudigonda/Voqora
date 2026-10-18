@@ -294,7 +294,7 @@ struct PlayerSegmentedHeader<Selection: Hashable & Identifiable & RawRepresentab
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(width: 220)
+        .frame(width: 110 * CGFloat(Selection.allCases.count))
         .padding(.top, 16)
         .padding(.bottom, 8)
     }
