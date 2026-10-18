@@ -37,6 +37,14 @@ def test_group_never_splits_a_unit() -> None:
     assert group([], 100) == []
 
 
+def test_group_caps_the_number_of_units_per_group() -> None:
+    assert group(["a", "b", "c", "d", "e"], 100, max_items=2) == [
+        ["a", "b"],
+        ["c", "d"],
+        ["e"],
+    ]
+
+
 def test_tokenize_lowercases_and_splits_cjk_into_characters() -> None:
     assert tokenize("Hello, World! 42") == ["hello", "world", "42"]
     assert tokenize("中文测试") == ["中", "文", "测", "试"]

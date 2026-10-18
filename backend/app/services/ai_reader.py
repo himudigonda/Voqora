@@ -4,7 +4,7 @@ import re
 import secrets
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from typing import Literal, TypeVar
+from typing import Annotated, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -35,6 +35,7 @@ LANGUAGE_NAMES: dict[str, str] = {lang["code"]: lang["name"] for lang in LANGUAG
 SUMMARY_CHUNK_CHARS = 24_000
 MAX_SUMMARY_CHUNKS = 64
 TRANSLATE_BATCH_CHARS = 6_000
+TRANSLATE_BATCH_PARAGRAPHS = 200
 PASSAGE_CHARS = 1_200
 ASK_TOP_PASSAGES = 6
 STUDY_SOURCE_CHARS = 60_000
@@ -91,7 +92,9 @@ class _SummaryOutput(_Output):
 
 
 class _TranslationOutput(_Output):
-    paragraphs: list[str] = Field(min_length=1, max_length=500)
+    paragraphs: list[Annotated[str, Field(min_length=1)]] = Field(
+        min_length=1, max_length=TRANSLATE_BATCH_PARAGRAPHS
+    )
     detected_source_language: str | None = Field(default=None, max_length=64)
 
     @field_validator("detected_source_language")
@@ -571,7 +574,7 @@ async def translate(
     if not parts:
         raise AIToolError("There is no text to translate.", status=422, code="no_text")
     target = LANGUAGE_NAMES[target_language]
-    batches = group(parts, TRANSLATE_BATCH_CHARS)
+    batches = group(parts, TRANSLATE_BATCH_CHARS, max_items=TRANSLATE_BATCH_PARAGRAPHS)
     replies = await gather_all(
         batches, lambda batch: _translate_batch(session, batch, target)
     )
@@ -658,7 +661,7 @@ async def ask(
     question: str,
     history: Sequence[HistoryTurn],
 ) -> AnswerResult:
-    passages = select_passages(book, question, history)
+    passages = await asyncio.to_thread(select_passages, book, question, history)
     if not passages:
         return AnswerResult(
             answer=_NOT_FOUND_ANSWER, citations=[], found=False, **session.usage()

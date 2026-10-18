@@ -311,6 +311,33 @@ async def test_translation_batches_long_text(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_translation_of_many_short_paragraphs_fits_the_reply_schema(
+    monkeypatch,
+):
+    def handler(call: Call, _n: int) -> str:
+        source = json.loads(call.user.split("\n", 1)[1].rsplit("\n", 1)[0])
+        return reply({"paragraphs": [p.upper() for p in source]})
+
+    fake = install(monkeypatch, FakeLLM(handler))
+    paragraphs = [f"l{i}" for i in range(900)]
+    result = await ai_reader.translate(_session(), "\n\n".join(paragraphs), "es")
+    assert result.text.split("\n\n") == [p.upper() for p in paragraphs]
+    assert len(fake.calls) == 5
+
+
+@pytest.mark.asyncio
+async def test_empty_translated_paragraph_is_repaired(monkeypatch):
+    replies = [
+        reply({"paragraphs": ["uno", ""]}),
+        reply({"paragraphs": ["uno", "dos"]}),
+    ]
+    fake = install(monkeypatch, FakeLLM(lambda _c, n: replies[n - 1]))
+    result = await ai_reader.translate(_session(), "one\n\ntwo", "es")
+    assert result.text == "uno\n\ndos"
+    assert len(fake.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_translation_count_mismatch_is_repaired(monkeypatch):
     replies = [
         reply({"paragraphs": ["only one"]}),

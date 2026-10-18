@@ -463,9 +463,24 @@ class _DisconnectingRequest:
         self.after = after
         self.polls = 0
 
-    async def is_disconnected(self) -> bool:
+    async def receive(self) -> dict[str, str]:
         self.polls += 1
-        return self.polls > self.after
+        if self.polls > self.after:
+            return {"type": "http.disconnect"}
+        return {"type": "http.request"}
+
+
+class _ConnectedRequest:
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def receive(self) -> dict[str, str]:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return {"type": "http.disconnect"}
 
 
 @pytest.mark.asyncio
@@ -487,33 +502,15 @@ async def test_client_disconnect_cancels_the_work(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_finished_work_wins_over_a_connected_client(monkeypatch):
-    async def work() -> str:
-        return "done"
-
-    request = _DisconnectingRequest(after=10_000)
-    assert await run_until_disconnect(request, work(), 5.0) == "done"
-
-
-class _CancelSwallowingRequest:
-    async def is_disconnected(self) -> bool:
-        try:
-            await asyncio.sleep(10)
-        except asyncio.CancelledError:
-            pass
-        return False
-
-
-@pytest.mark.asyncio
-async def test_runner_finishes_even_when_the_disconnect_check_swallows_cancel():
+async def test_finished_work_wins_and_stops_listening_for_disconnects():
     async def work() -> str:
         await asyncio.sleep(0.01)
         return "done"
 
-    result = await asyncio.wait_for(
-        run_until_disconnect(_CancelSwallowingRequest(), work(), 5.0), 2.0
-    )
+    request = _ConnectedRequest()
+    result = await asyncio.wait_for(run_until_disconnect(request, work(), 5.0), 2.0)
     assert result == "done"
+    assert request.cancelled
 
 
 @pytest.mark.asyncio
@@ -522,7 +519,7 @@ async def test_work_errors_propagate_from_the_runner():
         raise LLMAuthError("no")
 
     with pytest.raises(LLMAuthError):
-        await run_until_disconnect(_DisconnectingRequest(after=10_000), work(), 5.0)
+        await run_until_disconnect(_ConnectedRequest(), work(), 5.0)
 
 
 @pytest.mark.asyncio
@@ -547,6 +544,57 @@ async def test_disconnect_returns_499_and_stops_provider_calls(monkeypatch):
     assert response.status_code == 499
     assert fake.active == 0
     assert len(fake.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_disconnect_is_seen_through_the_full_middleware_stack(monkeypatch):
+    monkeypatch.setattr(ai_api.settings, "IPC_TOKEN", "ipc-test-token")
+    fake = install(
+        monkeypatch,
+        FakeLLM(lambda _c, _n: reply({"paragraphs": ["hola"]}), delay_s=30.0),
+    )
+    body = json.dumps({"text": "hello", "target_language": "es"}).encode()
+    headers = {
+        "x-voqora-ipc-token": "ipc-test-token",
+        "content-type": "application/json",
+        "content-length": str(len(body)),
+        **{key.lower(): value for key, value in OPENAI_HEADERS.items()},
+    }
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/ai/translate",
+        "raw_path": b"/ai/translate",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(k.encode(), v.encode()) for k, v in headers.items()],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 8000),
+    }
+    disconnected = asyncio.Event()
+    sent: list[dict] = []
+    messages = [{"type": "http.request", "body": body, "more_body": False}]
+
+    async def receive() -> dict:
+        if messages:
+            return messages.pop(0)
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    served = asyncio.ensure_future(app(scope, receive, send))
+    while not fake.calls:
+        await asyncio.sleep(0.01)
+    disconnected.set()
+    await asyncio.wait_for(served, 5.0)
+    assert fake.active == 0
+    starts = [m for m in sent if m["type"] == "http.response.start"]
+    assert [m["status"] for m in starts] in ([], [499])
 
 
 def test_logs_never_contain_document_text_or_the_key(client, monkeypatch, caplog):

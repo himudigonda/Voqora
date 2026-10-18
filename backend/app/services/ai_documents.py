@@ -79,10 +79,10 @@ def _require_inside_library(book_id: str) -> None:
 
 
 def load_book_text(book_id: str) -> BookText:
+    _require_inside_library(book_id)
     meta = AudiobookStore.read_meta(book_id)
     if meta is None:
         raise AIToolError("Book not found.", status=404, code="book_not_found")
-    _require_inside_library(book_id)
     page_count = min(int(meta.get("page_count") or 0), settings.MAX_AUDIOBOOK_PAGES)
     spans = _section_lookup(meta.get("sections"))
     pages: list[BookPage] = []

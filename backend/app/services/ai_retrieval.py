@@ -35,13 +35,19 @@ def _bounded_units(paragraph: str, max_chars: int) -> list[str]:
     return units
 
 
-def group(units: Iterable[str], max_chars: int, gap: int = 2) -> list[list[str]]:
+def group(
+    units: Iterable[str],
+    max_chars: int,
+    gap: int = 2,
+    max_items: int | None = None,
+) -> list[list[str]]:
     groups: list[list[str]] = []
     current: list[str] = []
     size = 0
     for unit in units:
         added = len(unit) + (gap if current else 0)
-        if current and size + added > max_chars:
+        full = max_items is not None and len(current) >= max_items
+        if current and (full or size + added > max_chars):
             groups.append(current)
             current, size = [], 0
             added = len(unit)

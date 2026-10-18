@@ -213,22 +213,16 @@ class _ToolTimedOut(Exception):
     pass
 
 
-async def _wait_for_disconnect(request: Request, stop: asyncio.Event) -> None:
-    while not stop.is_set():
-        if await request.is_disconnected():
-            return
-        try:
-            await asyncio.wait_for(stop.wait(), _DISCONNECT_POLL_S)
-        except TimeoutError:
-            pass
+async def _wait_for_disconnect(request: Request) -> None:
+    while (await request.receive())["type"] != "http.disconnect":
+        await asyncio.sleep(_DISCONNECT_POLL_S)
 
 
 async def run_until_disconnect(
     request: Request, work: Awaitable[T], timeout_s: float
 ) -> T:
-    stop = asyncio.Event()
     task = asyncio.ensure_future(work)
-    watcher = asyncio.ensure_future(_wait_for_disconnect(request, stop))
+    watcher = asyncio.ensure_future(_wait_for_disconnect(request))
     try:
         done, _ = await asyncio.wait(
             {task, watcher}, timeout=timeout_s, return_when=asyncio.FIRST_COMPLETED
@@ -239,7 +233,6 @@ async def run_until_disconnect(
             raise _ClientDisconnected()
         raise _ToolTimedOut()
     finally:
-        stop.set()
         for pending in (task, watcher):
             pending.cancel()
         await asyncio.gather(task, watcher, return_exceptions=True)
