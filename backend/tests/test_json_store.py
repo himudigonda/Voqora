@@ -39,3 +39,15 @@ def test_failed_save_keeps_old_file_and_removes_temp(tmp_path, monkeypatch):
         document.save({"version": 2})
     assert json.loads(path.read_text()) == {"version": 1}
     assert os.listdir(tmp_path) == ["doc.json"]
+
+
+@pytest.mark.parametrize("content", ["{broken", "[1, 2]", "[" * 100_000])
+def test_unreadable_document_is_set_aside_not_overwritten(tmp_path, content):
+    path = tmp_path / "doc.json"
+    path.write_text(content)
+    document = JsonDocument(lambda: str(path), "t")
+    assert document.load() == {}
+    assert (tmp_path / "doc.json.corrupt").read_text() == content
+    document.save({"version": 1})
+    assert (tmp_path / "doc.json.corrupt").read_text() == content
+    assert json.loads(path.read_text()) == {"version": 1}

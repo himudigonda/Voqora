@@ -33,20 +33,34 @@ class JsonDocument:
                 payload = json.load(handle)
         except FileNotFoundError:
             return {}
-        except (OSError, ValueError):
+        except OSError:
             log.warning(
                 "json_store.load_failed",
                 extra={"store": self._name, "failure_code": "store_load_failed"},
                 exc_info=True,
             )
             return {}
+        except (ValueError, RecursionError):
+            self._quarantine(path, "store_load_failed")
+            return {}
         if not isinstance(payload, dict):
-            log.warning(
-                "json_store.load_failed",
-                extra={"store": self._name, "failure_code": "store_shape_invalid"},
-            )
+            self._quarantine(path, "store_shape_invalid")
             return {}
         return payload
+
+    def _quarantine(self, path: str, failure_code: str) -> None:
+        log.warning(
+            "json_store.load_failed",
+            extra={"store": self._name, "failure_code": failure_code},
+        )
+        try:
+            os.replace(path, f"{path}.corrupt")
+        except OSError:
+            log.warning(
+                "json_store.quarantine_failed",
+                extra={"store": self._name, "failure_code": "store_quarantine_failed"},
+                exc_info=True,
+            )
 
     def save(self, payload: dict[str, Any]) -> None:
         path = self.path

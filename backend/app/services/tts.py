@@ -151,13 +151,6 @@ def _resolve_espeak_data_path() -> str:
 interactive_tts_lock: asyncio.Lock = asyncio.Lock()
 
 
-def _spoken_text(rules: PronunciationRules, segment: str) -> str | None:
-    spoken = rules.apply(segment)
-    if spoken == segment:
-        return segment
-    return spoken if any(ch.isalnum() for ch in spoken) else None
-
-
 class TTSEngine:
     _instance = None
     _model: Kokoro = None
@@ -333,7 +326,7 @@ class TTSEngine:
         first_seg = segments[0].strip()
         spec = voice_spec(voice)
         rules = pronunciation or EMPTY_RULES
-        spoken = _spoken_text(rules, first_seg)
+        spoken, _ = rules.speakable(first_seg)
         if spoken is None:
             return
         key = cls._lookahead_key(
@@ -543,7 +536,7 @@ class TTSEngine:
         for i, seg_text in enumerate(segments):
             cls.touch()  # Keep idle timer alive throughout multi-segment generation
             seg_stripped = seg_text.strip()
-            spoken = _spoken_text(rules, seg_stripped)
+            spoken, _ = rules.speakable(seg_stripped)
             if spoken is None:
                 continue
             audio = None

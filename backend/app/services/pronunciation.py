@@ -145,6 +145,12 @@ class PronunciationRules:
     def apply(self, text: str) -> str:
         return self.apply_counted(text)[0]
 
+    def speakable(self, segment: str) -> tuple[str | None, int]:
+        spoken, count = self.apply_counted(segment)
+        if spoken == segment or any(ch.isalnum() for ch in spoken):
+            return spoken, count
+        return None, count
+
     def apply_counted(self, text: str) -> tuple[str, int]:
         if not self._passes:
             return text, 0
@@ -153,7 +159,7 @@ class PronunciationRules:
         for rule_pass in self._passes:
             spoken, count = rule_pass.apply(spoken)
             total += count
-            if len(spoken) > MAX_SPOKEN_CHARS:
+            if len(spoken) > max(MAX_SPOKEN_CHARS, len(text)):
                 log.warning(
                     "pronunciation.expansion_capped",
                     extra={
@@ -294,8 +300,10 @@ class PronunciationStore:
     def delete_scope(self, scope: str) -> int:
         return self._delete_where(lambda entry: entry.scope == scope)
 
-    def delete_book_scopes(self) -> int:
-        return self._delete_where(lambda entry: entry.scope != SCOPE_GLOBAL)
+    def delete_orphaned_scopes(self, book_exists: Callable[[str], bool]) -> int:
+        return self._delete_where(
+            lambda entry: entry.scope != SCOPE_GLOBAL and not book_exists(entry.scope)
+        )
 
     def rules_for(self, book_id: str | None = None) -> PronunciationRules:
         with self._lock:
@@ -305,14 +313,17 @@ class PronunciationStore:
             if cached is not None:
                 self._rules.move_to_end(key)
                 return cached
-            global_entries = [
-                e for e in state.entries.values() if e.scope == SCOPE_GLOBAL
-            ]
             book_entries = (
                 [e for e in state.entries.values() if e.scope == book_id]
                 if book_id is not None and is_book_scope(book_id)
                 else []
             )
+            overridden = {e.identity()[1:] for e in book_entries}
+            global_entries = [
+                e
+                for e in state.entries.values()
+                if e.scope == SCOPE_GLOBAL and e.identity()[1:] not in overridden
+            ]
             rules = PronunciationRules(state.version, (global_entries, book_entries))
             self._rules[key] = rules
             while len(self._rules) > _MAX_CACHED_RULES:

@@ -185,6 +185,18 @@ def test_expansion_is_capped_to_original_text():
     assert _apply(rules, text) == text
 
 
+def test_long_segment_that_shrinks_is_not_capped():
+    text = "ab " * MAX_SPOKEN_CHARS
+    assert _apply([_entry("ab", "c")], text) == "c " * MAX_SPOKEN_CHARS
+
+
+def test_speakable_drops_segments_left_without_words():
+    rules = PronunciationRules(1, ([_entry("um", "")], ()))
+    assert rules.speakable("um.") == (None, 1)
+    assert rules.speakable("...") == ("...", 0)
+    assert rules.speakable("um, yes") == (", yes", 1)
+
+
 def test_empty_rules_are_identity():
     rules = PronunciationRules(0, ((), ()))
     assert rules.is_empty
@@ -256,7 +268,9 @@ def test_store_delete_and_scope_cleanup(tmp_path):
     _create(store, match="c", scope="b" * 32)
     assert store.delete_scope(BOOK_ID) == 2
     assert store.delete_scope(BOOK_ID) == 0
-    assert store.delete_book_scopes() == 1
+    kept_book = _create(store, match="d", scope="c" * 32)
+    assert store.delete_orphaned_scopes(lambda scope: scope == "c" * 32) == 1
+    assert store.delete(kept_book.id) is True
     assert [e.id for e in store.list()] == [keep.id]
     assert store.delete(keep.id) is True
     assert store.delete(keep.id) is False
@@ -318,6 +332,15 @@ def test_rules_are_cached_per_version_and_scope(tmp_path):
     assert store.rules_for(None) is not first
     assert store.rules_for(None).version == 3
     assert store.rules_for("not-a-book").apply("Bob") == "Bob"
+
+
+def test_book_entry_overrides_global_entry_for_the_same_text(tmp_path):
+    store = _store(tmp_path)
+    _create(store, match="Tolkien", replacement="Toll keen")
+    _create(store, match="tolkien", replacement="Tol keen", scope=BOOK_ID)
+    assert store.rules_for(None).apply("Tolkien") == "Toll keen"
+    assert store.rules_for(BOOK_ID).apply("Tolkien") == "Tol keen"
+    assert store.rules_for("b" * 32).apply("Tolkien") == "Toll keen"
 
 
 def test_concurrent_creates_keep_every_entry(tmp_path):
@@ -435,15 +458,20 @@ def test_deleting_a_book_removes_its_entries(isolated_books):
     assert [e.match for e in pronunciations.list()] == ["keep"]
 
 
-def test_deleting_all_books_removes_book_entries(isolated_books):
+def test_deleting_all_books_removes_entries_of_deleted_books_only(isolated_books):
     book_id = _make_book()
+    survivor = _make_book()
     _post(scope=book_id)
     _post(match="keep")
-    with patch.object(
-        AudiobookService, "request_delete_all", new=AsyncMock(return_value=1)
-    ):
+    _post(match="survivor", scope=survivor)
+
+    async def delete_first_book():
+        AudiobookStore.delete_book(book_id)
+        return 1
+
+    with patch.object(AudiobookService, "request_delete_all", new=delete_first_book):
         assert client.delete("/audiobook").status_code == 200
-    assert [e.match for e in pronunciations.list()] == ["keep"]
+    assert [e.match for e in pronunciations.list()] == ["keep", "survivor"]
 
 
 def test_book_delete_succeeds_when_dictionary_cleanup_fails(
@@ -498,6 +526,13 @@ def test_test_endpoint_returns_spoken_text(isolated_books):
         "/pronunciations/test", json={"text": "Dr. Smith", "book_id": book_id}
     ).json()
     assert scoped["spoken"] == "Doctor Smyth"
+
+
+def test_test_endpoint_skips_segments_synthesis_skips():
+    _post(match="um", replacement="")
+    body = client.post("/pronunciations/test", json={"text": "Um. Hello there."}).json()
+    assert body["spoken"] == "Hello there."
+    assert body["replacements"] == 1
 
 
 @pytest.mark.parametrize(

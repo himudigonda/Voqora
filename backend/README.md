@@ -63,11 +63,13 @@ characters, `replacement` is 0 to 200, and `scope` is `"global"` or a book id.
 
 Entries are applied to each phrase just before it is turned into phonemes:
 global entries first, then the book's entries, each pass taking the longest
-match first and never re-reading its own replacements. Matching is literal,
-so regex characters have no special meaning. Whole-word entries do not match
-inside a longer word. Phrase boundaries come from the original text, so a
-match that spans a phrase break (a comma, a sentence end, or the five-word
-chunking of long sentences) is not replaced. Audiobook transcripts show the
+match first and never re-reading its own replacements. A book entry with the
+same match and options as a global entry replaces that global entry for the
+book. Matching is literal, so regex characters have no special meaning.
+Whole-word entries do not match inside a longer word. Phrase boundaries come
+from the original text, so a match that spans punctuation that ends a phrase
+(such as a comma or a sentence end) is not replaced. A phrase that is left
+with no letters or digits is skipped. Audiobook transcripts show the
 original words while the audio speaks the replacement. Deleting a book
 deletes its entries.
 

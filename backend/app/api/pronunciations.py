@@ -153,9 +153,9 @@ def test_pronunciation(req: PronunciationTestRequest) -> dict[str, Any]:
     spoken: list[str] = []
     replacements = 0
     for segment in EngineManager.split_segments(req.text):
-        text, count = rules.apply_counted(segment)
+        text, count = rules.speakable(segment.strip())
         replacements += count
-        if text.strip():
+        if text:
             spoken.append(text.strip())
     return {
         "text": req.text,

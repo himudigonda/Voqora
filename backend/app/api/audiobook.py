@@ -191,7 +191,9 @@ def _validate_book_id(book_id: str) -> None:
 def _forget_book_pronunciations(book_id: str | None) -> None:
     try:
         if book_id is None:
-            pronunciations.delete_book_scopes()
+            pronunciations.delete_orphaned_scopes(
+                lambda scope: AudiobookStore.read_meta(scope) is not None
+            )
         else:
             pronunciations.delete_scope(book_id)
     except OSError:
