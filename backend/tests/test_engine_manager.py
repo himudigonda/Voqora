@@ -139,7 +139,7 @@ def test_state_exposes_language_catalog():
 async def test_generate_derives_language_from_voice(monkeypatch):
     seen = []
 
-    async def fake_generate(text, voice, speed, lang, failed_segments=None):
+    async def fake_generate(text, voice, speed, lang, failed_segments=None, **_):
         seen.append(lang)
         yield np.zeros(1, dtype=np.float32)
 
@@ -156,7 +156,7 @@ async def test_generate_derives_language_from_voice(monkeypatch):
 async def test_prewarm_uses_voice_language(monkeypatch):
     calls = []
 
-    async def fake_prewarm(text, voice, speed, lang="en-us"):
+    async def fake_prewarm(text, voice, speed, lang="en-us", **_options):
         calls.append(lang)
 
     monkeypatch.setattr(TTSEngine, "prewarm_with_lookahead", fake_prewarm)

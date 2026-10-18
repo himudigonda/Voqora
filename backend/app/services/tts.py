@@ -18,12 +18,17 @@ from kokoro_onnx.config import EspeakConfig
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
-from app.services.languages import DEFAULT_VOICE, espeak_lang_for_voice
+from app.services.languages import DEFAULT_VOICE
+from app.services.pronunciation import EMPTY_RULES, PronunciationRules
+from app.services.voice_blends import blend_styles
+from app.services.voices import VoiceSpec, builtin_spec, voice_spec
 
 log = get_logger(__name__)
 
 SEGMENT_PAUSE_SECONDS = {".": 0.35, "!": 0.35, "?": 0.35, ":": 0.2, ";": 0.2, ",": 0.12}
 DEFAULT_SEGMENT_PAUSE_SECONDS = 0.1
+MIN_PAUSE_SCALE = 0.5
+MAX_PAUSE_SCALE = 2.0
 
 # Periods that almost never end a sentence. Each segment is synthesized on its
 # own, so a break after "Dr." spoke it with a full stop and split the transcript
@@ -146,6 +151,13 @@ def _resolve_espeak_data_path() -> str:
 interactive_tts_lock: asyncio.Lock = asyncio.Lock()
 
 
+def _spoken_text(rules: PronunciationRules, segment: str) -> str | None:
+    spoken = rules.apply(segment)
+    if spoken == segment:
+        return segment
+    return spoken if any(ch.isalnum() for ch in spoken) else None
+
+
 class TTSEngine:
     _instance = None
     _model: Kokoro = None
@@ -163,6 +175,55 @@ class TTSEngine:
     # Uses LRU eviction: most recently hit entries stay, oldest unused are removed.
     _lookahead_cache: OrderedDict = OrderedDict()
     _MAX_CACHE_ENTRIES: int = 10
+
+    _style_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+    _MAX_STYLE_ENTRIES: int = 8
+
+    @staticmethod
+    def _lookahead_key(
+        segment: str,
+        voice: VoiceSpec,
+        speed: float,
+        lang: str,
+        dictionary_version: int = 0,
+        pause_scale: float = 1.0,
+    ) -> tuple[str, str, float, str, int, float]:
+        return (
+            segment,
+            voice.cache_tag,
+            round(speed, 2),
+            lang,
+            dictionary_version,
+            round(pause_scale, 2),
+        )
+
+    @classmethod
+    def _has_voices(cls, spec: VoiceSpec) -> bool:
+        return all(voice in cls._model.voices for voice, _ in spec.components)
+
+    @classmethod
+    def _voice_input(cls, spec: VoiceSpec) -> str | np.ndarray:
+        if not spec.is_blend:
+            return spec.id
+        cached = cls._style_cache.get(spec.cache_tag)
+        if cached is not None:
+            cls._style_cache.move_to_end(spec.cache_tag)
+            return cached
+        style = blend_styles(
+            [cls._model.get_voice_style(voice) for voice, _ in spec.components],
+            [weight for _, weight in spec.components],
+        )
+        cls._style_cache[spec.cache_tag] = style
+        while len(cls._style_cache) > cls._MAX_STYLE_ENTRIES:
+            cls._style_cache.popitem(last=False)
+        return style
+
+    @staticmethod
+    def _pause_seconds(segment: str, speed: float, pause_scale: float) -> float:
+        stripped = segment.rstrip("\"'\u201d\u2019)]")
+        last_char = stripped[-1] if stripped else ""
+        pause = SEGMENT_PAUSE_SECONDS.get(last_char, DEFAULT_SEGMENT_PAUSE_SECONDS)
+        return pause * pause_scale / speed
 
     @classmethod
     def touch(cls) -> None:
@@ -221,6 +282,7 @@ class TTSEngine:
             cls._executor.shutdown(wait=False, cancel_futures=True)
             cls._executor = None
         cls._lookahead_cache.clear()
+        cls._style_cache.clear()
         log.info("tts.model_unloaded")
 
     @classmethod
@@ -243,7 +305,14 @@ class TTSEngine:
 
     @classmethod
     async def prewarm_with_lookahead(
-        cls, text: str, voice: str, speed: float, lang: str = "en-us"
+        cls,
+        text: str,
+        voice: str | VoiceSpec,
+        speed: float,
+        lang: str = "en-us",
+        *,
+        pause_scale: float = 1.0,
+        pronunciation: PronunciationRules | None = None,
     ) -> None:
         """Pre-run inference on the first segment and store the result in the cache.
 
@@ -262,7 +331,14 @@ class TTSEngine:
             return
 
         first_seg = segments[0].strip()
-        key = (first_seg, voice, round(speed, 2), lang)
+        spec = voice_spec(voice)
+        rules = pronunciation or EMPTY_RULES
+        spoken = _spoken_text(rules, first_seg)
+        if spoken is None:
+            return
+        key = cls._lookahead_key(
+            first_seg, spec, speed, lang, rules.version, pause_scale
+        )
 
         if key in cls._lookahead_cache:
             # Move to end to mark as recently used (LRU)
@@ -278,8 +354,8 @@ class TTSEngine:
             audio, _ = await loop.run_in_executor(
                 cls._executor,
                 cls._model.create,
-                first_seg,
-                voice,
+                spoken,
+                cls._voice_input(spec),
                 speed,
                 lang,
             )
@@ -435,10 +511,13 @@ class TTSEngine:
     async def generate(
         cls,
         text: str,
-        voice: str,
+        voice: str | VoiceSpec,
         speed: float,
         lang: str = "en-us",
         failed_segments: list[str] | None = None,
+        *,
+        pause_scale: float = 1.0,
+        pronunciation: PronunciationRules | None = None,
     ) -> AsyncGenerator[np.ndarray, None]:
         if not cls._model or not cls._executor:
             raise RuntimeError("Model not initialized. Call initialize() first.")
@@ -448,24 +527,32 @@ class TTSEngine:
         if not segments:
             return
 
-        if voice not in cls._model.voices:
+        spec = voice_spec(voice)
+        if not cls._has_voices(spec):
             log.warning(
                 "tts.unknown_voice_fallback",
-                extra={"requested": voice, "fallback": DEFAULT_VOICE},
+                extra={"requested": spec.id, "fallback": DEFAULT_VOICE},
             )
-            voice = DEFAULT_VOICE
-            lang = espeak_lang_for_voice(voice)
+            spec = builtin_spec(DEFAULT_VOICE)
+            lang = spec.lang
+        voice_input = cls._voice_input(spec)
+        rules = pronunciation or EMPTY_RULES
 
         loop = asyncio.get_running_loop()
 
         for i, seg_text in enumerate(segments):
             cls.touch()  # Keep idle timer alive throughout multi-segment generation
             seg_stripped = seg_text.strip()
+            spoken = _spoken_text(rules, seg_stripped)
+            if spoken is None:
+                continue
             audio = None
 
             # Cache hit: first segment was pre-computed by prewarm_with_lookahead()
             if i == 0:
-                key = (seg_stripped, voice, round(speed, 2), lang)
+                key = cls._lookahead_key(
+                    seg_stripped, spec, speed, lang, rules.version, pause_scale
+                )
                 cached = cls._lookahead_cache.pop(key, None)
                 if cached is not None:
                     log.debug(
@@ -478,8 +565,8 @@ class TTSEngine:
                     audio, _ = await loop.run_in_executor(
                         cls._executor,
                         cls._model.create,
-                        seg_stripped,
-                        voice,
+                        spoken,
+                        voice_input,
                         speed,
                         lang,
                     )
@@ -503,12 +590,8 @@ class TTSEngine:
 
             # Append inter-segment silence using pre-computed arrays
             # Speed-scaled pause: divide duration by speed so pauses feel proportional
-            stripped = seg_text.strip().rstrip("\"'\u201d\u2019)]")
-            last_char = stripped[-1] if stripped else ""
-            silence_sec = (
-                SEGMENT_PAUSE_SECONDS.get(last_char, DEFAULT_SEGMENT_PAUSE_SECONDS)
-                / speed
+            silence = AudioService.get_silence(
+                cls._pause_seconds(seg_stripped, speed, pause_scale)
             )
-            silence = AudioService.get_silence(silence_sec)
 
             yield np.concatenate([audio, silence])

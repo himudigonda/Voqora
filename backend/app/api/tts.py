@@ -15,19 +15,26 @@ from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
 from app.services.engine_manager import EngineManager
-from app.services.languages import DEFAULT_VOICE, LANGUAGES, is_valid_voice
+from app.services.languages import DEFAULT_VOICE, LANGUAGES
 from app.services.text_normalizer import strip_markdown_for_narration
-from app.services.tts import TTSEngine, interactive_tts_lock
+from app.services.tts import (
+    MAX_PAUSE_SCALE,
+    MIN_PAUSE_SCALE,
+    TTSEngine,
+    interactive_tts_lock,
+)
+from app.services.voices import is_known_voice
 
 router = APIRouter()
 log = get_logger(__name__)
 
 
 _LANGUAGE_CODES = frozenset(language["code"] for language in LANGUAGES)
+_MAX_VOICE_ID_CHARS = 64
 
 
 def _require_known_voice(value: str | None) -> str | None:
-    if value is not None and not is_valid_voice(value):
+    if value is not None and not is_known_voice(value):
         raise ValueError(f"unknown voice: {value}")
     return value
 
@@ -36,10 +43,11 @@ class SpeakRequest(BaseModel):
     # Keep one request bounded. Long documents belong in the audiobook flow,
     # where progress, cancellation, and recovery are explicit.
     text: str = Field(min_length=1, max_length=50_000)
-    voice: str = DEFAULT_VOICE
+    voice: str = Field(default=DEFAULT_VOICE, max_length=_MAX_VOICE_ID_CHARS)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
     volume: float = Field(default=1.0, ge=0.0, le=1.5)
     lang: str | None = None
+    pause_scale: float = Field(default=1.0, ge=MIN_PAUSE_SCALE, le=MAX_PAUSE_SCALE)
 
     @field_validator("voice")
     @classmethod
@@ -85,8 +93,9 @@ class PrewarmRequest(BaseModel):
             return None
         return strip_markdown_for_narration(value)
 
-    voice: str | None = None
+    voice: str | None = Field(default=None, max_length=_MAX_VOICE_ID_CHARS)
     speed: float | None = Field(default=None, ge=0.5, le=2.0)
+    pause_scale: float = Field(default=1.0, ge=MIN_PAUSE_SCALE, le=MAX_PAUSE_SCALE)
 
     @field_validator("voice")
     @classmethod
@@ -137,7 +146,9 @@ async def _do_prewarm(req: PrewarmRequest | None) -> None:
     """Background task: ensure model is loaded, then optionally fill lookahead cache."""
     await EngineManager.ensure_loaded()
     if req and req.text and req.voice and req.speed is not None:
-        await EngineManager.prewarm_with_lookahead(req.text, req.voice, req.speed)
+        await EngineManager.prewarm_with_lookahead(
+            req.text, req.voice, req.speed, pause_scale=req.pause_scale
+        )
 
 
 @router.post("/prewarm")
@@ -186,7 +197,7 @@ async def speak(req: SpeakRequest):
         EngineManager.touch()
 
         raw_samples_generator = EngineManager.generate(
-            req.text, req.voice, req.speed, req.lang
+            req.text, req.voice, req.speed, req.lang, pause_scale=req.pause_scale
         )
         wav_chunk_generator = AudioService.stream_samples_to_wav(
             raw_samples_generator, req.volume

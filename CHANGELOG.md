@@ -35,6 +35,12 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Voice blends: mix two to four voices into a named custom voice and use it
+  anywhere you pick a voice, including audiobooks.
+- Pronunciation dictionary: tell Voqora how to say a word, for all reading or
+  for one audiobook. Transcripts keep the original words.
+- Pause length setting for reading and audiobooks makes the breaks between
+  phrases shorter or longer.
 
 ### Changed
 

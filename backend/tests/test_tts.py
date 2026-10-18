@@ -5,6 +5,7 @@ import pytest
 
 from app.services.audio import AudioService
 from app.services.tts import TTSEngine
+from app.services.voices import builtin_spec
 
 
 class MockKokoro:
@@ -160,7 +161,7 @@ async def test_lookahead_cache_hit_skips_inference():
     test_text = "Hello world. Great to meet you all."
     # Derive the exact first segment the way generate() does
     first_seg = TTSEngine._split_segments(test_text)[0]  # "Hello world." with period
-    key = (first_seg, "af_bella", round(1.0, 2), "en-us")
+    key = TTSEngine._lookahead_key(first_seg, builtin_spec("af_bella"), 1.0, "en-us")
     cached_audio = np.ones(50, dtype=np.float32) * 0.5
     TTSEngine._lookahead_cache[key] = cached_audio
 
@@ -190,7 +191,7 @@ async def test_prewarm_with_lookahead_populates_cache():
     # "Hello world test phrase" has no punctuation and 4 words < _NORMAL_SEG_WORDS,
     # so it stays as a single segment (no force-split at 2 words anymore).
     expected_seg = "Hello world test phrase"
-    key = (expected_seg, "af_bella", 1.0, "en-us")
+    key = TTSEngine._lookahead_key(expected_seg, builtin_spec("af_bella"), 1.0, "en-us")
     assert key in TTSEngine._lookahead_cache
     assert TTSEngine._lookahead_cache[key] is cached_audio
     mock_model.create.assert_called_once_with(expected_seg, "af_bella", 1.0, "en-us")
@@ -205,7 +206,7 @@ async def test_prewarm_with_lookahead_no_op_when_cached():
     prewarm_text = "Hello world. Extra text."
     # Derive exact first segment to match the cache key generation in prewarm_with_lookahead
     first_seg = TTSEngine._split_segments(prewarm_text)[0]  # "Hello world." with period
-    key = (first_seg, "af_bella", 1.0, "en-us")
+    key = TTSEngine._lookahead_key(first_seg, builtin_spec("af_bella"), 1.0, "en-us")
     TTSEngine._lookahead_cache[key] = np.ones(50, dtype=np.float32)
 
     await TTSEngine.prewarm_with_lookahead(prewarm_text, "af_bella", 1.0)

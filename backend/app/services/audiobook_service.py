@@ -51,9 +51,12 @@ from app.services.text_normalizer import (
 )
 from app.services.tts import (
     DEFAULT_SEGMENT_PAUSE_SECONDS,
+    MAX_PAUSE_SCALE,
+    MIN_PAUSE_SCALE,
     SEGMENT_PAUSE_SECONDS,
     interactive_tts_lock,
 )
+from app.services.voices import VoiceSpec, voice_with_fallback
 
 log = get_logger(__name__)
 
@@ -1646,8 +1649,9 @@ class AudiobookService:
             book_id, "phase_started", phase="tts", page=page_done, total=page_count
         )
 
-        voice = meta.get("voice") or EngineManager.default_voice()
+        voice = cls._book_voice(book_id, meta)
         speed = float(meta.get("speed") or 1.0)
+        pause_scale = _book_pause_scale(meta)
         failed: list[int] = list(
             (AudiobookStore.read_meta(book_id) or {}).get("failed_pages") or []
         )
@@ -1692,7 +1696,7 @@ class AudiobookService:
                 else:
                     try:
                         samples, lines = await cls._generate_full_page(
-                            book_id, text, voice, speed
+                            book_id, text, voice, speed, pause_scale=pause_scale
                         )
                         cls._write_json_atomic(timing_path, {"lines": lines})
                         cls._write_wav_from_samples(out_path, samples)
@@ -1745,8 +1749,29 @@ class AudiobookService:
         cls._emit(book_id, "phase_finished", phase="tts")
 
     @classmethod
+    def _book_voice(cls, book_id: str, meta: dict[str, Any]) -> VoiceSpec:
+        requested = meta.get("voice") or EngineManager.default_voice()
+        spec = voice_with_fallback(requested, meta.get("voice_fallback"))
+        if spec.id != requested:
+            log.warning(
+                "audiobook.voice_fallback",
+                extra={
+                    "book_id": book_id,
+                    "fallback": spec.id,
+                    "failure_code": "book_voice_unavailable",
+                },
+            )
+        return spec
+
+    @classmethod
     async def _generate_full_page(
-        cls, book_id: str, text: str, voice: str, speed: float
+        cls,
+        book_id: str,
+        text: str,
+        voice: str | VoiceSpec,
+        speed: float,
+        *,
+        pause_scale: float = 1.0,
     ) -> tuple[np.ndarray, list[dict[str, Any]]]:
         """Synthesize a page into one float32 array plus per-sentence timings.
 
@@ -1772,7 +1797,12 @@ class AudiobookService:
             for index, segment in enumerate(segments):
                 start = cursor
                 async for chunk in EngineManager.generate(
-                    segment, voice, speed, failed_segments=failed_segments
+                    segment,
+                    voice,
+                    speed,
+                    failed_segments=failed_segments,
+                    pause_scale=pause_scale,
+                    book_id=book_id,
                 ):
                     cls._check_cancel(book_id)
                     chunks.append(chunk)
@@ -1914,6 +1944,7 @@ class AudiobookService:
                     page_to_time,
                     page_status,
                     float(current_meta.get("speed") or 1.0),
+                    _book_pause_scale(current_meta),
                 ),
             }
             tpath = AudiobookStore.transcript_path(book_id)
@@ -1986,6 +2017,7 @@ class AudiobookService:
         page_to_time: dict[str, float],
         page_status: dict[str, str],
         speed: float = 1.0,
+        pause_scale: float = 1.0,
     ) -> dict[str, list[dict[str, Any]]]:
         lines: dict[str, list[dict[str, Any]]] = {}
         for n in range(1, page_count + 1):
@@ -1997,7 +2029,7 @@ class AudiobookService:
                 with open(path, encoding="utf-8") as f:
                     page_lines = json.load(f).get("lines") or []
             except FileNotFoundError:
-                page_lines = cls._align_page_from_audio(book_id, n, speed)
+                page_lines = cls._align_page_from_audio(book_id, n, speed, pause_scale)
             except (OSError, ValueError):
                 continue
             offset = page_to_time.get(key, 0.0)
@@ -2015,7 +2047,7 @@ class AudiobookService:
 
     @classmethod
     def _align_page_from_audio(
-        cls, book_id: str, n: int, speed: float
+        cls, book_id: str, n: int, speed: float, pause_scale: float = 1.0
     ) -> list[dict[str, Any]]:
         try:
             with open(
@@ -2028,7 +2060,7 @@ class AudiobookService:
             return []
         if not text or text == "-":
             return []
-        page_lines = _aligned_page_lines(text, samples, speed)
+        page_lines = _aligned_page_lines(text, samples, speed, pause_scale)
         try:
             cls._write_json_atomic(
                 AudiobookStore.page_timing_path(book_id, n), {"lines": page_lines}
@@ -2071,6 +2103,7 @@ class AudiobookService:
             page_to_time,
             page_status,
             float(meta.get("speed") or 1.0),
+            _book_pause_scale(meta),
         )
         if transcript["lines"] != existing:
             cls._write_json_atomic(path, transcript)
@@ -2287,8 +2320,18 @@ def _match_pauses(
     return matches
 
 
+def _book_pause_scale(meta: dict[str, Any]) -> float:
+    try:
+        scale = float(meta.get("pause_scale") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(scale):
+        return 1.0
+    return min(MAX_PAUSE_SCALE, max(MIN_PAUSE_SCALE, scale))
+
+
 def _aligned_page_lines(
-    text: str, samples: np.ndarray, speed: float
+    text: str, samples: np.ndarray, speed: float, pause_scale: float = 1.0
 ) -> list[dict[str, Any]]:
     lines = _sentence_lines(
         [
@@ -2307,6 +2350,7 @@ def _aligned_page_lines(
     estimates = [duration * float(c) / total for c in cumulative[:-1]]
     expected = [
         SEGMENT_PAUSE_SECONDS.get(line["text"][-1], DEFAULT_SEGMENT_PAUSE_SECONDS)
+        * pause_scale
         / max(0.1, speed)
         for line in lines[:-1]
     ]
