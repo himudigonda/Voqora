@@ -16,15 +16,15 @@ final class StudioVoicePreviewer: NSObject, ObservableObject, AVAudioPlayerDeleg
         super.init()
     }
 
-    func toggle(voice: String) {
+    func toggle(voice: String, sentence: String) {
         if playingVoice == voice || loadingVoice == voice {
             stop()
             return
         }
-        play(voice: voice)
+        play(voice: voice, sentence: sentence)
     }
 
-    func play(voice: String) {
+    func play(voice: String, sentence: String) {
         stop()
         errorMessage = nil
         guard !voice.isEmpty else { return }
@@ -33,7 +33,6 @@ final class StudioVoicePreviewer: NSObject, ObservableObject, AVAudioPlayerDeleg
             return
         }
         loadingVoice = voice
-        let sentence = DashboardViewModel.sampleSentence(forVoice: voice)
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -75,8 +74,10 @@ final class StudioVoicePreviewer: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
     }
 
-    nonisolated func audioPlayerDidFinishPlaying(_: AVAudioPlayer, successfully _: Bool) {
+    nonisolated func audioPlayerDidFinishPlaying(_ finished: AVAudioPlayer, successfully _: Bool) {
+        let finishedID = ObjectIdentifier(finished)
         Task { @MainActor in
+            guard let player = self.player, ObjectIdentifier(player) == finishedID else { return }
             self.player = nil
             self.playingVoice = nil
         }

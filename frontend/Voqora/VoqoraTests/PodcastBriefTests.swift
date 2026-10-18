@@ -126,4 +126,24 @@ final class PodcastBriefTests: XCTestCase {
         XCTAssertEqual(StudioVoiceCatalog.displayName(for: "am_adam", blends: blends), "Adam")
         XCTAssertTrue(StudioVoiceCatalog.speaks("blend:gone", language: .hindi, blends: blends))
     }
+
+    func test_suggestedVoiceFollowsTheFirstSpeakersLanguage() {
+        XCTAssertEqual(StudioVoiceCatalog.suggestedVoice(excluding: [], blends: []), "af_bella")
+        XCTAssertEqual(StudioVoiceCatalog.suggestedVoice(excluding: ["bf_emma"], blends: []), "bm_george")
+        let blends = [PodcastVoiceBlend(id: "blend:warm", name: "Warm", lang: "es")]
+        XCTAssertEqual(StudioVoiceCatalog.suggestedVoice(excluding: ["blend:warm"], blends: blends), "ef_dora")
+    }
+
+    func test_blendPreviewSentenceUsesTheBlendLanguage() {
+        let blends = [PodcastVoiceBlend(id: "blend:warm", name: "Warm", lang: "es")]
+
+        XCTAssertEqual(
+            StudioVoiceCatalog.sampleSentence(for: "blend:warm", blends: blends),
+            DashboardViewModel.sampleSentence(forVoice: "ef_dora")
+        )
+        XCTAssertEqual(
+            StudioVoiceCatalog.sampleSentence(for: "ff_siwis", blends: blends),
+            DashboardViewModel.sampleSentence(forVoice: "ff_siwis")
+        )
+    }
 }

@@ -70,6 +70,22 @@ enum StudioVoiceCatalog {
         return picks.count >= 2 ? picks : Array(pool.prefix(2))
     }
 
+    static func suggestedVoice(excluding used: [String], blends: [PodcastVoiceBlend]) -> String {
+        let code = used.first.flatMap { languageCode(for: $0, blends: blends) } ?? PodcastLanguage.englishUS.rawValue
+        let language = PodcastLanguage(rawValue: code) ?? PodcastLanguage.allCases.first { sameLanguage($0.rawValue, code) } ?? .englishUS
+        let candidates = defaultVoices(for: language) + DashboardViewModel.voiceCatalog
+            .map(\.id)
+            .filter { sameLanguage(DashboardViewModel.langCode(forVoice: $0), language.rawValue) }
+        return candidates.first { !used.contains($0) } ?? candidates.first ?? "af_bella"
+    }
+
+    static func sampleSentence(for voiceID: String, blends: [PodcastVoiceBlend]) -> String {
+        guard isBlend(voiceID) else { return DashboardViewModel.sampleSentence(forVoice: voiceID) }
+        let code = languageCode(for: voiceID, blends: blends) ?? PodcastLanguage.englishUS.rawValue
+        let sampleVoice = DashboardViewModel.defaultVoice(forLang: code) ?? "af_bella"
+        return DashboardViewModel.sampleSentence(forVoice: sampleVoice)
+    }
+
     static func isBundledSample(_ voiceID: String) -> Bool {
         !isBlend(voiceID) && DashboardViewModel.voicesByID[voiceID] != nil
     }

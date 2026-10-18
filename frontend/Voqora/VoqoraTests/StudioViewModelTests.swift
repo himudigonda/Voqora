@@ -116,6 +116,23 @@ final class StudioViewModelTests: XCTestCase {
         XCTAssertNil(studio.editor)
     }
 
+    func test_openingAScriptCancelsAPendingGeneration() async throws {
+        service.holdsScript = true
+        service.scriptResult = .success(StudioFixtures.result())
+        let studio = makeStudio()
+        let model = try briefModel(in: studio)
+
+        model.generate(blends: [])
+        await StudioFixtures.waitUntil { !service.writeRequests.isEmpty }
+        studio.startBlankScript()
+        service.holdsScript = false
+        try? await Task.sleep(nanoseconds: 20_000_000)
+
+        XCTAssertFalse(model.isGenerating)
+        XCTAssertEqual(studio.editor?.script.title, "Untitled Script")
+        XCTAssertEqual(studio.drafts.drafts.count, 1)
+    }
+
     func test_blankScriptOpensASavedEditor() throws {
         let studio = makeStudio()
 

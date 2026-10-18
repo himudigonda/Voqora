@@ -45,6 +45,8 @@ final class StudioViewModel: ObservableObject {
 
     func startNewPodcast(source: PodcastSource? = nil) {
         previewer.stop()
+        briefModel?.cancel()
+        closeEditorSaving()
         var brief = PodcastBrief()
         switch source {
         case let .book(bookID):
@@ -82,6 +84,7 @@ final class StudioViewModel: ObservableObject {
             editor.save()
         }
         self.editor = editor
+        briefModel?.cancel()
         briefModel = nil
         route = .editor
     }

@@ -57,6 +57,7 @@ nonisolated enum PodcastServiceError: LocalizedError, Equatable {
         case 413: return .tooLarge(detail ?? "This podcast is too large for Voqora to make.")
         case 422: return .invalid(detail ?? "Check the script details and try again.")
         case 429: return .busy(detail ?? "Voqora is already writing podcast scripts. Try again shortly.")
+        case 500: return detail.map(PodcastServiceError.rejected) ?? .unexpected
         case 502: return .scriptFailed(detail ?? "The AI provider did not return a usable script. Try again or choose another model.")
         case 503: return .providerUnavailable(detail ?? "The AI provider is temporarily unavailable. Try again later.")
         default: return .unexpected

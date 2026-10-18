@@ -103,7 +103,7 @@ struct PodcastScriptEditorView: View {
                         blends: studio.blends
                     )
                     .frame(maxWidth: 240)
-                    StudioPreviewButton(previewer: studio.previewer, voice: speaker.voice, speakerName: speaker.name)
+                    StudioPreviewButton(previewer: studio.previewer, voice: speaker.voice, speakerName: speaker.name, blends: studio.blends)
                     Text(turnCountLabel(for: speaker.id))
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textTertiary)
@@ -125,7 +125,7 @@ struct PodcastScriptEditorView: View {
             }
             HStack {
                 Button {
-                    editor.addSpeaker(voice: StudioVoiceCatalog.defaultVoices(for: .englishUS).first ?? "af_bella")
+                    editor.addSpeaker(voice: StudioVoiceCatalog.suggestedVoice(excluding: editor.script.speakers.map(\.voice), blends: studio.blends))
                 } label: {
                     Label("Add Speaker", systemImage: "person.badge.plus")
                 }
@@ -135,9 +135,7 @@ struct PodcastScriptEditorView: View {
                     .font(vm.font(.rowSubtitle))
                     .foregroundStyle(Palette.textTertiary)
             }
-            if let error = studio.previewer.errorMessage {
-                StudioIssueLabel(message: error)
-            }
+            StudioPreviewErrorLabel(previewer: studio.previewer)
         }
         .padding(.vertical, DesignTokens.Spacing.xs)
     }

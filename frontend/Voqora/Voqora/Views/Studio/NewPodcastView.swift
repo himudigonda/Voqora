@@ -7,6 +7,7 @@ struct NewPodcastView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var providers: LLMProviderStore
     @ObservedObject var model: PodcastBriefModel
+    @State private var hasProvider: Bool?
 
     var body: some View {
         ScrollView {
@@ -18,7 +19,7 @@ struct NewPodcastView: View {
                 ) {
                     EmptyView()
                 }
-                if providers.activeCredential == nil {
+                if hasProvider == false {
                     providerPrompt
                 }
                 sourceSection
@@ -32,6 +33,9 @@ struct NewPodcastView: View {
             .frame(maxWidth: .infinity)
         }
         .disabled(model.isGenerating)
+        .onAppear { refreshProvider() }
+        .onChange(of: providers.activeProvider) { refreshProvider() }
+        .onChange(of: providers.connected) { refreshProvider() }
         .overlay {
             if model.isGenerating {
                 generatingOverlay
@@ -208,6 +212,7 @@ struct NewPodcastView: View {
                     ForEach(brief.hosts.indices, id: \.self) { index in
                         hostRow(index)
                     }
+                    StudioPreviewErrorLabel(previewer: studio.previewer)
                     if brief.canAddHost {
                         Button {
                             model.brief.addHost()
@@ -234,7 +239,7 @@ struct NewPodcastView: View {
                 groups: StudioVoiceCatalog.groups(blends: studio.blends, language: brief.language),
                 blends: studio.blends
             )
-            StudioPreviewButton(previewer: studio.previewer, voice: host.voice, speakerName: host.name)
+            StudioPreviewButton(previewer: studio.previewer, voice: host.voice, speakerName: host.name, blends: studio.blends)
             if brief.canRemoveHost {
                 Button {
                     model.brief.removeHost(at: index)
@@ -273,7 +278,7 @@ struct NewPodcastView: View {
                 }
                 .buttonStyle(.voqoraPrimary)
                 .keyboardShortcut(.return, modifiers: .command)
-                .disabled(providers.activeCredential == nil)
+                .disabled(hasProvider != true)
                 .help("Write the script with your AI provider (Command-Return)")
             }
         }
@@ -333,6 +338,10 @@ struct NewPodcastView: View {
                 }
             }
         )
+    }
+
+    private func refreshProvider() {
+        hasProvider = providers.activeCredential != nil
     }
 
     private func pasteClipboard() {

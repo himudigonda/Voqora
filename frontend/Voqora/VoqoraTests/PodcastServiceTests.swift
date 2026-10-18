@@ -225,6 +225,10 @@ final class PodcastServiceTests: XCTestCase {
         )
         XCTAssertEqual(PodcastServiceError.from(statusCode: 404, data: Data(#"{"detail":"Podcast not found."}"#.utf8)), .notFound("Podcast not found."))
         XCTAssertEqual(PodcastServiceError.from(statusCode: 500, data: Data()), .unexpected)
+        XCTAssertEqual(
+            PodcastServiceError.from(statusCode: 500, data: Data(#"{"detail":"Script writing failed. Please try again."}"#.utf8)),
+            .rejected("Script writing failed. Please try again.")
+        )
         if case .tooLarge = PodcastServiceError.from(statusCode: 413, data: Data()) {} else {
             XCTFail("413 should map to tooLarge")
         }

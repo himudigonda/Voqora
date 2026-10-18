@@ -140,10 +140,11 @@ struct StudioPreviewButton: View {
     @ObservedObject var previewer: StudioVoicePreviewer
     let voice: String
     let speakerName: String
+    let blends: [PodcastVoiceBlend]
 
     var body: some View {
         Button {
-            previewer.toggle(voice: voice)
+            previewer.toggle(voice: voice, sentence: StudioVoiceCatalog.sampleSentence(for: voice, blends: blends))
         } label: {
             Group {
                 if previewer.loadingVoice == voice {
@@ -158,5 +159,15 @@ struct StudioPreviewButton: View {
         .disabled(voice.isEmpty)
         .help(previewer.playingVoice == voice ? "Stop preview" : "Preview this voice")
         .accessibilityLabel(previewer.playingVoice == voice ? "Stop preview for \(speakerName)" : "Preview voice for \(speakerName)")
+    }
+}
+
+struct StudioPreviewErrorLabel: View {
+    @ObservedObject var previewer: StudioVoicePreviewer
+
+    var body: some View {
+        if let error = previewer.errorMessage {
+            StudioIssueLabel(message: error)
+        }
     }
 }
