@@ -77,7 +77,10 @@ struct VoqoraApp: App {
 
         let providersInstance = LLMProviderStore(defaults: testDefaults ?? .standard)
         let audiobookInstance = AudiobookViewModel(audio: audioInstance, providers: providersInstance)
-        let dictationInstance = DictationController(transcripts: DictationTranscriptStore())
+        let dictationInstance = DictationController(
+            transcripts: DictationTranscriptStore(),
+            dependencies: .system(defaults: testDefaults ?? .standard)
+        )
 
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
@@ -101,7 +104,7 @@ struct VoqoraApp: App {
 
         if !runningTests {
             setupShortcuts(vm: vmInstance)
-            dictationInstance.installSystemIntegrations(appearance: vmInstance)
+            dictationInstance.installSystemIntegrations(dashboard: vmInstance)
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
 

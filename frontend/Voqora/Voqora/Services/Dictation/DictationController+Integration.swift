@@ -1,12 +1,12 @@
 import SwiftUI
 
 extension DictationController {
-    func installSystemIntegrations(appearance: DashboardViewModel) {
-        speechPauser = appearance
+    func installSystemIntegrations(dashboard: DashboardViewModel) {
+        speechPauser = dashboard
         hud = DictationHUDPresenter(
             rootView: DictationHUDView()
                 .environmentObject(self)
-                .environmentObject(appearance)
+                .environmentObject(dashboard)
         )
         registerShortcut()
     }

@@ -2,7 +2,7 @@ import Foundation
 
 extension DashboardViewModel: DictationSpeechPausing {
     func pauseSpeechForDictation() {
-        if status == .thinking {
+        if status == .thinking || audiobookVM?.isPreparingPlayback == true {
             VoqoraLog.info("DashboardViewModel", "Stopping pending speech for dictation")
             stopPlayback()
         } else if audio.isPlaying {

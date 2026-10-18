@@ -13,14 +13,9 @@ struct DictationView: View {
             VStack(alignment: .leading, spacing: DesignTokens.Layout.sectionGap) {
                 header
                 if dictation.phase == .idle, let issue = dictation.issue {
-                    DictationMessageRow(
-                        systemImage: "exclamationmark.triangle.fill",
-                        tint: Palette.warning,
-                        message: issue.message,
-                        settingsPane: issue.settingsPane
-                    )
-                    .padding(DesignTokens.Layout.cardInset)
-                    .background(Palette.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
+                    banner(message: issue.message, settingsPane: issue.settingsPane)
+                } else if dictation.phase == .idle, let outcome = dictation.outcome, let pane = outcome.settingsPane {
+                    banner(message: outcome.message, settingsPane: pane)
                 }
                 DictationSettingsCard()
                 transcriptSection(matches)
@@ -60,6 +55,17 @@ struct DictationView: View {
                 .foregroundStyle(Palette.textSecondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    private func banner(message: String, settingsPane: PrivacySettingsPane?) -> some View {
+        DictationMessageRow(
+            systemImage: "exclamationmark.triangle.fill",
+            tint: Palette.warning,
+            message: message,
+            settingsPane: settingsPane
+        )
+        .padding(DesignTokens.Layout.cardInset)
+        .background(Palette.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
     }
 
     private func transcriptSection(_ matches: [DictationTranscript]) -> some View {
