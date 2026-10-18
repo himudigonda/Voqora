@@ -79,6 +79,10 @@
   cookie banners, or add it to Library as an audiobook with its headings as
   sections. Links to PDFs are added like a PDF file. Voqora only opens public
   websites and tells you when a page is paywalled, too large, or not readable.
+- AI podcasts: turn a document or pasted text into a deep dive, brief, debate
+  or lecture with one or two hosts, then listen to it in Library. You can also
+  write your own script for up to four voices. Podcasts show who is speaking
+  in the transcript and can be cancelled and resumed like audiobooks.
 
 ### Changed
 

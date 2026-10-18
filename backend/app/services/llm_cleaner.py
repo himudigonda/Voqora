@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 
@@ -615,18 +616,56 @@ class LLMCleaner:
         *,
         max_output_tokens: int,
         json_output: bool = False,
+        temperature: float = 0.2,
+        retry: bool = False,
+    ) -> GeneratedText:
+        """One free-form completion on the standard tier, for any provider.
+
+        `json_output` asks Gemini for a JSON reply and `temperature` is passed
+        to Gemini; other providers use their own fixed settings. `retry=True`
+        retries transient failures with backoff. Callers that run their own
+        retry loop, such as the AI reader's budgeted one, leave it off.
+        """
+
+        def attempt(tier: "types.ServiceTier") -> Awaitable[GeneratedText]:
+            return cls._generate_once(
+                credential,
+                system,
+                text,
+                max_output_tokens=max_output_tokens,
+                json_output=json_output,
+                temperature=temperature,
+                tier=tier,
+            )
+
+        if not retry:
+            return await attempt(types.ServiceTier.STANDARD)
+        return await cls._with_retry(
+            "generate", attempt, start_tier=types.ServiceTier.STANDARD
+        )
+
+    @classmethod
+    async def _generate_once(
+        cls,
+        credential: LLMCredential,
+        system: str,
+        text: str,
+        *,
+        max_output_tokens: int,
+        json_output: bool,
+        temperature: float,
+        tier: "types.ServiceTier",
     ) -> GeneratedText:
         if not credential.is_gemini:
             return await cls._async_complete(
                 credential, system, text=text, max_output_tokens=max_output_tokens
             )
-        tier = types.ServiceTier.STANDARD
         client = genai.Client(
             api_key=credential.api_key, http_options=STANDARD_HTTP_OPTIONS
         )
         config = types.GenerateContentConfig(
             system_instruction=system,
-            temperature=0.2,
+            temperature=temperature,
             max_output_tokens=max_output_tokens,
             service_tier=tier,
             response_mime_type="application/json" if json_output else None,

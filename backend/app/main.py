@@ -15,6 +15,7 @@ from app.api.middleware import (
     IPCAuthenticationMiddleware,
     RejectBrowserOriginMiddleware,
 )
+from app.api.podcast import router as podcast_router
 from app.api.pronunciations import router as pronunciations_router
 from app.api.tts import router as tts_router
 from app.api.voices import router as voices_router
@@ -133,6 +134,7 @@ app.include_router(pronunciations_router)
 app.include_router(export_router)
 app.include_router(ai_router)
 app.include_router(article_router)
+app.include_router(podcast_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:

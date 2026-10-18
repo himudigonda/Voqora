@@ -8,6 +8,7 @@ Layout under {AUDIOBOOKS_DIR}/{book_id}/:
   audio_pages/{n:03d}.wav       per-page TTS (resumability granularity)
   audio.wav                     final concatenated
   transcript.json               sections + page→time map (Phase 2)
+  script.json                   podcast script (kind == "podcast" only)
 
 Metadata lives in {AUDIOBOOKS_DIR}/audiobooks.db (SQLite). One row per book
 in the `books` table. The dict-shaped `read_meta` / `write_meta` API is
@@ -38,6 +39,8 @@ log = get_logger(__name__)
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+
+DEFAULT_KIND = "book"
 
 # Columns we hoist out of the JSON blob for indexed queries. Everything else
 # (sections, page_to_time, estimated, actual, phase_progress, failed_pages,
@@ -149,10 +152,12 @@ class AudiobookStore:
     @staticmethod
     def _row_to_meta(row: sqlite3.Row) -> dict[str, Any]:
         try:
-            return json.loads(row["meta_json"])
+            meta = json.loads(row["meta_json"])
         except (json.JSONDecodeError, KeyError):
             # Fall back to indexed columns only.
-            return {col: row[col] for col in _INDEXED_COLUMNS if col in row.keys()}
+            meta = {col: row[col] for col in _INDEXED_COLUMNS if col in row.keys()}
+        meta.setdefault("kind", DEFAULT_KIND)
+        return meta
 
     @classmethod
     def _upsert_row(cls, conn: sqlite3.Connection, meta: dict[str, Any]) -> None:
@@ -223,6 +228,10 @@ class AudiobookStore:
         if not isinstance(transcript, dict):
             raise ValueError("transcript is not an object")
         return transcript
+
+    @classmethod
+    def script_path(cls, book_id: str) -> str:
+        return os.path.join(cls.book_dir(book_id), "script.json")
 
     @classmethod
     def audio_path(cls, book_id: str) -> str:
@@ -351,6 +360,7 @@ class AudiobookStore:
     ) -> dict[str, Any]:
         return {
             "book_id": book_id,
+            "kind": DEFAULT_KIND,
             "title": title,
             "created_at": _now_iso(),
             "page_count": page_count,
