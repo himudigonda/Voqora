@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import UniformTypeIdentifiers
 
 enum AudiobookExportFormat: String, CaseIterable, Identifiable {
     case m4b
@@ -55,6 +56,7 @@ enum AudiobookExportSettings {
 enum AudiobookExportNaming {
     static let fallbackName = "Audiobook"
     static let maximumLength = 120
+    static let maximumUTF8Length = 200
     private static let unsafeCharacters = CharacterSet(charactersIn: "/\\:?%*|\"<>")
         .union(.controlCharacters)
         .union(.newlines)
@@ -68,8 +70,11 @@ enum AudiobookExportNaming {
         let collapsed = String(String.UnicodeScalarView(scalars))
             .split(whereSeparator: \.isWhitespace)
             .joined(separator: " ")
-        let trimmed = String(collapsed.prefix(maximumLength))
-            .trimmingCharacters(in: CharacterSet(charactersIn: ". ").union(.whitespaces))
+        var limited = collapsed.prefix(maximumLength)
+        while limited.utf8.count > maximumUTF8Length {
+            limited.removeLast()
+        }
+        let trimmed = limited.trimmingCharacters(in: CharacterSet(charactersIn: ". ").union(.whitespaces))
         return trimmed.isEmpty ? fallbackName : trimmed
     }
 }
@@ -81,6 +86,9 @@ enum AudiobookExportPanel {
         panel.nameFieldStringValue = suggestedName
         panel.canCreateDirectories = true
         panel.isExtensionHidden = false
+        if let contentType = UTType(filenameExtension: format.fileExtension) {
+            panel.allowedContentTypes = [contentType]
+        }
         guard panel.runModal() == .OK else { return nil }
         return panel.url
     }
@@ -90,7 +98,6 @@ enum AudiobookExportPanel {
 final class AudiobookExportController: ObservableObject {
     struct ActiveExport: Equatable {
         let bookID: String
-        let format: AudiobookExportFormat
         var progress: Double
     }
 
@@ -101,9 +108,11 @@ final class AudiobookExportController: ObservableObject {
         var chooseDestination: @MainActor (AudiobookExportFormat, String) -> URL?
         var exporter: any M4BExporting
         var bitrateKbps: @MainActor () -> Int
-        var copyFile: @MainActor (URL, URL) throws -> Void
+        var copyFile: @MainActor (URL, URL) async throws -> Void
         var notify: @MainActor (String, AudiobookViewModel.Toast.Kind) -> Void
     }
+
+    static let genericFailureMessage = "Couldn't export this audiobook."
 
     @Published private(set) var active: ActiveExport?
     private let dependencies: Dependencies
@@ -132,7 +141,7 @@ final class AudiobookExportController: ObservableObject {
         }
         let suggestedName = AudiobookExportNaming.fileName(for: book.displayTitle, format: format)
         guard let destination = dependencies.chooseDestination(format, suggestedName) else { return }
-        active = ActiveExport(bookID: book.bookID, format: format, progress: 0)
+        active = ActiveExport(bookID: book.bookID, progress: 0)
         task = Task { [weak self] in
             await self?.run(book, format: format, to: destination)
         }
@@ -158,12 +167,14 @@ final class AudiobookExportController: ObservableObject {
             case .m4b:
                 try await exportM4B(book, source: source, to: destination)
             case .wav:
-                try dependencies.copyFile(source, destination)
+                try await dependencies.copyFile(source, destination)
             }
             dependencies.notify("Exported \(destination.lastPathComponent)", .success)
-        } catch is CancellationError {
-            dependencies.notify("Export cancelled.", .info)
         } catch {
+            guard !(error is CancellationError), !Task.isCancelled else {
+                dependencies.notify("Export cancelled.", .info)
+                return
+            }
             VoqoraLog.error("AudiobookExport", "Export failed", [
                 "bookID": book.bookID,
                 "format": format.rawValue,
@@ -230,8 +241,6 @@ final class AudiobookExportController: ObservableObject {
         default: "audiobook_export_failed"
         }
     }
-
-    static let genericFailureMessage = "Couldn't export this audiobook."
 }
 
 extension AudiobookExportController.Dependencies {
@@ -246,7 +255,11 @@ extension AudiobookExportController.Dependencies {
             chooseDestination: { AudiobookExportPanel.chooseDestination(for: $0, suggestedName: $1) },
             exporter: M4BExporter(),
             bitrateKbps: { AudiobookExportSettings.bitrateKbps() },
-            copyFile: { try AtomicFileReplacement.copy($0, to: $1) },
+            copyFile: { source, destination in
+                try await Task.detached(priority: .userInitiated) {
+                    try AtomicFileReplacement.copy(source, to: destination)
+                }.value
+            },
             notify: { [weak viewModel] message, kind in viewModel?.showToast(message, kind: kind) }
         )
     }

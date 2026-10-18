@@ -7,6 +7,7 @@ final class AudiobookExportControllerTests: XCTestCase {
         case unavailable
     }
 
+    @MainActor
     private struct Notice: Equatable {
         let message: String
         let kind: AudiobookViewModel.Toast.Kind
@@ -148,6 +149,7 @@ final class AudiobookExportControllerTests: XCTestCase {
         XCTAssertEqual(AudiobookExportNaming.fileName(for: "...", format: .m4b), "Audiobook.m4b")
         XCTAssertEqual(AudiobookExportNaming.sanitized("Line\nBreak\tTab"), "Line Break Tab")
         XCTAssertEqual(AudiobookExportNaming.sanitized(String(repeating: "b", count: 300)).count, AudiobookExportNaming.maximumLength)
+        XCTAssertLessThanOrEqual(AudiobookExportNaming.sanitized(String(repeating: "本", count: 300)).utf8.count, AudiobookExportNaming.maximumUTF8Length)
     }
 
     func test_bitrateSetting_defaultsAndClamps() throws {

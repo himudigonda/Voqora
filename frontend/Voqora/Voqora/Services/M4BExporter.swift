@@ -323,7 +323,7 @@ private final nonisolated class M4BWriterPipeline {
             await finishWriting()
             guard writer.status == .completed else { throw M4BExportError.encodingFailed }
         } catch {
-            abort()
+            cancelPipeline()
             throw error
         }
     }
@@ -378,7 +378,7 @@ private final nonisolated class M4BWriterPipeline {
         return min(0.99, max(0, end.seconds / durationSeconds))
     }
 
-    private func abort() {
+    private func cancelPipeline() {
         if reader.status == .reading {
             reader.cancelReading()
         }

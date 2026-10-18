@@ -24,8 +24,7 @@ nonisolated enum AtomicFileReplacement {
         }
     }
 
-    static func copy(_ source: URL, to destination: URL) throws {
-        let fileManager = FileManager.default
+    static func copy(_ source: URL, to destination: URL, fileManager: FileManager = .default) throws {
         let workspace = try makeWorkspace(near: destination, fileManager: fileManager)
         defer { discard(workspace, fileManager: fileManager) }
         let staged = workspace.appendingPathComponent(destination.lastPathComponent)
