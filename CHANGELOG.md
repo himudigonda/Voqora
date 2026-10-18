@@ -35,6 +35,10 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Export a finished audiobook as an M4B file with chapters, cover art, title,
+  and narrator, ready for Apple Books and other audiobook players. Choose
+  Export from the book's right-click menu or the player. WAV export is still
+  there, and Preferences -> Audiobooks sets the M4B quality.
 
 ### Changed
 

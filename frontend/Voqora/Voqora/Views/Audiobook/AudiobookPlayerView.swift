@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct AudiobookPlayerView: View {
@@ -228,7 +227,6 @@ private struct PlayerSecondaryControls: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
-    @State private var isExporting = false
 
     private var accent: Color {
         vm.accentColor(scheme: colorScheme, contrast: contrast)
@@ -241,12 +239,7 @@ private struct PlayerSecondaryControls: View {
             PlayerVolumeControl()
             Spacer(minLength: 0)
             sleepMenu
-            PlayerCircleButton(
-                systemName: "square.and.arrow.down",
-                label: "Export Audio…",
-                isEnabled: !isExporting && book.status == "done",
-                action: export
-            )
+            AudiobookExportButton(exports: bookVM.exports, book: book, tint: accent)
         }
     }
 
@@ -292,29 +285,6 @@ private struct PlayerSecondaryControls: View {
         .fixedSize()
         .help("Sleep Timer")
         .accessibilityLabel("Sleep Timer")
-    }
-
-    private func export() {
-        guard !isExporting else { return }
-        isExporting = true
-        Task { @MainActor in
-            defer { isExporting = false }
-            do {
-                let source = try await bookVM.validatedAudioURL(for: book)
-                let panel = NSSavePanel()
-                panel.title = "Export Audio"
-                panel.nameFieldStringValue = "\(book.displayTitle).wav"
-                panel.canCreateDirectories = true
-                guard panel.runModal() == .OK, let destination = panel.url else { return }
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: source, to: destination)
-                bookVM.showToast("Exported \(destination.lastPathComponent)", kind: .success)
-            } catch {
-                bookVM.showToast("Couldn't export this audiobook.", kind: .error)
-            }
-        }
     }
 }
 

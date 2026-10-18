@@ -119,6 +119,14 @@ struct AudiobookCardView: View {
                 }
                 Divider()
             }
+            if status.isReady {
+                Menu {
+                    AudiobookExportMenuItems(exports: bookVM.exports, book: book)
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                Divider()
+            }
             Button(role: .destructive) { showDeleteConfirmation = true } label: {
                 Label("Delete", systemImage: "trash")
             }

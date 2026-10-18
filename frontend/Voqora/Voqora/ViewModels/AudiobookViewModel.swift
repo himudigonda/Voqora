@@ -125,6 +125,7 @@ final class AudiobookViewModel: ObservableObject {
 
     @Published var libraryPath: [AudiobookRoute] = []
     @Published private(set) var chapters: [AudiobookSection] = []
+    private(set) lazy var exports = AudiobookExportController(dependencies: .live(service: service, viewModel: self))
 
     func openPlayer(for bookID: String) {
         libraryPath = [.player(bookID)]

@@ -166,6 +166,10 @@ struct PreferencesView: View {
                         )
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textSecondary)
+
+                        Divider()
+
+                        AudiobookExportQualityPicker()
                     }
                 }
 
