@@ -318,6 +318,10 @@ struct PreferencesView: View {
                     ReadingSettingsForm(preferences: ReadingPreferences.shared)
                 }
 
+                PreferenceSection(title: "Integrations", icon: "puzzlepiece.extension") {
+                    IntegrationsSettings()
+                }
+
                 PreferenceSection(title: "General", icon: "gearshape") {
                     VStack(alignment: .leading, spacing: 16) {
                         Toggle(isOn: $launchManager.isLaunchAtLoginEnabled) {

@@ -1,0 +1,52 @@
+import Foundation
+
+struct AudiobookM4BRenderer {
+    var audioURL: @MainActor (Audiobook) async throws -> URL
+    var transcript: @MainActor (String) async throws -> AudiobookService.Transcript
+    var cover: @MainActor (String) async -> Data?
+    var exporter: any M4BExporting
+    var bitrateKbps: @MainActor () -> Int
+
+    func render(_ book: Audiobook, to destination: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
+        let source = try await audioURL(book)
+        try Task.checkCancellation()
+        let markers = await chapters(for: book)
+        let artwork = await cover(book.bookID)
+        let request = M4BExportRequest(
+            sources: [source],
+            chapters: markers,
+            title: book.displayTitle,
+            author: book.narratorName,
+            cover: artwork,
+            bitrate: AudiobookExportSettings.clampedKbps(bitrateKbps()) * 1000,
+            outputURL: destination
+        )
+        try await exporter.export(request, progress: progress)
+    }
+
+    private func chapters(for book: Audiobook) async -> [M4BChapter] {
+        let document: TranscriptDocument = if let loaded = try? await transcript(book.bookID) {
+            await Task.detached(priority: .userInitiated) {
+                TranscriptDocument(transcript: loaded)
+            }.value
+        } else {
+            .empty
+        }
+        return AudiobookExportController.chapters(from: AudiobookViewModel.chapters(for: book, document: document))
+    }
+}
+
+extension AudiobookM4BRenderer {
+    static func live(service: AudiobookService, viewModel: AudiobookViewModel) -> Self {
+        Self(
+            audioURL: { [weak viewModel] book in
+                guard let viewModel else { throw CancellationError() }
+                return try await viewModel.validatedAudioURL(for: book)
+            },
+            transcript: { try await service.transcript(for: $0) },
+            cover: { await service.coverImageData(for: $0) },
+            exporter: M4BExporter(),
+            bitrateKbps: { AudiobookExportSettings.bitrateKbps() }
+        )
+    }
+}

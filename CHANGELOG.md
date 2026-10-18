@@ -14,6 +14,15 @@
   API. It is off until you turn it on, listens only on this Mac, and needs the
   key you set. It speaks the OpenAI speech API, can ask Voqora to read text
   aloud, and includes an MCP server with speak, stop, and list voices tools.
+- Preferences -> Integrations turns the local API on and off, sets its port,
+  and creates, shows, copies, or replaces its key in your Keychain. It shows
+  ready-to-copy setup for OpenAI-compatible clients, Claude Code, and other
+  MCP clients. Speech those tools request plays through Voqora with your
+  current voice, and a short note names the app that asked when it says so.
+- Upload to Audiobookshelf: connect your server and pick a library in
+  Preferences -> Integrations, then choose Upload to Audiobookshelf from a
+  finished book's Export menu. Voqora makes the M4B and uploads it with
+  progress. The API token stays in your Keychain.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
   OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or

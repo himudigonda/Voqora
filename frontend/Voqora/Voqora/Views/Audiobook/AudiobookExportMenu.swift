@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AudiobookExportMenuItems: View {
     @ObservedObject var exports: AudiobookExportController
+    @EnvironmentObject var shelfUploads: AudiobookshelfUploadController
+    @EnvironmentObject var shelf: AudiobookshelfSettingsStore
     let book: Audiobook
 
     var body: some View {
@@ -15,13 +17,26 @@ struct AudiobookExportMenuItems: View {
                     Label(format.menuTitle, systemImage: format.systemImage)
                 }
             }
-            .disabled(exports.active != nil || book.status != "done")
+            .disabled(exports.active != nil || shelfUploads.isUploading(book) || book.status != "done")
+        }
+        if shelfUploads.isUploading(book) {
+            Divider()
+            Button { shelfUploads.cancel() } label: {
+                Label("Cancel Upload", systemImage: "xmark.circle")
+            }
+        } else if shelf.isConfigured {
+            Divider()
+            Button { shelfUploads.upload(book) } label: {
+                Label("Upload to Audiobookshelf", systemImage: "icloud.and.arrow.up")
+            }
+            .disabled(exports.active != nil || shelfUploads.active != nil || book.status != "done")
         }
     }
 }
 
 struct AudiobookExportButton: View {
     @ObservedObject var exports: AudiobookExportController
+    @EnvironmentObject var shelfUploads: AudiobookshelfUploadController
     let book: Audiobook
     let tint: Color
 
@@ -34,7 +49,7 @@ struct AudiobookExportButton: View {
             AudiobookExportMenuItems(exports: exports, book: book)
         } label: {
             Group {
-                if let progress = exports.progress(for: book) {
+                if let progress = activeProgress {
                     ProgressView(value: progress)
                         .progressViewStyle(.circular)
                         .controlSize(.small)
@@ -59,9 +74,18 @@ struct AudiobookExportButton: View {
         .accessibilityLabel(helpText)
     }
 
+    private var activeProgress: Double? {
+        exports.progress(for: book) ?? shelfUploads.progress(for: book)
+    }
+
     private var helpText: String {
-        guard let progress = exports.progress(for: book) else { return "Export" }
-        return "Exporting, \(Int((progress * 100).rounded())) percent"
+        if let progress = exports.progress(for: book) {
+            return "Exporting, \(Int((progress * 100).rounded())) percent"
+        }
+        if let progress = shelfUploads.progress(for: book) {
+            return "Uploading to Audiobookshelf, \(Int((progress * 100).rounded())) percent"
+        }
+        return "Export"
     }
 }
 
