@@ -93,6 +93,33 @@ in Preferences -> Shortcuts.
   **Speak Clipboard**, **Pause or Resume Speech**, and **Stop Speech** actions
   for your own shortcuts and for Siri.
 
+## Read web pages in Chrome or Edge
+
+The Voqora extension for Chrome and Edge sends text from web pages to Voqora,
+which reads it aloud with your current voice. It talks only to Voqora on this
+Mac and never sends page text anywhere else.
+
+1. In Voqora, open **Preferences -> Integrations** and turn on **Local API**.
+   Note the port and copy the API key.
+2. In the browser, open `chrome://extensions` (or `edge://extensions`), turn on
+   **Developer mode**, choose **Load unpacked**, and pick the
+   `extensions/chromium` folder from the Voqora source code.
+3. On the options page that opens, enter the port and the key, then choose
+   **Test Connection**.
+
+To listen, select text and right-click **Read selection with Voqora**, or press
+`Option + Shift + R`. Right-click elsewhere on the page and choose **Read this
+page with Voqora** to hear the main article without menus, sidebars, or
+footers. The toolbar button has **Read Selection**, **Read Page**, and **Stop**,
+and `Option + Shift + S` stops speech. Pages longer than 50,000 characters are
+read in parts: choose **Next Part** in the toolbar button when a part ends.
+
+If the extension says it can't reach Voqora, make sure Voqora is open, Local
+API is on, and the port matches. If it says the key was not accepted, copy the
+key again; regenerating it in Voqora replaces the old one. Browsers do not let
+extensions read their own pages, such as `chrome://` pages and the Web Store.
+See `extensions/chromium/README.md` for more detail.
+
 ## Dictate into any app
 
 1. Click where you want the text to go, in any app.
