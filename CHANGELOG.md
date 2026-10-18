@@ -35,6 +35,9 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- AI reading tools use the provider you connected to summarize, translate,
+  answer questions about a book with page citations, and make quizzes and
+  flashcards. Each result shows its token count and estimated cost.
 
 ### Changed
 
