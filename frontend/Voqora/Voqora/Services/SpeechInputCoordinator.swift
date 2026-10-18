@@ -180,7 +180,7 @@ final class SpeechInputCoordinator {
         speaker.stopPlayback()
     }
 
-    static func readableText(_ text: String) -> String? {
+    nonisolated static func readableText(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }

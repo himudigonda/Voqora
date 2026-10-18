@@ -34,7 +34,15 @@ final class OCRTextAssemblerTests: XCTestCase {
             line("Trans-", top: 0.90),
             line("Atlantic flights", top: 0.85),
         ])
-        XCTAssertEqual(text, "Trans- Atlantic flights")
+        XCTAssertEqual(text, "Trans-Atlantic flights")
+    }
+
+    func test_softHyphenIsAlwaysRemovedAtLineBreak() {
+        let text = OCRTextAssembler.assemble([
+            line("Mc\u{00AD}", top: 0.90),
+            line("Donald farms", top: 0.85),
+        ])
+        XCTAssertEqual(text, "McDonald farms")
     }
 
     func test_standaloneDashIsNotTreatedAsHyphenation() {

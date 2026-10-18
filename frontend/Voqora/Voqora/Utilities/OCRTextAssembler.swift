@@ -11,7 +11,8 @@ nonisolated enum OCRTextAssembler {
     static let columnJumpRatio: CGFloat = 1.5
     static let shortLineRatio: CGFloat = 0.7
 
-    private static let lineBreakHyphens: Set<Character> = ["-", "\u{00AD}", "\u{2010}"]
+    private static let softHyphen: Character = "\u{00AD}"
+    private static let lineBreakHyphens: Set<Character> = ["-", softHyphen, "\u{2010}"]
     private static let sentenceTerminators: Set<Character> = [".", "!", "?", ":", "\u{3002}", "\u{FF01}", "\u{FF1F}"]
     private static let cjkRanges: [ClosedRange<UInt32>] = [
         0x3000 ... 0x303F,
@@ -56,8 +57,8 @@ nonisolated enum OCRTextAssembler {
 
     static func join(_ head: String, _ tail: String) -> String {
         guard let last = head.last, let first = tail.first else { return head + tail }
-        if endsWithLineBreakHyphen(head), first.isLowercase {
-            return String(head.dropLast()) + tail
+        if endsWithLineBreakHyphen(head) {
+            return first.isLowercase || last == softHyphen ? String(head.dropLast()) + tail : head + tail
         }
         if isCJK(last), isCJK(first) {
             return head + tail

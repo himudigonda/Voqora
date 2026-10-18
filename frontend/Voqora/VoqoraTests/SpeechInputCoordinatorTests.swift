@@ -351,6 +351,13 @@ final class SpeechInputCoordinatorTests: XCTestCase {
         }
     }
 
+    func test_intentsReportNotRunningWithoutActiveCoordinator() {
+        let expected = SpeechInputCoordinator.Message.notRunning
+        XCTAssertThrowsError(try SpeechInputCoordinator.requireActive()) { error in
+            XCTAssertEqual((error as? VoqoraIntentError)?.message, expected)
+        }
+    }
+
     func test_voiceEntitiesMirrorTheVoiceCatalog() async throws {
         XCTAssertEqual(VoqoraVoiceEntity.all.map(\.id), DashboardViewModel.voiceCatalog.map(\.id))
         let found = try await VoqoraVoiceQuery().entities(for: ["bf_emma", "missing"])

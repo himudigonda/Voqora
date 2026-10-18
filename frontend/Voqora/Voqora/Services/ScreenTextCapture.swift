@@ -94,7 +94,6 @@ struct SystemScreenCapturePermission: ScreenCapturePermissionHandling {
 
     func openSettings() {
         guard let url = Self.settingsURL else { return }
-        NSApp.activate(ignoringOtherApps: true)
         NSWorkspace.shared.open(url)
     }
 }
