@@ -3,9 +3,11 @@ import Foundation
 
 final class VoqoraServicesProvider: NSObject {
     private let inputs: SpeechInputCoordinator
+    private let inbox: InboxViewModel
 
-    init(inputs: SpeechInputCoordinator) {
+    init(inputs: SpeechInputCoordinator, inbox: InboxViewModel) {
         self.inputs = inputs
+        self.inbox = inbox
         super.init()
     }
 
@@ -29,6 +31,15 @@ final class VoqoraServicesProvider: NSObject {
         if case let .failed(message) = inputs.addToLibrary(text) {
             error.pointee = message as NSString
         }
+    }
+
+    @objc func saveToVoqoraInbox(_ pasteboard: NSPasteboard, userData _: String?, error: AutoreleasingUnsafeMutablePointer<NSString?>) {
+        guard let link = InboxDropReader.pasteboardLink(from: pasteboard) else {
+            error.pointee = InboxViewModel.Message.invalidLink as NSString
+            return
+        }
+        VoqoraLog.info("VoqoraServicesProvider", "Inbox service invoked")
+        inbox.add(link, announce: true)
     }
 
     static func serviceText(from pasteboard: NSPasteboard) -> String? {

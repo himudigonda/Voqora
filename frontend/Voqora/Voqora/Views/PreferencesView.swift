@@ -14,6 +14,7 @@ struct PreferencesView: View {
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var updater: AppUpdater
     @EnvironmentObject var dictationTranscripts: DictationTranscriptStore
+    @EnvironmentObject var inbox: InboxViewModel
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
@@ -604,7 +605,7 @@ struct PreferencesView: View {
                             Text("Erase All Local Data")
                                 .font(vm.font(.sectionTitle))
                             Text(
-                                "Permanently removes every audiobook and source document, generated audio, history, dictation transcripts, caches, " +
+                                "Permanently removes every audiobook and source document, generated audio, history, dictation transcripts, Inbox articles, caches, " +
                                     "settings, your name and email, telemetry outbox, anonymous identifier, and saved AI provider keys " +
                                     "from this Mac. Voqora will quit when complete."
                             )
@@ -638,7 +639,7 @@ struct PreferencesView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This cannot be undone. All local books, sources, audio, history, dictation transcripts, settings, caches, telemetry outbox, " +
+                "This cannot be undone. All local books, sources, audio, history, dictation transcripts, Inbox articles, settings, caches, telemetry outbox, " +
                     "your name and email, anonymous identifier, and AI provider keys will be permanently removed. Voqora " +
                     "will quit after the erase finishes."
             )
@@ -725,6 +726,11 @@ struct PreferencesView: View {
                 try dictationTranscripts.eraseAll()
             } catch {
                 failures.append("dictation transcripts")
+            }
+            do {
+                try inbox.eraseAll()
+            } catch {
+                failures.append("inbox articles")
             }
             for key in KeychainKey.allCases where !KeychainService.delete(key) {
                 failures.append("saved credential")

@@ -117,6 +117,10 @@
   or lecture with one or two hosts, then listen to it in Library. You can also
   write your own script for up to four voices. Podcasts show who is speaking
   in the transcript and can be cancelled and resumed like audiobooks.
+- Inbox in the sidebar saves articles to listen to later. Paste or drop a link
+  or a .webloc file, or choose Save to Voqora Inbox from the Services menu.
+  Listen now, make an audiobook, filter by Unread or Archived, and see how long
+  each article takes at your speed. Up to 500 articles stay on this Mac.
 
 ### Changed
 

@@ -433,13 +433,18 @@ class DashboardViewModel: ObservableObject {
             speechFollower.follow(spokenText: spokenText)
 
             do {
-                let stream = backend.streamAudio(
-                    text: cleaned,
-                    voice: effectiveVoice,
-                    speed: speechSpeed,
-                    volume: speechVolume,
-                    pauseScale: speechPauseScale
-                )
+                let speed = speechSpeed
+                let volume = speechVolume
+                let pauseScale = speechPauseScale
+                let stream = ChunkedSpeechStream.make(chunks: SpeechTextChunker.chunks(of: cleaned)) { [backend] chunk in
+                    backend.streamAudio(
+                        text: chunk,
+                        voice: effectiveVoice,
+                        speed: speed,
+                        volume: volume,
+                        pauseScale: pauseScale
+                    )
+                }
                 var receivedAudio = false
 
                 for try await chunk in stream {
@@ -744,8 +749,7 @@ class DashboardViewModel: ObservableObject {
         isModelLoaded: Bool,
         hasReadableStringContent: Bool
     ) -> Bool {
-        guard isBackendOnline, !isModelLoaded else { return false }
-        guard currentChangeCount != lastChangeCount else { return false }
+        guard isBackendOnline, !isModelLoaded, currentChangeCount != lastChangeCount else { return false }
         return hasReadableStringContent
     }
 
