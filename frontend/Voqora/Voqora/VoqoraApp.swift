@@ -219,6 +219,20 @@ struct VoqoraApp: App {
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])
 
+        Window(ReadingModeWindow.title, id: ReadingModeWindow.id) {
+            Group {
+                if RuntimeEnvironment.isRunningTests {
+                    EmptyView()
+                } else {
+                    ReadingModeView()
+                        .environmentObject(dashboardVM)
+                        .environmentObject(audio)
+                        .environmentObject(audiobookVM)
+                }
+            }
+        }
+        .defaultSize(width: 900, height: 720)
+
         MenuBarExtra(isInserted: Binding(
             get: { showMenuBarIcon },
             set: { AppPresence.setShowMenuBarIcon($0) }
@@ -302,6 +316,8 @@ struct VoqoraApp: App {
             } label: {
                 Label("Open Audiobooks", systemImage: "books.vertical")
             }
+
+            ReadingModeMenuButton()
 
             Divider()
 

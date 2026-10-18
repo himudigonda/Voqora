@@ -35,6 +35,10 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Reading Mode opens the current transcript in its own window with large,
+  adjustable text, Paper, Sepia, Dark, and High Contrast themes, soft tints,
+  and a reading ruler that dims everything but the sentence being read. Open
+  it from the player or the menu bar, and set it up in Preferences -> Reading.
 
 ### Changed
 

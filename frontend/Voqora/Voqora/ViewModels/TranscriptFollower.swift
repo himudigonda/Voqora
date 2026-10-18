@@ -40,6 +40,10 @@ final class TranscriptFollower: ObservableObject {
         scrubTime ?? audio.currentTime
     }
 
+    var documentTime: TimeInterval {
+        normalizedTime(currentTime)
+    }
+
     func startTime(of line: TranscriptLine) -> TimeInterval {
         isRelative ? line.start * audio.duration : line.start
     }
@@ -75,7 +79,7 @@ final class TranscriptFollower: ObservableObject {
     }
 
     private func update(at time: TimeInterval, duration: TimeInterval? = nil) {
-        let time = isRelative ? time / max(duration ?? audio.duration, 0.001) : time
+        let time = normalizedTime(time, duration: duration)
         let index = document.lineIndex(at: time)
         if index != activeIndex {
             activeIndex = index
@@ -84,5 +88,9 @@ final class TranscriptFollower: ObservableObject {
         if fraction != lineProgress.fraction {
             lineProgress.fraction = fraction
         }
+    }
+
+    private func normalizedTime(_ time: TimeInterval, duration: TimeInterval? = nil) -> TimeInterval {
+        isRelative ? time / max(duration ?? audio.duration, 0.001) : time
     }
 }
