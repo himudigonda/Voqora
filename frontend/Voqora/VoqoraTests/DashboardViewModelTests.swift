@@ -267,6 +267,24 @@ final class DashboardViewModelTests: XCTestCase {
         XCTAssertEqual(vm.status, .ready)
     }
 
+    func test_pauseSpeechForDictation_stopsPendingSpeech() {
+        let vm = makeVM()
+        vm.status = .thinking
+
+        vm.pauseSpeechForDictation()
+
+        XCTAssertEqual(vm.status, .ready)
+    }
+
+    func test_pauseSpeechForDictation_leavesIdlePlaybackAlone() {
+        let vm = makeVM()
+        let before = vm.status
+
+        vm.pauseSpeechForDictation()
+
+        XCTAssertEqual(vm.status, before)
+    }
+
     func test_stopPlayback_whenAudiobookPlaying_resetsDashboardStatusToReady() {
         let audio = AudioService(startingEngine: false)
         let vm = DashboardViewModel(

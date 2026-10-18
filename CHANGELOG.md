@@ -4,6 +4,12 @@
 
 ### New
 
+- Dictation: press `Control + Option + Space` in any app, speak, and press it
+  again (or pause for two seconds). Voqora transcribes on your Mac, pastes the
+  text where your cursor is, and puts your clipboard back. Choose the language,
+  paste or copy only, and the auto-stop pause on the new Dictation page, where
+  your last 200 transcripts are kept. Audio is sent to Apple only if you allow
+  server recognition for a language without on-device support.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
   OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or

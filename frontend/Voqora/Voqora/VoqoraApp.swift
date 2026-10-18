@@ -24,6 +24,8 @@ struct VoqoraApp: App {
 
     @StateObject private var installer: GuidedInstallerService
     @StateObject private var providers: LLMProviderStore
+    @StateObject private var dictation: DictationController
+    @StateObject private var dictationTranscripts: DictationTranscriptStore
 
     private let backend: BackendService
     private let systemMedia: SystemMediaSession?
@@ -76,6 +78,10 @@ struct VoqoraApp: App {
 
         let providersInstance = LLMProviderStore(defaults: testDefaults ?? .standard)
         let audiobookInstance = AudiobookViewModel(audio: audioInstance, providers: providersInstance)
+        let dictationInstance = DictationController(
+            transcripts: DictationTranscriptStore(),
+            dependencies: .system(defaults: testDefaults ?? .standard)
+        )
 
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
@@ -87,6 +93,8 @@ struct VoqoraApp: App {
         _updater = StateObject(wrappedValue: updaterInstance)
         _installer = StateObject(wrappedValue: installerInstance)
         _providers = StateObject(wrappedValue: providersInstance)
+        _dictation = StateObject(wrappedValue: dictationInstance)
+        _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
 
         vmInstance.audiobookVM = audiobookInstance
         let inputsInstance = SpeechInputCoordinator(
@@ -109,6 +117,7 @@ struct VoqoraApp: App {
             appDelegate.servicesProvider = VoqoraServicesProvider(inputs: inputsInstance)
             setupShortcuts(vm: vmInstance, inputs: inputsInstance)
             systemMedia?.start()
+            dictationInstance.installSystemIntegrations(dashboard: vmInstance)
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
 
@@ -242,6 +251,8 @@ struct VoqoraApp: App {
                         .environmentObject(installer)
                         .environmentObject(providers)
                         .environmentObject(UsageStatsStore.shared)
+                        .environmentObject(dictation)
+                        .environmentObject(dictationTranscripts)
                 }
             }
         }

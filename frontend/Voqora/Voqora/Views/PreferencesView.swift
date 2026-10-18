@@ -13,6 +13,7 @@ struct PreferencesView: View {
     @EnvironmentObject var installer: GuidedInstallerService
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var updater: AppUpdater
+    @EnvironmentObject var dictationTranscripts: DictationTranscriptStore
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
@@ -116,6 +117,8 @@ struct PreferencesView: View {
                         ShortcutRow(title: "Speak Text on Screen", name: .speakScreenText)
                         Divider().padding(.vertical, 8)
                         ShortcutRow(title: "Speak Clipboard", name: .speakClipboard)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Start / Finish Dictation", name: .toggleDictation)
 
                         Divider().padding(.vertical, 16)
 
@@ -583,7 +586,7 @@ struct PreferencesView: View {
                             Text("Erase All Local Data")
                                 .font(vm.font(.sectionTitle))
                             Text(
-                                "Permanently removes every audiobook and source document, generated audio, history, caches, " +
+                                "Permanently removes every audiobook and source document, generated audio, history, dictation transcripts, caches, " +
                                     "settings, your name and email, telemetry outbox, anonymous identifier, and saved AI provider keys " +
                                     "from this Mac. Voqora will quit when complete."
                             )
@@ -617,7 +620,7 @@ struct PreferencesView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This cannot be undone. All local books, sources, audio, history, settings, caches, telemetry outbox, " +
+                "This cannot be undone. All local books, sources, audio, history, dictation transcripts, settings, caches, telemetry outbox, " +
                     "your name and email, anonymous identifier, and AI provider keys will be permanently removed. Voqora " +
                     "will quit after the erase finishes."
             )
@@ -699,6 +702,11 @@ struct PreferencesView: View {
                 try UsageStatsStore.shared.eraseAll()
             } catch {
                 failures.append("stats")
+            }
+            do {
+                try dictationTranscripts.eraseAll()
+            } catch {
+                failures.append("dictation transcripts")
             }
             for key in KeychainKey.allCases where !KeychainService.delete(key) {
                 failures.append("saved credential")

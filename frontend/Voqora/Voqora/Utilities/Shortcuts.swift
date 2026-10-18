@@ -8,6 +8,7 @@ extension KeyboardShortcuts.Name {
     static let exportAudio = Self("exportAudio", default: .init(.m, modifiers: [.command, .shift]))
     static let speakScreenText = Self("speakScreenText", default: .init(.eight, modifiers: [.command, .shift]))
     static let speakClipboard = Self("speakClipboard")
+    static let toggleDictation = Self("toggleDictation", default: .init(.space, modifiers: [.control, .option]))
 
     static let allCases: [KeyboardShortcuts.Name] = [
         .playText,
@@ -16,5 +17,6 @@ extension KeyboardShortcuts.Name {
         .exportAudio,
         .speakScreenText,
         .speakClipboard,
+        .toggleDictation,
     ]
 }
