@@ -234,6 +234,7 @@ private struct PlayerSecondaryControls: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
+    @State private var showingPronunciations = false
 
     private var accent: Color {
         vm.accentColor(scheme: colorScheme, contrast: contrast)
@@ -247,6 +248,18 @@ private struct PlayerSecondaryControls: View {
             Spacer(minLength: 0)
             sleepMenu
             AudiobookExportButton(exports: bookVM.exports, book: book, tint: accent)
+            moreMenu
+        }
+        .sheet(isPresented: $showingPronunciations) {
+            BookPronunciationsSheet(book: book)
+                .environmentObject(vm)
+                .environmentObject(bookVM)
+        }
+    }
+
+    private var moreMenu: some View {
+        PlayerCircleMenu(systemName: "ellipsis", label: "More") {
+            Button("Pronunciations for This Book…") { showingPronunciations = true }
         }
     }
 

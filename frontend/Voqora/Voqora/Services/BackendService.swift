@@ -314,14 +314,22 @@ final class BackendService: NSObject, @unchecked Sendable {
         }
     }
 
-    func prewarm() async {
-        guard let request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
+    func prewarm(pauseScale: Double = PauseScale.standard) async {
+        guard var request = try? connection.request(path: "prewarm", method: "POST", timeout: 2) else {
             return
         }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["pause_scale": PauseScale.clamped(pauseScale)])
         _ = try? await URLSession.shared.data(for: request)
     }
 
-    func streamAudio(text: String, voice: String, speed: Double, volume: Double) -> AsyncThrowingStream<Data, Error> {
+    func streamAudio(
+        text: String,
+        voice: String,
+        speed: Double,
+        volume: Double,
+        pauseScale: Double = PauseScale.standard
+    ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             guard var request = try? self.connection.request(
                 path: "speak", method: "POST", timeout: 120
@@ -331,7 +339,13 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let payload: [String: Any] = ["text": text, "voice": voice, "speed": speed, "volume": volume]
+            let payload: [String: Any] = [
+                "text": text,
+                "voice": voice,
+                "speed": speed,
+                "volume": volume,
+                "pause_scale": PauseScale.clamped(pauseScale),
+            ]
 
             do {
                 request.httpBody = try JSONSerialization.data(withJSONObject: payload)

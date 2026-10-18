@@ -168,6 +168,57 @@ text's language when it differs from your voice's language.
 There is no universally right voice or speed. Voqora starts with Bella. Adjust
 the voice and speed until you can follow a paragraph without wanting to rewind it.
 
+## Voices, pronunciations, and pacing
+
+The **Voices** section of the sidebar is the one place to explore and shape
+how Voqora sounds.
+
+### Voice Catalog
+
+**Voice Catalog** lists all 28 built-in voices, grouped by language. Choose the
+play button to hear a sample, then use **Use** to make a voice your speech
+voice or your audiobook voice.
+
+### My Voices
+
+Mix two to four built-in voices into a voice of your own.
+
+1. Open **My Voices** and choose **New Voice** (`Shift + Command + N`).
+2. Name the voice, pick the voices to mix, and drag each weight slider. Weights
+   are relative, so the percentage next to each slider shows how much of that
+   voice you hear.
+3. Choose **Save Voice**, then the play button to preview it.
+
+Your voices appear at the top of every voice picker under **My Voices**,
+including Preferences and the New Audiobook sheet. Voices in the same language
+blend most naturally. You can save up to 50. If you delete a voice that is in
+use, Voqora switches to the first voice in its mix.
+
+### Pronunciations
+
+Teach Voqora how to say names, acronyms, and jargon. Open **Pronunciations**
+and choose **Add**. Enter the text Voqora sees and what it should say, for
+example "SQL" as "sequel". Leave **Say** empty to skip the text. **Whole word
+only** stops "cat" from matching inside "concatenate", and **Match case** keeps
+"US" separate from "us".
+
+- **Applies to** chooses whether an entry is used everywhere or only for one
+  audiobook. In the player, the **More** menu has **Pronunciations for This
+  Book** for entries that only one book needs. A book's entry wins over an
+  everyday entry for the same text.
+- Type a sentence under **Test** to see what Voqora will say and hear it read.
+- Use **Import or Export** to save your list as a JSON file or bring one in.
+  Imported entries go to the scope you are viewing, and entries you already
+  have are skipped.
+- Changes apply to speech and to audiobook pages narrated from then on.
+  Pages that are already narrated keep their audio.
+
+### Pause length
+
+**Preferences -> Speech -> Pause Length** makes the pauses between sentences
+and paragraphs shorter or longer, from 0.5x to 2x. The New Audiobook sheet has
+the same slider for a book, next to its voice, and remembers your last choice.
+
 ## Turn a document into an audiobook
 
 1. Open **Library** in the sidebar.

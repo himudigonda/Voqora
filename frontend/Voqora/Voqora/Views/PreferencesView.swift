@@ -88,6 +88,8 @@ struct PreferencesView: View {
                                 .tint(accentColor)
                         }
 
+                        PauseLengthControl(value: $vm.speechPauseScale, accentColor: accentColor)
+
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
                                 Label("Volume", systemImage: "speaker.wave.3")
@@ -809,9 +811,25 @@ struct AccentSwatchButton: View {
 struct GroupedVoicePicker: View {
     let title: String
     @Binding var selection: String
+    var includesBlends = true
+    @ObservedObject private var blendStore = VoiceBlendStore.shared
+
+    private var showsUnknownBlend: Bool {
+        includesBlends && VoiceBlendRules.isBlendID(selection) && blendStore.blend(id: selection) == nil
+    }
 
     var body: some View {
         Picker(title, selection: $selection) {
+            if includesBlends, !blendStore.blends.isEmpty || showsUnknownBlend {
+                Section("My Voices") {
+                    ForEach(blendStore.blends) { blend in
+                        Text(blend.name).tag(blend.id)
+                    }
+                    if showsUnknownBlend {
+                        Text(blendStore.displayName(for: selection)).tag(selection)
+                    }
+                }
+            }
             ForEach(DashboardViewModel.languageGroups) { group in
                 Section(group.beta ? "\(group.id) (Beta)" : group.id) {
                     ForEach(group.voices) { voice in
@@ -826,6 +844,7 @@ struct GroupedVoicePicker: View {
 }
 
 struct VoiceSampleButton: View {
+    @EnvironmentObject var vm: DashboardViewModel
     @ObservedObject var player: VoiceSamplePlayer
     let voice: String
     let speed: Double
@@ -836,7 +855,10 @@ struct VoiceSampleButton: View {
 
     var body: some View {
         Button {
-            if isPlayingThisVoice {
+            if VoiceBlendRules.isBlendID(voice) {
+                player.stop()
+                Task { await vm.speak(text: DashboardViewModel.sampleSentence(forVoice: voice), voice: voice) }
+            } else if isPlayingThisVoice {
                 player.stop()
             } else {
                 player.play(voice: voice, speed: speed)

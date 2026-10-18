@@ -109,12 +109,13 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         voice: String?,
         speed: Double?,
         engine: String?,
+        pauseScale: Double? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook/url", method: "POST", timeout: Self.webPageTimeout)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(
-            WebPageImportBody(url: url, voice: voice, speed: speed, engine: engine, cleanup: cleanup)
+            WebPageImportBody(url: url, voice: voice, speed: speed, engine: engine, pauseScale: pauseScale, cleanup: cleanup)
         )
         let (data, response) = try await session.data(for: req)
         try AudiobookAPIFailure.check(response, body: data)
@@ -188,6 +189,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         voice: String?,
         speed: Double?,
         engine: String?,
+        pauseScale: Double? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
@@ -203,6 +205,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
         if let engine {
             fields.append(("engine", engine))
+        }
+        if let pauseScale {
+            fields.append(("pause_scale", String(PauseScale.clamped(pauseScale))))
         }
         if let cleanup {
             fields.append(("llm_provider", cleanup.provider.rawValue))

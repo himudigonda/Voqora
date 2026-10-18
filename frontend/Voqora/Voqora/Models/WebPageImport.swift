@@ -79,15 +79,17 @@ nonisolated struct WebPageImportBody: Encodable, Equatable, Sendable {
     let voice: String?
     let speed: Double?
     let engine: String?
+    let pauseScale: Double?
     let llmProvider: String?
     let llmModel: String?
     let llmBaseURL: String?
 
-    init(url: URL, voice: String?, speed: Double?, engine: String?, cleanup: LLMCredential?) {
+    init(url: URL, voice: String?, speed: Double?, engine: String?, pauseScale: Double? = nil, cleanup: LLMCredential?) {
         self.url = url.absoluteString
         self.voice = voice
         self.speed = speed
         self.engine = engine
+        self.pauseScale = pauseScale.map(PauseScale.clamped)
         llmProvider = cleanup?.provider.rawValue
         llmModel = cleanup?.resolvedModel
         if let cleanup, cleanup.provider.acceptsServerURL, !cleanup.serverURL.isEmpty {
@@ -99,6 +101,7 @@ nonisolated struct WebPageImportBody: Encodable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case url, voice, speed, engine
+        case pauseScale = "pause_scale"
         case llmProvider = "llm_provider"
         case llmModel = "llm_model"
         case llmBaseURL = "llm_base_url"

@@ -38,9 +38,10 @@ final class AudiobookViewModel: ObservableObject {
 
     private struct QueuedUpload {
         let source: AudiobookImportSource
-        let voice: String
+        var voice: String
         let speed: Double
         let engine: String
+        var pauseScale: Double
     }
 
     struct ProviderFix: Identifiable, Equatable {
@@ -107,6 +108,7 @@ final class AudiobookViewModel: ObservableObject {
     @AppStorage("defaultBookSpeed") var defaultBookSpeed: Double = 1.0
     @AppStorage("audiobookPlaybackRate") private var playbackRate: Double = 1.0
     @AppStorage("defaultBookVoice") var defaultBookVoice: String = "af_bella"
+    @AppStorage("defaultBookPauseScale") var defaultBookPauseScale: Double = PauseScale.standard
     @AppStorage("lastPlayedBookID") var lastPlayedBookID: String = ""
 
     @Published var startingProcessing: Bool = false
@@ -274,7 +276,13 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func presentEstimate(for source: AudiobookImportSource, voice: String, speed: Double, engine: String) {
-        let upload = QueuedUpload(source: source, voice: voice, speed: speed, engine: engine)
+        let upload = QueuedUpload(
+            source: source,
+            voice: voice,
+            speed: speed,
+            engine: engine,
+            pauseScale: PauseScale.clamped(defaultBookPauseScale)
+        )
         if pendingSource != nil || uploadInProgress {
             uploadQueue.append(upload)
             showToast("Queued \(source.displayName)", kind: .info)
@@ -313,6 +321,27 @@ final class AudiobookViewModel: ObservableObject {
         if pendingSource == nil {
             isWebPageImportPresented = true
         }
+    }
+
+    var pendingNarrationVoice: String? {
+        pendingUpload?.voice
+    }
+
+    var pendingPauseScale: Double? {
+        pendingUpload?.pauseScale
+    }
+
+    func updatePendingNarration(voice: String? = nil, pauseScale: Double? = nil) {
+        guard var upload = pendingUpload, pendingSource != nil, !startingProcessing else { return }
+        let newVoice = voice ?? upload.voice
+        let newPauseScale = pauseScale.map(PauseScale.clamped) ?? upload.pauseScale
+        guard newVoice != upload.voice || abs(newPauseScale - upload.pauseScale) > 0.001 else { return }
+        upload.voice = newVoice
+        upload.pauseScale = newPauseScale
+        if pauseScale != nil {
+            defaultBookPauseScale = newPauseScale
+        }
+        requestEstimate(upload, replacing: pendingEstimate)
     }
 
     func refreshEstimate() {
@@ -374,9 +403,23 @@ final class AudiobookViewModel: ObservableObject {
     private func fetchEstimate(for upload: QueuedUpload, cleanup: LLMCredential?) async throws -> AudiobookEstimateResponse {
         switch upload.source {
         case let .document(document):
-            try await service.upload(document: document, voice: upload.voice, speed: upload.speed, engine: upload.engine, cleanup: cleanup)
+            try await service.upload(
+                document: document,
+                voice: upload.voice,
+                speed: upload.speed,
+                engine: upload.engine,
+                pauseScale: upload.pauseScale,
+                cleanup: cleanup
+            )
         case let .webPage(url):
-            try await service.importWebPage(url, voice: upload.voice, speed: upload.speed, engine: upload.engine, cleanup: cleanup)
+            try await service.importWebPage(
+                url,
+                voice: upload.voice,
+                speed: upload.speed,
+                engine: upload.engine,
+                pauseScale: upload.pauseScale,
+                cleanup: cleanup
+            )
         }
     }
 
