@@ -9,26 +9,26 @@ final class AudiobookshelfClientTests: XCTestCase {
     private let server = URL(string: "https://abs.example.com/shelf")!
 
     override func setUpWithError() throws {
-        StubURLProtocol.reset()
+        HTTPStubProtocol.reset()
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("AudiobookshelfClientTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        client = AudiobookshelfClient(session: StubURLProtocol.makeSession(), temporaryDirectory: directory)
+        client = AudiobookshelfClient(session: HTTPStubProtocol.makeSession(), temporaryDirectory: directory)
     }
 
     override func tearDownWithError() throws {
-        StubURLProtocol.reset()
+        HTTPStubProtocol.reset()
         try? FileManager.default.removeItem(at: directory)
     }
 
     func test_libraries_sendsTheBearerTokenAndDecodesLibraries() async throws {
-        StubURLProtocol.install { _ in
-            StubReply(statusCode: 200, json: #"{"libraries":[{"id":"lib1","name":"Books","mediaType":"book","folders":[{"id":"f1","fullPath":"/books"}]}]}"#)
+        HTTPStubProtocol.install { _ in
+            HTTPStubReply(statusCode: 200, json: #"{"libraries":[{"id":"lib1","name":"Books","mediaType":"book","folders":[{"id":"f1","fullPath":"/books"}]}]}"#)
         }
 
         let libraries = try await client.libraries(server: server, token: "tok")
 
         XCTAssertEqual(libraries.map(\.id), ["lib1"])
-        let request = try XCTUnwrap(StubURLProtocol.requests.first)
+        let request = try XCTUnwrap(HTTPStubProtocol.requests.first)
         XCTAssertEqual(request.url?.absoluteString, "https://abs.example.com/shelf/api/libraries")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
         XCTAssertEqual(request.httpMethod, "GET")
@@ -43,7 +43,7 @@ final class AudiobookshelfClientTests: XCTestCase {
             (200, "<html>", .notAudiobookshelf),
         ]
         for (status, body, expected) in cases {
-            StubURLProtocol.install { _ in StubReply(statusCode: status, json: body) }
+            HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: status, json: body) }
             do {
                 _ = try await client.libraries(server: server, token: "tok")
                 XCTFail("Expected \(expected)")
@@ -65,7 +65,7 @@ final class AudiobookshelfClientTests: XCTestCase {
     }
 
     func test_upload_postsMultipartToTheUploadEndpoint() async throws {
-        StubURLProtocol.install { _ in StubReply(statusCode: 200) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 200) }
         let file = directory.appendingPathComponent("book.m4b")
         try Data("AUDIO".utf8).write(to: file)
         let upload = AudiobookshelfUpload(
@@ -77,7 +77,7 @@ final class AudiobookshelfClientTests: XCTestCase {
 
         try await client.upload(upload) { _ in }
 
-        let request = try XCTUnwrap(StubURLProtocol.requests.first)
+        let request = try XCTUnwrap(HTTPStubProtocol.requests.first)
         XCTAssertEqual(request.url?.absoluteString, "https://abs.example.com/shelf/api/upload")
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")

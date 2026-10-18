@@ -59,7 +59,7 @@ final class AudiobookshelfServerAddressTests: XCTestCase {
 }
 
 final class MultipartFormWriterTests: XCTestCase {
-    func test_writesFieldsThenTheFileWithHeaderSafeValues() throws {
+    func test_writesSingleLineFieldsThenTheFileWithAHeaderSafeName() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MultipartTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -68,7 +68,7 @@ final class MultipartFormWriterTests: XCTestCase {
         let output = directory.appendingPathComponent("body")
 
         try MultipartFormWriter.write(
-            fields: [("title", "Line\r\nBreak"), ("library", "lib1")],
+            fields: [("title", "A \"Line\"\r\nBreak"), ("library", "lib1")],
             file: MultipartFilePart(name: "0", filename: "A \"Book\".m4b", contentType: "audio/mp4", source: source),
             boundary: "XYZ",
             to: output
@@ -76,7 +76,7 @@ final class MultipartFormWriterTests: XCTestCase {
 
         let body = try String(contentsOf: output, encoding: .utf8)
         XCTAssertEqual(body, [
-            "--XYZ\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nLine  Break\r\n",
+            "--XYZ\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nA \"Line\"  Break\r\n",
             "--XYZ\r\nContent-Disposition: form-data; name=\"library\"\r\n\r\nlib1\r\n",
             "--XYZ\r\nContent-Disposition: form-data; name=\"0\"; filename=\"A 'Book'.m4b\"\r\nContent-Type: audio/mp4\r\n\r\nAUDIO",
             "\r\n--XYZ--\r\n",

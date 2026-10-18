@@ -33,10 +33,6 @@ final class AudiobookshelfUploadController: ObservableObject {
         self.dependencies = dependencies
     }
 
-    var isAvailable: Bool {
-        dependencies.destination() != nil
-    }
-
     func isUploading(_ book: Audiobook) -> Bool {
         active?.bookID == book.bookID
     }

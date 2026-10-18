@@ -120,9 +120,16 @@ final class LocalAPIController: ObservableObject {
 
     func refreshStatus() async {
         guard isEngineAvailable, !isApplying else { return }
+        let generation = applyGeneration
         do {
             let status = try await backend.status()
+            guard generation == applyGeneration, !isApplying else { return }
+            if isEnabled, !status.enabled, !phase.isFailure {
+                apply()
+                return
+            }
             phase = isEnabled ? LocalAPIPhase(status: status, requestedPort: port) : .off
+            syncRelay()
         } catch {
             VoqoraLog.warn("LocalAPI", "Could not read local API status", ["failureCode": Self.failureCode(for: error)])
         }
@@ -164,6 +171,10 @@ final class LocalAPIController: ObservableObject {
             VoqoraLog.error("LocalAPI", "Could not apply local API settings", ["failureCode": Self.failureCode(for: error)])
             phase = isEnabled ? .failed(Self.message(for: error)) : .off
         }
+        syncRelay()
+    }
+
+    private func syncRelay() {
         if isEnabled, phase.isRunning {
             relay?.start()
         } else {

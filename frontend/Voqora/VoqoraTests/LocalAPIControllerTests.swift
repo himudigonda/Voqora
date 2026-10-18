@@ -272,6 +272,21 @@ final class LocalAPIControllerTests: XCTestCase {
         XCTAssertEqual(controller.phase, .failed(LocalAPIFailure.stopped.message(port: 51851)))
     }
 
+    func test_refreshStatusReappliesSettingsAnEngineRestartForgot() async {
+        let controller = makeController()
+        controller.engineAvailabilityChanged(true)
+        controller.setEnabled(true)
+        await settle(controller)
+        backend.statusResult = .success(LocalAPIStatus(enabled: false, port: nil, running: false, errorCode: nil))
+
+        await controller.refreshStatus()
+        await settle(controller)
+
+        XCTAssertEqual(backend.applied, [.enabled(port: 51851, apiKey: Self.fixedKey), .enabled(port: 51851, apiKey: Self.fixedKey)])
+        XCTAssertEqual(controller.phase, .running(port: 51851))
+        XCTAssertTrue(relay.isRunning)
+    }
+
     func test_outOfRangeStoredPortFallsBackToDefault() {
         testDefaults.defaults.set(80, forKey: LocalAPIController.portKey)
 

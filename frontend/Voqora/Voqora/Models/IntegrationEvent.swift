@@ -18,7 +18,7 @@ nonisolated enum IntegrationEventParser {
     static let maximumClientNameLength = 40
     static let maximumVoiceLength = 64
 
-    private struct Payload: Decodable {
+    private nonisolated struct Payload: Decodable {
         let type: String
         let id: String?
         let text: String?

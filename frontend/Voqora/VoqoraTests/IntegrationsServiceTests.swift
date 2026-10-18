@@ -8,46 +8,46 @@ final class IntegrationsServiceTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        StubURLProtocol.reset()
+        HTTPStubProtocol.reset()
         let connection = BackendConnection(baseURL: URL(string: "http://127.0.0.1:9")!, token: "ipc-token")
-        service = IntegrationsService(connection: connection, session: StubURLProtocol.makeSession())
+        service = IntegrationsService(connection: connection, session: HTTPStubProtocol.makeSession())
     }
 
     override func tearDown() {
-        StubURLProtocol.reset()
+        HTTPStubProtocol.reset()
         service = nil
         super.tearDown()
     }
 
     func test_status_sendsIPCTokenAndDecodesResponse() async throws {
-        StubURLProtocol.install { _ in StubReply(statusCode: 200, json: #"{"enabled":true,"port":6000,"running":true}"#) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 200, json: #"{"enabled":true,"port":6000,"running":true}"#) }
 
         let status = try await service.status()
 
         XCTAssertEqual(status, LocalAPIStatus(enabled: true, port: 6000, running: true, errorCode: nil))
-        let request = try XCTUnwrap(StubURLProtocol.requests.first)
+        let request = try XCTUnwrap(HTTPStubProtocol.requests.first)
         XCTAssertEqual(request.url?.path, "/integrations/local-api")
         XCTAssertEqual(request.httpMethod, "GET")
         XCTAssertEqual(request.value(forHTTPHeaderField: "X-Voqora-IPC-Token"), "ipc-token")
     }
 
     func test_apply_postsConfigurationAsJSON() async throws {
-        StubURLProtocol.install { _ in StubReply(statusCode: 200, json: #"{"enabled":true,"port":6000,"running":true}"#) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 200, json: #"{"enabled":true,"port":6000,"running":true}"#) }
 
         _ = try await service.apply(.enabled(port: 6000, apiKey: String(repeating: "k", count: 40)))
 
-        let request = try XCTUnwrap(StubURLProtocol.requests.first)
+        let request = try XCTUnwrap(HTTPStubProtocol.requests.first)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
-        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: StubURLProtocol.body(of: request)) as? [String: Any])
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: HTTPStubProtocol.body(of: request)) as? [String: Any])
         XCTAssertEqual(body["port"] as? Int, 6000)
         XCTAssertEqual(body["api_key"] as? String, String(repeating: "k", count: 40))
         XCTAssertEqual(body["enabled"] as? Bool, true)
     }
 
     func test_apply_returnsStatusForPortConflicts() async throws {
-        StubURLProtocol.install { _ in
-            StubReply(statusCode: 409, json: #"{"enabled":true,"port":6000,"running":false,"error":"taken","error_code":"port_in_use"}"#)
+        HTTPStubProtocol.install { _ in
+            HTTPStubReply(statusCode: 409, json: #"{"enabled":true,"port":6000,"running":false,"error":"taken","error_code":"port_in_use"}"#)
         }
 
         let status = try await service.apply(.enabled(port: 6000, apiKey: String(repeating: "k", count: 40)))
@@ -57,7 +57,7 @@ final class IntegrationsServiceTests: XCTestCase {
     }
 
     func test_apply_mapsValidationErrorsWithoutExposingTheBody() async {
-        StubURLProtocol.install { _ in StubReply(statusCode: 422, json: #"{"detail":[{"input":"secret-key"}]}"#) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 422, json: #"{"detail":[{"input":"secret-key"}]}"#) }
 
         do {
             _ = try await service.apply(.enabled(port: 6000, apiKey: "secret-key"))
@@ -69,7 +69,7 @@ final class IntegrationsServiceTests: XCTestCase {
     }
 
     func test_transportFailuresMeanTheEngineIsUnavailable() async {
-        StubURLProtocol.install { _ in throw URLError(.cannotConnectToHost) }
+        HTTPStubProtocol.install { _ in throw URLError(.cannotConnectToHost) }
 
         do {
             _ = try await service.status()
@@ -91,7 +91,7 @@ final class IntegrationsServiceTests: XCTestCase {
 
 
         """
-        StubURLProtocol.install { _ in StubReply(statusCode: 200, body: Data(frames.utf8), headers: ["Content-Type": "text/event-stream"]) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 200, body: Data(frames.utf8), headers: ["Content-Type": "text/event-stream"]) }
 
         var received: [IntegrationEvent] = []
         for try await event in service.events() {
@@ -103,12 +103,12 @@ final class IntegrationsServiceTests: XCTestCase {
             .speak(RelaySpeakCommand(id: "1", text: "Hello", voice: nil, client: nil)),
             .stop(id: "2"),
         ])
-        XCTAssertEqual(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "Accept"), "text/event-stream")
-        XCTAssertEqual(StubURLProtocol.requests.first?.url?.path, "/integrations/events")
+        XCTAssertEqual(HTTPStubProtocol.requests.first?.value(forHTTPHeaderField: "Accept"), "text/event-stream")
+        XCTAssertEqual(HTTPStubProtocol.requests.first?.url?.path, "/integrations/events")
     }
 
     func test_events_failsWhenTheStreamIsRejected() async {
-        StubURLProtocol.install { _ in StubReply(statusCode: 403) }
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 403) }
 
         do {
             for try await _ in service.events() {}

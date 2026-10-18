@@ -18,11 +18,14 @@ nonisolated enum MultipartFormWriter {
         "multipart/form-data; boundary=\(boundary)"
     }
 
-    static func headerSafe(_ value: String) -> String {
+    static func singleLine(_ value: String) -> String {
         value
             .replacingOccurrences(of: "\r", with: " ")
             .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\"", with: "'")
+    }
+
+    static func headerSafe(_ value: String) -> String {
+        singleLine(value).replacingOccurrences(of: "\"", with: "'")
     }
 
     static func write(fields: [(String, String)], file: MultipartFilePart, boundary: String, to destination: URL) throws {
@@ -38,7 +41,7 @@ nonisolated enum MultipartFormWriter {
             for (name, value) in fields {
                 try emit("--\(boundary)\r\n")
                 try emit("Content-Disposition: form-data; name=\"\(headerSafe(name))\"\r\n\r\n")
-                try emit(headerSafe(value))
+                try emit(singleLine(value))
                 try emit("\r\n")
             }
             try emit("--\(boundary)\r\n")

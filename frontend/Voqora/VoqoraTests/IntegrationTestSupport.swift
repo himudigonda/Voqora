@@ -2,7 +2,7 @@ import Foundation
 @testable import Voqora
 import XCTest
 
-struct StubReply: Sendable {
+struct HTTPStubReply: Sendable {
     let statusCode: Int
     let body: Data
     let headers: [String: String]
@@ -18,8 +18,8 @@ struct StubReply: Sendable {
     }
 }
 
-final class StubURLProtocol: URLProtocol, @unchecked Sendable {
-    typealias Handler = @Sendable (URLRequest) throws -> StubReply
+final class HTTPStubProtocol: URLProtocol, @unchecked Sendable {
+    typealias Handler = @Sendable (URLRequest) throws -> HTTPStubReply
 
     private static let lock = NSLock()
     private nonisolated(unsafe) static var handler: Handler?
@@ -45,7 +45,7 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 
     static func makeSession() -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [StubURLProtocol.self]
+        configuration.protocolClasses = [HTTPStubProtocol.self]
         return URLSession(configuration: configuration)
     }
 

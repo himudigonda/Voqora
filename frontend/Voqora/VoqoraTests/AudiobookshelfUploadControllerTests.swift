@@ -4,6 +4,7 @@ import XCTest
 
 @MainActor
 final class AudiobookshelfUploadControllerTests: XCTestCase {
+    @MainActor
     private struct Notice: Equatable {
         let message: String
         let kind: AudiobookViewModel.Toast.Kind
@@ -102,7 +103,7 @@ final class AudiobookshelfUploadControllerTests: XCTestCase {
         XCTAssertEqual(notices.first?.kind, .error)
     }
 
-    func test_uploadErrorsAreShownAndTheTempFileIsRemoved() async throws {
+    func test_uploadErrorsAreShownAndTheTempFileIsRemoved() async {
         let controller = makeController(uploadError: AudiobookshelfError.uploadNotAllowed)
 
         controller.upload(makeTestAudiobook())

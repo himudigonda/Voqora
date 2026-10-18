@@ -10,6 +10,10 @@ struct AudiobookM4BRenderer {
     func render(_ book: Audiobook, to destination: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
         let source = try await audioURL(book)
         try Task.checkCancellation()
+        try await render(book, source: source, to: destination, progress: progress)
+    }
+
+    func render(_ book: Audiobook, source: URL, to destination: URL, progress: @escaping @Sendable (Double) -> Void) async throws {
         let markers = await chapters(for: book)
         let artwork = await cover(book.bookID)
         let request = M4BExportRequest(
@@ -25,14 +29,15 @@ struct AudiobookM4BRenderer {
     }
 
     private func chapters(for book: Audiobook) async -> [M4BChapter] {
-        let document: TranscriptDocument = if let loaded = try? await transcript(book.bookID) {
-            await Task.detached(priority: .userInitiated) {
-                TranscriptDocument(transcript: loaded)
-            }.value
-        } else {
-            .empty
-        }
+        let document = await transcriptDocument(for: book.bookID)
         return AudiobookExportController.chapters(from: AudiobookViewModel.chapters(for: book, document: document))
+    }
+
+    private func transcriptDocument(for bookID: String) async -> TranscriptDocument {
+        guard let loaded = try? await transcript(bookID) else { return .empty }
+        return await Task.detached(priority: .userInitiated) {
+            TranscriptDocument(transcript: loaded)
+        }.value
     }
 }
 
