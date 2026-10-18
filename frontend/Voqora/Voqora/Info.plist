@@ -29,6 +29,10 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Voqora listens through your microphone only while you dictate, so it can type what you say into the app you are using.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Voqora transcribes your dictation on this Mac. Audio is sent to Apple only if you turn on server recognition for a language without on-device support.</string>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Voqora needs to control other apps to adjust music volume while speaking.</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>

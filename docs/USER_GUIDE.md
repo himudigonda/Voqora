@@ -46,9 +46,33 @@ name and email, and lets you pick an accent color and app icon.
 | Play / pause | `Command + Shift + /` |
 | Stop | `Command + Shift + ,` |
 | Export the latest clip | `Command + Shift + M` |
+| Start or finish dictation | `Control + Option + Space` |
 
 Change any shortcut in Preferences. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
+
+## Dictate into any app
+
+1. Click where you want the text to go, in any app.
+2. Press `Control + Option + Space` and start speaking. A small panel at the
+   top of the screen shows a level meter and the words as Voqora hears them.
+   Any Voqora speech pauses while you dictate.
+3. Press the shortcut again, or stop talking for two seconds. Voqora pastes
+   the transcript where your cursor is and then puts your previous clipboard
+   back.
+
+The first time, macOS asks for microphone and Speech Recognition access. If you
+said no, the panel offers **Open System Settings** so you can turn them on.
+Pasting uses the same Accessibility access as speaking a selection; without it,
+Voqora copies the transcript so you can paste it yourself.
+
+Open **Dictation** in the sidebar to change the shortcut, the language, whether
+Voqora pastes or only copies, and how long a pause ends dictation (or turn
+auto-stop off). Recognition runs on your Mac. If a language has no on-device
+support, Voqora tells you instead of sending audio anywhere; turn on **Allow
+Server Recognition** only if you are comfortable with Apple transcribing that
+audio. The page also keeps your last 200 transcripts on this Mac, with search,
+copy, and delete. **Erase All Local Data** removes them too.
 
 ## Choose a voice and speed
 

@@ -1,0 +1,103 @@
+import Foundation
+@testable import Voqora
+import XCTest
+
+final class DictationPreferencesTests: XCTestCase {
+    private var suiteName = ""
+    private var defaults = UserDefaults.standard
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        suiteName = "DictationPreferencesTests.\(UUID().uuidString)"
+        defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    func test_defaultsArePrivatePasteWithTwoSecondAutoStop() {
+        let preferences = DictationPreferences(defaults: defaults)
+
+        XCTAssertNil(preferences.localeIdentifier)
+        XCTAssertEqual(preferences.insertionMode, .paste)
+        XCTAssertEqual(preferences.silenceTimeout, 2)
+        XCTAssertFalse(preferences.allowsServerRecognition)
+    }
+
+    func test_storedValuesAreRead() {
+        defaults.set("fr_FR", forKey: DictationPreferences.localeKey)
+        defaults.set(DictationInsertionMode.copy.rawValue, forKey: DictationPreferences.insertionModeKey)
+        defaults.set(3.0, forKey: DictationPreferences.silenceTimeoutKey)
+        defaults.set(true, forKey: DictationPreferences.allowsServerRecognitionKey)
+
+        let preferences = DictationPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.localeIdentifier, "fr_FR")
+        XCTAssertEqual(preferences.insertionMode, .copy)
+        XCTAssertEqual(preferences.silenceTimeout, 3)
+        XCTAssertTrue(preferences.allowsServerRecognition)
+    }
+
+    func test_invalidStoredValuesFallBackSafely() {
+        defaults.set("   ", forKey: DictationPreferences.localeKey)
+        defaults.set("type-it-twice", forKey: DictationPreferences.insertionModeKey)
+
+        let preferences = DictationPreferences(defaults: defaults)
+
+        XCTAssertNil(preferences.localeIdentifier)
+        XCTAssertEqual(preferences.insertionMode, .paste)
+    }
+
+    func test_zeroOrNegativeSilenceTimeoutTurnsAutoStopOff() {
+        XCTAssertNil(DictationPreferences.validatedSilenceTimeout(0))
+        XCTAssertNil(DictationPreferences.validatedSilenceTimeout(-4))
+        XCTAssertNil(DictationPreferences.validatedSilenceTimeout(.infinity))
+    }
+
+    func test_silenceTimeoutIsClampedIntoItsRange() {
+        XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(0.1), 0.5)
+        XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(90), 10)
+        XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(nil), DictationPreferences.defaultSilenceTimeout)
+    }
+
+    func test_silenceOptionSnapsToTheNearestChoice() {
+        XCTAssertEqual(DictationPreferences.silenceOption(closestTo: 2.2), 2)
+        XCTAssertEqual(DictationPreferences.silenceOption(closestTo: 9), 5)
+        XCTAssertEqual(DictationPreferences.silenceOption(closestTo: 0), 0)
+        XCTAssertEqual(DictationPreferences.silenceOption(closestTo: .nan), DictationPreferences.defaultSilenceTimeout)
+    }
+
+    func test_silenceLabelNamesTheOffChoiceAndSingularSecond() {
+        XCTAssertEqual(DictationPreferences.silenceLabel(for: 0), "Off")
+        XCTAssertEqual(DictationPreferences.silenceLabel(for: 1), "After 1 second")
+        XCTAssertTrue(DictationPreferences.silenceLabel(for: 3).hasSuffix("seconds"))
+    }
+
+    func test_localeOptionsAreDeduplicatedAndSortedByDisplayName() {
+        let options = DictationLocaleCatalog.options(
+            identifiers: ["fr_FR", "en_US", "de_DE", "en_US"],
+            displayLocale: Locale(identifier: "en_US")
+        )
+
+        XCTAssertEqual(options.map(\.id), ["en_US", "fr_FR", "de_DE"])
+        XCTAssertEqual(options.first?.name, "English (United States)")
+    }
+
+    func test_unknownStoredLocaleFallsBackToSystemDefault() {
+        let options = [DictationLocaleOption(id: "en_US", name: "English (United States)")]
+
+        XCTAssertEqual(DictationLocaleCatalog.validatedSelection("en_US", among: options), "en_US")
+        XCTAssertEqual(DictationLocaleCatalog.validatedSelection("xx_YY", among: options), "")
+    }
+
+    func test_localeSupportNotesNeverPromiseServerUseUnlessAllowed() {
+        let blocked = DictationLocaleSupport.serverOnly.note(allowsServerRecognition: false)
+        let allowed = DictationLocaleSupport.serverOnly.note(allowsServerRecognition: true)
+
+        XCTAssertTrue(blocked.contains("allow server recognition"))
+        XCTAssertTrue(allowed.contains("Apple's servers"))
+        XCTAssertTrue(DictationLocaleSupport.onDevice.note(allowsServerRecognition: true).contains("never leaves"))
+    }
+}

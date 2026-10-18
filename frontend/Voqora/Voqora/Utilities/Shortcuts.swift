@@ -6,11 +6,13 @@ extension KeyboardShortcuts.Name {
     static let togglePause = Self("togglePause", default: .init(.slash, modifiers: [.command, .shift]))
     static let stopText = Self("stopText", default: .init(.comma, modifiers: [.command, .shift]))
     static let exportAudio = Self("exportAudio", default: .init(.m, modifiers: [.command, .shift]))
+    static let toggleDictation = Self("toggleDictation", default: .init(.space, modifiers: [.control, .option]))
 
     static let allCases: [KeyboardShortcuts.Name] = [
         .playText,
         .togglePause,
         .stopText,
         .exportAudio,
+        .toggleDictation,
     ]
 }

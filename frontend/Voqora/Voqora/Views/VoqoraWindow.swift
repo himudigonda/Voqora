@@ -253,6 +253,7 @@ private extension VoqoraWindow {
         case "preferences": PreferencesView()
         case "about": AboutView()
         case "feedback": FeedbackView()
+        case "dictation": DictationView()
         default: MainDashboardView()
         }
     }
@@ -272,6 +273,11 @@ private extension VoqoraWindow {
                     if let resume = bookVM.continueListeningBook {
                         continueListeningButton(for: resume)
                     }
+                }
+            }
+            PaneSection("Dictation") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Transcripts", icon: "mic.fill", value: "dictation")
                 }
             }
         }
