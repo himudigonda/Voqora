@@ -40,7 +40,7 @@ router = APIRouter()
 log = get_logger(__name__)
 
 _GENERATING_STATUSES = _PENDING_STATUSES | {"needs_cost_approval"}
-_SOURCE_EXTENSIONS = (".pdf", ".txt", ".docx", ".md")
+_SOURCE_EXTENSIONS = (".pdf", ".txt", ".docx", ".md", ".epub", ".html", ".htm")
 _FILENAME_PUNCTUATION = frozenset(" -_.,()")
 _MAX_FILENAME_CHARS = 100
 _WAV_CONTENT_TYPES = frozenset(

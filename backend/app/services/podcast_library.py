@@ -8,8 +8,13 @@ from pydantic import ValidationError
 from app.core.logging import get_logger
 from app.services.audiobook_store import AudiobookStore
 from app.services.pdf_extractor import PDFExtractor
-from app.services.podcast_script import PODCAST_KIND, PodcastScript
+from app.services.podcast_script import (
+    PODCAST_KIND,
+    STORED_SCRIPT_CONTEXT,
+    PodcastScript,
+)
 from app.services.text_extractor import TextExtractor
+from app.services.voices import voice_with_fallback
 
 log = get_logger(__name__)
 
@@ -60,7 +65,9 @@ def save_script(book_id: str, script: PodcastScript) -> None:
 def load_script(book_id: str) -> PodcastScript | None:
     try:
         with open(AudiobookStore.script_path(book_id), encoding="utf-8") as f:
-            return PodcastScript.model_validate_json(f.read())
+            return PodcastScript.model_validate_json(
+                f.read(), context=STORED_SCRIPT_CONTEXT
+            )
     except FileNotFoundError:
         return None
     except (OSError, ValueError, ValidationError):
@@ -98,7 +105,7 @@ def turn_plan(book_id: str) -> list[TurnPlan]:
         TurnPlan(
             speaker_id=turn.speaker_id,
             speaker=script.speaker(turn.speaker_id).name,
-            voice=script.speaker(turn.speaker_id).voice,
+            voice=voice_with_fallback(script.speaker(turn.speaker_id).voice, None).id,
             pause_after_seconds=turn.pause_after_seconds,
         )
         for turn in script.turns

@@ -241,6 +241,19 @@ def test_speech_releases_interactive_lock(client: TestClient, engine) -> None:
     assert not interactive_tts_lock.locked()
 
 
+@pytest.mark.asyncio
+async def test_speech_is_generated_before_the_client_reads(engine) -> None:
+    from fastapi.responses import StreamingResponse
+
+    from app.api.openai_compat import SpeechRequest, create_speech
+
+    response = await create_speech(SpeechRequest(**_speech(response_format="pcm")))
+    assert not isinstance(response, StreamingResponse)
+    assert not interactive_tts_lock.locked()
+    assert len(response.body) == SAMPLES * 4
+    assert response.headers["content-length"] == str(SAMPLES * 4)
+
+
 def test_engine_load_failure_is_500_without_internals(client: TestClient) -> None:
     failing = AsyncMock(side_effect=RuntimeError("/Users/someone/model.onnx missing"))
     with patch.object(EngineManager, "ensure_loaded", new=failing):

@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.api.public_errors import error_response
@@ -19,10 +19,12 @@ from app.services.public_voices import (
     voice_list,
 )
 from app.services.speech_relay import (
+    MAX_CLIENT_NAME_CHARS,
     RELAY_BUSY_MESSAGE,
     RELAY_UNAVAILABLE_MESSAGE,
     RelayBusyError,
     RelayUnavailableError,
+    client_name,
     speech_relay,
 )
 from app.services.speech_stream import (
@@ -95,6 +97,7 @@ class SpeechRequest(BaseModel):
 class RelaySpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
     voice: str | None = Field(default=None, min_length=1, max_length=MAX_VOICE_ID_CHARS)
+    client: str | None = Field(default=None, max_length=MAX_CLIENT_NAME_CHARS)
 
     @field_validator("text")
     @classmethod
@@ -105,6 +108,11 @@ class RelaySpeakRequest(BaseModel):
     @classmethod
     def require_known_voice(cls, value: str | None) -> str | None:
         return None if value is None else require_voice(value)
+
+    @field_validator("client")
+    @classmethod
+    def clean_client_name(cls, value: str | None) -> str | None:
+        return client_name(value)
 
 
 def _model_entry(model_id: str) -> dict[str, Any]:
@@ -130,7 +138,11 @@ def list_voices() -> dict[str, Any]:
 
 @router.post("/v1/audio/speech")
 async def create_speech(req: SpeechRequest) -> Response:
-    """OpenAI-compatible speech. Streams 24 kHz mono 16-bit audio."""
+    """OpenAI-compatible speech as 24 kHz mono 16-bit audio.
+
+    The audio is generated in full before it is returned, so a slow client
+    never holds the interactive speech lock while it reads.
+    """
     audio_format = AUDIO_FORMATS[req.response_format]
     try:
         samples = await open_speech_samples(
@@ -139,6 +151,10 @@ async def create_speech(req: SpeechRequest) -> Response:
             clamp_engine_speed(req.speed),
             pause_scale=req.pause_scale,
         )
+        try:
+            body = b"".join([part async for part in audio_format.encode(samples)])
+        finally:
+            await samples.aclose()
     except Exception:
         log.error(
             "local_api.speech_failed",
@@ -152,15 +168,13 @@ async def create_speech(req: SpeechRequest) -> Response:
         return error_response(
             500, "Speech generation failed. Check that Voqora's voice model is ready."
         )
-    return StreamingResponse(
-        audio_format.encode(samples), media_type=audio_format.media_type
-    )
+    return Response(content=body, media_type=audio_format.media_type)
 
 
 @router.post("/v1/voqora/speak", status_code=202)
 async def relay_speak(req: RelaySpeakRequest) -> JSONResponse:
     """Ask the Voqora app to speak text aloud on this Mac."""
-    return _relay(lambda: speech_relay.speak(req.text, req.voice))
+    return _relay(lambda: speech_relay.speak(req.text, req.voice, req.client))
 
 
 @router.post("/v1/voqora/stop", status_code=202)

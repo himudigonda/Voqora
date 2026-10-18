@@ -18,7 +18,7 @@ from app.services import podcast_library
 from app.services.audiobook_service import AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.import_limits import ImportLimitError, ensure_storage_capacity
-from app.services.languages import LANGUAGES, espeak_lang_for_voice, is_valid_voice
+from app.services.languages import LANGUAGES
 from app.services.llm_providers import LLMConfigError, LLMCredential, LLMError
 from app.services.podcast_generator import (
     MAX_SOURCE_CHARS,
@@ -35,6 +35,7 @@ from app.services.podcast_script import (
     PodcastScript,
     Speaker,
 )
+from app.services.voices import is_known_voice, resolve_voice
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -96,7 +97,7 @@ class HostRequest(BaseModel):
     @field_validator("voice")
     @classmethod
     def require_known_voice(cls, value: str) -> str:
-        if not is_valid_voice(value):
+        if not is_known_voice(value):
             raise ValueError(f"unknown voice: {value}")
         return value
 
@@ -131,10 +132,8 @@ class ScriptRequest(BaseModel):
         if len(set(names)) != len(names):
             raise ValueError("host names must be different")
         language = _base_language(self.language)
-        if any(
-            _base_language(espeak_lang_for_voice(host.voice)) != language
-            for host in self.hosts
-        ):
+        specs = [resolve_voice(host.voice) for host in self.hosts]
+        if any(spec is None or _base_language(spec.lang) != language for spec in specs):
             raise ValueError("every host voice must speak the script language")
         return self
 

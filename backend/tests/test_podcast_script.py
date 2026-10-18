@@ -39,7 +39,12 @@ from app.services.podcast_generator import (
     ScriptRejected,
     parse_script,
 )
-from app.services.podcast_script import MAX_TURNS, PodcastScript
+from app.services.podcast_script import (
+    MAX_TURNS,
+    STORED_SCRIPT_CONTEXT,
+    PodcastScript,
+)
+from app.services.voice_blends import VoiceBlendStore
 
 CREDENTIAL = LLMCredential("openai", api_key="sk-test-key", model="gpt-6-luna")
 PROVIDER_HEADERS = {
@@ -64,6 +69,16 @@ def isolated_audiobooks_dir(monkeypatch):
     yield tmp
     AudiobookStore._reset_for_tests()
     shutil.rmtree(tmp, ignore_errors=True)
+
+
+@pytest.fixture
+def blend_store(tmp_path, monkeypatch):
+    store = VoiceBlendStore(lambda: str(tmp_path / "voice_blends.json"))
+    monkeypatch.setattr("app.services.voices.voice_blends", store)
+    return store
+
+
+UNSAVED_BLEND = "blend:00000000-0000-4000-8000-000000000000"
 
 
 def _script_dict(**overrides) -> dict:
@@ -196,6 +211,35 @@ def test_sections_fall_back_to_title_before_first_marker():
 def test_invalid_scripts_are_rejected(overrides):
     with pytest.raises(ValidationError):
         PodcastScript.model_validate(_script_dict(**overrides))
+
+
+def test_speakers_accept_saved_blends(blend_store):
+    blend = blend_store.create("Mix", [("af_bella", 0.5), ("af_heart", 0.5)])
+    script = PodcastScript.model_validate(
+        _script_dict(
+            speakers=[
+                {"id": "host_1", "name": "Ava", "voice": blend.id},
+                {"id": "host_2", "name": "Sam", "voice": "am_adam"},
+            ]
+        )
+    )
+    assert script.speakers[0].voice == blend.id
+
+
+def test_speakers_reject_unsaved_blends_unless_reading_a_stored_script(blend_store):
+    data = _script_dict(
+        speakers=[
+            {"id": "host_1", "name": "Ava", "voice": UNSAVED_BLEND},
+            {"id": "host_2", "name": "Sam", "voice": "am_adam"},
+        ]
+    )
+    with pytest.raises(ValidationError):
+        PodcastScript.model_validate(data)
+    stored = PodcastScript.model_validate(data, context=STORED_SCRIPT_CONTEXT)
+    assert stored.speakers[0].voice == UNSAVED_BLEND
+    data["speakers"][0]["voice"] = "xx_nobody"
+    with pytest.raises(ValidationError):
+        PodcastScript.model_validate(data, context=STORED_SCRIPT_CONTEXT)
 
 
 def test_nan_pause_is_rejected():
@@ -583,6 +627,47 @@ def test_script_endpoint_returns_a_validated_script():
     assert body["source_truncated"] is False
     assert body["estimated_audio_seconds"] > 0
     assert (body["llm_provider"], body["llm_model"]) == ("openai", "gpt-6-luna")
+
+
+def test_script_endpoint_accepts_blend_hosts(blend_store):
+    blend = blend_store.create("Mix", [("af_bella", 0.6), ("af_heart", 0.4)])
+    fake = FakeLLM(_llm_json())
+    hosts = [
+        {"name": "Ava", "voice": blend.id},
+        {"name": "Sam", "voice": "am_adam"},
+    ]
+    with patch.object(LLMCleaner, "generate", new=fake):
+        response = _client().post(
+            "/podcast/script", json=_request(hosts=hosts), headers=PROVIDER_HEADERS
+        )
+    assert response.status_code == 200
+    assert response.json()["script"]["speakers"][0]["voice"] == blend.id
+
+
+def test_script_endpoint_checks_a_blend_hosts_language(blend_store):
+    blend = blend_store.create("Mezcla", [("ef_dora", 0.5), ("em_alex", 0.5)])
+    english = _request(
+        hosts=[{"name": "Ava", "voice": blend.id}, {"name": "Sam", "voice": "am_adam"}]
+    )
+    spanish = _request(
+        style="lecture", language="es", hosts=[{"name": "Dora", "voice": blend.id}]
+    )
+    rejected = _client().post("/podcast/script", json=english, headers=PROVIDER_HEADERS)
+    assert rejected.status_code == 422
+    unsaved = _request(
+        hosts=[
+            {"name": "Ava", "voice": UNSAVED_BLEND},
+            {"name": "Sam", "voice": "am_adam"},
+        ]
+    )
+    missing = _client().post("/podcast/script", json=unsaved, headers=PROVIDER_HEADERS)
+    assert missing.status_code == 422
+    fake = FakeLLM(_llm_json([{"speaker_id": "host_1", "text": "Hola."}]))
+    with patch.object(LLMCleaner, "generate", new=fake):
+        accepted = _client().post(
+            "/podcast/script", json=spanish, headers=PROVIDER_HEADERS
+        )
+    assert accepted.status_code == 200
 
 
 def test_lecture_uses_a_single_host():

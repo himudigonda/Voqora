@@ -16,9 +16,11 @@ from app.api.public_app import create_public_app
 from app.core.config import settings
 from app.main import app
 from app.services.speech_relay import (
+    MAX_CLIENT_NAME_CHARS,
     RelayBusyError,
     RelayUnavailableError,
     SpeechRelay,
+    client_name,
     speech_relay,
 )
 
@@ -62,7 +64,54 @@ def test_speak_delivers_to_every_subscriber() -> None:
             "id": event_id,
             "text": "hello",
             "voice": "af_bella",
+            "client": None,
         }
+
+
+def test_speak_carries_the_client_name() -> None:
+    relay = SpeechRelay(queue_size=2, max_subscribers=1)
+    queue = relay.subscribe()
+    relay.speak("hello", None, "Raycast")
+    assert queue.get_nowait()["client"] == "Raycast"
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (None, None),
+        (42, None),
+        ("   ", None),
+        ("\u200b\x07", None),
+        ("  Claude\nDesktop\t ", "Claude Desktop"),
+        ("Zed\x1b[31m", "Zed [31m"),
+        ("a" * 70, "a" * MAX_CLIENT_NAME_CHARS),
+        ("a" * (MAX_CLIENT_NAME_CHARS - 1) + " b", "a" * (MAX_CLIENT_NAME_CHARS - 1)),
+    ],
+)
+def test_client_names_are_printable_single_lines(raw, expected) -> None:
+    assert client_name(raw) == expected
+
+
+def test_public_speak_passes_a_cleaned_client_name(public: TestClient) -> None:
+    queue = speech_relay.subscribe()
+    response = public.post(
+        "/v1/voqora/speak", json={"text": "Hi", "client": " My\x00Agent "}
+    )
+    assert response.status_code == 202
+    assert queue.get_nowait()["client"] == "My Agent"
+    public.post("/v1/voqora/speak", json={"text": "Hi"})
+    assert queue.get_nowait()["client"] is None
+
+
+def test_public_speak_rejects_an_overlong_client_name(public: TestClient) -> None:
+    queue = speech_relay.subscribe()
+    response = public.post(
+        "/v1/voqora/speak",
+        json={"text": "Hi", "client": "c" * (MAX_CLIENT_NAME_CHARS + 1)},
+    )
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == "client"
+    assert queue.empty()
 
 
 def test_full_queue_rejects_without_partial_delivery() -> None:

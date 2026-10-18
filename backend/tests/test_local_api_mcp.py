@@ -19,6 +19,8 @@ from app.services.mcp_server import (
     PARSE_ERROR,
     SUPPORTED_PROTOCOL_VERSIONS,
     McpServer,
+    McpSession,
+    McpSessions,
     McpTool,
     NoArguments,
 )
@@ -146,6 +148,65 @@ def test_speak_tool_queues_for_app(client: TestClient) -> None:
     assert event["type"] == "speak"
     assert event["text"] == "Hello there"
     assert event["voice"] == "af_bella"
+
+
+def _initialize(client: TestClient, info: object) -> str:
+    response = _rpc(
+        client,
+        "initialize",
+        {"protocolVersion": LATEST_PROTOCOL_VERSION, "clientInfo": info},
+    )
+    assert response.status_code == 200
+    return response.headers["mcp-session-id"]
+
+
+def _speak_in(client: TestClient, session_id: str | None) -> dict:
+    headers = {} if session_id is None else {"Mcp-Session-Id": session_id}
+    message = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "speak", "arguments": {"text": "Hi"}},
+    }
+    response = client.post("/mcp", json=message, headers=headers)
+    assert response.json()["result"]["isError"] is False
+    assert "mcp-session-id" not in response.headers
+    return response.json()
+
+
+def test_speak_tool_names_the_client_of_its_session(client: TestClient) -> None:
+    queue = speech_relay.subscribe()
+    session_id = _initialize(client, {"name": " Claude\nDesktop ", "version": "1"})
+    _speak_in(client, session_id)
+    assert queue.get_nowait()["client"] == "Claude Desktop"
+
+
+@pytest.mark.parametrize("session_id", [None, "unknown-session"])
+def test_speak_tool_without_a_known_session_has_no_client(
+    client: TestClient, session_id: str | None
+) -> None:
+    queue = speech_relay.subscribe()
+    _initialize(client, {"name": "Cursor", "version": "1"})
+    _speak_in(client, session_id)
+    assert queue.get_nowait()["client"] is None
+
+
+def test_initialize_without_a_client_name_opens_an_anonymous_session(
+    client: TestClient,
+) -> None:
+    queue = speech_relay.subscribe()
+    _speak_in(client, _initialize(client, "not an object"))
+    assert queue.get_nowait()["client"] is None
+
+
+def test_sessions_forget_the_oldest_clients_beyond_the_limit() -> None:
+    sessions = McpSessions(2)
+    started = [McpSession() for _ in range(3)]
+    for index, session in enumerate(started):
+        sessions.start(session, f"client {index}")
+    assert sessions.lookup(started[0].id) == McpSession()
+    assert sessions.lookup(started[2].id) == McpSession(started[2].id, "client 2")
+    assert len({session.id for session in started}) == 3
 
 
 def test_speak_tool_reports_busy_queue(client: TestClient) -> None:
@@ -328,7 +389,7 @@ def test_mcp_rejects_web_origin(client: TestClient) -> None:
 
 
 def test_unexpected_tool_exception_is_internal_error() -> None:
-    def explode(_args: NoArguments) -> str:
+    def explode(_args: NoArguments, _client: str | None) -> str:
         raise RuntimeError("secret detail")
 
     server = McpServer([McpTool("boom", "Boom", "Explodes.", NoArguments, explode)])

@@ -10,7 +10,8 @@ final class IntegrationsServiceTests: XCTestCase {
         super.setUp()
         HTTPStubProtocol.reset()
         let connection = BackendConnection(baseURL: URL(string: "http://127.0.0.1:9")!, token: "ipc-token")
-        service = IntegrationsService(connection: connection, session: HTTPStubProtocol.makeSession())
+        let stubSession = HTTPStubProtocol.makeSession()
+        service = IntegrationsService(connection: connection, session: stubSession, eventSession: stubSession)
     }
 
     override func tearDown() {
@@ -105,6 +106,31 @@ final class IntegrationsServiceTests: XCTestCase {
         ])
         XCTAssertEqual(HTTPStubProtocol.requests.first?.value(forHTTPHeaderField: "Accept"), "text/event-stream")
         XCTAssertEqual(HTTPStubProtocol.requests.first?.url?.path, "/integrations/events")
+    }
+
+    func test_events_useTheEventStreamSessionAndRequestsUseTheSharedOne() async throws {
+        HTTPStubProtocol.install { _ in HTTPStubReply(statusCode: 200, json: #"{"enabled":false,"port":null,"running":false}"#) }
+        let connection = try BackendConnection(baseURL: XCTUnwrap(URL(string: "http://127.0.0.1:9")), token: "ipc-token")
+        let split = IntegrationsService(
+            connection: connection,
+            session: HTTPStubProtocol.makeSession(),
+            eventSession: URLSession(configuration: .ephemeral)
+        )
+
+        _ = try await split.status()
+        do {
+            for try await _ in split.events() {}
+            XCTFail("Expected the unstubbed event session to fail")
+        } catch {
+            XCTAssertNil(error as? IntegrationsServiceError)
+        }
+
+        XCTAssertEqual(HTTPStubProtocol.requests.map { $0.url?.path }, ["/integrations/local-api"])
+    }
+
+    func test_eventStreamSessionIsSeparateFromTheSharedSession() {
+        XCTAssertFalse(EventStreamSession.shared === URLSession.shared)
+        XCTAssertEqual(EventStreamSession.shared.configuration.httpMaximumConnectionsPerHost, EventStreamSession.maximumStreamsPerHost)
     }
 
     func test_events_failsWhenTheStreamIsRejected() async {

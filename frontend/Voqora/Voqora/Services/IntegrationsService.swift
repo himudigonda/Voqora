@@ -39,10 +39,16 @@ final class IntegrationsService: LocalAPIBackend {
 
     private let connection: BackendConnection
     private let session: URLSession
+    private let eventSession: URLSession
 
-    init(connection: BackendConnection? = nil, session: URLSession = .shared) {
+    init(
+        connection: BackendConnection? = nil,
+        session: URLSession = .shared,
+        eventSession: URLSession = EventStreamSession.shared
+    ) {
         self.connection = connection ?? .shared
         self.session = session
+        self.eventSession = eventSession
     }
 
     func status() async throws -> LocalAPIStatus {
@@ -78,7 +84,7 @@ final class IntegrationsService: LocalAPIBackend {
         } catch {
             return AsyncThrowingStream { $0.finish(throwing: error) }
         }
-        let session = session
+        let session = eventSession
         return AsyncThrowingStream { continuation in
             let task = Task.detached {
                 do {

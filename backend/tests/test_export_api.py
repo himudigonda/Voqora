@@ -177,6 +177,23 @@ def test_non_ascii_only_title_gets_an_ascii_fallback(client):
     assert _filenames(response) == ("export.vtt", "東京.vtt")
 
 
+@pytest.mark.parametrize(
+    "title",
+    ["Moby Dick.epub", "Moby Dick.HTML", "Moby Dick.htm", "Moby Dick.md"],
+)
+def test_source_extensions_are_dropped_from_export_names(client, title):
+    bid = _book(title=title)
+
+    response = client.get(f"/audiobook/{bid}/export/srt")
+
+    assert _filenames(response) == ("Moby Dick.srt", "Moby Dick.srt")
+
+
+def test_unknown_extensions_stay_in_export_names():
+    assert export.book_title("Notes.rtf", "audiobook") == "Notes.rtf"
+    assert export.book_title("Notes.epub", "audiobook") == "Notes"
+
+
 def test_blank_title_falls_back_to_audiobook(client):
     bid = _book(title="...")
 

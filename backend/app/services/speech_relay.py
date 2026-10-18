@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import unicodedata
 import uuid
 from typing import Any
 
@@ -16,6 +17,8 @@ RELAY_UNAVAILABLE_MESSAGE = (
     "The Voqora app is not listening. Open Voqora and try again."
 )
 RELAY_BUSY_MESSAGE = "Too much speech is queued. Try again shortly."
+MAX_CLIENT_NAME_CHARS = 64
+_INVISIBLE_CATEGORIES = frozenset({"Cc", "Cf"})
 
 
 class RelayUnavailableError(Exception):
@@ -48,11 +51,11 @@ class SpeechRelay:
         if queue in self._subscribers:
             self._subscribers.remove(queue)
 
-    def speak(self, text: str, voice: str | None) -> str:
+    def speak(self, text: str, voice: str | None, client: str | None = None) -> str:
         self._require_subscriber()
         if any(queue.full() for queue in self._subscribers):
             raise RelayBusyError
-        event = _event("speak", text=text, voice=voice)
+        event = _event("speak", text=text, voice=voice, client=client)
         for queue in self._subscribers:
             queue.put_nowait(event)
         log.info("relay.speak_queued", extra={"text_len": len(text)})
@@ -79,6 +82,15 @@ class SpeechRelay:
     def _close(queue: RelayQueue) -> None:
         _drain(queue)
         queue.put_nowait(None)
+
+
+def client_name(raw: Any) -> str | None:
+    if not isinstance(raw, str):
+        return None
+    printable = "".join(
+        " " if unicodedata.category(ch) in _INVISIBLE_CATEGORIES else ch for ch in raw
+    )
+    return " ".join(printable.split())[:MAX_CLIENT_NAME_CHARS].strip() or None
 
 
 def _event(kind: str, **fields: Any) -> RelayEvent:

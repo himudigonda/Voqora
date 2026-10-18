@@ -266,10 +266,11 @@ refused when an `Origin` header is present.
   `permission_denied`, `bind_failed`, `start_failed`, `start_timeout`, and
   `stopped`.
 - `GET /integrations/events` is a server-sent event stream. It sends
-  `{"type": "ready"}` first, then `{"type": "speak", "id", "text", "voice"}`
-  and `{"type": "stop", "id"}` commands from the local API for the app to play,
-  with a `: keep-alive` comment every 15 seconds. `voice` is null when the
-  caller left it to the app.
+  `{"type": "ready"}` first, then `{"type": "speak", "id", "text", "voice",
+  "client"}` and `{"type": "stop", "id"}` commands from the local API for the
+  app to play, with a `: keep-alive` comment every 15 seconds. `voice` is null
+  when the caller left it to the app, and `client` is null when the caller did
+  not name itself.
 
 ### Local API (opt-in)
 
@@ -299,18 +300,21 @@ shape `{"error": {"message", "type", "param", "code"}}`.
   anything else is a 400 naming the supported formats. `speed` is 0.25 to 4.0
   and is clamped to the engine's 0.5 to 2.0. `pause_scale` is Voqora's pause
   length setting (0.5 to 2.0, default 1.0), as on `/speak`. The pronunciation
-  dictionary applies, as it does on `/speak`. WAV and PCM stream as they are
-  made; FLAC is sent once encoding finishes.
-- `POST /v1/voqora/speak` takes `{text, voice?}` and asks the app to speak it
-  on this Mac. `POST /v1/voqora/stop` stops speech and drops queued commands.
+  dictionary applies, as it does on `/speak`. The audio is generated in full
+  before it is sent, so a slow reader never holds the interactive speech lock.
+- `POST /v1/voqora/speak` takes `{text, voice?, client?}` and asks the app to
+  speak it on this Mac. `client` is up to 64 characters naming the caller; the
+  app shows it as "Spoken by" the client. `POST /v1/voqora/stop` stops speech and drops queued commands.
   Both return 202 `{status: "queued", id}`, 503 when the app is not
   subscribed to `/integrations/events`, and 429 when 16 commands are queued.
 - `POST /mcp` is a Model Context Protocol server over Streamable HTTP with
   JSON responses. It supports protocol versions 2025-11-25, 2025-06-18,
   2025-03-26, and 2024-11-05, and the methods `initialize`,
   `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Tools
-  are `speak(text, voice?)`, `stop()`, and `list_voices()`. `GET` and
-  `DELETE` return 405.
+  are `speak(text, voice?)`, `stop()`, and `list_voices()`. `initialize`
+  returns an `Mcp-Session-Id` header, and `speak` calls that send it are
+  shown in the app as spoken by the `clientInfo.name` given at `initialize`.
+  `GET` and `DELETE` return 405.
 
 ## Local development
 

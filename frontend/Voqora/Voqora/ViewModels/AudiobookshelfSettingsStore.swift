@@ -9,6 +9,7 @@ final class AudiobookshelfSettingsStore: ObservableObject {
     static let folderIDKey = "audiobookshelfFolderID"
     static let missingTokenMessage = "Paste an API token from Audiobookshelf."
     static let tokenStorageFailure = "Voqora could not save the token to your Keychain. Try again."
+    static let tokenForNewServerMessage = "Paste the API token for this server. Voqora only sends a saved token to the server it was verified with."
     static let maximumTokenLength = 4096
 
     enum ConnectionState: Equatable {
@@ -31,6 +32,7 @@ final class AudiobookshelfSettingsStore: ObservableObject {
     private let secrets: SecretStore
     private let defaults: UserDefaults
     private var token: String
+    private var tokenServer: String?
     private var testGeneration = 0
 
     init(client: any AudiobookshelfServing, secrets: SecretStore, defaults: UserDefaults) {
@@ -38,9 +40,11 @@ final class AudiobookshelfSettingsStore: ObservableObject {
         self.secrets = secrets
         self.defaults = defaults
         let storedToken = secrets.get(.audiobookshelfToken) ?? ""
+        let storedServer = defaults.string(forKey: Self.serverKey) ?? ""
         token = storedToken
         hasToken = !storedToken.isEmpty
-        serverText = defaults.string(forKey: Self.serverKey) ?? ""
+        tokenServer = storedToken.isEmpty || storedServer.isEmpty ? nil : storedServer
+        serverText = storedServer
         libraryID = defaults.string(forKey: Self.libraryIDKey)
         libraryName = defaults.string(forKey: Self.libraryNameKey)
         folderID = defaults.string(forKey: Self.folderIDKey)
@@ -58,8 +62,13 @@ final class AudiobookshelfSettingsStore: ObservableObject {
         libraries.first { $0.id == libraryID }
     }
 
+    var needsTokenForAddress: Bool {
+        guard hasToken, let tokenServer, let server = address.url else { return false }
+        return server.absoluteString != tokenServer
+    }
+
     var destination: AudiobookshelfDestination? {
-        guard hasToken, let server = AudiobookshelfServerAddress(savedServer).url,
+        guard hasToken, tokenServer == savedServer, let server = AudiobookshelfServerAddress(savedServer).url,
               let libraryID, let folderID
         else { return nil }
         return AudiobookshelfDestination(server: server, token: token, libraryID: libraryID, folderID: folderID)
@@ -86,6 +95,7 @@ final class AudiobookshelfSettingsStore: ObservableObject {
         }
         tokenError = nil
         token = trimmed
+        tokenServer = nil
         hasToken = true
         connection = .idle
         return true
@@ -100,6 +110,10 @@ final class AudiobookshelfSettingsStore: ObservableObject {
             connection = .failed(Self.missingTokenMessage)
             return
         }
+        guard tokenServer == nil || tokenServer == server.absoluteString else {
+            connection = .failed(Self.tokenForNewServerMessage)
+            return
+        }
         serverText = server.absoluteString
         testGeneration &+= 1
         let generation = testGeneration
@@ -111,6 +125,7 @@ final class AudiobookshelfSettingsStore: ObservableObject {
                 clearLibrarySelection()
                 defaults.set(server.absoluteString, forKey: Self.serverKey)
             }
+            tokenServer = server.absoluteString
             libraries = found
             guard !bookLibraries.isEmpty else {
                 connection = .failed(AudiobookshelfError.noBookLibraries.localizedDescription)
@@ -151,6 +166,7 @@ final class AudiobookshelfSettingsStore: ObservableObject {
     func disconnect() {
         _ = secrets.delete(.audiobookshelfToken)
         token = ""
+        tokenServer = nil
         hasToken = false
         tokenError = nil
         libraries = []

@@ -75,7 +75,7 @@ struct AudiobookshelfSettingsView: View {
                 Label("API Token", systemImage: "key")
                     .font(vm.font(.rowTitle))
                 Spacer(minLength: 12)
-                if shelf.hasToken, !replacingToken {
+                if shelf.hasToken, !replacingToken, !shelf.needsTokenForAddress {
                     Text("Saved in your Keychain")
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textSecondary)
@@ -104,6 +104,11 @@ struct AudiobookshelfSettingsView: View {
                 Text(tokenError)
                     .font(vm.font(.rowSubtitle))
                     .foregroundStyle(Palette.danger)
+            } else if shelf.needsTokenForAddress {
+                Text(AudiobookshelfSettingsStore.tokenForNewServerMessage)
+                    .font(vm.font(.rowSubtitle))
+                    .foregroundStyle(Palette.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Text("Create an API key in Audiobookshelf under Settings, then API Keys. The account needs permission to upload.")
                     .font(vm.font(.rowSubtitle))
@@ -119,7 +124,7 @@ struct AudiobookshelfSettingsView: View {
                 Label("Test Connection", systemImage: "bolt.horizontal.circle")
             }
             .buttonStyle(.voqoraPrimary)
-            .disabled(shelf.connection == .testing || shelf.address.url == nil || !shelf.hasToken)
+            .disabled(shelf.connection == .testing || shelf.address.url == nil || !shelf.hasToken || shelf.needsTokenForAddress)
             Spacer()
             if shelf.hasToken || !shelf.serverText.isEmpty {
                 Button("Disconnect…", role: .destructive) { confirmingDisconnect = true }

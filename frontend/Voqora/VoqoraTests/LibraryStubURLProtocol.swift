@@ -61,7 +61,8 @@ final class LibraryStubURLProtocol: URLProtocol {
     static func makeService() -> AudiobookService {
         AudiobookService(
             connection: BackendConnection(baseURL: TestLinks.url("http://127.0.0.1:9"), token: "stub-token"),
-            session: makeSession()
+            session: makeSession(),
+            eventSession: makeSession()
         )
     }
 

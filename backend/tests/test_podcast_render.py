@@ -21,6 +21,7 @@ from app.services.audiobook_service import SAMPLE_RATE, AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.import_limits import ImportLimitError
 from app.services.podcast_script import PODCAST_KIND, PodcastScript
+from app.services.voice_blends import VoiceBlendStore
 
 SPEECH_SECONDS = 0.5
 
@@ -53,6 +54,22 @@ def reset_audiobook_service(monkeypatch):
     AudiobookService._subscribers.clear()
     AudiobookService._cancel_flags.clear()
     AudiobookService._scheduled_book_ids.clear()
+
+
+@pytest.fixture
+def blend_store(tmp_path, monkeypatch):
+    store = VoiceBlendStore(lambda: str(tmp_path / "voice_blends.json"))
+    monkeypatch.setattr("app.services.voices.voice_blends", store)
+    return store
+
+
+def _blend_script(blend_id: str) -> PodcastScript:
+    return _script(
+        speakers=[
+            {"id": "host_1", "name": "Ava", "voice": blend_id},
+            {"id": "host_2", "name": "Sam", "voice": "am_adam"},
+        ]
+    )
 
 
 def _script(**overrides) -> PodcastScript:
@@ -254,6 +271,48 @@ async def test_render_uses_each_speakers_voice_and_adds_pauses():
     meta = AudiobookStore.read_meta(bid)
     assert meta["status"] == "done"
     assert meta["phase_progress"] == {"page_done": 4, "page_total": 4}
+
+
+@pytest.mark.asyncio
+async def test_render_speaks_a_blend_speaker_through_the_engine(blend_store):
+    blend = blend_store.create("Mix", [("bf_emma", 0.75), ("af_bella", 0.25)])
+    bid = podcast_library.create_item(_blend_script(blend.id), "Tides Explained")
+    spoken: list[tuple[object, str]] = []
+
+    async def tts_generate(text, voice, speed, lang, failed_segments, **kwargs):
+        spoken.append((voice, lang))
+        yield np.full(int(SPEECH_SECONDS * SAMPLE_RATE), 0.1, dtype=np.float32)
+
+    with (
+        patch(
+            "app.services.audiobook_service.EngineManager.ensure_loaded",
+            new=AsyncMock(return_value=None),
+        ),
+        patch("app.services.audiobook_service.EngineManager.touch", return_value=None),
+        patch(
+            "app.services.engine_manager.TTSEngine.generate", side_effect=tts_generate
+        ),
+    ):
+        await AudiobookService._run_pipeline(bid)
+
+    assert AudiobookStore.read_meta(bid)["status"] == "done"
+    assert [voice.id for voice, _ in spoken] == [blend.id, "am_adam"] * 2
+    blended = spoken[0][0]
+    assert blended.components == (("bf_emma", 0.75), ("af_bella", 0.25))
+    assert spoken[0][1] == "en-gb"
+
+
+@pytest.mark.asyncio
+async def test_render_falls_back_when_a_speakers_blend_was_deleted(blend_store):
+    blend = blend_store.create("Mix", [("bf_emma", 0.5), ("af_bella", 0.5)])
+    bid = podcast_library.create_item(_blend_script(blend.id), "Tides Explained")
+    blend_store.delete(blend.id)
+    engine = FakeEngine()
+    await _run(bid, engine)
+
+    assert podcast_library.load_script(bid).speakers[0].voice == blend.id
+    assert [voice for _, voice in engine.calls] == ["af_bella", "am_adam"] * 2
+    assert AudiobookStore.read_meta(bid)["status"] == "done"
 
 
 @pytest.mark.asyncio
@@ -491,6 +550,25 @@ def test_user_written_single_voice_script_renders(started):
     assert response.json()["speakers"] == [
         {"id": "me", "name": "Me", "voice": "bf_emma"}
     ]
+
+
+def test_render_endpoint_accepts_a_blend_speaker(started, blend_store):
+    blend = blend_store.create("Mix", [("bf_emma", 0.5), ("af_bella", 0.5)])
+    body = {"script": _blend_script(blend.id).model_dump(mode="json")}
+    response = TestClient(app).post("/podcast/render", json=body)
+    assert response.status_code == 200
+    assert response.json()["speakers"][0]["voice"] == blend.id
+    started.assert_awaited_once()
+
+
+def test_render_endpoint_rejects_an_unsaved_blend(started, blend_store):
+    body = _render_body()
+    body["script"]["speakers"][0][
+        "voice"
+    ] = "blend:00000000-0000-4000-8000-000000000000"
+    response = TestClient(app).post("/podcast/render", json=body)
+    assert response.status_code == 422
+    started.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

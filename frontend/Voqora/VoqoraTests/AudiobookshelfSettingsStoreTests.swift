@@ -136,10 +136,79 @@ final class AudiobookshelfSettingsStoreTests: XCTestCase {
         let other = AudiobookshelfLibrary(id: "lib9", name: "Other", mediaType: "book", folders: [AudiobookshelfFolder(id: "f9", fullPath: nil)])
         client.result = .success([other])
         store.serverText = "https://two.example.com"
+        store.saveToken("token-two")
         await store.testConnection()
 
         XCTAssertEqual(store.destination?.libraryID, "lib9")
         XCTAssertEqual(store.destination?.server.absoluteString, "https://two.example.com")
+        XCTAssertEqual(store.destination?.token, "token-two")
+        XCTAssertEqual(client.requests.last?.token, "token-two")
+    }
+
+    func test_savedTokenIsNotSentToANewServerAddress() async {
+        client.result = .success([books])
+        let store = makeStore()
+        store.serverText = "https://one.example.com"
+        store.saveToken("token")
+        await store.testConnection()
+
+        store.serverText = "two.example.com"
+        XCTAssertTrue(store.needsTokenForAddress)
+        await store.testConnection()
+
+        XCTAssertEqual(client.requests.count, 1)
+        XCTAssertEqual(store.connection, .failed(AudiobookshelfSettingsStore.tokenForNewServerMessage))
+        XCTAssertEqual(store.destination?.server.absoluteString, "https://one.example.com")
+
+        store.serverText = "https://one.example.com/"
+        XCTAssertFalse(store.needsTokenForAddress)
+    }
+
+    func test_savedTokenStaysWithItsServerAfterARelaunch() async {
+        client.result = .success([books])
+        let first = makeStore()
+        first.serverText = "https://one.example.com"
+        first.saveToken("token")
+        await first.testConnection()
+
+        let relaunched = makeStore()
+        relaunched.serverText = "https://two.example.com"
+        await relaunched.testConnection()
+
+        XCTAssertEqual(client.requests.count, 1)
+        XCTAssertEqual(relaunched.connection, .failed(AudiobookshelfSettingsStore.tokenForNewServerMessage))
+    }
+
+    func test_newTokenIsNotUsedForUploadsUntilItsServerIsVerified() async {
+        client.result = .success([books])
+        let store = makeStore()
+        store.serverText = "https://one.example.com"
+        store.saveToken("token")
+        await store.testConnection()
+
+        client.result = .failure(AudiobookshelfError.unreachable)
+        store.serverText = "https://two.example.com"
+        store.saveToken("token-two")
+        await store.testConnection()
+
+        XCTAssertEqual(client.requests.last?.server.absoluteString, "https://two.example.com")
+        XCTAssertNil(store.destination)
+        XCTAssertFalse(store.needsTokenForAddress)
+    }
+
+    func test_firstTokenCanBeTestedAgainstAnyAddress() async {
+        client.result = .failure(AudiobookshelfError.unreachable)
+        let store = makeStore()
+        store.serverText = "https://one.example.com"
+        store.saveToken("token")
+        await store.testConnection()
+
+        client.result = .success([books])
+        store.serverText = "https://two.example.com"
+        await store.testConnection()
+
+        XCTAssertEqual(store.connection, .connected)
+        XCTAssertEqual(client.requests.map(\.server.absoluteString), ["https://one.example.com", "https://two.example.com"])
     }
 
     func test_disconnectRemovesTokenAndSettings() async {

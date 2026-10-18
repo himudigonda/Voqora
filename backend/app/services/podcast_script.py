@@ -1,9 +1,16 @@
 import math
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
-from app.services.languages import is_valid_voice
 from app.services.text_normalizer import strip_markdown_for_narration
+from app.services.voice_blends import is_blend_id
+from app.services.voices import is_known_voice
 
 PODCAST_KIND = "podcast"
 
@@ -17,16 +24,19 @@ MAX_PAUSE_SECONDS = 3.0
 DEFAULT_PAUSE_SECONDS = 0.4
 _MAX_LISTED_UNKNOWN = 5
 SPEAKER_ID_PATTERN = r"^[A-Za-z0-9_-]{1,32}$"
+STORED_SCRIPT_CONTEXT = {"stored": True}
 
 
 def _single_line(value: str) -> str:
     return " ".join(value.split())
 
 
-def _require_voice(value: str) -> str:
-    if not is_valid_voice(value):
-        raise ValueError(f"unknown voice: {value}")
-    return value
+def _require_voice(value: str, info: ValidationInfo) -> str:
+    if is_known_voice(value):
+        return value
+    if is_blend_id(value) and (info.context or {}).get("stored"):
+        return value
+    raise ValueError(f"unknown voice: {value}")
 
 
 class Speaker(BaseModel):
@@ -44,8 +54,8 @@ class Speaker(BaseModel):
 
     @field_validator("voice")
     @classmethod
-    def require_known_voice(cls, value: str) -> str:
-        return _require_voice(value)
+    def require_known_voice(cls, value: str, info: ValidationInfo) -> str:
+        return _require_voice(value, info)
 
 
 class Turn(BaseModel):

@@ -8,7 +8,6 @@ import os
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import settings
@@ -20,6 +19,7 @@ from app.services.speech_stream import (
     MAX_ENGINE_SPEED,
     MAX_SPEECH_CHARS,
     MIN_ENGINE_SPEED,
+    SpeechStreamResponse,
     open_speech_samples,
 )
 from app.services.text_normalizer import strip_markdown_for_narration
@@ -194,7 +194,8 @@ async def speak(req: SpeakRequest):
             status_code=500,
             content="Speech generation failed. Check that the voice model is available and try again.",
         )
-    return StreamingResponse(
+    return SpeechStreamResponse(
+        samples,
         AudioService.stream_samples_to_wav(samples, req.volume),
         media_type="audio/wav",
     )

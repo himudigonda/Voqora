@@ -36,16 +36,23 @@ async def mcp_endpoint(request: Request) -> Response:
         return _rpc_error(400, PARSE_ERROR, "Parse error.")
     if isinstance(message, list):
         return _rpc_error(400, INVALID_REQUEST, "Batch requests are not supported.")
-    reply = mcp_server.handle(message)
+    requested_session = request.headers.get("mcp-session-id")
+    session = mcp_server.sessions.lookup(requested_session)
+    reply = mcp_server.handle(message, session)
     if reply is None:
         return Response(status_code=202)
     status = 400 if reply["id"] is None else 200
-    return JSONResponse(reply, status_code=status)
+    headers = (
+        {"Mcp-Session-Id": session.id}
+        if session.id is not None and session.id != requested_session
+        else None
+    )
+    return JSONResponse(reply, status_code=status, headers=headers)
 
 
 @router.api_route("/mcp", methods=["GET", "DELETE"])
 def mcp_unsupported_method() -> Response:
-    """Voqora does not open server-sent streams or sessions on /mcp."""
+    """Voqora does not open server-sent streams on /mcp or end sessions early."""
     return _rpc_error(405, INVALID_REQUEST, "Method not allowed.", {"Allow": "POST"})
 
 

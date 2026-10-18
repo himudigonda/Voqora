@@ -4,10 +4,16 @@ import Foundation
 final class AudiobookService: NSObject, @unchecked Sendable {
     private let connection: BackendConnection
     private let session: URLSession
+    private let eventSession: URLSession
 
-    init(connection: BackendConnection = .shared, session: URLSession = .shared) {
+    init(
+        connection: BackendConnection = .shared,
+        session: URLSession = .shared,
+        eventSession: URLSession = EventStreamSession.shared
+    ) {
         self.connection = connection
         self.session = session
+        self.eventSession = eventSession
         super.init()
     }
 
@@ -355,7 +361,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                     var sawTerminal = false
                     var bookGone = false
                     do {
-                        let (bytes, response) = try await self.session.bytes(for: req)
+                        let (bytes, response) = try await self.eventSession.bytes(for: req)
                         if let http = response as? HTTPURLResponse,
                            http.statusCode == 404 || http.statusCode == 410
                         {
