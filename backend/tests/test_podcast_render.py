@@ -516,8 +516,22 @@ def test_render_endpoint_hides_storage_errors(started, monkeypatch):
 
 def test_render_endpoint_reports_a_rejected_start(monkeypatch):
     monkeypatch.setattr(AudiobookService, "start", AsyncMock(return_value=False))
+    cover = AsyncMock()
+    monkeypatch.setattr("app.api.podcast._render_cover_task", cover)
     response = TestClient(app).post("/podcast/render", json=_render_body())
     assert response.status_code == 409
+    assert AudiobookStore.list_books() == []
+    cover.assert_not_called()
+
+
+def test_render_endpoint_removes_the_item_when_start_crashes(monkeypatch):
+    monkeypatch.setattr(
+        AudiobookService, "start", AsyncMock(side_effect=RuntimeError("queue"))
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    response = client.post("/podcast/render", json=_render_body())
+    assert response.status_code == 500
+    assert AudiobookStore.list_books() == []
 
 
 def test_script_lookup_errors():

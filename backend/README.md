@@ -30,7 +30,9 @@ settings travel in the `X-Voqora-LLM-Provider`, `X-Voqora-LLM-Key`,
 - `POST /podcast/script` writes a podcast script with the chosen AI provider.
   The body names a source (`{"text": ...}` or `{"book_id": ...}`), a style
   (`deep_dive`, `brief`, `debate` or `lecture`), 2 to 30 minutes, a language
-  and one or two hosts (`lecture` takes one host, `debate` takes two). Long
+  and one or two hosts (`lecture` takes one host, `debate` takes two). Each
+  host's voice must speak that language (US and UK English voices both count
+  as English). Long
   sources are condensed into notes first. The source is passed to the model
   as delimited data, and the reply must be JSON that passes validation, with
   one repair attempt.

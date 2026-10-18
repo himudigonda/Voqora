@@ -18,7 +18,7 @@ from app.services import podcast_library
 from app.services.audiobook_service import AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.import_limits import ImportLimitError, ensure_storage_capacity
-from app.services.languages import LANGUAGES, is_valid_voice
+from app.services.languages import LANGUAGES, espeak_lang_for_voice, is_valid_voice
 from app.services.llm_providers import LLMConfigError, LLMCredential, LLMError
 from app.services.podcast_generator import (
     MAX_SOURCE_CHARS,
@@ -48,6 +48,10 @@ _HOST_COUNTS: dict[str, frozenset[int]] = {
     "debate": frozenset({2}),
     "lecture": frozenset({1}),
 }
+
+
+def _base_language(code: str) -> str:
+    return code.split("-")[0]
 
 
 def _optional_title(value: str | None) -> str | None:
@@ -126,6 +130,12 @@ class ScriptRequest(BaseModel):
         names = [host.name.casefold() for host in self.hosts]
         if len(set(names)) != len(names):
             raise ValueError("host names must be different")
+        language = _base_language(self.language)
+        if any(
+            _base_language(espeak_lang_for_voice(host.voice)) != language
+            for host in self.hosts
+        ):
+            raise ValueError("every host voice must speak the script language")
         return self
 
     def brief(self) -> ScriptBrief:
@@ -329,11 +339,17 @@ async def render_podcast(req: RenderRequest):
     script = req.script.model_copy(update={"title": title})
     seconds = _require_render_capacity(script)
     book_id = await _create_item(script, title)
-    _spawn_bg(_render_cover_task(book_id, False))
-    if not await AudiobookService.start(book_id, None, uses_llm_cleanup=False):
+    try:
+        accepted = await AudiobookService.start(book_id, None, uses_llm_cleanup=False)
+    except Exception:
+        AudiobookStore.delete_book(book_id)
+        raise
+    if not accepted:
+        AudiobookStore.delete_book(book_id)
         raise HTTPException(
             status_code=409, detail="This podcast is already processing."
         )
+    _spawn_bg(_render_cover_task(book_id, False))
     log.info(
         "podcast.render_queued",
         extra={

@@ -230,12 +230,19 @@ def test_parse_script_accepts_fenced_json_and_assigns_brief_speakers():
     assert script.turns[0].section == "Intro"
 
 
+def test_parse_script_extracts_json_wrapped_in_prose():
+    script = parse_script(f"Here is the script:\n{_llm_json()}\nEnjoy!", _brief())
+    assert script.title == "Generated"
+
+
 def test_parse_script_prefers_the_requested_title():
     brief = ScriptBrief("brief", 2, "en-us", TWO_HOSTS, title="My Title")
     assert parse_script(_llm_json(), brief).title == "My Title"
 
 
-@pytest.mark.parametrize("raw", ["not json", "[1, 2]", '{"title": "x"}', ""])
+@pytest.mark.parametrize(
+    "raw", ["not json", "[1, 2]", '{"title": "x"}', "", "prose {not json}"]
+)
 def test_parse_script_rejects_unusable_output(raw):
     with pytest.raises(ScriptRejected) as rejected:
         parse_script(raw, _brief())
@@ -338,6 +345,10 @@ async def test_long_source_is_summarized_into_bounded_notes():
         for c in note_calls
     )
     assert all("untrusted data" in c["system"] for c in note_calls)
+    assert all(
+        f"at most {podcast_generator.NOTES_TARGET_WORDS} words" in c["system"]
+        for c in note_calls
+    )
     script_call = fake.calls[-1]
     assert "Notes for part 1" in script_call["text"]
     assert source not in script_call["text"]
@@ -506,6 +517,12 @@ def test_script_endpoint_rejects_an_incomplete_credential():
         {"source": {"text": "   "}},
         {"source": {"text": "x" * (podcast_generator.MAX_SOURCE_CHARS + 1)}},
         {"title": "t" * 201},
+        {"language": "es"},
+        {
+            "style": "lecture",
+            "language": "hi",
+            "hosts": [{"name": "Asha", "voice": "ef_dora"}],
+        },
     ],
 )
 def test_script_endpoint_validates_the_request(overrides):
