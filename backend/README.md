@@ -15,6 +15,33 @@ not a hosted Voqora API.
 - Use an AI provider only for optional document cleanup and scanned-page OCR.
   The provider and key come from the request headers and are never stored.
 
+## API
+
+Every request needs the per-launch `X-Voqora-IPC-Token` header. AI provider
+settings travel in the `X-Voqora-LLM-Provider`, `X-Voqora-LLM-Key`,
+`X-Voqora-LLM-Model` and `X-Voqora-LLM-Base-URL` headers and are never stored.
+
+- `GET /health`, `GET /engine`, `POST /prewarm`, `POST /speak`: speech.
+- `POST /audiobook` uploads a document; `POST /audiobook/{id}/start`,
+  `/cancel` and `/retry` control processing; `GET /audiobook/{id}/events`
+  streams progress as server-sent events; `GET /audiobook/{id}/audio`,
+  `/transcript` and `/cover` serve the result. `GET /audiobook` lists the
+  Library. Every item has a `kind`: `book` or `podcast`.
+- `POST /podcast/script` writes a podcast script with the chosen AI provider.
+  The body names a source (`{"text": ...}` or `{"book_id": ...}`), a style
+  (`deep_dive`, `brief`, `debate` or `lecture`), 2 to 30 minutes, a language
+  and one or two hosts (`lecture` takes one host, `debate` takes two). Long
+  sources are condensed into notes first. The source is passed to the model
+  as delimited data, and the reply must be JSON that passes validation, with
+  one repair attempt.
+- `POST /podcast/render` takes `{"script": ..., "title": ...}`, creates a
+  `podcast` Library item and narrates it turn by turn in each speaker's voice.
+  Scripts have 1 to 4 speakers and up to 600 turns of up to 2,000 characters,
+  each with a pause of 0 to 3 seconds. Progress, cancel, retry, resume,
+  audio and transcript use the audiobook routes above, where a page is a
+  turn and each transcript line carries `speaker_id` and `speaker`.
+- `GET /podcast/{id}/script` returns the script a podcast was made from.
+
 ## Local development
 
 From the repository root:

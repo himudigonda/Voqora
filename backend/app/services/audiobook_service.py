@@ -33,6 +33,7 @@ from google.genai import types
 
 from app.core.config import settings as _settings
 from app.core.logging import get_logger
+from app.services import podcast_library
 from app.services.audiobook_store import AudiobookStore, _now_iso
 from app.services.engine_manager import EngineManager
 from app.services.llm_cleaner import FLEX_HTTP_OPTIONS, LLMCleaner
@@ -801,12 +802,15 @@ class AudiobookService:
         credential = cls._job_keys.get(book_id)
 
         try:
-            await cls._phase_extract(book_id)
-            await cls._phase_clean(book_id, credential)
-            # Re-read meta — page_count + voice/speed haven't changed but other
-            # fields might be updated by clean phase.
-            meta = AudiobookStore.read_meta(book_id) or meta
-            await cls._phase_section(book_id, credential, meta)
+            if podcast_library.is_podcast(meta):
+                await cls._phase_prepare_script(book_id)
+            else:
+                await cls._phase_extract(book_id)
+                await cls._phase_clean(book_id, credential)
+                # Re-read meta — page_count + voice/speed haven't changed but other
+                # fields might be updated by clean phase.
+                meta = AudiobookStore.read_meta(book_id) or meta
+                await cls._phase_section(book_id, credential, meta)
             meta = AudiobookStore.read_meta(book_id) or meta
             await cls._phase_tts(book_id, meta)
             actual = await cls._phase_concat(book_id, meta)
@@ -891,6 +895,13 @@ class AudiobookService:
             cls._emit(book_id, "failed", error=error_message, error_code=error_code)
         finally:
             cls._cancel_flags.pop(book_id, None)
+
+    @classmethod
+    async def _phase_prepare_script(cls, book_id: str) -> None:
+        cls._check_cancel(book_id)
+        await asyncio.get_running_loop().run_in_executor(
+            cls._executor, podcast_library.materialize_turn_pages, book_id
+        )
 
     # ---------- phase: extract ----------
 
@@ -1646,8 +1657,13 @@ class AudiobookService:
             book_id, "phase_started", phase="tts", page=page_done, total=page_count
         )
 
-        voice = meta.get("voice") or EngineManager.default_voice()
+        default_voice = meta.get("voice") or EngineManager.default_voice()
         speed = float(meta.get("speed") or 1.0)
+        plan = (
+            podcast_library.turn_plan(book_id)
+            if podcast_library.is_podcast(meta)
+            else None
+        )
         failed: list[int] = list(
             (AudiobookStore.read_meta(book_id) or {}).get("failed_pages") or []
         )
@@ -1692,8 +1708,15 @@ class AudiobookService:
                 else:
                     try:
                         samples, lines = await cls._generate_full_page(
-                            book_id, text, voice, speed
+                            book_id,
+                            text,
+                            plan[n - 1].voice if plan else default_voice,
+                            speed,
                         )
+                        if plan:
+                            samples = _with_trailing_pause(
+                                samples, plan[n - 1].pause_after_seconds
+                            )
                         cls._write_json_atomic(timing_path, {"lines": lines})
                         cls._write_wav_from_samples(out_path, samples)
                         produced += os.path.getsize(out_path)
@@ -1914,8 +1937,12 @@ class AudiobookService:
                     page_to_time,
                     page_status,
                     float(current_meta.get("speed") or 1.0),
+                    cls._speaker_labels(book_id, current_meta),
                 ),
             }
+            if podcast_library.is_podcast(current_meta):
+                transcript["kind"] = current_meta["kind"]
+                transcript["speakers"] = list(current_meta.get("speakers") or [])
             tpath = AudiobookStore.transcript_path(book_id)
             tmp = tpath + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
@@ -1986,8 +2013,10 @@ class AudiobookService:
         page_to_time: dict[str, float],
         page_status: dict[str, str],
         speed: float = 1.0,
+        speakers: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
         lines: dict[str, list[dict[str, Any]]] = {}
+        speakers = speakers or {}
         for n in range(1, page_count + 1):
             key = str(n)
             if page_status.get(key) in _SILENT_PAGE_STATUSES:
@@ -2007,6 +2036,7 @@ class AudiobookService:
                     "text": str(line["text"]),
                     "start": round(offset + float(line["start"]), 3),
                     "end": round(offset + float(line["end"]), 3),
+                    **speakers.get(key, {}),
                 }
                 for line in page_lines
                 if isinstance(line, dict) and line.get("text")
@@ -2071,9 +2101,18 @@ class AudiobookService:
             page_to_time,
             page_status,
             float(meta.get("speed") or 1.0),
+            cls._speaker_labels(book_id, meta),
         )
         if transcript["lines"] != existing:
             cls._write_json_atomic(path, transcript)
+
+    @staticmethod
+    def _speaker_labels(
+        book_id: str, meta: dict[str, Any]
+    ) -> dict[str, dict[str, str]]:
+        if not podcast_library.is_podcast(meta):
+            return {}
+        return podcast_library.speaker_labels(book_id)
 
     @staticmethod
     def _remove_quietly(path: str) -> None:
@@ -2152,6 +2191,13 @@ class AudiobookService:
             "processing_seconds": processing_seconds,
             "cost_usd": cost_usd,
         }
+
+
+def _with_trailing_pause(samples: np.ndarray, seconds: float) -> np.ndarray:
+    pause = int(max(0.0, seconds) * SAMPLE_RATE)
+    if pause == 0:
+        return samples
+    return np.concatenate([samples, np.zeros(pause, dtype=samples.dtype)])
 
 
 def _wav_header(pcm_data_size: int) -> bytes:

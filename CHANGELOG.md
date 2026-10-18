@@ -35,6 +35,10 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- AI podcasts: turn a document or pasted text into a deep dive, brief, debate
+  or lecture with one or two hosts, then listen to it in Library. You can also
+  write your own script for up to four voices. Podcasts show who is speaking
+  in the transcript and can be cancelled and resumed like audiobooks.
 
 ### Changed
 

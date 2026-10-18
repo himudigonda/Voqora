@@ -12,6 +12,7 @@ from app.api.middleware import (
     IPCAuthenticationMiddleware,
     RejectBrowserOriginMiddleware,
 )
+from app.api.podcast import router as podcast_router
 from app.api.tts import router as tts_router
 from app.core.config import settings
 from app.core.logging import configure as configure_logging
@@ -121,6 +122,7 @@ app.add_middleware(IPCAuthenticationMiddleware)
 
 app.include_router(tts_router)
 app.include_router(audiobook_router)
+app.include_router(podcast_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:

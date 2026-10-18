@@ -607,6 +607,59 @@ class LLMCleaner:
         return GeneratedText(completion.text or empty, usage)
 
     @classmethod
+    async def complete_text(
+        cls,
+        credential: LLMCredential,
+        system: str,
+        text: str,
+        *,
+        max_output_tokens: int,
+        json_output: bool = False,
+    ) -> GeneratedText:
+        return await cls._with_retry(
+            "complete_text",
+            lambda tier: cls._async_text(
+                credential, system, text, max_output_tokens, json_output, tier
+            ),
+            start_tier=types.ServiceTier.STANDARD,
+        )
+
+    @classmethod
+    async def _async_text(
+        cls,
+        credential: LLMCredential,
+        system: str,
+        text: str,
+        max_output_tokens: int,
+        json_output: bool,
+        tier: "types.ServiceTier",
+    ) -> GeneratedText:
+        if not credential.is_gemini:
+            return await cls._async_complete(
+                credential, system, text=text, max_output_tokens=max_output_tokens
+            )
+        client = genai.Client(
+            api_key=credential.api_key, http_options=STANDARD_HTTP_OPTIONS
+        )
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.7,
+            max_output_tokens=max_output_tokens,
+            response_mime_type="application/json" if json_output else None,
+            service_tier=tier,
+        )
+        try:
+            resp = await client.aio.models.generate_content(
+                model=credential.resolved_model, config=config, contents=text
+            )
+        except Exception as e:
+            cls._reraise_typed(e, credential)
+        cls._require_complete(resp)
+        return GeneratedText(
+            (resp.text or "").strip(), cls._usage_from_response(resp, tier, credential)
+        )
+
+    @classmethod
     def _usage_from_response(
         cls,
         response: Any,
