@@ -27,7 +27,7 @@ struct SystemPasteboard: PasteboardAccessing {
     private let pasteboard: NSPasteboard
 
     init(pasteboard: NSPasteboard = .general) {
-        self.pasteboard = pasteboard ?? SystemPasteboard()
+        self.pasteboard = pasteboard
     }
 
     var changeCount: Int {
@@ -72,7 +72,7 @@ struct SystemPasteCommand: PasteCommandSending {
 }
 
 struct TranscriptInserter: TranscriptInserting {
-    static let defaultRestoreDelay: TimeInterval = 0.4
+    nonisolated static let defaultRestoreDelay: TimeInterval = 0.4
 
     private let pasteboard: any PasteboardAccessing
     private let pasteCommand: any PasteCommandSending
@@ -89,7 +89,7 @@ struct TranscriptInserter: TranscriptInserting {
             try? await Task.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
         }
     ) {
-        self.pasteboard = pasteboard
+        self.pasteboard = pasteboard ?? SystemPasteboard()
         self.pasteCommand = pasteCommand ?? SystemPasteCommand()
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.restoreDelay = restoreDelay
