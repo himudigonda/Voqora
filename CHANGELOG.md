@@ -10,6 +10,10 @@
   paste or copy only, and the auto-stop pause on the new Dictation page, where
   your last 200 transcripts are kept. Audio is sent to Apple only if you allow
   server recognition for a language without on-device support.
+- Other apps and AI agents can use Voqora's voices through an optional local
+  API. It is off until you turn it on, listens only on this Mac, and needs the
+  key you set. It speaks the OpenAI speech API, can ask Voqora to read text
+  aloud, and includes an MCP server with speak, stop, and list voices tools.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
   OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or

@@ -246,6 +246,72 @@ settings travel in the `X-Voqora-LLM-Provider`, `X-Voqora-LLM-Key`,
   turn and each transcript line carries `speaker_id` and `speaker`.
 - `GET /podcast/{id}/script` returns the script a podcast was made from.
 
+## API
+
+### Private app channel
+
+Every route below needs the per-launch `X-Voqora-IPC-Token` header and is
+refused when an `Origin` header is present.
+
+- `GET /health`, `GET /engine`, `POST /prewarm`, `POST /speak`, and the
+  `/audiobook` routes serve the native app.
+- `GET /integrations/local-api` returns `{enabled, port, running}`, plus
+  `error` and `error_code` when the local API could not start or stopped. The
+  key is never returned.
+- `POST /integrations/local-api` takes `{enabled, port, api_key}`. `port` is
+  1024 to 65535 and `api_key` is 32 to 128 characters of `A-Z a-z 0-9 . _ ~ + /
+  = -`; both are required when `enabled` is true. The call starts, restarts, or
+  stops the local API and returns the same shape as the GET. A port that is
+  taken returns 409 with `error_code` `port_in_use`. Other codes are
+  `permission_denied`, `bind_failed`, `start_failed`, `start_timeout`, and
+  `stopped`.
+- `GET /integrations/events` is a server-sent event stream. It sends
+  `{"type": "ready"}` first, then `{"type": "speak", "id", "text", "voice"}`
+  and `{"type": "stop", "id"}` commands from the local API for the app to play,
+  with a `: keep-alive` comment every 15 seconds. `voice` is null when the
+  caller left it to the app.
+
+### Local API (opt-in)
+
+A second server that the app starts on `127.0.0.1` only, on the port the user
+picks. It shares the speech engine and the interactive speech lock with
+`/speak`. The key and port live in the app; this service never stores them.
+
+Every request needs `Authorization: Bearer <api_key>`. Requests with an
+`Origin` header are refused unless the origin is a `chrome-extension://`,
+`moz-extension://`, or `safari-web-extension://` extension, and those still
+need the key. CORS preflight is answered only for those origins. Bodies are
+capped at 1 MiB, and each key gets a token bucket of 60 requests that refills
+at 2 per second (429 with `Retry-After` when empty). Errors use the OpenAI
+shape `{"error": {"message", "type", "param", "code"}}`.
+
+- `GET /v1/models` lists `kokoro`, `tts-1`, and `tts-1-hd`. All three use
+  Kokoro.
+- `GET /v1/voices` returns `{object, data, aliases}`. `data` holds built-in
+  voices `{id, name, gender, language, type: "builtin"}` and voice blends
+  `{id, name, type: "custom"}`. `aliases` maps OpenAI voice names to Kokoro
+  voices: alloy to af_heart, echo to am_michael, fable to bm_fable, onyx to
+  am_adam, nova to af_bella, shimmer to af_nicole.
+- `POST /v1/audio/speech` takes `{model, input, voice, response_format?,
+  speed?, pause_scale?}`. `input` is up to 50,000 characters. `voice` is a
+  built-in voice, a voice blend id, or an OpenAI voice name. `response_format`
+  is `wav` (default), `pcm` (raw 24 kHz mono 16-bit little-endian), or `flac`;
+  anything else is a 400 naming the supported formats. `speed` is 0.25 to 4.0
+  and is clamped to the engine's 0.5 to 2.0. `pause_scale` is Voqora's pause
+  length setting (0.5 to 2.0, default 1.0), as on `/speak`. The pronunciation
+  dictionary applies, as it does on `/speak`. WAV and PCM stream as they are
+  made; FLAC is sent once encoding finishes.
+- `POST /v1/voqora/speak` takes `{text, voice?}` and asks the app to speak it
+  on this Mac. `POST /v1/voqora/stop` stops speech and drops queued commands.
+  Both return 202 `{status: "queued", id}`, 503 when the app is not
+  subscribed to `/integrations/events`, and 429 when 16 commands are queued.
+- `POST /mcp` is a Model Context Protocol server over Streamable HTTP with
+  JSON responses. It supports protocol versions 2025-11-25, 2025-06-18,
+  2025-03-26, and 2024-11-05, and the methods `initialize`,
+  `notifications/initialized`, `ping`, `tools/list`, and `tools/call`. Tools
+  are `speak(text, voice?)`, `stop()`, and `list_voices()`. `GET` and
+  `DELETE` return 405.
+
 ## Local development
 
 From the repository root:

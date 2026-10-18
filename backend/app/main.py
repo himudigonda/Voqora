@@ -10,6 +10,8 @@ from app.api.ai import router as ai_router
 from app.api.article import router as article_router
 from app.api.audiobook import router as audiobook_router
 from app.api.export import router as export_router
+from app.api.integrations import local_api_server
+from app.api.integrations import router as integrations_router
 from app.api.middleware import (
     CorrelationMiddleware,
     IPCAuthenticationMiddleware,
@@ -23,6 +25,7 @@ from app.core.config import settings
 from app.core.logging import configure as configure_logging
 from app.core.logging import get_logger
 from app.services.engine_manager import EngineManager
+from app.services.speech_relay import speech_relay
 from app.services.tts import TTSEngine
 
 # Force asyncio backend for uvicorn compatibility
@@ -111,6 +114,8 @@ async def lifespan(app: FastAPI):
     _spawn_bg(_parent_watchdog())
 
     yield
+    speech_relay.close_all()
+    await local_api_server.shutdown()
     # Clean shutdown: cancel any in-flight audiobook pipeline at the next
     # page-boundary checkpoint, then release the thread pool. See HARD-073.
     from app.services.audiobook_service import AudiobookService as _AS
@@ -135,6 +140,7 @@ app.include_router(export_router)
 app.include_router(ai_router)
 app.include_router(article_router)
 app.include_router(podcast_router)
+app.include_router(integrations_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:
