@@ -32,7 +32,7 @@ to every author and maintainer below; Voqora would not exist without them.
 | pypdfium2 (PDFium) | PDF rendering | BSD-3-Clause, Apache-2.0 |
 | Pillow | Image handling | MIT-CMU and bundled notices |
 | python-docx | DOCX import | MIT |
-| lxml | DOCX parsing | BSD-3-Clause |
+| lxml | DOCX, EPUB, and HTML parsing | BSD-3-Clause |
 | pypinyin | Chinese pronunciation | MIT |
 | google-genai | Optional Gemini cleanup | Apache-2.0 |
 | httpx | Optional AI provider cleanup | BSD-3-Clause |

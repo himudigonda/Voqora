@@ -59,6 +59,9 @@
   and narrator, ready for Apple Books and other audiobook players. Choose
   Export from the book's right-click menu or the player. WAV export is still
   there, and Preferences -> Audiobooks sets the M4B quality.
+- Library imports EPUB books and HTML pages. EPUB chapters come from the
+  book's table of contents, and the title, author, and cover come from the
+  book itself. DRM-protected EPUBs are refused with a clear message.
 
 ### Changed
 
