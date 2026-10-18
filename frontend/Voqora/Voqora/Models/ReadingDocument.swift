@@ -36,7 +36,8 @@ nonisolated struct ReadingDocument: Equatable, Sendable {
 }
 
 nonisolated extension ReadingDocument {
-    init(transcript: TranscriptDocument, wordTimings: [Int: [ReadingWordTiming]] = [:]) {
+    init(transcript: TranscriptDocument, wordTimings: [Int: [ReadingWordTiming]]? = nil) {
+        let timings = wordTimings ?? transcript.wordTimings
         sentences = transcript.lines.map { line in
             ReadingSentence(
                 id: line.id,
@@ -45,7 +46,7 @@ nonisolated extension ReadingDocument {
                 end: line.end,
                 block: line.block,
                 isHeading: line.isHeading,
-                words: wordTimings[line.id].flatMap(ReadingWordTiming.sanitized)
+                words: timings[line.id].flatMap(ReadingWordTiming.sanitized)
             )
         }
     }

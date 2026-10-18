@@ -22,15 +22,22 @@ final class AudiobookViewModel: ObservableObject {
     @Published var hasLoadedOnce: Bool = false
     @Published var loadFailed: Bool = false
 
-    @Published var pendingDocument: URL? = nil
+    @Published var pendingSource: AudiobookImportSource? = nil
     @Published var isImporterPresented = false
+    @Published var isWebPageImportPresented = false
+    @Published private(set) var webPageDraft = ""
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
     @Published private(set) var deletingAllBooks = false
     @Published var completionSummary: Audiobook? = nil
 
+    var pendingDocument: URL? {
+        get { pendingSource?.documentURL }
+        set { pendingSource = newValue.map(AudiobookImportSource.document) }
+    }
+
     private struct QueuedUpload {
-        let document: URL
+        let source: AudiobookImportSource
         let voice: String
         let speed: Double
         let engine: String
@@ -263,17 +270,53 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func presentEstimate(for document: URL, voice: String, speed: Double, engine: String) {
-        if pendingDocument != nil || uploadInProgress {
-            uploadQueue.append(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine))
-            showToast("Queued \(AudiobookImportStaging.displayName(from: document.lastPathComponent))", kind: .info)
+        presentEstimate(for: .document(document), voice: voice, speed: speed, engine: engine)
+    }
+
+    func presentEstimate(for source: AudiobookImportSource, voice: String, speed: Double, engine: String) {
+        let upload = QueuedUpload(source: source, voice: voice, speed: speed, engine: engine)
+        if pendingSource != nil || uploadInProgress {
+            uploadQueue.append(upload)
+            showToast("Queued \(source.displayName)", kind: .info)
             return
         }
-        pendingDocument = document
-        requestEstimate(QueuedUpload(document: document, voice: voice, speed: speed, engine: engine), replacing: nil)
+        pendingSource = source
+        requestEstimate(upload, replacing: nil)
+    }
+
+    func importVoice(fallback: String) -> String {
+        defaultBookVoice.isEmpty ? fallback : defaultBookVoice
+    }
+
+    func importSpeed(fallback: Double) -> Double {
+        defaultBookSpeed > 0 ? defaultBookSpeed : fallback
+    }
+
+    func presentWebPageImport() {
+        guard pendingSource == nil else { return }
+        isWebPageImportPresented = true
+    }
+
+    func dismissWebPageImport() {
+        isWebPageImportPresented = false
+    }
+
+    func importWebPage(_ url: URL, voice: String, speed: Double) {
+        webPageDraft = url.absoluteString
+        isWebPageImportPresented = false
+        presentEstimate(for: .webPage(url), voice: voice, speed: speed, engine: "kokoro")
+    }
+
+    func editWebPageLink() {
+        guard pendingSource?.webPageURL != nil else { return }
+        cancelUpload()
+        if pendingSource == nil {
+            isWebPageImportPresented = true
+        }
     }
 
     func refreshEstimate() {
-        guard let upload = pendingUpload, pendingDocument != nil, !startingProcessing else { return }
+        guard let upload = pendingUpload, pendingSource != nil, !startingProcessing else { return }
         requestEstimate(upload, replacing: pendingEstimate)
     }
 
@@ -305,30 +348,48 @@ final class AudiobookViewModel: ObservableObject {
             }
             guard generation == uploadGeneration else { return }
             do {
-                let estimate = try await service.upload(
-                    document: upload.document,
-                    voice: upload.voice,
-                    speed: upload.speed,
-                    engine: upload.engine,
-                    cleanup: credential
-                )
+                let estimate = try await fetchEstimate(for: upload, cleanup: credential)
                 guard generation == uploadGeneration else {
                     try? await service.delete(estimate.bookID)
                     return
                 }
                 pendingEstimate = estimate
                 if previous == nil {
-                    MetricsService.shared.trackAudiobookUpload(
-                        pages: estimate.pageCount,
-                        fileKind: upload.document.pathExtension.lowercased()
-                    )
+                    MetricsService.shared.trackAudiobookUpload(pages: estimate.pageCount, fileKind: Self.fileKind(of: upload.source))
                 }
             } catch {
                 guard generation == uploadGeneration else { return }
-                loadingError = error.localizedDescription
-                showToast("Could not read this document. Check the file and try again.", kind: .error)
+                switch upload.source {
+                case .document:
+                    loadingError = error.localizedDescription
+                    showToast("Could not read this document. Check the file and try again.", kind: .error)
+                case .webPage:
+                    loadingError = WebPageImportMessage.message(for: error)
+                    VoqoraLog.warn("AudiobookViewModel", "Web page import failed", ["failureCode": Self.webImportFailureCode(for: error)])
+                }
             }
         }
+    }
+
+    private func fetchEstimate(for upload: QueuedUpload, cleanup: LLMCredential?) async throws -> AudiobookEstimateResponse {
+        switch upload.source {
+        case let .document(document):
+            try await service.upload(document: document, voice: upload.voice, speed: upload.speed, engine: upload.engine, cleanup: cleanup)
+        case let .webPage(url):
+            try await service.importWebPage(url, voice: upload.voice, speed: upload.speed, engine: upload.engine, cleanup: cleanup)
+        }
+    }
+
+    static func fileKind(of source: AudiobookImportSource) -> String {
+        switch source {
+        case let .document(url): url.pathExtension.lowercased()
+        case .webPage: "url"
+        }
+    }
+
+    static func webImportFailureCode(for error: Error) -> String {
+        guard let failure = error as? AudiobookAPIFailure else { return "web_import_transport_failed" }
+        return failure.code ?? "web_import_http_\(failure.statusCode)"
     }
 
     func importDocument(_ url: URL, defaultVoice: String, defaultSpeed: Double) {
@@ -340,8 +401,8 @@ final class AudiobookViewModel: ObservableObject {
             let staged = try AudiobookImportStaging.stageDocument(from: url)
             presentEstimate(
                 for: staged,
-                voice: defaultBookVoice.isEmpty ? defaultVoice : defaultBookVoice,
-                speed: defaultBookSpeed > 0 ? defaultBookSpeed : defaultSpeed,
+                voice: importVoice(fallback: defaultVoice),
+                speed: importSpeed(fallback: defaultSpeed),
                 engine: "kokoro"
             )
         } catch {
@@ -382,7 +443,7 @@ final class AudiobookViewModel: ObservableObject {
         if let est = pendingEstimate {
             Task { try? await service.delete(est.bookID) }
         }
-        pendingDocument = nil
+        pendingSource = nil
         pendingUpload = nil
         pendingEstimate = nil
         loadingError = nil
@@ -393,7 +454,7 @@ final class AudiobookViewModel: ObservableObject {
     private func flushUploadQueue() {
         guard !uploadQueue.isEmpty else { return }
         let next = uploadQueue.removeFirst()
-        presentEstimate(for: next.document, voice: next.voice, speed: next.speed, engine: next.engine)
+        presentEstimate(for: next.source, voice: next.voice, speed: next.speed, engine: next.engine)
     }
 
     func startProcessing(useCleanup: Bool) {
@@ -412,7 +473,7 @@ final class AudiobookViewModel: ObservableObject {
             do {
                 try await service.start(bookID, cleanup: cleanup)
                 UsageStatsStore.shared.recordDocumentAdded(pages: est.pageCount)
-                pendingDocument = nil
+                pendingSource = nil
                 pendingUpload = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
@@ -422,7 +483,7 @@ final class AudiobookViewModel: ObservableObject {
             } catch {
                 showToast(error.localizedDescription, kind: .error)
                 Task { try? await service.delete(bookID) }
-                pendingDocument = nil
+                pendingSource = nil
                 pendingUpload = nil
                 pendingEstimate = nil
                 AudiobookImportStaging.discard(stagedDocument)
@@ -820,7 +881,7 @@ final class AudiobookViewModel: ObservableObject {
         transcriptTask?.cancel()
         transcriptState = .loading
         transcriptTask = Task { [weak self, service] in
-            let transcript = try? await service.transcript(for: bookID)
+            let transcript = try? await service.transcript(for: bookID, includingWords: true)
             let document = await Task.detached(priority: .userInitiated) {
                 transcript.map(TranscriptDocument.init(transcript:))
             }.value

@@ -6,13 +6,15 @@ enum AudiobookRoute: Hashable {
 }
 
 enum LibrarySheet: Identifiable {
-    case upload(URL)
+    case upload(AudiobookImportSource)
+    case addFromURL
     case completion(Audiobook)
     case fixProvider(AudiobookViewModel.ProviderFix)
 
     var id: String {
         switch self {
-        case let .upload(url): "upload-\(url.absoluteString)"
+        case let .upload(source): "upload-\(source.identifier)"
+        case .addFromURL: "add-from-url"
         case let .fixProvider(fix): "fix-\(fix.id)"
         case let .completion(book): "completion-\(book.bookID)"
         }
@@ -59,11 +61,19 @@ struct AudiobookLibraryView: View {
         .animation(.easeInOut(duration: 0.2), value: bookVM.libraryPath)
         .sheet(item: librarySheetBinding, onDismiss: { bookVM.offerResumeAfterFix() }) { sheet in
             switch sheet {
-            case let .upload(url):
-                UploadEstimateModal(documentURL: url)
+            case let .upload(source):
+                UploadEstimateModal(source: source)
                     .environmentObject(vm)
                     .environmentObject(bookVM)
                     .environmentObject(bookVM.providers)
+            case .addFromURL:
+                AddFromURLSheet(
+                    initialAddress: bookVM.webPageDraft,
+                    voice: bookVM.importVoice(fallback: vm.selectedVoice),
+                    speed: bookVM.importSpeed(fallback: vm.speechSpeed)
+                )
+                .environmentObject(vm)
+                .environmentObject(bookVM)
             case let .completion(book):
                 CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
                     .environmentObject(vm)
@@ -153,8 +163,11 @@ struct AudiobookLibraryView: View {
                 if let fix = bookVM.providerFix {
                     return .fixProvider(fix)
                 }
-                if let url = bookVM.pendingDocument {
-                    return .upload(url)
+                if let source = bookVM.pendingSource {
+                    return .upload(source)
+                }
+                if bookVM.isWebPageImportPresented {
+                    return .addFromURL
                 }
                 return nil
             },
@@ -164,8 +177,10 @@ struct AudiobookLibraryView: View {
                     bookVM.completionSummary = nil
                 } else if bookVM.providerFix != nil {
                     bookVM.endProviderFix()
-                } else if bookVM.pendingDocument != nil {
+                } else if bookVM.pendingSource != nil {
                     bookVM.cancelUpload()
+                } else if bookVM.isWebPageImportPresented {
+                    bookVM.dismissWebPageImport()
                 }
             }
         )
@@ -280,10 +295,15 @@ struct AudiobookLibraryView: View {
         !searchText.isEmpty && matchCount == 0
     }
 
+    static func matches(_ book: Audiobook, searchText: String) -> Bool {
+        book.displayTitle.localizedCaseInsensitiveContains(searchText)
+            || (book.displayAuthor?.localizedCaseInsensitiveContains(searchText) ?? false)
+    }
+
     private var filteredSorted: [Audiobook] {
         var result = bookVM.books
         if !searchText.isEmpty {
-            result = result.filter { $0.displayTitle.localizedCaseInsensitiveContains(searchText) }
+            result = result.filter { Self.matches($0, searchText: searchText) }
         }
         switch sort {
         case .recent:
@@ -304,6 +324,12 @@ struct AudiobookLibraryView: View {
             }
             .keyboardShortcut("o", modifiers: .command)
             .help("Add Book")
+
+            Button { bookVM.presentWebPageImport() } label: {
+                Label("Add from URL", systemImage: "link")
+            }
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .help("Add from URL")
 
             Menu {
                 Picker("Sort By", selection: $sort) {
@@ -341,12 +367,18 @@ struct AudiobookLibraryView: View {
         LibraryPlaceholder(
             systemImage: "books.vertical",
             title: "No Audiobooks",
-            message: "Turn a PDF, Word, text, or Markdown file into an audiobook you can follow line by line. Drop one here to begin."
+            message: "Turn a PDF, EPUB, Word, HTML, text, or Markdown file, or a web article, into an audiobook you can follow line by line. Drop a file here to begin."
         ) {
-            Button { bookVM.isImporterPresented = true } label: {
-                Label("Add a Document…", systemImage: "plus")
+            HStack(spacing: 12) {
+                Button { bookVM.isImporterPresented = true } label: {
+                    Label("Add a Document…", systemImage: "plus")
+                }
+                .buttonStyle(.voqoraPrimary)
+                Button { bookVM.presentWebPageImport() } label: {
+                    Label("Add from URL…", systemImage: "link")
+                }
+                .buttonStyle(.voqoraSecondary)
             }
-            .buttonStyle(.voqoraPrimary)
         }
     }
 

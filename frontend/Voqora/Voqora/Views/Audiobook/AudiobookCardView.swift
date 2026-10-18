@@ -54,6 +54,14 @@ struct AudiobookCardView: View {
                     .foregroundStyle(Palette.textPrimary)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+                if let author = book.displayAuthor {
+                    Text(author)
+                        .font(vm.appFont(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.textSecondary)
+                        .lineLimit(1)
+                        .help(author)
+                        .accessibilityLabel("By \(author)")
+                }
                 caption
             }
             .padding(.horizontal, 2)
