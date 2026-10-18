@@ -111,6 +111,10 @@ struct PreferencesView: View {
                         ShortcutRow(title: "Stop Playback", name: .stopText)
                         Divider().padding(.vertical, 8)
                         ShortcutRow(title: "Export to Desktop", name: .exportAudio)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Speak Text on Screen", name: .speakScreenText)
+                        Divider().padding(.vertical, 8)
+                        ShortcutRow(title: "Speak Clipboard", name: .speakClipboard)
 
                         Divider().padding(.vertical, 16)
 

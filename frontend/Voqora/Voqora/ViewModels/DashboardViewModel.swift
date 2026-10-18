@@ -373,7 +373,7 @@ class DashboardViewModel: ObservableObject {
         await speak(text: text)
     }
 
-    func speak(text: String) async {
+    func speak(text: String, voice: String? = nil) async {
         clearActionFeedback()
         guard isBackendOnline else {
             backend.start()
@@ -409,9 +409,10 @@ class DashboardViewModel: ObservableObject {
             awaitingFirstChunk = true
 
             let cleaned = TextProcessor.sanitize(text, options: .init(cleanURLs: cleanURLs, cleanHandles: true, fixLigatures: true, expandAbbr: true, expandNumbers: true, stripMarkdown: true))
-            let effectiveVoice = autoDetectLanguage
+            let preferredVoice = autoDetectLanguage
                 ? LanguageDetector.voiceForText(cleaned, fallback: selectedVoice)
                 : selectedVoice
+            let effectiveVoice = voice ?? preferredVoice
             VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": effectiveVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -564,7 +565,7 @@ class DashboardViewModel: ObservableObject {
         }
     }
 
-    private func showTransientError(_ message: String) {
+    func showTransientError(_ message: String) {
         clearActionFeedback()
         status = .error(message)
         errorResetTask?.cancel()
