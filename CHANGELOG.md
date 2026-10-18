@@ -14,6 +14,10 @@
   API. It is off until you turn it on, listens only on this Mac, and needs the
   key you set. It speaks the OpenAI speech API, can ask Voqora to read text
   aloud, and includes an MCP server with speak, stop, and list voices tools.
+- Voqora for Chrome and Edge: a browser extension in `extensions/chromium`
+  reads the selection or the main text of a page aloud through Voqora, from
+  the right-click menu, its toolbar button, or `Option + Shift + R` (stop with
+  `Option + Shift + S`). It talks only to the local API on your Mac.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
   OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or
