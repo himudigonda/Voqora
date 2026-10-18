@@ -933,26 +933,15 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func jumpToNextSection(in book: Audiobook) {
-        let sorted = chapters(for: book)
-        let t = audio.currentTime
-        if let next = sorted.first(where: { $0.startTime > t + 0.5 }) {
-            seek(toSeconds: next.startTime)
+        let starts = chapters(for: book).map(\.startTime)
+        if let next = PlaybackTrackNavigation.nextStart(in: starts, after: audio.currentTime) {
+            seek(toSeconds: next)
         }
     }
 
     func jumpToPreviousSection(in book: Audiobook) {
-        let sorted = chapters(for: book)
-        let t = audio.currentTime
-        if let current = sorted.last(where: { $0.startTime <= t }), t - current.startTime > 3 {
-            seek(toSeconds: current.startTime)
-            return
-        }
-        let prior = sorted.last(where: { $0.startTime < t - 1 })
-        if let prior {
-            seek(toSeconds: prior.startTime)
-        } else {
-            seek(toSeconds: 0)
-        }
+        let starts = chapters(for: book).map(\.startTime)
+        seek(toSeconds: PlaybackTrackNavigation.previousStart(in: starts, before: audio.currentTime))
     }
 
     enum SleepDuration: String, Identifiable, CaseIterable {

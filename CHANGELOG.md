@@ -35,6 +35,11 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- Media keys, AirPods and headphone controls, and Control Center now play,
+  pause, skip 15 seconds, and jump between sentences or chapters. Now Playing
+  shows the book, chapter, and cover. Turn this off with "Respond to media
+  keys" in Preferences -> Shortcuts. Playback pauses when headphones
+  disconnect.
 
 ### Changed
 
