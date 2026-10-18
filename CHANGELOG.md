@@ -35,6 +35,10 @@
 - Drop several files on Library at once to add them together.
 - Chapter lists come from Word and Markdown headings and from PDF outlines.
   Documents without headings get "Part N" sections.
+- The speech server can export a finished audiobook as SRT or WebVTT
+  subtitles, as an MP3 (64 to 192 kbps), and as a chapter list for M4B files.
+  It can also convert a single WAV clip to MP3.
+- Transcripts can include estimated per-word timings.
 
 ### Changed
 
