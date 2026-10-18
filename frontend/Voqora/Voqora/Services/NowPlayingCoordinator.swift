@@ -186,9 +186,9 @@ final class NowPlayingCoordinator {
         artworkTask?.cancel()
         let provider = artworkProvider
         artworkTask = Task { [weak self] in
-            let image = await provider.artwork(for: media)
-            guard let self, !Task.isCancelled, artworkMedia == media, let image else { return }
-            artwork = image
+            let loaded = await provider.artwork(for: media)
+            guard let self, !Task.isCancelled, artworkMedia == media, let loaded else { return }
+            artwork = loaded
             guard isEnabled, let latestState, latestState.media == media else { return }
             publish(latestState, at: now())
         }

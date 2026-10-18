@@ -30,9 +30,9 @@ final class NowPlayingStateTests: XCTestCase {
             section("Chapter Two", at: 200),
         ]
 
-        let section = NowPlayingSection.current(in: chapters, bookTitle: "Book", at: 150)
+        let current = NowPlayingSection.current(in: chapters, bookTitle: "Book", at: 150)
 
-        XCTAssertEqual(section, NowPlayingSection(title: "Chapter One", index: 1, count: 3))
+        XCTAssertEqual(current, NowPlayingSection(title: "Chapter One", index: 1, count: 3))
     }
 
     func test_sectionHidesATitleThatRepeatsTheBookAndNeedsMoreThanOneChapter() {

@@ -10,6 +10,8 @@ final class SystemMediaSessionTests: XCTestCase {
     private var audio: AudioService!
     private var dashboard: DashboardViewModel!
     private var audiobooks: AudiobookViewModel!
+    private var infoCenter: SessionInfoCenter!
+    private var commandCenter: SessionCommandCenter!
     private var session: SystemMediaSession!
 
     override func setUp() {
@@ -27,9 +29,11 @@ final class SystemMediaSessionTests: XCTestCase {
         )
         audiobooks = AudiobookViewModel(audio: audio)
         dashboard.audiobookVM = audiobooks
+        infoCenter = SessionInfoCenter()
+        commandCenter = SessionCommandCenter()
         let coordinator = NowPlayingCoordinator(
-            infoCenter: SilentInfoCenter(),
-            commandCenter: SilentCommandCenter(),
+            infoCenter: infoCenter,
+            commandCenter: commandCenter,
             artworkProvider: SilentArtwork(),
             routeMonitor: SilentRouteMonitor()
         )
@@ -40,6 +44,8 @@ final class SystemMediaSessionTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: "bookPos_\(bookID)")
         defaults.removePersistentDomain(forName: suiteName)
         session = nil
+        commandCenter = nil
+        infoCenter = nil
         audiobooks = nil
         dashboard = nil
         audio = nil
@@ -123,6 +129,29 @@ final class SystemMediaSessionTests: XCTestCase {
         XCTAssertNil(session.currentState())
     }
 
+    func test_startedSessionPublishesPlaybackAndFollowsTheMediaKeysPreference() async {
+        session.start()
+        XCTAssertTrue(commandCenter.isActive)
+
+        audiobooks.nowPlaying = makeBook()
+        await waitUntil { infoCenter.published.last?.media == .audiobook(bookID: bookID) }
+        XCTAssertEqual(infoCenter.published.last?.media, .audiobook(bookID: bookID))
+
+        defaults.set(false, forKey: NowPlayingPreferences.respondToMediaKeysKey)
+        await waitUntil { !commandCenter.isActive }
+        XCTAssertFalse(commandCenter.isActive)
+        XCTAssertEqual(infoCenter.clearCount, 1)
+    }
+
+    private func waitUntil(_ condition: () -> Bool, attempts: Int = 100) async {
+        for _ in 0 ..< attempts {
+            if condition() {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
     private func loadClip(seconds: Double) {
         audio.prepareForStream()
         audio.playChunk(Data(count: 44) + Data(count: Int(seconds * 24000) * 2), volume: 1)
@@ -157,17 +186,30 @@ final class SystemMediaSessionTests: XCTestCase {
 }
 
 @MainActor
-private final class SilentInfoCenter: NowPlayingInfoPublishing {
-    func publish(_: NowPlayingState, artwork _: NSImage?) {}
+private final class SessionInfoCenter: NowPlayingInfoPublishing {
+    private(set) var published: [NowPlayingState] = []
+    private(set) var clearCount = 0
 
-    func clear() {}
+    func publish(_ state: NowPlayingState, artwork _: NSImage?) {
+        published.append(state)
+    }
+
+    func clear() {
+        clearCount += 1
+    }
 }
 
 @MainActor
-private final class SilentCommandCenter: RemoteCommandRegistering {
-    func activate(skipInterval _: TimeInterval, handler _: @escaping @MainActor (NowPlayingCommandRequest) -> Bool) {}
+private final class SessionCommandCenter: RemoteCommandRegistering {
+    private(set) var isActive = false
 
-    func deactivate() {}
+    func activate(skipInterval _: TimeInterval, handler _: @escaping @MainActor (NowPlayingCommandRequest) -> Bool) {
+        isActive = true
+    }
+
+    func deactivate() {
+        isActive = false
+    }
 
     func setAvailable(_: Set<NowPlayingCommand>) {}
 }
