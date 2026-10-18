@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.ai import router as ai_router
+from app.api.article import router as article_router
 from app.api.audiobook import router as audiobook_router
 from app.api.export import router as export_router
 from app.api.middleware import (
@@ -131,6 +132,7 @@ app.include_router(voices_router)
 app.include_router(pronunciations_router)
 app.include_router(export_router)
 app.include_router(ai_router)
+app.include_router(article_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:

@@ -75,6 +75,10 @@
 - AI reading tools use the provider you connected to summarize, translate,
   answer questions about a book with page citations, and make quizzes and
   flashcards. Each result shows its token count and estimated cost.
+- Read web articles: paste a link to hear the article without menus, ads, or
+  cookie banners, or add it to Library as an audiobook with its headings as
+  sections. Links to PDFs are added like a PDF file. Voqora only opens public
+  websites and tells you when a page is paywalled, too large, or not readable.
 
 ### Changed
 

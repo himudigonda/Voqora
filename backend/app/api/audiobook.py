@@ -10,7 +10,7 @@ import math
 import os
 import re
 import tempfile
-from typing import Any
+from typing import Any, NamedTuple
 
 from fastapi import (
     APIRouter,
@@ -24,10 +24,13 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.api.article import article_error_response, run_reader
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.article_errors import ArticleError
+from app.services.article_reader import audiobook_source
 from app.services.audiobook_service import WAV_HEADER_SIZE, AudiobookService
 from app.services.audiobook_store import AudiobookStore
 from app.services.engine_manager import EngineManager
@@ -46,7 +49,9 @@ from app.services.pronunciation import pronunciations
 from app.services.text_extractor import TextExtractor
 from app.services.transcript_export import with_word_timings
 from app.services.tts import MAX_PAUSE_SCALE, MIN_PAUSE_SCALE
+from app.services.url_guard import MAX_URL_CHARS
 from app.services.voices import resolve_voice
+from app.services.web_fetcher import WebFetcher, web_fetcher
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -131,6 +136,17 @@ def _require_credential(credential: LLMCredential | None) -> LLMCredential:
     if problem:
         raise HTTPException(status_code=400, detail=problem)
     return credential
+
+
+class AudiobookURLRequest(BaseModel):
+    url: str = Field(min_length=1, max_length=MAX_URL_CHARS)
+    voice: str | None = Field(default=None, max_length=64)
+    speed: float | None = None
+    engine: str | None = Field(default=None, max_length=32)
+    pause_scale: float | None = None
+    llm_provider: str | None = Field(default=None, max_length=32)
+    llm_model: str | None = Field(default=None, max_length=200)
+    llm_base_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
 
 
 class CostApprovalRequest(BaseModel):
@@ -285,56 +301,61 @@ async def _render_cover_task(book_id: str, is_pdf: bool) -> None:
         await AudiobookStore.update_meta(book_id, cover_status="failed")
 
 
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
+class _StagedSource(NamedTuple):
+    path: str
+    file_ext: str
+    title: str
+    total: int
+    content_hash: str
+    # Who wrote it, when the source says so outside the file itself (a web
+    # article's byline). Metadata the file declares (EPUB, HTML) wins.
+    author: str | None = None
 
 
-@router.post("/audiobook", response_model=AudiobookEstimate)
-async def upload_audiobook(
-    file: UploadFile = File(...),
-    voice: str | None = Form(default=None),
-    speed: float | None = Form(default=None),
-    engine: str | None = Form(default=None),
-    pause_scale: float | None = Form(default=None),
-    llm_provider: str | None = Form(default=None),
-    llm_model: str | None = Form(default=None),
-    llm_base_url: str | None = Form(default=None),
-):
-    """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
+class _Synthesis(NamedTuple):
+    voice: str
+    speed: float
+    engine: str
+    voice_fallback: str
+    pause_scale: float
 
-    Accepts PDF, EPUB, TXT, DOCX, MD, and HTML files. Optional `voice` (a built-in
-    voice or blend id), `speed`, `engine` and `pause_scale` form fields snapshot the
-    user's current selection for this book.
-    """
-    filename = file.filename or "Untitled"
-    file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if file_ext not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail="Only PDF, EPUB, TXT, DOCX, MD, and HTML files are supported.",
-        )
 
-    # Validate before allocating a book directory or buffering a potentially
-    # large upload. These fields are persisted settings, not client hints.
-    book_voice, book_speed, book_engine, voice_fallback = _validated_synthesis_settings(
-        voice, speed, engine
+def _validated_synthesis(
+    voice: str | None,
+    speed: float | None,
+    engine: str | None,
+    pause_scale: float | None,
+) -> _Synthesis:
+    return _Synthesis(
+        *_validated_synthesis_settings(voice, speed, engine),
+        _validated_pause_scale(pause_scale),
     )
-    book_pause_scale = _validated_pause_scale(pause_scale)
-    pricing_credential = _pricing_credential(llm_provider, llm_model, llm_base_url)
 
+
+def _new_staging_file(file_ext: str) -> tuple[int, str]:
+    return tempfile.mkstemp(
+        prefix=".upload-", suffix=f".{file_ext}", dir=AudiobookStore.root_dir()
+    )
+
+
+def _discard_staged(staged_path: str | None) -> None:
+    if not staged_path:
+        return
+    try:
+        os.unlink(staged_path)
+    except FileNotFoundError:
+        pass
+
+
+async def _stage_upload(file: UploadFile, file_ext: str) -> tuple[str, int, str]:
     # Stream straight to a private staging file. Keeping chunks in a list and
     # joining them later made a nominal 100 MB document occupy multiple large
     # process allocations while the speech model was also resident.
     max_bytes = settings.MAX_AUDIOBOOK_UPLOAD_MB * 1024 * 1024
     total = 0
     digest = hashlib.sha256()
-    staged_path: str | None = None
-    book_id: str | None = None
+    descriptor, staged_path = _new_staging_file(file_ext)
     try:
-        descriptor, staged_path = tempfile.mkstemp(
-            prefix=".upload-", suffix=f".{file_ext}", dir=AudiobookStore.root_dir()
-        )
         with os.fdopen(descriptor, "wb") as staged:
             while True:
                 chunk = await file.read(1 << 20)  # 1 MiB
@@ -350,7 +371,41 @@ async def upload_audiobook(
                 staged.write(chunk)
             staged.flush()
             os.fsync(staged.fileno())
+    except BaseException:
+        _discard_staged(staged_path)
+        raise
+    return staged_path, total, digest.hexdigest()
 
+
+def _stage_bytes(content: bytes, file_ext: str) -> str:
+    descriptor, staged_path = _new_staging_file(file_ext)
+    try:
+        with os.fdopen(descriptor, "wb") as staged:
+            staged.write(content)
+            staged.flush()
+            os.fsync(staged.fileno())
+    except BaseException:
+        _discard_staged(staged_path)
+        raise
+    return staged_path
+
+
+async def _import_staged(
+    source: _StagedSource,
+    synthesis: _Synthesis,
+    pricing_credential: LLMCredential | None,
+    *,
+    extra_meta: dict[str, Any] | None = None,
+) -> AudiobookEstimate:
+    book_voice, book_speed, book_engine = (
+        synthesis.voice,
+        synthesis.speed,
+        synthesis.engine,
+    )
+    staged_path, file_ext, title = source.path, source.file_ext, source.title
+    total, content_hash = source.total, source.content_hash
+    book_id: str | None = None
+    try:
         if total == 0:
             raise HTTPException(status_code=400, detail="The uploaded file is empty.")
         if file_ext == "pdf" and total < 100:
@@ -364,8 +419,6 @@ async def upload_audiobook(
         if file_ext == "epub":
             validate_epub_archive(staged_path)
 
-        title = filename
-        content_hash = digest.hexdigest()
         duplicate = next(
             (
                 b
@@ -377,7 +430,6 @@ async def upload_audiobook(
 
         book_id = AudiobookStore.create_book(title)
         source_path = AudiobookStore.adopt_staged_source(book_id, staged_path, file_ext)
-        staged_path = None
         # Wrap everything after book creation so any unexpected failure cleans up
         # the directory and never leaves an orphan row in the DB.
         loop = asyncio.get_running_loop()
@@ -438,6 +490,7 @@ async def upload_audiobook(
                 None, TextExtractor.read_metadata, source_path
             )
         )
+        author = author or source.author
         if declared_title and file_ext == "epub":
             title = declared_title
         if page_count > settings.MAX_AUDIOBOOK_PAGES:
@@ -515,8 +568,9 @@ async def upload_audiobook(
         meta["source_sha256"] = content_hash
         if author:
             meta["author"] = author
-        meta["voice_fallback"] = voice_fallback
-        meta["pause_scale"] = book_pause_scale
+        meta["voice_fallback"] = synthesis.voice_fallback
+        meta["pause_scale"] = synthesis.pause_scale
+        meta.update(extra_meta or {})
         AudiobookStore.write_meta(book_id, meta)
 
         # Render cover off the request path. Pulled out of an inline closure
@@ -560,24 +614,121 @@ async def upload_audiobook(
         if book_id is not None:
             AudiobookStore.delete_book(book_id)
         raise
-    except Exception as exc:
+    except Exception:
         if book_id is not None:
             AudiobookStore.delete_book(book_id)
-        # Not curated: a bare exception string reaching the user verbatim —
-        # log it server-side, tell the user only what they can act on.
-        log.warning(
-            "audiobook.upload_failed",
-            extra={"book_id": book_id, "failure_code": "upload_failed"},
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
+
+
+@router.post("/audiobook", response_model=AudiobookEstimate)
+async def upload_audiobook(
+    file: UploadFile = File(...),
+    voice: str | None = Form(default=None),
+    speed: float | None = Form(default=None),
+    engine: str | None = Form(default=None),
+    pause_scale: float | None = Form(default=None),
+    llm_provider: str | None = Form(default=None),
+    llm_model: str | None = Form(default=None),
+    llm_base_url: str | None = Form(default=None),
+):
+    """Save the uploaded file, extract estimate, return book_id + stats. No processing yet.
+
+    Accepts PDF, EPUB, TXT, DOCX, MD, and HTML files. Optional `voice` (a built-in
+    voice or blend id), `speed`, `engine` and `pause_scale` form fields snapshot the
+    user's current selection for this book.
+    """
+    filename = file.filename or "Untitled"
+    file_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if file_ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, EPUB, TXT, DOCX, MD, and HTML files are supported.",
         )
+
+    # Validate before allocating a book directory or buffering a potentially
+    # large upload. These fields are persisted settings, not client hints.
+    synthesis = _validated_synthesis(voice, speed, engine, pause_scale)
+    pricing_credential = _pricing_credential(llm_provider, llm_model, llm_base_url)
+
+    staged_path: str | None = None
+    try:
+        staged_path, total, content_hash = await _stage_upload(file, file_ext)
+        return await _import_staged(
+            _StagedSource(staged_path, file_ext, filename, total, content_hash),
+            synthesis,
+            pricing_credential,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("audiobook.upload_failed", extra={"failure_code": "upload_failed"})
         raise HTTPException(
             status_code=500, detail="Upload failed. Please try again."
         ) from exc
     finally:
-        if staged_path:
-            try:
-                os.unlink(staged_path)
-            except FileNotFoundError:
-                pass
+        _discard_staged(staged_path)
+
+
+@router.post("/audiobook/url", response_model=AudiobookEstimate)
+async def create_audiobook_from_url(
+    body: AudiobookURLRequest, fetcher: WebFetcher = Depends(web_fetcher)
+):
+    """Fetch a web article or PDF link and add it to Library like an upload.
+
+    Articles are stored as Markdown so their headings become sections.
+    """
+    synthesis = _validated_synthesis(
+        body.voice, body.speed, body.engine, body.pause_scale
+    )
+    pricing_credential = _pricing_credential(
+        body.llm_provider, body.llm_model, body.llm_base_url
+    )
+    try:
+        page = await fetcher.fetch(body.url)
+        source = await run_reader(audiobook_source, page)
+    except ArticleError as error:
+        return article_error_response(error)
+    if len(source.content) > settings.MAX_AUDIOBOOK_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds {settings.MAX_AUDIOBOOK_UPLOAD_MB} MB limit.",
+        )
+
+    staged_path: str | None = None
+    try:
+        staged_path = await asyncio.get_running_loop().run_in_executor(
+            None, _stage_bytes, source.content, source.file_ext
+        )
+        return await _import_staged(
+            _StagedSource(
+                staged_path,
+                source.file_ext,
+                source.title,
+                len(source.content),
+                hashlib.sha256(source.content).hexdigest(),
+                source.author,
+            ),
+            synthesis,
+            pricing_credential,
+            extra_meta={"source_url": page.url},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning(
+            "audiobook.url_import_failed",
+            extra={"failure_code": "url_import_failed"},
+        )
+        raise HTTPException(
+            status_code=500, detail="Couldn't add this page. Please try again."
+        ) from exc
+    finally:
+        _discard_staged(staged_path)
 
 
 @router.post("/audiobook/{book_id}/start")

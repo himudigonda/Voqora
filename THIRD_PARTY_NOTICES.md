@@ -32,10 +32,10 @@ to every author and maintainer below; Voqora would not exist without them.
 | pypdfium2 (PDFium) | PDF rendering | BSD-3-Clause, Apache-2.0 |
 | Pillow | Image handling | MIT-CMU and bundled notices |
 | python-docx | DOCX import | MIT |
-| lxml | DOCX, EPUB, and HTML parsing | BSD-3-Clause |
+| lxml | DOCX, EPUB, HTML parsing and web article extraction | BSD-3-Clause |
 | pypinyin | Chinese pronunciation | MIT |
 | google-genai | Optional Gemini cleanup | Apache-2.0 |
-| httpx | Optional AI provider cleanup | BSD-3-Clause |
+| httpx | Optional AI provider cleanup and web article download | BSD-3-Clause |
 | huggingface-hub | Model download | Apache-2.0 |
 
 The app bundle also contains this notice, the Voqora license, and the
