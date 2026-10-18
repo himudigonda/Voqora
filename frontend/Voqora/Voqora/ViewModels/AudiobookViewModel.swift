@@ -467,12 +467,16 @@ final class AudiobookViewModel: ObservableObject {
         }
         let bookID = est.bookID
         let stagedDocument = pendingDocument
+        let isWebPage = pendingSource?.webPageURL != nil
         startingProcessing = true
         Task {
             defer { startingProcessing = false }
             do {
                 try await service.start(bookID, cleanup: cleanup)
                 UsageStatsStore.shared.recordDocumentAdded(pages: est.pageCount)
+                if isWebPage {
+                    webPageDraft = ""
+                }
                 pendingSource = nil
                 pendingUpload = nil
                 pendingEstimate = nil

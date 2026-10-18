@@ -83,6 +83,24 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         XCTAssertEqual(vm.webPageDraft, page.absoluteString)
     }
 
+    func test_startingAWebPageImportClearsTheLinkDraft() async {
+        LibraryStubURLProtocol.install(Self.reply())
+        let vm = AudiobookViewModel(
+            service: LibraryStubURLProtocol.makeService(),
+            audio: AudioService(startingEngine: false),
+            subscribeToEvents: { _ in AsyncStream { $0.finish() } },
+            listBooks: { [] }
+        )
+        vm.importWebPage(page, voice: "af_bella", speed: 1)
+        await waitUntil { vm.pendingEstimate != nil }
+
+        vm.startProcessing(useCleanup: false)
+        await waitUntil { vm.pendingSource == nil }
+
+        XCTAssertNil(vm.pendingSource)
+        XCTAssertEqual(vm.webPageDraft, "")
+    }
+
     func test_editWebPageLink_ignoresDocumentImports() {
         let vm = makeVM()
         vm.pendingDocument = URL(fileURLWithPath: "/tmp/book.pdf")

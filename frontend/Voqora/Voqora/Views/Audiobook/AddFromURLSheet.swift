@@ -139,6 +139,7 @@ struct AddFromURLSheet: View {
     }
 
     private func submit() {
+        guard bookVM.isWebPageImportPresented else { return }
         switch WebPageLink.validate(address) {
         case let .success(url):
             bookVM.importWebPage(url, voice: voice, speed: speed)
