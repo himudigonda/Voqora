@@ -11,6 +11,7 @@ nonisolated struct TranscriptLine: Identifiable, Equatable, Sendable {
     let isHeading: Bool
     let isNarrated: Bool
     let isExactlyTimed: Bool
+    var speaker: String?
 }
 
 nonisolated struct TranscriptDocument: Equatable, Sendable {
@@ -39,6 +40,12 @@ nonisolated struct TranscriptDocument: Equatable, Sendable {
         return result
     }
 
+    func speakerLabel(at index: Int) -> String? {
+        guard lines.indices.contains(index), let speaker = lines[index].speaker else { return nil }
+        guard index > 0 else { return speaker }
+        return lines[index - 1].speaker == speaker ? nil : speaker
+    }
+
     func progress(of index: Int, at time: TimeInterval) -> Double {
         guard lines.indices.contains(index) else { return 0 }
         let line = lines[index]
@@ -53,6 +60,7 @@ nonisolated extension TranscriptDocument {
         let text: String
         let start: Double
         let end: Double
+        var speaker: String? = nil
     }
 
     init(transcript: AudiobookService.Transcript) {
@@ -119,7 +127,8 @@ nonisolated extension TranscriptDocument {
                         block: block,
                         isHeading: TranscriptText.isHeadingLike(text) && isSoleLine(of: line, in: timed),
                         isNarrated: true,
-                        isExactlyTimed: true
+                        isExactlyTimed: true,
+                        speaker: line.speaker
                     )
                 )
             }
@@ -240,7 +249,8 @@ nonisolated enum PauseAligner {
                 block: line.block,
                 isHeading: line.isHeading,
                 isNarrated: line.isNarrated,
-                isExactlyTimed: anchors[index] != nil && anchors[index + 1] != nil
+                isExactlyTimed: anchors[index] != nil && anchors[index + 1] != nil,
+                speaker: line.speaker
             )
         }
     }

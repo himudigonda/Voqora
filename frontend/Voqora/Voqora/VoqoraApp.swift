@@ -26,6 +26,7 @@ struct VoqoraApp: App {
     @StateObject private var providers: LLMProviderStore
     @StateObject private var dictation: DictationController
     @StateObject private var dictationTranscripts: DictationTranscriptStore
+    @StateObject private var studio: StudioViewModel
 
     private let backend: BackendService
     private let systemMedia: SystemMediaSession?
@@ -95,6 +96,7 @@ struct VoqoraApp: App {
         _providers = StateObject(wrappedValue: providersInstance)
         _dictation = StateObject(wrappedValue: dictationInstance)
         _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
+        _studio = StateObject(wrappedValue: StudioViewModel(providers: providersInstance, library: .live(audiobookInstance)))
 
         vmInstance.audiobookVM = audiobookInstance
         let inputsInstance = SpeechInputCoordinator(
@@ -253,6 +255,7 @@ struct VoqoraApp: App {
                         .environmentObject(UsageStatsStore.shared)
                         .environmentObject(dictation)
                         .environmentObject(dictationTranscripts)
+                        .environmentObject(studio)
                 }
             }
         }
