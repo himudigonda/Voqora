@@ -349,7 +349,7 @@ def _encrypted_paths(archive: zipfile.ZipFile, names: frozenset[str]) -> frozens
     )
     paths = set()
     for reference in _descendants(root, "CipherReference"):
-        resolved = resolve_href("", reference.get("URI"))
+        resolved = resolve_href("", (reference.get("URI") or "").lstrip("/"))
         if resolved is not None:
             paths.add(resolved[0])
     return frozenset(paths)

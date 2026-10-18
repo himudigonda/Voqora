@@ -90,7 +90,9 @@ def is_safe_member_name(filename: str) -> bool:
     if not filename or "\\" in filename or "\x00" in filename:
         return False
     name = PurePosixPath(filename)
-    return not (name.is_absolute() or ".." in name.parts or ":" in name.parts[0])
+    return bool(name.parts) and not (
+        name.is_absolute() or ".." in name.parts or ":" in name.parts[0]
+    )
 
 
 def _check_member(member: zipfile.ZipInfo, rules: _ArchiveRules) -> None:

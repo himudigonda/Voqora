@@ -28,11 +28,14 @@ from app.services.epub_reader import (
 )
 from app.services.import_limits import (
     ImportLimitError,
+    is_safe_member_name,
+    validate_docx_archive,
     validate_epub_archive,
     validate_magic,
 )
 from app.services.markup_text import (
     TOO_MUCH_TEXT,
+    BlockCollector,
     decode_markup,
     parse_html,
     read_html_document,
@@ -563,6 +566,17 @@ def test_drm_encrypted_content_is_rejected_with_a_clear_message(tmp_path):
         read_epub_document(path)
 
 
+def test_drm_reference_with_a_leading_slash_is_still_rejected(tmp_path):
+    path = write_epub(
+        tmp_path / "drm-root.epub",
+        three_chapters(),
+        encrypted={"/OEBPS/text/ch1.xhtml": AES},
+    )
+
+    with pytest.raises(ImportLimitError, match="DRM"):
+        read_epub_document(path)
+
+
 def test_obfuscated_fonts_alone_are_not_treated_as_drm(tmp_path):
     path = write_epub(
         tmp_path / "fonts.epub",
@@ -729,6 +743,22 @@ def test_epub_validator_rejects_traversal_names(tmp_path, name):
         read_epub_document(path)
 
 
+@pytest.mark.parametrize("name", [".", "./", ""])
+def test_member_names_without_parts_are_unsafe_not_a_crash(tmp_path, name):
+    assert not is_safe_member_name(name)
+    if not name:
+        return
+    path = write_epub(tmp_path / "dot.epub", three_chapters(), extra={name: b"x"})
+    with pytest.raises(ImportLimitError, match="unsafe"):
+        validate_epub_archive(path)
+    docx = tmp_path / "dot.docx"
+    with zipfile.ZipFile(docx, "w") as archive:
+        archive.writestr("word/document.xml", "<w:document/>")
+        archive.writestr(name, b"x")
+    with pytest.raises(ImportLimitError, match="unsafe"):
+        validate_docx_archive(str(docx))
+
+
 def test_epub_validator_rejects_symlinks(tmp_path):
     path = write_epub(tmp_path / "link.epub", three_chapters())
     with zipfile.ZipFile(path, "a") as archive:
@@ -882,6 +912,21 @@ def test_htm_without_headings_has_no_outline_and_reads_legacy_bytes(tmp_path):
 
     assert TextExtractor.read_text(str(path)) == "Naïve résumé"
     assert TextExtractor.read_outline(str(path)) is None
+
+
+def test_block_anchors_point_at_their_own_block_even_on_skipped_elements():
+    markup = xhtml(
+        '<div>loose intro<h2 id="c2">Two</h2><p>body '
+        '<span epub:type="pagebreak" id="p7" title="7"/>rest</p></div>'
+    )
+    root = parse_html(decode_markup(markup.encode()))
+    collector = BlockCollector(10_000)
+
+    collector.add_document(root, "ch.xhtml")
+
+    assert collector.blocks == ["loose intro", "Two", "body rest"]
+    assert collector.blocks[collector.anchors["ch.xhtml#c2"]] == "Two"
+    assert collector.blocks[collector.anchors["ch.xhtml#p7"]] == "body rest"
 
 
 def test_html_binary_and_oversized_files_are_rejected(tmp_path, monkeypatch):

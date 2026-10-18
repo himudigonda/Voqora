@@ -247,20 +247,21 @@ class BlockCollector:
 
     def _walk(self, element: etree._Element) -> None:
         tag = tag_name(element)
-        if tag is None or is_skipped(element, tag):
+        if tag is None:
             return
+        level = _HEADING_LEVELS.get(tag)
+        is_block = level is not None or tag in _BLOCK_TAGS or tag == "table"
+        if is_block:
+            self._flush()
         self._register_anchor(element)
+        if is_skipped(element, tag):
+            return
         if tag == "br":
             self._parts.append("\n")
             return
         if tag == "table":
-            self._flush()
             self._add_table(element)
             return
-        level = _HEADING_LEVELS.get(tag)
-        is_block = level is not None or tag in _BLOCK_TAGS
-        if is_block:
-            self._flush()
         if tag == "pre":
             self._preformatted += 1
         self._add_text(element.text)
