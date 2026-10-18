@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     # Caps the body size of /audiobook uploads so a huge file can't OOM the
     # backend. Enforced via stream-reading the upload. See HARD-017.
     MAX_AUDIOBOOK_UPLOAD_MB: int = 100
+    MAX_WAV_CONVERT_MB: int = 200
 
     # Import and storage limits are deliberately independent. A small
     # compressed DOCX or a short source file can otherwise expand into a

@@ -2052,6 +2052,8 @@ class AudiobookService:
                 transcript = json.load(f)
         except (OSError, ValueError):
             return
+        if not isinstance(transcript, dict):
+            return
         existing = transcript.get("lines") or {}
         page_status = transcript.get("page_status") or {}
         page_to_time = transcript.get("page_to_time") or {}

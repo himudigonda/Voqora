@@ -7,6 +7,7 @@ import uvicorn
 from fastapi import FastAPI
 
 from app.api.audiobook import router as audiobook_router
+from app.api.export import router as export_router
 from app.api.middleware import (
     CorrelationMiddleware,
     IPCAuthenticationMiddleware,
@@ -121,6 +122,7 @@ app.add_middleware(IPCAuthenticationMiddleware)
 
 app.include_router(tts_router)
 app.include_router(audiobook_router)
+app.include_router(export_router)
 
 if __name__ == "__main__":
     if not settings.IPC_TOKEN:
