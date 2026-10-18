@@ -257,22 +257,9 @@ private struct PlayerSecondaryControls: View {
     }
 
     private var moreMenu: some View {
-        Menu {
+        PlayerCircleMenu(systemName: "ellipsis", label: "More") {
             Button("Pronunciations for This Book…") { showingPronunciations = true }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Palette.textPrimary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Palette.controlFill))
-                .contentShape(Circle())
         }
-        .menuStyle(.button)
-        .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("More")
-        .accessibilityLabel("More")
     }
 
     private var sleepIsArmed: Bool {

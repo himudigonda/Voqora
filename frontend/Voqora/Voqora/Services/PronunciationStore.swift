@@ -1,7 +1,7 @@
 import Combine
 import Foundation
 
-enum PronunciationFilter: Hashable {
+nonisolated enum PronunciationFilter: Hashable, Sendable {
     case all
     case scope(PronunciationScope)
 
@@ -87,6 +87,12 @@ final class PronunciationStore: ObservableObject {
             state = .loaded
         } catch {
             guard generation == refreshGeneration else { return }
+            if error is CancellationError {
+                if state == .loading {
+                    state = .idle
+                }
+                return
+            }
             VoqoraLog.warn("PronunciationStore", "Pronunciations failed to load", ["status": BackendAPIError.logLabel(for: error)])
             if state != .loaded {
                 state = .failed(error.localizedDescription)

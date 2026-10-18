@@ -222,22 +222,9 @@ struct VoiceBlendRow: View {
             HStack(spacing: DesignTokens.Spacing.sm) {
                 PlayerCircleButton(systemName: "play.fill", label: "Preview \(blend.name)", isEnabled: vm.isBackendOnline, action: actions.preview)
                 PlayerCircleButton(systemName: "pencil", label: "Edit \(blend.name)", action: actions.edit)
-                Menu {
+                PlayerCircleMenu(systemName: "ellipsis", label: "More actions for \(blend.name)") {
                     menuItems
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(Palette.controlFill))
-                        .contentShape(Circle())
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("More")
-                .accessibilityLabel("More actions for \(blend.name)")
             }
             .opacity(hovering ? 1 : 0.6)
         }

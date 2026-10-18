@@ -252,6 +252,8 @@ final class VoiceBlendStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(message, "That custom voice is no longer available. Choose another voice in Voices.")
+        XCTAssertTrue(DashboardViewModel.isMissingBlendFailure(BackendService.StreamError.rejectedResponse(statusCode: 422), voice: Self.firstID))
+        XCTAssertFalse(DashboardViewModel.isMissingBlendFailure(BackendService.StreamError.rejectedResponse(statusCode: 503), voice: Self.firstID))
         XCTAssertEqual(
             DashboardViewModel.speechFailureMessage(for: BackendService.StreamError.rejectedResponse(statusCode: 422), voice: "af_bella"),
             "That selection is empty or too long. Try a shorter passage."

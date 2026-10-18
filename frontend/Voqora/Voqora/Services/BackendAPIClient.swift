@@ -144,6 +144,9 @@ final class BackendAPIClient {
         do {
             result = try await session.data(for: request)
         } catch {
+            if Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                throw CancellationError()
+            }
             throw BackendAPIError.unreachable
         }
         let (data, response) = result

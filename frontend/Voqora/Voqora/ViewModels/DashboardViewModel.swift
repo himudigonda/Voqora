@@ -490,6 +490,9 @@ class DashboardViewModel: ObservableObject {
                 awaitingFirstChunk = false
                 audio.stop()
                 showTransientError(Self.speechFailureMessage(for: error, voice: effectiveVoice))
+                if Self.isMissingBlendFailure(error, voice: effectiveVoice) {
+                    Task { await VoiceBlendStore.shared.refresh() }
+                }
             }
         }
     }
@@ -498,7 +501,7 @@ class DashboardViewModel: ObservableObject {
         guard let streamError = error as? BackendService.StreamError else {
             return "Voqora could not reach the local speech engine. Try again."
         }
-        if streamError == .rejectedResponse(statusCode: 422), let voice, VoiceBlendRules.isBlendID(voice) {
+        if isMissingBlendFailure(streamError, voice: voice) {
             return "That custom voice is no longer available. Choose another voice in Voices."
         }
         switch streamError {
@@ -511,6 +514,11 @@ class DashboardViewModel: ObservableObject {
         default:
             return "Voqora could not reach the local speech engine. Try again."
         }
+    }
+
+    static func isMissingBlendFailure(_ error: Error, voice: String?) -> Bool {
+        guard let voice, VoiceBlendRules.isBlendID(voice) else { return false }
+        return (error as? BackendService.StreamError) == .rejectedResponse(statusCode: 422)
     }
 
     func playSpokenText(from line: TranscriptLine) {

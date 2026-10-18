@@ -27,6 +27,7 @@ final class VoiceBlendStore: ObservableObject {
     let directory: VoiceBlendDirectory
     private let service: any VoiceBlendServing
     private var refreshGeneration = 0
+    private var refreshTask: Task<Void, Never>?
 
     init(service: (any VoiceBlendServing)? = nil, directory: VoiceBlendDirectory? = nil) {
         self.service = service ?? VoiceBlendService()
@@ -50,6 +51,17 @@ final class VoiceBlendStore: ObservableObject {
     }
 
     func refresh() async {
+        if let refreshTask {
+            await refreshTask.value
+            return
+        }
+        let task = Task { await load() }
+        refreshTask = task
+        await task.value
+        refreshTask = nil
+    }
+
+    private func load() async {
         refreshGeneration &+= 1
         let generation = refreshGeneration
         if state != .loaded {

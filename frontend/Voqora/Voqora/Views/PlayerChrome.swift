@@ -173,18 +173,44 @@ struct PlayerCircleButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Palette.textPrimary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Palette.controlFill))
-                .contentShape(Circle())
+            PlayerCircleIcon(systemName: systemName)
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+struct PlayerCircleMenu<Content: View>: View {
+    let systemName: String
+    let label: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            PlayerCircleIcon(systemName: systemName)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(label)
+        .accessibilityLabel(label)
+    }
+}
+
+private struct PlayerCircleIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(Palette.textPrimary)
+            .frame(width: 30, height: 30)
+            .background(Circle().fill(Palette.controlFill))
+            .contentShape(Circle())
     }
 }
 
