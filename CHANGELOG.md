@@ -4,6 +4,14 @@
 
 ### New
 
+- AI reading tools: the audiobook player has an Assistant panel next to
+  Transcript and Sections. Summarize the book (short, medium, or detailed, in
+  any app language), ask questions with citations that jump to the passage,
+  take a multiple choice quiz, or study flip-card flashcards. Results can be
+  copied or spoken aloud. Two new shortcuts, Summarize Selection and Speak and
+  Translate Selection and Speak, work in any app; assign them in Preferences ->
+  Shortcuts and choose the translation language in Preferences -> AI. They use
+  the AI provider you connected.
 - Dictation: press `Control + Option + Space` in any app, speak, and press it
   again (or pause for two seconds). Voqora transcribes on your Mac, pastes the
   text where your cursor is, and puts your clipboard back. Choose the language,
@@ -16,13 +24,13 @@
   aloud, and includes an MCP server with speak, stop, and list voices tools.
 - AI cleanup works with ten providers: OpenAI, Anthropic, xAI, Groq, Cerebras,
   Google Gemini, OpenRouter, Ollama, LM Studio, and Custom (any
-  OpenAI-compatible server). Connect them in Preferences -> AI Cleanup or
+  OpenAI-compatible server). Connect them in Preferences -> AI or
   during setup. Voqora checks each connection before saving it. Existing
   Gemini keys move to Google automatically.
 - Keys are stored in your macOS login Keychain, one per provider. They go only
   to the Voqora service on your Mac, with each request, and from there to the
   provider you connected. Ollama and LM Studio keep page text on your Mac.
-- Preferences -> AI Cleanup has a "Used for audiobooks" chooser, and the New
+- Preferences -> AI has a "Used for audiobooks" chooser, and the New
   Audiobook sheet has a provider menu. Removing a provider asks first and says
   what will happen to audiobooks that use it.
 - When cleanup fails, the book shows the reason. Choose Fix Provider to correct
