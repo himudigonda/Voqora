@@ -60,7 +60,7 @@ final class AudiobookExportControllerTests: XCTestCase {
         XCTAssertNil(controller.active)
     }
 
-    func test_m4bExport_clampsStoredBitrate() async throws {
+    func test_m4bExport_clampsStoredBitrate() async {
         let exporter = RecordingExporter()
         let controller = makeController(exporter: exporter, destination: directory.appendingPathComponent("a.m4b"), bitrateKbps: 512)
 
