@@ -607,6 +607,43 @@ class LLMCleaner:
         return GeneratedText(completion.text or empty, usage)
 
     @classmethod
+    async def generate(
+        cls,
+        credential: LLMCredential,
+        system: str,
+        text: str,
+        *,
+        max_output_tokens: int,
+        json_output: bool = False,
+    ) -> GeneratedText:
+        if not credential.is_gemini:
+            return await cls._async_complete(
+                credential, system, text=text, max_output_tokens=max_output_tokens
+            )
+        tier = types.ServiceTier.STANDARD
+        client = genai.Client(
+            api_key=credential.api_key, http_options=STANDARD_HTTP_OPTIONS
+        )
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=0.2,
+            max_output_tokens=max_output_tokens,
+            service_tier=tier,
+            response_mime_type="application/json" if json_output else None,
+        )
+        try:
+            resp = await client.aio.models.generate_content(
+                model=credential.resolved_model, config=config, contents=text
+            )
+        except Exception as e:
+            cls._reraise_typed(e, credential)
+        cls._require_complete(resp)
+        output = (resp.text or "").strip()
+        if not output:
+            raise LLMBadResponseError(f"{credential.name} returned no text.")
+        return GeneratedText(output, cls._usage_from_response(resp, tier, credential))
+
+    @classmethod
     def _usage_from_response(
         cls,
         response: Any,

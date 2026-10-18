@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     # run up a multi-dollar bill on a 2,000-page book. See HARD-072.
     MAX_GEMINI_COST_USD_PER_BOOK: float = 5.0
 
+    MAX_AI_REQUEST_COST_USD: float = 2.0
+    MAX_AI_REQUEST_TOKENS: int = 600_000
+
     # Yield between audiobook TTS segments so audiobook synthesis doesn't
     # monopolize the CPU. Applies to every audiobook TTS pass — the backend
     # has no signal to distinguish a foreground user-initiated job from a

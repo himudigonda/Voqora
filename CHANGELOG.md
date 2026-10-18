@@ -72,6 +72,9 @@
   subtitles, as an MP3 (64 to 192 kbps), and as a chapter list for M4B files.
   It can also convert a single WAV clip to MP3.
 - Transcripts can include estimated per-word timings.
+- AI reading tools use the provider you connected to summarize, translate,
+  answer questions about a book with page citations, and make quizzes and
+  flashcards. Each result shows its token count and estimated cost.
 
 ### Changed
 
