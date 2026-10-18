@@ -261,6 +261,7 @@ private extension VoqoraWindow {
         case "dictation": DictationView()
         case let tab? where VoicesPage(tab: tab) != nil: VoicesView(page: VoicesPage(tab: tab) ?? .myVoices)
         case "inbox": InboxView()
+        case StudioView.tab: StudioView()
         default: MainDashboardView()
         }
     }
@@ -280,6 +281,11 @@ private extension VoqoraWindow {
                     if let resume = bookVM.continueListeningBook {
                         continueListeningButton(for: resume)
                     }
+                }
+            }
+            PaneSection("Studio") {
+                VStack(spacing: DesignTokens.Spacing.xxs) {
+                    sidebarLink("Podcasts", icon: "waveform.and.mic", value: StudioView.tab)
                 }
             }
             PaneSection("Read Later") {

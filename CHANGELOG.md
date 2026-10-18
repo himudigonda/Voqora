@@ -19,6 +19,13 @@
   Translate Selection and Speak, work in any app; assign them in Preferences ->
   Shortcuts and choose the translation language in Preferences -> AI. They use
   the AI provider you connected.
+- Studio: turn a Library item or pasted text into a podcast. Pick Deep Dive,
+  Brief, Debate, or Lecture, a length from 2 to 30 minutes, the language, and
+  one or two hosts with their own voices. Your AI provider writes the script,
+  you edit every turn, and Voqora renders it on your Mac. Podcasts appear in
+  the Library with a Podcast badge and a transcript that names each speaker.
+  You can also write a script for up to four voices yourself with New Blank
+  Script.
 - Dictation: press `Control + Option + Space` in any app, speak, and press it
   again (or pause for two seconds). Voqora transcribes on your Mac, pastes the
   text where your cursor is, and puts your clipboard back. Choose the language,

@@ -394,6 +394,50 @@ your key, or a text is over the size or cost limit for one request, Voqora says
 so and nothing is spoken. Selections can be up to 20,000 characters for
 translation.
 
+## Make a podcast in Studio
+
+Studio turns something you want to understand into a conversation, and lets
+you write scripts for several voices yourself.
+
+1. Open **Podcasts** under **Studio** in the sidebar and choose **New Podcast**
+   (`Shift + Command + N`).
+2. Pick the source: an item from your Library, or text. Paste text, choose
+   **Paste from Clipboard**, or choose **Use Last Spoken Text** to reuse what
+   Voqora just read aloud.
+3. Choose a style. **Deep Dive** and **Brief** use one or two hosts,
+   **Debate** uses two, and **Lecture** uses one. Set the length (2 to 30
+   minutes) and the language, then name the hosts and pick their voices. Your
+   voice blends are listed too. Use the play button to hear a voice.
+4. Choose **Generate Script** (`Command + Return`). Writing the script uses the
+   AI provider you connected in **Preferences -> AI Cleanup**, and sends the
+   source text to it. Without a provider, Studio shows where to add one, or
+   you can start a blank script instead.
+
+### Edit the script
+
+- Each turn has a speaker, its text (up to 2,000 characters), and the pause
+  after it. Drag turns to reorder them, or use the turn menu to insert a turn
+  below, move it, start a chapter there, or delete it.
+- The speakers table sets each speaker's name and voice, with a preview for
+  each. A script can have up to four speakers and 600 turns. Removing a speaker
+  moves their turns to the first speaker.
+- Scripts save on your Mac as you edit (`Command + S` saves right away). Find
+  them under **Scripts** on the Studio page.
+- **New Blank Script** (`Shift + Command + B`) starts an empty script you
+  write yourself. Rendering it needs no AI provider.
+
+### Render and listen
+
+Choose **Render Podcast** (`Command + R`). Voqora narrates each turn with its
+speaker's voice on your Mac, and the podcast appears in the Library with a
+**Podcast** badge and the usual progress. The transcript shows who is talking.
+
+To change a podcast later, right-click it in the Library and choose **Edit
+Script in Studio**, or choose **Edit Script** under **Rendered Podcasts**.
+You edit a copy, and rendering it adds a new podcast while the original stays
+in the Library. Right-click any finished audiobook and choose **Make a
+Podcast** to start from it.
+
 ## Reading Mode
 
 Reading Mode shows the text being read, from a selection or an audiobook, in a

@@ -64,7 +64,15 @@ struct TranscriptView: View {
         let previous = line.id > 0 ? lines[line.id - 1] : nil
         let startsBlock = previous?.block != line.block
         let startsUnnarratedPage = !line.isNarrated && previous.map { $0.page != line.page || $0.isNarrated } ?? true
+        let speakerLabel = follower.document.speakerLabel(at: line.id)
         return VStack(alignment: .leading, spacing: 8) {
+            if let speakerLabel {
+                Text(speakerLabel.uppercased())
+                    .font(vm.appFont(size: 11, weight: .semibold))
+                    .kerning(0.6)
+                    .foregroundStyle(Palette.textSecondary)
+                    .accessibilityHidden(true)
+            }
             if startsUnnarratedPage {
                 Label("Not narrated", systemImage: "speaker.slash")
                     .font(vm.appFont(size: 11, weight: .semibold))
@@ -80,7 +88,7 @@ struct TranscriptView: View {
                 onSelect: { select(line) }
             )
         }
-        .padding(.top, startsBlock ? (line.isHeading ? 44 : 22) : 2)
+        .padding(.top, startsBlock || speakerLabel != nil ? (line.isHeading ? 44 : 22) : 2)
     }
 
     private func rowBlur(distance: Int) -> CGFloat {
@@ -222,7 +230,7 @@ private struct TranscriptLineRow: View {
         .animation(animation, value: isActive)
         .animation(animation, value: blur)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(line.text)
+        .accessibilityLabel(line.speaker.map { "\($0): \(line.text)" } ?? line.text)
         .accessibilityHint("Plays from this line")
         .accessibilityAddTraits(isActive ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { onSelect() }
