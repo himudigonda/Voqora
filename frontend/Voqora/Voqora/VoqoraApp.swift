@@ -26,6 +26,7 @@ struct VoqoraApp: App {
     @StateObject private var providers: LLMProviderStore
 
     private let backend: BackendService
+    private let systemMedia: SystemMediaSession?
 
     init() {
         let runningTests = RuntimeEnvironment.isRunningTests
@@ -90,12 +91,14 @@ struct VoqoraApp: App {
         vmInstance.audiobookVM = audiobookInstance
 
         backend = backendInstance
+        systemMedia = runningTests ? nil : SystemMediaSession.live(dashboard: vmInstance, audiobooks: audiobookInstance)
         appDelegate.stopOwnedBackend = { [backendInstance] in
             backendInstance.stop()
         }
 
         if !runningTests {
             setupShortcuts(vm: vmInstance)
+            systemMedia?.start()
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()
 

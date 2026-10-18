@@ -19,6 +19,7 @@ struct PreferencesView: View {
     @AppStorage(AppPresence.showMenuBarIconKey) var showMenuBarIcon = true
     @AppStorage(AppPresence.hideFromDockKey) var hideFromDock = false
     @AppStorage(MetricsService.analyticsEnabledKey) var analyticsEnabled = false
+    @AppStorage(NowPlayingPreferences.respondToMediaKeysKey) var respondToMediaKeys = true
     @StateObject private var samplePlayer = VoiceSamplePlayer()
     @State private var nameDraft: String = ""
     @State private var emailDraft: String = ""
@@ -111,6 +112,20 @@ struct PreferencesView: View {
                         ShortcutRow(title: "Stop Playback", name: .stopText)
                         Divider().padding(.vertical, 8)
                         ShortcutRow(title: "Export to Desktop", name: .exportAudio)
+
+                        Divider().padding(.vertical, 16)
+
+                        Toggle(isOn: $respondToMediaKeys) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Respond to media keys")
+                                    .font(vm.font(.rowTitle))
+                                Text("Play, pause and skip Voqora from your keyboard's media keys, headphone controls and Control Center.")
+                                    .font(vm.font(.rowSubtitle))
+                                    .foregroundStyle(Palette.textSecondary)
+                            }
+                        }
+                        .toggleStyle(.switch)
+                        .frame(maxWidth: .infinity, alignment: .leading)
 
                         Divider().padding(.vertical, 16)
 

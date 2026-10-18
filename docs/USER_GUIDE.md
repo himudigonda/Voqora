@@ -50,6 +50,26 @@ name and email, and lets you pick an accent color and app icon.
 Change any shortcut in Preferences. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
 
+### Media keys and headphones
+
+The play/pause, next, and previous keys on your keyboard, AirPods and
+headphone controls, and the Now Playing control in Control Center all work
+with Voqora:
+
+- Play and pause the selection or audiobook that is playing.
+- Skip forward or back 15 seconds.
+- Next and previous move to the next or previous sentence of a selection, or
+  to the next or previous chapter of an audiobook.
+- Drag the Control Center progress bar to jump anywhere in the clip.
+
+Now Playing shows the audiobook title, the current chapter, and the cover, or
+"Selected text" while a selection is read. Voqora clears it when you stop.
+Playback pauses when the headphones you were listening on disconnect, so a
+book never starts playing out loud by surprise.
+
+To leave media keys to Music or another app, turn off "Respond to media keys"
+in Preferences -> Shortcuts.
+
 ## Choose a voice and speed
 
 Open Preferences to choose a voice, set the reading speed, adjust volume, and
