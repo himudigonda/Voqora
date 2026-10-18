@@ -59,7 +59,7 @@ nonisolated enum IntegrationEventParser {
 
     static func clientName(_ raw: String?) -> String? {
         guard let raw else { return nil }
-        let printable = String(String.UnicodeScalarView(raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }))
+        let printable = String(String.UnicodeScalarView(raw.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : $0 }))
         let collapsed = printable.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         let limited = String(collapsed.prefix(maximumClientNameLength))
         return limited.isEmpty ? nil : limited

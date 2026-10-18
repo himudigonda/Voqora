@@ -63,9 +63,9 @@ final class AudiobookWordTimingTests: XCTestCase {
     }
 
     func test_bookAuthorDecodesWhenPresentAndIsOptional() throws {
-        let withAuthor = try JSONDecoder().decode(Audiobook.self, from: Data(bookJSON(author: #","author":"  Jane   Austen "#).utf8))
-        let withoutAuthor = try JSONDecoder().decode(Audiobook.self, from: Data(bookJSON(author: "").utf8))
-        let blankAuthor = try JSONDecoder().decode(Audiobook.self, from: Data(bookJSON(author: #","author":"   ""#).utf8))
+        let withAuthor = try decodeBook(author: "  Jane   Austen ")
+        let withoutAuthor = try decodeBook(author: nil)
+        let blankAuthor = try decodeBook(author: "   ")
 
         XCTAssertEqual(withAuthor.displayAuthor, "Jane Austen")
         XCTAssertNil(withoutAuthor.author)
@@ -81,7 +81,7 @@ final class AudiobookWordTimingTests: XCTestCase {
     }
 
     func test_librarySearchMatchesTitleOrAuthor() throws {
-        let book = try JSONDecoder().decode(Audiobook.self, from: Data(bookJSON(author: #","author":"Jane Austen"#).utf8))
+        let book = try decodeBook(author: "Jane Austen")
 
         XCTAssertTrue(AudiobookLibraryView.matches(book, searchText: "austen"))
         XCTAssertTrue(AudiobookLibraryView.matches(book, searchText: "pride"))
@@ -96,12 +96,26 @@ final class AudiobookWordTimingTests: XCTestCase {
         return try JSONDecoder().decode(AudiobookService.Transcript.self, from: Data(json.utf8))
     }
 
-    private func bookJSON(author: String) -> String {
-        """
-        {"book_id":"b","title":"Pride and Prejudice.epub","created_at":"2026-01-01T00:00:00Z","page_count":3,
-        "status":"done","phase_progress":{"page_done":3,"page_total":3},"sections":[],"page_to_time":{},
-        "total_audio_seconds":60,"failed_pages":[],"estimated":null,"actual":null,"engine":"kokoro",
-        "voice":"af_bella","speed":1.0,"uses_gemini_cleanup":false,"budget":null,"error":null\(author)}
-        """
+    private func decodeBook(author: String?) throws -> Audiobook {
+        var json: [String: Any] = [
+            "book_id": "b",
+            "title": "Pride and Prejudice.epub",
+            "created_at": "2026-01-01T00:00:00Z",
+            "page_count": 3,
+            "status": "done",
+            "phase_progress": ["page_done": 3, "page_total": 3],
+            "sections": [],
+            "page_to_time": [String: Double](),
+            "total_audio_seconds": 60,
+            "failed_pages": [Int](),
+            "engine": "kokoro",
+            "voice": "af_bella",
+            "speed": 1.0,
+            "uses_gemini_cleanup": false,
+        ]
+        if let author {
+            json["author"] = author
+        }
+        return try JSONDecoder().decode(Audiobook.self, from: JSONSerialization.data(withJSONObject: json))
     }
 }
