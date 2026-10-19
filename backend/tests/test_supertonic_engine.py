@@ -348,6 +348,11 @@ async def test_idle_watcher_unloads_after_the_idle_timeout(engine, monkeypatch):
             raise asyncio.CancelledError
 
     monkeypatch.setattr(supertonic_engine.asyncio, "sleep", fast_sleep)
+    monkeypatch.setattr(
+        supertonic_engine.time,
+        "monotonic",
+        lambda: 1.0 + SupertonicEngine._IDLE_TIMEOUT + 1,
+    )
     with pytest.raises(asyncio.CancelledError):
         await SupertonicEngine.idle_watcher()
     assert not SupertonicEngine.is_loaded()
