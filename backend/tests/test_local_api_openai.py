@@ -197,7 +197,7 @@ def test_unsupported_response_format_is_a_clear_400(
         ({"voice": "unknown_voice"}, "voice"),
         ({"input": ""}, "input"),
         ({"input": "   "}, "input"),
-        ({"input": "a" * 50_001}, "input"),
+        ({"input": "a" * 4097}, "input"),
         ({"speed": 0.1}, "speed"),
         ({"speed": 4.5}, "speed"),
         ({"voice": "v" * 65}, "voice"),
@@ -232,7 +232,7 @@ def test_malformed_json_is_400(client: TestClient, engine) -> None:
 
 
 def test_input_at_limit_is_accepted(client: TestClient, engine) -> None:
-    response = client.post("/v1/audio/speech", json=_speech(input="a" * 50_000))
+    response = client.post("/v1/audio/speech", json=_speech(input="a" * 4096))
     assert response.status_code == 200
 
 

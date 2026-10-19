@@ -1,8 +1,12 @@
 import Foundation
 
 nonisolated enum BackendFileDownload {
-    static let chunkSize = 64 * 1024
     static let maximumErrorBodySize = 64 * 1024
+
+    static func fraction(written: Int64, expected: Int64) -> Double? {
+        guard expected > 0 else { return nil }
+        return min(1, max(0, Double(written) / Double(expected)))
+    }
 
     static func save(
         _ request: URLRequest,
@@ -10,87 +14,136 @@ nonisolated enum BackendFileDownload {
         to destination: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
-        let worker = Task.detached(priority: .userInitiated) {
-            try await Self.stream(request, using: session, to: destination, progress: progress)
-        }
-        try await withTaskCancellationHandler {
-            try await worker.value
-        } onCancel: {
-            worker.cancel()
-        }
-    }
-
-    private static func stream(
-        _ request: URLRequest,
-        using session: URLSession,
-        to destination: URL,
-        progress: (@Sendable (Double) -> Void)?
-    ) async throws {
-        let (bytes, response) = try await session.bytes(for: request)
+        let transfer = DownloadTransfer(progress)
+        let (downloaded, response) = try await download(request, using: session, transfer: transfer)
+        defer { try? FileManager.default.removeItem(at: downloaded) }
         guard let http = response as? HTTPURLResponse else {
             throw AudiobookAPIFailure(statusCode: 0)
         }
         guard (200 ..< 300).contains(http.statusCode) else {
-            let body = try await collect(bytes)
-            throw AudiobookAPIFailure(statusCode: http.statusCode, body: body)
+            throw AudiobookAPIFailure(statusCode: http.statusCode, body: errorBody(of: downloaded))
         }
+        let expected = http.expectedContentLength
+        if expected >= 0 {
+            let actual = try (FileManager.default.attributesOfItem(atPath: downloaded.path)[.size] as? NSNumber)?.int64Value
+            guard actual == expected else { throw URLError(.networkConnectionLost) }
+        }
+        try Task.checkCancellation()
         let workspace = try AtomicFileReplacement.makeWorkspace(near: destination)
         defer { AtomicFileReplacement.discard(workspace) }
         let staged = workspace.appendingPathComponent(destination.lastPathComponent)
-        let expected = http.expectedContentLength
-        let written = try await write(bytes, to: staged, expected: expected, progress: progress)
-        guard expected < 0 || written == expected else {
-            throw URLError(.networkConnectionLost)
-        }
+        try FileManager.default.moveItem(at: downloaded, to: staged)
         try AtomicFileReplacement.moveIntoPlace(staged, at: destination)
-        progress?(1)
+        transfer.complete()
     }
 
-    private static func write(
-        _ bytes: URLSession.AsyncBytes,
-        to file: URL,
-        expected: Int64,
-        progress: (@Sendable (Double) -> Void)?
-    ) async throws -> Int64 {
-        guard FileManager.default.createFile(atPath: file.path, contents: nil) else {
-            throw CocoaError(.fileWriteUnknown)
+    private static func download(
+        _ request: URLRequest,
+        using session: URLSession,
+        transfer: DownloadTransfer
+    ) async throws -> (URL, URLResponse) {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.downloadTask(with: request) { location, response, error in
+                    transfer.finish()
+                    continuation.resume(with: Self.outcome(location: location, response: response, error: error))
+                }
+                transfer.start(task)
+            }
+        } onCancel: {
+            transfer.cancel()
         }
-        let handle = try FileHandle(forWritingTo: file)
+    }
+
+    private static func outcome(
+        location: URL?,
+        response: URLResponse?,
+        error: Error?
+    ) -> Result<(URL, URLResponse), Error> {
+        if let error {
+            return .failure(error)
+        }
+        guard let location, let response else { return .failure(URLError(.badServerResponse)) }
+        let retained = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voqora-download-\(UUID().uuidString)")
+        do {
+            try FileManager.default.moveItem(at: location, to: retained)
+        } catch {
+            return .failure(error)
+        }
+        return .success((retained, response))
+    }
+
+    private static func errorBody(of file: URL) -> Data {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return Data() }
         defer { try? handle.close() }
-        var buffer = Data()
-        buffer.reserveCapacity(chunkSize)
-        var written: Int64 = 0
-        var reportedPercent: Int64 = -1
-        func flush() throws {
-            guard !buffer.isEmpty else { return }
-            try handle.write(contentsOf: buffer)
-            written += Int64(buffer.count)
-            buffer.removeAll(keepingCapacity: true)
-            guard expected > 0, let progress else { return }
-            let percent = min(100, written * 100 / expected)
-            if percent != reportedPercent {
-                reportedPercent = percent
-                progress(Double(percent) / 100)
-            }
-        }
-        for try await byte in bytes {
-            buffer.append(byte)
-            if buffer.count >= chunkSize {
-                try Task.checkCancellation()
-                try flush()
-            }
-        }
-        try flush()
-        try handle.synchronize()
-        return written
+        return (try? handle.read(upToCount: maximumErrorBodySize)) ?? Data()
+    }
+}
+
+private final nonisolated class DownloadTransfer: @unchecked Sendable {
+    private let report: (@Sendable (Double) -> Void)?
+    private let lock = NSLock()
+    private var task: URLSessionDownloadTask?
+    private var observation: NSKeyValueObservation?
+    private var isCancelled = false
+    private var lastPercent = -1
+
+    init(_ report: (@Sendable (Double) -> Void)?) {
+        self.report = report
     }
 
-    private static func collect(_ bytes: URLSession.AsyncBytes) async throws -> Data {
-        var body = Data()
-        for try await byte in bytes {
-            guard body.count < maximumErrorBodySize else { break }
-            body.append(byte)
+    func start(_ task: URLSessionDownloadTask) {
+        let cancelled = lock.withLock { () -> Bool in
+            self.task = task
+            return isCancelled
         }
-        return body
+        if report != nil {
+            let observation = task.observe(\.countOfBytesReceived, options: [.new]) { [weak self] task, _ in
+                self?.publish(written: task.countOfBytesReceived, expected: task.countOfBytesExpectedToReceive)
+            }
+            lock.withLock { self.observation = observation }
+        }
+        if cancelled {
+            task.cancel()
+        } else {
+            task.resume()
+        }
+    }
+
+    func cancel() {
+        let task = lock.withLock { () -> URLSessionDownloadTask? in
+            isCancelled = true
+            return self.task
+        }
+        task?.cancel()
+    }
+
+    func finish() {
+        lock.withLock {
+            observation?.invalidate()
+            observation = nil
+        }
+    }
+
+    func complete() {
+        publish(percent: 100)
+    }
+
+    private func publish(written: Int64, expected: Int64) {
+        guard let fraction = BackendFileDownload.fraction(written: written, expected: expected) else { return }
+        publish(percent: Int(fraction * 100))
+    }
+
+    private func publish(percent: Int) {
+        guard let report else { return }
+        let isNew = lock.withLock { () -> Bool in
+            guard percent != lastPercent else { return false }
+            lastPercent = percent
+            return true
+        }
+        if isNew {
+            report(Double(percent) / 100)
+        }
     }
 }

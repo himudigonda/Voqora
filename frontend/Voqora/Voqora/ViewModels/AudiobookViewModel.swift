@@ -156,6 +156,7 @@ final class AudiobookViewModel: ObservableObject {
     private var sectionSleepObserver: AnyCancellable?
     private var listeningObservers: Set<AnyCancellable> = []
 
+    private let resumePoints: UserDefaults
     private let subscribeToEvents: @MainActor (String) -> AsyncStream<[String: Any]>
     private let listBooks: @MainActor () async throws -> [Audiobook]
 
@@ -163,6 +164,7 @@ final class AudiobookViewModel: ObservableObject {
         service: AudiobookService? = nil,
         audio: AudioService,
         providers: LLMProviderStore? = nil,
+        resumePoints: UserDefaults = .standard,
         localAudioURL: (@MainActor (String) async throws -> URL)? = nil,
         subscribeToEvents: (@MainActor (String) -> AsyncStream<[String: Any]>)? = nil,
         listBooks: (@MainActor () async throws -> [Audiobook])? = nil
@@ -170,6 +172,7 @@ final class AudiobookViewModel: ObservableObject {
         let resolvedService = service ?? AudiobookService()
         self.service = resolvedService
         self.audio = audio
+        self.resumePoints = resumePoints
         self.providers = providers ?? LLMProviderStore()
         self.localAudioURL = localAudioURL ?? { bookID in
             try await resolvedService.ensureLocalAudio(for: bookID)
@@ -181,7 +184,7 @@ final class AudiobookViewModel: ObservableObject {
             .filter(\.self)
             .sink { [weak self] _ in
                 guard let self, let bookID = self.audio.completedSessionID else { return }
-                UserDefaults.standard.removeObject(forKey: "bookPos_\(bookID)")
+                resumePoints.removeObject(forKey: "bookPos_\(bookID)")
                 if sleepUntilEndOfBook {
                     cancelSleepTimer()
                 }
@@ -874,7 +877,7 @@ final class AudiobookViewModel: ObservableObject {
                 audio.stop()
                 let url = try await localAudioURL(book.bookID)
                 guard generation == playbackGeneration else { return }
-                let savedTime = UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
+                let savedTime = resumePoints.double(forKey: "bookPos_\(book.bookID)")
                 try audio.loadAndPlayWAV(
                     at: url,
                     sessionID: book.bookID,
@@ -903,7 +906,7 @@ final class AudiobookViewModel: ObservableObject {
         guard book.totalAudioSeconds > 0 else { return 0 }
         let seconds = nowPlaying?.bookID == book.bookID
             ? audio.currentTime
-            : UserDefaults.standard.double(forKey: "bookPos_\(book.bookID)")
+            : resumePoints.double(forKey: "bookPos_\(book.bookID)")
         return min(1, max(0, seconds / book.totalAudioSeconds))
     }
 
@@ -912,7 +915,7 @@ final class AudiobookViewModel: ObservableObject {
         if let last = ready.first(where: { $0.bookID == lastPlayedBookID }) {
             return last
         }
-        return ready.first { UserDefaults.standard.double(forKey: "bookPos_\($0.bookID)") > 0 }
+        return ready.first { resumePoints.double(forKey: "bookPos_\($0.bookID)") > 0 }
     }
 
     func togglePlayback() {
@@ -959,9 +962,9 @@ final class AudiobookViewModel: ObservableObject {
         let key = "bookPos_\(book.bookID)"
         let nearEnd = audio.duration > 0 && audio.currentTime >= audio.duration - 5.0
         if audio.playbackCompleted || nearEnd {
-            UserDefaults.standard.removeObject(forKey: key)
+            resumePoints.removeObject(forKey: key)
         } else if audio.currentTime > 1.0 {
-            UserDefaults.standard.set(audio.currentTime, forKey: key)
+            resumePoints.set(audio.currentTime, forKey: key)
         }
     }
 
@@ -984,6 +987,12 @@ final class AudiobookViewModel: ObservableObject {
         }
         nowPlaying = nil
         cancelSleepTimer()
+    }
+
+    func pauseForSpeech(fadeOverSeconds: TimeInterval) {
+        guard let book = nowPlaying else { return }
+        lastPlayedBookID = book.bookID
+        stopPlayback(fadeOverSeconds: fadeOverSeconds)
     }
 
     func seek(toSeconds seconds: Double) {

@@ -80,7 +80,7 @@ private actor ResolutionGate {
 @MainActor
 final class AudiobookPlaybackStateTests: XCTestCase {
     func test_nowPlayingBar_isVisibleOnlyOutsideFullPlayer() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         XCTAssertFalse(viewModel.isNowPlayingBarVisible)
 
         viewModel.nowPlaying = makeBook()
@@ -101,6 +101,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let loader = DelayedAudioLoader()
         let viewModel = AudiobookViewModel(
             audio: audio,
+            providers: StudioFixtures.providers(connected: false),
             localAudioURL: { _ in try await loader.load() }
         )
         let before = viewModel.playbackGeneration
@@ -123,7 +124,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_stopPlayback_withFade_cancelsArmedSleepTimer() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         let book = makeBook(bookID: "b1", status: "done")
         viewModel.nowPlaying = book
         viewModel.startSleepTimer(.endOfBook, currentBook: book)
@@ -141,7 +142,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_continueListening_fallsBackToABookWithSavedProgress() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         let fresh = makeBook(bookID: "fresh-book")
         let started = makeBook(bookID: "started-book")
         viewModel.books = [fresh, started]
@@ -156,9 +157,46 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertEqual(viewModel.continueListeningBook?.bookID, "started-book")
     }
 
+    func test_pauseForSpeech_keepsTheExactResumePointAndTheBookToContinue() throws {
+        let suiteName = "AudiobookPlaybackStateTests.\(UUID().uuidString)"
+        let resumePoints = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        let audio = AudioService(startingEngine: false)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false), resumePoints: resumePoints)
+        let book = makeBook(bookID: "speech-pause-book", status: "done")
+        viewModel.books = [book]
+        viewModel.nowPlaying = book
+        audio.duration = 600
+        audio.currentTime = 123
+        let previousLastPlayed = viewModel.lastPlayedBookID
+        viewModel.lastPlayedBookID = "another-book"
+        defer {
+            resumePoints.removePersistentDomain(forName: suiteName)
+            viewModel.lastPlayedBookID = previousLastPlayed
+        }
+
+        viewModel.pauseForSpeech(fadeOverSeconds: 0.12)
+
+        XCTAssertNil(viewModel.nowPlaying)
+        XCTAssertEqual(resumePoints.double(forKey: "bookPos_speech-pause-book"), 123)
+        XCTAssertEqual(UserDefaults.standard.double(forKey: "bookPos_speech-pause-book"), 0)
+        XCTAssertEqual(viewModel.lastPlayedBookID, "speech-pause-book")
+        XCTAssertEqual(viewModel.continueListeningBook?.bookID, "speech-pause-book")
+    }
+
+    func test_pauseForSpeech_withNothingPlayingChangesNothing() {
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
+        let previousLastPlayed = viewModel.lastPlayedBookID
+        viewModel.lastPlayedBookID = "kept-book"
+        defer { viewModel.lastPlayedBookID = previousLastPlayed }
+
+        viewModel.pauseForSpeech(fadeOverSeconds: 0.12)
+
+        XCTAssertEqual(viewModel.lastPlayedBookID, "kept-book")
+    }
+
     func test_endOfSectionSleep_followsPlaybackPositionNotWallClock() {
         let audio = AudioService(startingEngine: false)
-        let viewModel = AudiobookViewModel(audio: audio)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let book = makeBook(
             bookID: "b1",
             sections: [
@@ -185,7 +223,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_stopPlayback_defaultParameter_behavesExactlyAsBefore() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         viewModel.nowPlaying = makeBook(bookID: "b1")
 
         viewModel.stopPlayback()
@@ -224,6 +262,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         var callCount = 0
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in
                 callCount += 1
                 return callCount == 1 ? streamA : streamB
@@ -269,6 +308,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let book = makeBook(bookID: "b1", status: "cleaning", pageDone: 1, pageTotal: 10)
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in AsyncStream { _ in } }, // never yields; stays "active"
             listBooks: { [book] }
         )
@@ -293,6 +333,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         var callCount = 0
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in AsyncStream { _ in } },
             listBooks: {
                 callCount += 1
@@ -319,7 +360,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_applyCompletion_receiptOrderWins_notResolutionOrder() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         let bookA = makeBook(bookID: "A", status: "done")
         let bookB = makeBook(bookID: "B", status: "done")
 
@@ -341,6 +382,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let book = makeBook(bookID: "b1", status: "cleaning")
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in stream }
         )
 
@@ -374,7 +416,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         }
 
         let audio = AudioService(startingEngine: false)
-        let viewModel = AudiobookViewModel(audio: audio)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         UserDefaults.standard.set(42.0, forKey: bookPosKeyA)
         UserDefaults.standard.set(7.0, forKey: bookPosKeyB)
 
@@ -396,6 +438,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     func test_refresh_catchPath_setsLoadFailedFlag() async {
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             listBooks: { throw LibraryLoadFailure.backendUnreachable }
         )
         XCTAssertFalse(viewModel.loadFailed, "precondition: no failure yet")
@@ -412,6 +455,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         let book = makeBook(bookID: "b1", status: "done")
         let viewModel = AudiobookViewModel(
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in AsyncStream { _ in } },
             listBooks: {
                 if await failureSwitch.value() {
@@ -452,7 +496,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
         XCTAssertEqual(book.displayStatus, .finishing)
         XCTAssertTrue(book.displayStatus.isProcessing)
 
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         viewModel.applyPhase(bookID: "b1", phase: "concatenating", page: 11, total: 11)
         XCTAssertEqual(viewModel.processingState["b1"], .finishing)
         viewModel.applyStatus(bookID: "b2", status: "concatenating", pageDone: 11, pageTotal: 11, error: nil)
@@ -460,7 +504,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_applyStatus_sectioning_setsSectioningState() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         viewModel.applyStatus(bookID: "b1", status: "sectioning", pageDone: 2, pageTotal: 5, error: nil)
         guard case let .sectioning(page, total) = viewModel.processingState["b1"] else {
             XCTFail("expected .sectioning, got \(String(describing: viewModel.processingState["b1"]))")
@@ -471,7 +515,7 @@ final class AudiobookPlaybackStateTests: XCTestCase {
     }
 
     func test_applyPhase_sectioning_setsSectioningState_doesNotFreezeAtPriorPhase() {
-        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false))
+        let viewModel = AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
         viewModel.applyPhase(bookID: "b1", phase: "cleaning", page: 1, total: 5)
         viewModel.applyPhase(bookID: "b1", phase: "sectioning", page: 5, total: 5)
         guard case let .sectioning(page, total) = viewModel.processingState["b1"] else {

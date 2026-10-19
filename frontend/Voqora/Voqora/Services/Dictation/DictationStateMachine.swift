@@ -23,6 +23,7 @@ nonisolated enum DictationEvent: Equatable, Sendable {
     case finishTimedOut
     case failed(DictationIssue)
     case insertionFinished
+    case abandonInsertion
 }
 
 nonisolated enum DictationEffect: Equatable, Sendable {
@@ -60,6 +61,8 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
             fail(issue)
         case .insertionFinished:
             finishInsertion()
+        case .abandonInsertion:
+            abandonInsertion()
         }
     }
 
@@ -123,6 +126,13 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
         phase = .idle
         transcript = ""
         return .report(issue)
+    }
+
+    private mutating func abandonInsertion() -> DictationEffect {
+        guard phase == .inserting else { return .nothing }
+        phase = .idle
+        transcript = ""
+        return .nothing
     }
 
     private mutating func finishInsertion() -> DictationEffect {

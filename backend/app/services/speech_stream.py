@@ -97,18 +97,22 @@ async def open_speech_samples(
     lang: str | None = None,
     *,
     pause_scale: float = 1.0,
+    book_id: str | None = None,
 ) -> SpeechSamples:
     """Start interactive speech under the preemption lock.
 
-    `voice` may be a built-in voice or a blend id. The global pronunciation
-    dictionary applies, as it does everywhere outside an audiobook.
+    `voice` may be a built-in voice, a blend id or a Supertonic voice. The
+    global pronunciation dictionary applies, plus the book's own rules when
+    `book_id` names one.
     """
+    engine = EngineManager.engine_for_voice(voice)
+    EngineManager.require_installed(engine)
     await interactive_tts_lock.acquire()
     try:
-        await EngineManager.ensure_loaded()
-        EngineManager.touch()
+        await EngineManager.ensure_loaded(engine)
+        EngineManager.touch(engine)
         samples = EngineManager.generate(
-            text, voice, speed, lang, pause_scale=pause_scale
+            text, voice, speed, lang, pause_scale=pause_scale, book_id=book_id
         )
     except BaseException:
         interactive_tts_lock.release()

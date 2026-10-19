@@ -91,6 +91,7 @@ struct VoqoraApp: App {
         let localAPIInstance = LocalAPIController.live(
             speaker: vmInstance,
             announce: { [weak audiobookInstance] message in audiobookInstance?.showToast(message, kind: .info) },
+            interrupts: vmInstance.speechInterrupts,
             defaults: testDefaults ?? .standard
         )
         let shelfClient = AudiobookshelfClient()
@@ -119,7 +120,8 @@ struct VoqoraApp: App {
         _dictation = StateObject(wrappedValue: dictationInstance)
         _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
         _inbox = StateObject(wrappedValue: inboxInstance)
-        _studio = StateObject(wrappedValue: StudioViewModel(providers: providersInstance, library: .live(audiobookInstance)))
+        let studioInstance = StudioViewModel(providers: providersInstance, library: .live(audiobookInstance))
+        _studio = StateObject(wrappedValue: studioInstance)
         _localAPI = StateObject(wrappedValue: localAPIInstance)
         _shelfSettings = StateObject(wrappedValue: shelfSettingsInstance)
         _shelfUploads = StateObject(wrappedValue: shelfUploadsInstance)
@@ -138,6 +140,9 @@ struct VoqoraApp: App {
         systemMedia = runningTests ? nil : SystemMediaSession.live(dashboard: vmInstance, audiobooks: audiobookInstance)
         appDelegate.stopOwnedBackend = { [backendInstance] in
             backendInstance.stop()
+        }
+        appDelegate.flushStudioDrafts = { [studioInstance] in
+            studioInstance.flushForTermination()
         }
 
         if !runningTests {

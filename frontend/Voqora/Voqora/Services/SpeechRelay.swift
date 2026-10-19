@@ -86,13 +86,70 @@ final class SpeechRelaySubscriber {
 }
 
 @MainActor
+final class SpeechInterruptSignal {
+    private var observers: [@MainActor () -> Void] = []
+
+    func observe(_ observer: @escaping @MainActor () -> Void) {
+        observers.append(observer)
+    }
+
+    func fire() {
+        for observer in observers {
+            observer()
+        }
+    }
+}
+
+@MainActor
+protocol SpeechActivityReporting: SpeechInputSpeaking {
+    var isSpeechActive: Bool { get }
+}
+
+extension DashboardViewModel: SpeechActivityReporting {
+    var isSpeechActive: Bool {
+        switch status {
+        case .thinking, .speaking, .paused: true
+        case .ready, .error: false
+        }
+    }
+}
+
+@MainActor
 final class SpeechRelayPlayer {
+    typealias Sleep = @Sendable (Double) async -> Void
+
+    static let pollSeconds = 0.2
+    static let settleSeconds = 0.3
+
     private let speaker: any SpeechInputSpeaking
     private let announce: @MainActor (String) -> Void
+    private let sleep: Sleep
+    private var pending: [RelaySpeakCommand] = []
+    private var drainTask: Task<Void, Never>?
+    private var isStartingRelayedSpeech = false
 
-    init(speaker: any SpeechInputSpeaking, announce: @escaping @MainActor (String) -> Void) {
+    init(
+        speaker: any SpeechInputSpeaking,
+        announce: @escaping @MainActor (String) -> Void,
+        interrupts: SpeechInterruptSignal? = nil,
+        sleep: Sleep? = nil
+    ) {
         self.speaker = speaker
         self.announce = announce
+        self.sleep = sleep ?? { seconds in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        }
+        interrupts?.observe { [weak self] in
+            self?.handleLocalInterrupt()
+        }
+    }
+
+    var queuedCount: Int {
+        pending.count
+    }
+
+    private var isSpeechActive: Bool {
+        (speaker as? any SpeechActivityReporting)?.isSpeechActive ?? false
     }
 
     func handle(_ event: IntegrationEvent) {
@@ -100,19 +157,66 @@ final class SpeechRelayPlayer {
         case .ready:
             break
         case let .speak(command):
-            VoqoraLog.info("SpeechRelay", "Speaking local API request", [
-                "chars": "\(command.text.count)",
-                "namedVoice": command.voice == nil ? "false" : "true",
-            ])
-            if let client = command.client {
-                announce(Self.announcement(for: client))
+            switch command.mode {
+            case .replace:
+                clearQueue()
+                Task { await begin(command) }
+            case .queue:
+                pending.append(command)
+                startDrainingIfNeeded()
             }
-            let speaker = speaker
-            Task { await speaker.speak(text: command.text, voice: command.voice) }
         case .stop:
             VoqoraLog.info("SpeechRelay", "Stopping speech for local API request")
+            clearQueue()
             speaker.stopPlayback()
         }
+    }
+
+    private func handleLocalInterrupt() {
+        guard !isStartingRelayedSpeech else { return }
+        clearQueue()
+    }
+
+    private func clearQueue() {
+        pending.removeAll()
+        drainTask?.cancel()
+        drainTask = nil
+    }
+
+    private func startDrainingIfNeeded() {
+        guard drainTask == nil else { return }
+        drainTask = Task { [weak self] in
+            await self?.drain()
+        }
+    }
+
+    private func drain() async {
+        await sleep(Self.settleSeconds)
+        while !Task.isCancelled, !pending.isEmpty {
+            while !Task.isCancelled, isSpeechActive {
+                await sleep(Self.pollSeconds)
+            }
+            guard !Task.isCancelled, !pending.isEmpty else { return }
+            await begin(pending.removeFirst())
+            await sleep(Self.settleSeconds)
+        }
+        if !Task.isCancelled {
+            drainTask = nil
+        }
+    }
+
+    private func begin(_ command: RelaySpeakCommand) async {
+        VoqoraLog.info("SpeechRelay", "Speaking local API request", [
+            "chars": "\(command.text.count)",
+            "namedVoice": command.voice == nil ? "false" : "true",
+            "queued": command.mode == .queue ? "true" : "false",
+        ])
+        if let client = command.client {
+            announce(Self.announcement(for: client))
+        }
+        isStartingRelayedSpeech = true
+        defer { isStartingRelayedSpeech = false }
+        await speaker.speak(text: command.text, voice: command.voice)
     }
 
     static func announcement(for client: String) -> String {

@@ -2,11 +2,24 @@ import AppKit
 import Combine
 import Foundation
 
+nonisolated enum InboxSpeechPhase: Equatable, Sendable {
+    case active
+    case stopped
+
+    init(_ status: AppStatus) {
+        switch status {
+        case .thinking, .speaking, .paused: self = .active
+        case .ready, .error: self = .stopped
+        }
+    }
+}
+
 nonisolated struct InboxPlaybackSample: Equatable, Sendable {
     let spokenText: String?
     let progress: Double
     let completed: Bool
     let isSpeechSession: Bool
+    var phase: InboxSpeechPhase = .active
 }
 
 struct InboxNotice: Identifiable, Equatable {
@@ -18,14 +31,10 @@ struct InboxNotice: Identifiable, Equatable {
 
     enum Action: Equatable {
         case makeAudiobook(URL)
-        case openAudiobook(String)
-        case showLibrary
 
         var title: String {
             switch self {
             case .makeAudiobook: "Make Audiobook"
-            case .openAudiobook: "Open in Library"
-            case .showLibrary: "Show Library"
             }
         }
     }
@@ -42,14 +51,8 @@ struct InboxNotice: Identifiable, Equatable {
 
 struct InboxDependencies {
     var extract: @MainActor (URL) async throws -> ExtractedArticle
-    var createAudiobook: @MainActor (URL, AudiobookNarration) async throws -> AudiobookEstimateResponse
-    var startAudiobook: @MainActor (String) async throws -> Void
-    var discardAudiobook: @MainActor (String) async -> Void
-    var narration: @MainActor () -> AudiobookNarration
-    var speak: @MainActor (String) async -> Void
-    var refreshLibrary: @MainActor () async -> Void
-    var openAudiobook: @MainActor (String) -> Void
-    var showLibrary: @MainActor () -> Void
+    var importAudiobook: @MainActor (URL) -> Void
+    var speak: @MainActor (String) async -> Bool
     var openURL: @MainActor (URL) -> Void
     var copyText: @MainActor (String) -> Void
     var notify: @MainActor (String, String) -> Void
@@ -60,30 +63,38 @@ struct InboxDependencies {
 extension InboxDependencies {
     static func live(dashboard: DashboardViewModel, library: AudiobookViewModel) -> InboxDependencies {
         let articles = ArticleService()
-        let audiobooks = AudiobookService()
-        let playback = Publishers.CombineLatest4(
+        let speech = Publishers.CombineLatest4(
             dashboard.$spokenText,
             dashboard.audio.$progress,
             dashboard.audio.$playbackCompleted,
             library.$nowPlaying.map { $0 == nil }
         )
-        .map { InboxPlaybackSample(spokenText: $0, progress: $1, completed: $2, isSpeechSession: $3) }
-        .eraseToAnyPublisher()
+        let playback = Publishers.CombineLatest(speech, dashboard.$status.map(InboxSpeechPhase.init))
+            .map { speech, phase in
+                InboxPlaybackSample(
+                    spokenText: speech.0,
+                    progress: speech.1,
+                    completed: speech.2,
+                    isSpeechSession: speech.3,
+                    phase: phase
+                )
+            }
+            .eraseToAnyPublisher()
         return InboxDependencies(
             extract: { try await articles.extract($0) },
-            createAudiobook: { try await articles.createAudiobook(from: $0, narration: $1) },
-            startAudiobook: { try await audiobooks.start($0, cleanup: nil) },
-            discardAudiobook: { try? await audiobooks.delete($0) },
-            narration: {
-                AudiobookNarration(
-                    voice: library.defaultBookVoice.isEmpty ? dashboard.selectedVoice : library.defaultBookVoice,
-                    speed: library.defaultBookSpeed > 0 ? library.defaultBookSpeed : dashboard.speechSpeed
+            importAudiobook: { url in
+                library.importWebPage(
+                    url,
+                    voice: library.importVoice(fallback: dashboard.selectedVoice),
+                    speed: library.importSpeed(fallback: dashboard.speechSpeed)
                 )
+                dashboard.showLibrary()
             },
-            speak: { await dashboard.speak(text: $0, voice: nil) },
-            refreshLibrary: { await library.refresh() },
-            openAudiobook: { dashboard.openAudiobook($0) },
-            showLibrary: { dashboard.showLibrary() },
+            speak: { text in
+                let wasOnline = dashboard.isBackendOnline
+                await dashboard.speak(text: text, voice: nil)
+                return wasOnline
+            },
             openURL: { _ = NSWorkspace.shared.open($0) },
             copyText: { SystemPasteboard().write($0, transient: false) },
             notify: { PermissionsService.shared.scheduleNotification(title: $0, body: $1) },
@@ -116,6 +127,7 @@ final class InboxViewModel: ObservableObject {
         let itemID: InboxItem.ID
         let text: String
         var hasStarted = false
+        var isArmed = false
         var savedProgress: Double
     }
 
@@ -127,7 +139,6 @@ final class InboxViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var linkDraft = ""
     @Published private(set) var pendingLinks: [PendingLink] = []
-    @Published private(set) var audiobookRequests: Set<String> = []
     @Published private(set) var listeningItemID: InboxItem.ID?
     @Published var notice: InboxNotice?
 
@@ -137,7 +148,7 @@ final class InboxViewModel: ObservableObject {
     private var extractionTask: Task<Void, Never>?
     private var extractionGeneration = 0
     private var speakTask: Task<Void, Never>?
-    private var audiobookTasks: [String: Task<Void, Never>] = [:]
+    private var linkImportTask: Task<Void, Never>?
     private var noticeTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
 
@@ -163,10 +174,6 @@ final class InboxViewModel: ObservableObject {
 
     func count(for filter: InboxFilter) -> Int {
         store.items.filter(filter.includes).count
-    }
-
-    func isMakingAudiobook(_ item: InboxItem) -> Bool {
-        audiobookRequests.contains(InboxLinkParser.matchKey(for: item.url))
     }
 
     @discardableResult
@@ -210,12 +217,22 @@ final class InboxViewModel: ObservableObject {
     }
 
     func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        importLinks(from: providers, emptyMessage: Message.noDroppedLink)
+    }
+
+    func handlePaste(_ providers: [NSItemProvider]) {
+        if !importLinks(from: providers, emptyMessage: Message.noPastedLink) {
+            post(InboxNotice(message: Message.noPastedLink, kind: .error))
+        }
+    }
+
+    private func importLinks(from providers: [NSItemProvider], emptyMessage: String) -> Bool {
         let accepted = providers.filter(InboxDropReader.accepts)
         guard !accepted.isEmpty else { return false }
-        Task {
+        linkImportTask = Task {
             let links = await InboxDropReader.links(from: accepted)
             guard !links.isEmpty else {
-                post(InboxNotice(message: Message.noDroppedLink, kind: .error))
+                post(InboxNotice(message: emptyMessage, kind: .error))
                 return
             }
             for link in links {
@@ -234,11 +251,17 @@ final class InboxViewModel: ObservableObject {
         listening = ListeningSession(itemID: item.id, text: text, savedProgress: item.progress)
         listeningItemID = item.id
         VoqoraLog.info("InboxViewModel", "Listening to an Inbox article", ["words": "\(item.wordCount)"])
-        speakTask = Task { await dependencies.speak(text) }
+        let itemID = item.id
+        speakTask = Task {
+            let accepted = await dependencies.speak(text)
+            if !accepted, listening?.itemID == itemID {
+                endListening()
+            }
+        }
     }
 
     func makeAudiobook(from item: InboxItem) {
-        requestAudiobook(for: item.url)
+        dependencies.importAudiobook(item.url)
     }
 
     func openOriginal(_ item: InboxItem) {
@@ -268,9 +291,7 @@ final class InboxViewModel: ObservableObject {
     func perform(_ action: InboxNotice.Action) {
         notice = nil
         switch action {
-        case let .makeAudiobook(url): requestAudiobook(for: url)
-        case let .openAudiobook(bookID): dependencies.openAudiobook(bookID)
-        case .showLibrary: dependencies.showLibrary()
+        case let .makeAudiobook(url): dependencies.importAudiobook(url)
         }
     }
 
@@ -290,10 +311,8 @@ final class InboxViewModel: ObservableObject {
 
     func waitUntilIdle() async {
         await speakTask?.value
+        await linkImportTask?.value
         while let task = extractionTask {
-            await task.value
-        }
-        while let task = audiobookTasks.values.first {
             await task.value
         }
     }
@@ -364,49 +383,6 @@ final class InboxViewModel: ObservableObject {
         post(InboxNotice(message: "“\(item.title)” is already in your Inbox.", kind: .info))
     }
 
-    private func requestAudiobook(for url: URL) {
-        let key = InboxLinkParser.matchKey(for: url)
-        guard !audiobookRequests.contains(key) else { return }
-        audiobookRequests.insert(key)
-        let narration = dependencies.narration()
-        audiobookTasks[key] = Task {
-            defer {
-                audiobookRequests.remove(key)
-                audiobookTasks[key] = nil
-            }
-            do {
-                try await createAudiobook(from: url, narration: narration)
-            } catch is CancellationError {
-                return
-            } catch {
-                VoqoraLog.warn("InboxViewModel", "An article audiobook could not be started", ["failureCode": "inbox_audiobook_failed"])
-                post(InboxNotice(message: Self.message(for: error), kind: .error))
-            }
-        }
-    }
-
-    private func createAudiobook(from url: URL, narration: AudiobookNarration) async throws {
-        let estimate = try await dependencies.createAudiobook(url, narration)
-        if let duplicateID = estimate.duplicateOfBookID {
-            await dependencies.discardAudiobook(estimate.bookID)
-            let title = estimate.duplicateOfTitle ?? estimate.title
-            post(InboxNotice(message: "“\(title)” is already in your Library.", kind: .info, action: .openAudiobook(duplicateID)))
-            return
-        }
-        do {
-            try await dependencies.startAudiobook(estimate.bookID)
-        } catch {
-            await dependencies.discardAudiobook(estimate.bookID)
-            throw error
-        }
-        await dependencies.refreshLibrary()
-        post(InboxNotice(
-            message: "Making an audiobook of “\(estimate.title)”. It will be ready in your Library soon.",
-            kind: .success,
-            action: .showLibrary
-        ))
-    }
-
     private func handlePlayback(_ sample: InboxPlaybackSample) {
         guard var session = listening else { return }
         guard sample.isSpeechSession, sample.spokenText == session.text else {
@@ -415,8 +391,18 @@ final class InboxViewModel: ObservableObject {
             }
             return
         }
+        if sample.phase == .active {
+            session.isArmed = true
+        }
+        let stopped = session.isArmed && sample.phase == .stopped
         if !session.hasStarted {
-            guard !sample.completed, sample.progress == 0 else { return }
+            guard !sample.completed, sample.progress == 0 else {
+                listening = session
+                if stopped {
+                    endListening()
+                }
+                return
+            }
             session.hasStarted = true
         }
         let fraction = sample.completed ? 1 : min(max(sample.progress, 0), 1)
@@ -426,7 +412,7 @@ final class InboxViewModel: ObservableObject {
             store.setProgress(fraction, for: session.itemID)
         }
         listening = session
-        if sample.completed {
+        if sample.completed || stopped {
             endListening()
         }
     }

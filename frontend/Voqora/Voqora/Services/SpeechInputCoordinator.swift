@@ -13,6 +13,7 @@ protocol SpeechInputSpeaking: AnyObject {
     var selectedVoice: String { get }
     var speechSpeed: Double { get }
     func speak(text: String, voice: String?) async
+    func speakAIResult(text: String, voice: String?) async
     func togglePlayback()
     func stopPlayback()
     func showTransientError(_ message: String)
@@ -22,6 +23,12 @@ protocol SpeechInputSpeaking: AnyObject {
 protocol LibraryTextImporting: AnyObject {
     var defaultBookVoice: String { get }
     func importDocument(_ url: URL, defaultVoice: String, defaultSpeed: Double)
+}
+
+extension SpeechInputSpeaking {
+    func speakAIResult(text: String, voice: String?) async {
+        await speak(text: text, voice: voice)
+    }
 }
 
 extension DashboardViewModel: SpeechInputSpeaking {}

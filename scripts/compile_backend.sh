@@ -135,6 +135,8 @@ PYINSTALLER_FLAGS=(
     --collect-all 'phonemizer'
     --collect-all 'language_tags'
     --collect-all 'kokoro_onnx'
+    --collect-all 'supertonic'
+    --collect-submodules 'huggingface_hub'
     --collect-all 'pdfplumber'
     --collect-all 'pdfminer'
     --collect-all 'pypdfium2'

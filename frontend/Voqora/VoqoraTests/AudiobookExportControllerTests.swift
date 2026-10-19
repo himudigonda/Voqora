@@ -227,6 +227,24 @@ final class AudiobookExportControllerTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(exporter.requests.first).author, "Herman Melville")
     }
 
+    func test_m4bExport_creditsAPodcastWithItsCreditLineNotTheFirstVoice() async throws {
+        let exporter = RecordingExporter()
+        let controller = makeController(exporter: exporter, destination: directory.appendingPathComponent("a.m4b"))
+        let speakers = [
+            PodcastSpeaker(id: "host_1", name: "Avery", voice: "af_bella"),
+            PodcastSpeaker(id: "host_2", name: "Jordan", voice: "am_adam"),
+        ]
+        let podcast = makeBook(kind: Audiobook.podcastKind, speakers: speakers)
+
+        controller.export(podcast, as: .m4b)
+        await controller.waitUntilFinished()
+
+        let author = try XCTUnwrap(exporter.requests.first).author
+        XCTAssertEqual(author, podcast.creditLine)
+        XCTAssertEqual(author, "With \(ListFormatter.localizedString(byJoining: ["Avery", "Jordan"]))")
+        XCTAssertNotEqual(author, podcast.narratorName)
+    }
+
     func test_mp3Export_downloadsAtTheNearestAllowedBitrate() async {
         let destination = directory.appendingPathComponent("Test Book.mp3")
         let controller = makeController(exporter: RecordingExporter(), destination: destination, mp3BitrateKbps: 100)
@@ -383,7 +401,9 @@ final class AudiobookExportControllerTests: XCTestCase {
         id: String = "book-1",
         status: String = "done",
         sections: [AudiobookSection] = [],
-        author: String? = nil
+        author: String? = nil,
+        kind: String? = nil,
+        speakers: [PodcastSpeaker]? = nil
     ) -> Audiobook {
         Audiobook(
             bookID: id,
@@ -404,7 +424,9 @@ final class AudiobookExportControllerTests: XCTestCase {
             usesLLMCleanup: false,
             budget: nil,
             error: nil,
-            author: author
+            author: author,
+            kind: kind,
+            speakers: speakers
         )
     }
 }

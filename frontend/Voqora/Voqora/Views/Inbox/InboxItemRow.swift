@@ -39,15 +39,8 @@ struct InboxItemRow: View {
             .accessibilityLabel(accessibilitySummary)
             Spacer(minLength: 0)
             HStack(spacing: DesignTokens.Spacing.sm) {
-                if inbox.isMakingAudiobook(item) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 30, height: 30)
-                        .accessibilityLabel("Making audiobook")
-                } else {
-                    PlayerCircleButton(systemName: "books.vertical", label: "Make Audiobook") {
-                        inbox.makeAudiobook(from: item)
-                    }
+                PlayerCircleButton(systemName: "books.vertical", label: "Make Audiobook") {
+                    inbox.makeAudiobook(from: item)
                 }
                 Menu {
                     actionItems
@@ -75,7 +68,6 @@ struct InboxItemRow: View {
         .contextMenu {
             Button("Listen Now") { inbox.listen(to: item) }
             Button("Make Audiobook") { inbox.makeAudiobook(from: item) }
-                .disabled(inbox.isMakingAudiobook(item))
             Divider()
             actionItems
         }

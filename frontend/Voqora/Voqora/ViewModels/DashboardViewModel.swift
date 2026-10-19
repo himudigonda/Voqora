@@ -43,6 +43,7 @@ class DashboardViewModel: ObservableObject {
     private let backend: BackendService
     private let system: SystemService
     let audio: AudioService
+    let speechInterrupts = SpeechInterruptSignal()
     private let history: HistoryManager
     private let defaults: UserDefaults
 
@@ -242,6 +243,9 @@ class DashboardViewModel: ObservableObject {
         if VoiceBlendRules.isBlendID(id) {
             return VoiceBlendDirectory.shared.name(for: id) ?? "Custom Voice"
         }
+        if let supertonic = SpeechEngineCatalog.displayName(forVoice: id) {
+            return supertonic
+        }
         let name = id.split(separator: "_").last.map(String.init) ?? id
         return name.prefix(1).uppercased() + name.dropFirst()
     }
@@ -353,6 +357,11 @@ class DashboardViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    private enum AudiobookHandoff {
+        case stop
+        case pause
+    }
+
     func speakSelection() async {
         VoqoraLog.info("DashboardViewModel", "speakSelection triggered")
         let frontApp = NSWorkspace.shared.frontmostApplication
@@ -385,6 +394,19 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speak(text: String, voice: String? = nil) async {
+        await speak(text: text, voice: voice, audiobook: .stop)
+    }
+
+    func speak(text: String, bookID: String?) async {
+        await speak(text: text, voice: nil, audiobook: .stop, bookID: bookID)
+    }
+
+    func speakAIResult(text: String, voice: String?) async {
+        await speak(text: text, voice: voice, audiobook: .pause)
+    }
+
+    private func speak(text: String, voice: String?, audiobook: AudiobookHandoff, bookID: String? = nil) async {
+        speechInterrupts.fire()
         clearActionFeedback()
         guard isBackendOnline else {
             backend.start()
@@ -397,7 +419,10 @@ class DashboardViewModel: ObservableObject {
         currentSpeakTask?.cancel()
 
         if let avm = audiobookVM, avm.nowPlaying != nil {
-            avm.stopPlayback(fadeOverSeconds: 0.12)
+            switch audiobook {
+            case .stop: avm.stopPlayback(fadeOverSeconds: 0.12)
+            case .pause: avm.pauseForSpeech(fadeOverSeconds: 0.12)
+            }
         }
 
         currentSpeakTask = Task { [weak self] in
@@ -442,7 +467,8 @@ class DashboardViewModel: ObservableObject {
                         voice: effectiveVoice,
                         speed: speed,
                         volume: volume,
-                        pauseScale: pauseScale
+                        pauseScale: pauseScale,
+                        bookID: bookID
                     )
                 }
                 var receivedAudio = false
@@ -576,6 +602,7 @@ class DashboardViewModel: ObservableObject {
     }
 
     func stopPlayback() {
+        speechInterrupts.fire()
         speakGeneration &+= 1
         currentSpeakTask?.cancel()
         currentSpeakTask = nil

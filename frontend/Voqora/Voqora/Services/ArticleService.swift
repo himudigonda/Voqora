@@ -23,11 +23,14 @@ nonisolated struct ExtractedArticle: Decodable, Equatable, Sendable {
 }
 
 nonisolated struct AudiobookNarration: Equatable, Sendable {
-    static let engine = "kokoro"
     static let speedRange = 0.5 ... 2.0
 
     let voice: String
     let speed: Double
+
+    var engine: String {
+        SpeechEngineID.engine(forVoice: voice)
+    }
 
     init(voice: String, speed: Double) {
         self.voice = voice
@@ -151,7 +154,7 @@ final class ArticleService {
                 url: url.absoluteString,
                 voice: narration.voice,
                 speed: narration.speed,
-                engine: AudiobookNarration.engine
+                engine: narration.engine
             ),
             timeout: Self.audiobookTimeout
         )

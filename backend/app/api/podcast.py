@@ -32,10 +32,11 @@ from app.services.podcast_script import (
     MAX_SPEAKER_NAME_CHARS,
     MAX_TITLE_CHARS,
     PODCAST_KIND,
+    PODCAST_KOKORO_ONLY_MESSAGE,
     PodcastScript,
     Speaker,
 )
-from app.services.voices import is_known_voice, resolve_voice
+from app.services.voices import is_known_voice, is_kokoro_voice, resolve_voice
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -99,6 +100,8 @@ class HostRequest(BaseModel):
     def require_known_voice(cls, value: str) -> str:
         if not is_known_voice(value):
             raise ValueError(f"unknown voice: {value}")
+        if not is_kokoro_voice(value):
+            raise ValueError(PODCAST_KOKORO_ONLY_MESSAGE)
         return value
 
 

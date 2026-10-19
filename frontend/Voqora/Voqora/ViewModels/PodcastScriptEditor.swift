@@ -197,7 +197,13 @@ final class PodcastScriptEditor: ObservableObject, Identifiable {
         autosaveTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { return }
-            self?.save()
+            self?.stageAutosave()
         }
+    }
+
+    private func stageAutosave() {
+        autosaveTask = nil
+        store.autosave(PodcastDraft(id: id, script: script, updatedAt: Date(), basedOnBookID: basedOnBookID))
+        hasUnsavedChanges = false
     }
 }

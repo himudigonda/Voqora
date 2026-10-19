@@ -170,6 +170,9 @@ def test_long_book_summary_exceeding_the_cost_cap_is_413(client, monkeypatch):
         ("/ai/translate", {"text": "hello", "target_language": "de"}),
         ("/ai/translate", {"text": "", "target_language": "es"}),
         ("/ai/translate", {"text": "hello"}),
+        ("/ai/tidy", {"text": "x" * 20_001}),
+        ("/ai/tidy", {"text": "   "}),
+        ("/ai/tidy", {}),
         ("/ai/ask", {"book_id": "a" * 32, "question": "q" * 1_001}),
         ("/ai/ask", {"book_id": "a" * 32, "question": "  "}),
         ("/ai/ask", {"question": "Why?"}),
@@ -269,6 +272,44 @@ def test_translate_round_trip(client, monkeypatch):
     body = response.json()
     assert body["text"] == "[One.]\n\n[Two.]"
     assert body["detected_source_language"] == "en"
+
+
+def test_tidy_returns_cleaned_text_and_usage(client, monkeypatch):
+    fake = install(
+        monkeypatch,
+        FakeLLM(lambda _c, _n: reply({"text": "Hello, world. This is a test."})),
+    )
+    response = client.post(
+        "/ai/tidy",
+        json={"text": "um hello world uh this is a test"},
+        headers=OPENAI_HEADERS,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "Hello, world. This is a test."
+    assert body["provider"] == "openai"
+    assert body["tokens"] == 120
+    assert len(fake.calls) == 1
+    assert fake.calls[0].json_output is True
+    assert "um hello world uh this is a test" in fake.calls[0].user
+    assert "DICTATION" in fake.calls[0].user
+
+
+def test_tidy_rejects_a_reply_that_adds_text(client, monkeypatch):
+    fake = install(monkeypatch, FakeLLM(lambda _c, _n: reply({"text": "word " * 200})))
+    response = client.post(
+        "/ai/tidy", json={"text": "hello there"}, headers=OPENAI_HEADERS
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "ai_invalid_output"
+    assert len(fake.calls) == 2
+
+
+def test_tidy_requires_a_provider(client, monkeypatch):
+    fake = install(monkeypatch, FakeLLM(lambda _c, _n: reply({"text": "x"})))
+    response = client.post("/ai/tidy", json={"text": "hello"})
+    assert response.status_code == 400
+    assert fake.calls == []
 
 
 def test_ask_returns_citations_with_page_and_section(client, monkeypatch):

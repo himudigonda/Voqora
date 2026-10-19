@@ -11,6 +11,7 @@ struct InboxView: View {
     private enum Field: Hashable {
         case link
         case search
+        case pasteTarget
     }
 
     private var accentColor: Color {
@@ -157,7 +158,7 @@ struct InboxView: View {
                 Text("Your Inbox Is Empty")
                     .font(vm.font(.sectionTitle))
                     .foregroundStyle(Palette.textPrimary)
-                Text("Copy a link to an article and press ⌘V here, or drop a link or .webloc file. Voqora keeps up to \(InboxStore.capacity) articles on this Mac.")
+                Text("Copy a link to an article, then press ⌘V here or choose Paste Link. You can also drop a link or .webloc file. Voqora keeps up to \(InboxStore.capacity) articles on this Mac.")
                     .font(vm.font(.rowTitle))
                     .foregroundStyle(Palette.textSecondary)
                     .multilineTextAlignment(.center)
@@ -169,13 +170,22 @@ struct InboxView: View {
                 Label("Paste Link", systemImage: "doc.on.clipboard")
             }
             .buttonStyle(.voqoraSecondary)
-            .keyboardShortcut("v", modifiers: .command)
-            .disabled(focusedField != nil)
             .help("Paste a copied link")
         }
         .padding(.horizontal, 40)
         .padding(.vertical, 48)
         .frame(maxWidth: .infinity)
+        .focusable()
+        .focused($focusedField, equals: .pasteTarget)
+        .focusEffectDisabled()
+        .onPasteCommand(of: InboxDropReader.acceptedTypes) { providers in
+            inbox.handlePaste(providers)
+        }
+        .onAppear {
+            if focusedField == nil {
+                focusedField = .pasteTarget
+            }
+        }
     }
 
     private func persistenceBanner(_ message: String) -> some View {

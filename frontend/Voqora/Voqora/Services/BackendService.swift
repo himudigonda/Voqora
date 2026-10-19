@@ -328,7 +328,8 @@ final class BackendService: NSObject, @unchecked Sendable {
         voice: String,
         speed: Double,
         volume: Double,
-        pauseScale: Double = PauseScale.standard
+        pauseScale: Double = PauseScale.standard,
+        bookID: String? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             guard var request = try? self.connection.request(
@@ -339,13 +340,16 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            let payload: [String: Any] = [
+            var payload: [String: Any] = [
                 "text": text,
                 "voice": voice,
                 "speed": speed,
                 "volume": volume,
                 "pause_scale": PauseScale.clamped(pauseScale),
             ]
+            if let scopedBookID = Self.scopedBookID(bookID) {
+                payload["book_id"] = scopedBookID
+            }
 
             do {
                 request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -369,6 +373,10 @@ final class BackendService: NSObject, @unchecked Sendable {
                 continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
+    }
+
+    static func scopedBookID(_ bookID: String?) -> String? {
+        bookID.flatMap { PronunciationRules.isHexID($0) ? $0 : nil }
     }
 
     static func isExpectedAudioResponse(_ response: URLResponse?) -> Bool {

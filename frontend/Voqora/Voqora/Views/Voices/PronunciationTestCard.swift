@@ -54,9 +54,9 @@ struct PronunciationTestCard: View {
                     .font(vm.font(.caption))
                     .foregroundStyle(Palette.textTertiary)
                 Spacer()
-                if !result.spoken.isEmpty {
+                if let sentence = Self.playbackText(for: result) {
                     Button {
-                        play(result.spoken)
+                        play(sentence)
                     } label: {
                         Label("Play Again", systemImage: "arrow.clockwise")
                     }
@@ -66,6 +66,10 @@ struct PronunciationTestCard: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    static func playbackText(for result: PronunciationTestResult) -> String? {
+        result.spoken.isEmpty ? nil : result.text
     }
 
     static func replacementSummary(_ count: Int) -> String {
@@ -80,13 +84,13 @@ struct PronunciationTestCard: View {
         guard !store.isTesting else { return }
         Task {
             await store.runTest(text)
-            if let spoken = store.testResult?.spoken, !spoken.isEmpty {
-                play(spoken)
+            if let sentence = store.testResult.flatMap(Self.playbackText(for:)) {
+                play(sentence)
             }
         }
     }
 
-    private func play(_ spoken: String) {
-        Task { await vm.speak(text: spoken) }
+    private func play(_ sentence: String) {
+        Task { await vm.speak(text: sentence, bookID: store.bookID) }
     }
 }

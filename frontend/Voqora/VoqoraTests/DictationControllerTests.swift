@@ -86,6 +86,11 @@ private final class FakeSpeech: DictationSpeechPausing {
 }
 
 @MainActor
+private final class FrontmostStub {
+    var current: FrontmostApplication? = FrontmostApplication(processIdentifier: 100, bundleIdentifier: "com.example.notes")
+}
+
+@MainActor
 private final class ManualClock {
     var now: TimeInterval = 0
 }
@@ -98,6 +103,7 @@ final class DictationControllerTests: XCTestCase {
     private var hud: FakeHUD!
     private var speech: FakeSpeech!
     private var clock: ManualClock!
+    private var frontmost: FrontmostStub!
     private var defaults: UserDefaults!
     private var suiteName = ""
     private var folder: URL!
@@ -111,11 +117,13 @@ final class DictationControllerTests: XCTestCase {
         hud = FakeHUD()
         speech = FakeSpeech()
         clock = ManualClock()
+        frontmost = FrontmostStub()
         suiteName = "DictationControllerTests.\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
         folder = FileManager.default.temporaryDirectory
             .appendingPathComponent("VoqoraDictationControllerTests-\(UUID().uuidString)", isDirectory: true)
         let manualClock: ManualClock? = clock
+        let frontmostStub: FrontmostStub? = frontmost
         controller = DictationController(
             transcripts: DictationTranscriptStore(storageURL: folder.appendingPathComponent("transcripts.json")),
             dependencies: DictationDependencies(
@@ -124,7 +132,8 @@ final class DictationControllerTests: XCTestCase {
                 inserter: inserter,
                 defaults: defaults,
                 clock: { manualClock?.now ?? 0 },
-                finishTimeout: 60
+                finishTimeout: 60,
+                frontmostApplication: { frontmostStub?.current }
             )
         )
         controller.hud = hud
@@ -277,5 +286,179 @@ final class DictationControllerTests: XCTestCase {
 
         XCTAssertNil(controller.issue)
         XCTAssertEqual(controller.phase, .listening)
+    }
+
+    private func dictate(_ text: String) async {
+        await controller.toggle()
+        await controller.receive(.transcript(text, isFinal: true))
+    }
+
+    func test_tidyWithAIInsertsAndSavesTheTidiedText() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        var received: [String] = []
+        controller.connectTidy { text in
+            received.append(text)
+            return "Hello, world."
+        }
+
+        await dictate("hello world")
+
+        XCTAssertEqual(received, ["hello world"])
+        XCTAssertEqual(inserter.inserted, ["Hello, world."])
+        XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["Hello, world."])
+        XCTAssertNil(controller.tidyFailure)
+        XCTAssertFalse(controller.isTidying)
+        XCTAssertEqual(controller.outcomeMessage, DictationInsertionOutcome.pasted.message)
+    }
+
+    func test_tidyIsSkippedWhenTheOptionIsOff() async {
+        var calls = 0
+        controller.connectTidy { _ in
+            calls += 1
+            return "changed"
+        }
+
+        await dictate("hello world")
+
+        XCTAssertEqual(calls, 0)
+        XCTAssertEqual(inserter.inserted, ["hello world"])
+    }
+
+    func test_tidyFailureInsertsTheRawTextAndSurfacesTheError() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        controller.connectTidy { _ in throw AIReadingError.providerRequired }
+
+        await dictate("hello world")
+
+        XCTAssertEqual(inserter.inserted, ["hello world"])
+        XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["hello world"])
+        XCTAssertEqual(controller.tidyFailure, AIReadingError.providerRequired.message)
+        XCTAssertEqual(controller.outcome, .pasted)
+        XCTAssertTrue(controller.outcomeMessage?.contains(AIReadingError.providerRequired.message) == true)
+        XCTAssertEqual(hud.hideDelays.last, DictationController.actionableIssueDisplaySeconds)
+        XCTAssertFalse(controller.isTidying)
+    }
+
+    func test_emptyTidyResultFallsBackToTheRawText() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        controller.connectTidy { _ in "  \n" }
+
+        await dictate("hello world")
+
+        XCTAssertEqual(inserter.inserted, ["hello world"])
+        XCTAssertEqual(controller.tidyFailure, AIReadingError.invalidResponse.message)
+    }
+
+    func test_slowTidyTimesOutAndInsertsTheRawText() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        let manualClock: ManualClock? = clock
+        let slow = DictationController(
+            transcripts: DictationTranscriptStore(storageURL: folder.appendingPathComponent("slow.json")),
+            dependencies: DictationDependencies(
+                recognizer: recognizer,
+                authorizer: authorizer,
+                inserter: inserter,
+                defaults: defaults,
+                clock: { manualClock?.now ?? 0 },
+                finishTimeout: 60,
+                tidyTimeout: 0.05
+            )
+        )
+        slow.hud = hud
+        slow.connectTidy { _ in
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            return "never"
+        }
+
+        await slow.toggle()
+        await slow.receive(.transcript("hello world", isFinal: true))
+
+        XCTAssertEqual(inserter.inserted, ["hello world"])
+        XCTAssertNotNil(slow.tidyFailure)
+    }
+
+    func test_aNewSessionClearsThePreviousTidyFailure() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        controller.connectTidy { _ in throw AIReadingError.providerRequired }
+        await dictate("first")
+        XCTAssertNotNil(controller.tidyFailure)
+
+        await controller.toggle()
+
+        XCTAssertNil(controller.tidyFailure)
+    }
+
+    func test_cancelWhileTidyingInsertsNothingAndKeepsTheRawTranscript() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        controller.connectTidy { _ in
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            return "never"
+        }
+        await controller.toggle()
+        let session = Task { await controller.receive(.transcript("hello world", isFinal: true)) }
+        await yieldUntil { controller.isTidying }
+
+        await controller.cancel()
+        await session.value
+
+        XCTAssertTrue(inserter.inserted.isEmpty)
+        XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["hello world"])
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertFalse(controller.isTidying)
+        XCTAssertNil(controller.tidyFailure)
+        XCTAssertEqual(hud.hideDelays.last, 0)
+    }
+
+    func test_toggleWhileTidyingAbandonsTheTidy() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        controller.connectTidy { _ in
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            return "never"
+        }
+        await controller.toggle()
+        let session = Task { await controller.receive(.transcript("hello world", isFinal: true)) }
+        await yieldUntil { controller.isTidying }
+
+        await controller.toggle()
+        await session.value
+
+        XCTAssertTrue(inserter.inserted.isEmpty)
+        XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["hello world"])
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func test_switchingAppsBeforeInsertionCopiesInsteadOfPasting() async {
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
+        let stub: FrontmostStub? = frontmost
+        controller.connectTidy { _ in
+            stub?.current = FrontmostApplication(processIdentifier: 200, bundleIdentifier: "com.example.mail")
+            return "Hello, world."
+        }
+
+        await dictate("hello world")
+
+        XCTAssertEqual(inserter.inserted, ["Hello, world."])
+        XCTAssertEqual(inserter.modes, [.copy])
+        XCTAssertEqual(controller.outcome, .copiedAppChanged)
+        XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["Hello, world."])
+        XCTAssertEqual(hud.hideDelays.last, DictationController.actionableIssueDisplaySeconds)
+    }
+
+    func test_staysPastingWhenTheFrontmostAppIsUnchanged() async {
+        await dictate("hello world")
+
+        XCTAssertEqual(inserter.modes, [.paste])
+        XCTAssertEqual(controller.outcome, .pasted)
+    }
+
+    func test_appCapturedWhenFinishingIsTheOneComparedAgainst() async {
+        let stub: FrontmostStub? = frontmost
+        await controller.toggle()
+        await controller.toggle()
+        stub?.current = FrontmostApplication(processIdentifier: 200, bundleIdentifier: "com.example.mail")
+        await controller.receive(.transcript("Hello", isFinal: true))
+
+        XCTAssertEqual(inserter.modes, [.copy])
+        XCTAssertEqual(controller.outcome, .copiedAppChanged)
     }
 }

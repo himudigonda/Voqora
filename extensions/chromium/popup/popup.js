@@ -5,7 +5,6 @@ const STATUS_KEY = "lastStatus";
 const buttons = {
   readSelection: document.getElementById("read-selection"),
   readPage: document.getElementById("read-page"),
-  readNext: document.getElementById("read-next"),
   stop: document.getElementById("stop"),
 };
 const statusLine = document.getElementById("status");
@@ -13,9 +12,6 @@ const statusLine = document.getElementById("status");
 function render(status) {
   statusLine.textContent = status?.text ?? "";
   statusLine.dataset.kind = status?.kind ?? "idle";
-  const progress = status?.progress;
-  buttons.readNext.hidden = !progress;
-  buttons.readNext.textContent = progress ? `Next Part (${progress.part + 1} of ${progress.total})` : "Next Part";
 }
 
 function setBusy(busy) {
@@ -67,13 +63,11 @@ async function showShortcuts() {
 async function start() {
   const stored = await chrome.storage.session.get(STATUS_KEY);
   const last = stored?.[STATUS_KEY];
-  const status = await chrome.runtime.sendMessage({ type: Action.progress });
-  render(last?.kind === "error" ? { ...last, progress: status?.progress ?? null } : status);
+  render(last?.kind === "error" ? last : null);
 }
 
 buttons.readSelection.addEventListener("click", () => send(Action.readSelection));
 buttons.readPage.addEventListener("click", () => send(Action.readPage));
-buttons.readNext.addEventListener("click", () => send(Action.readNextPart));
 buttons.stop.addEventListener("click", () => send(Action.stop));
 document.getElementById("open-options").addEventListener("click", () => chrome.runtime.openOptionsPage());
 document.getElementById("open-shortcuts").addEventListener("click", () => {

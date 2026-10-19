@@ -150,6 +150,14 @@ def test_speak_tool_queues_for_app(client: TestClient) -> None:
     assert event["voice"] == "af_bella"
 
 
+def test_speak_tool_forwards_the_mode(client: TestClient) -> None:
+    queue = speech_relay.subscribe()
+    _call(client, "speak", {"text": "one"})
+    _call(client, "speak", {"text": "two", "mode": "queue"})
+    assert queue.get_nowait()["mode"] == "replace"
+    assert queue.get_nowait()["mode"] == "queue"
+
+
 def _initialize(client: TestClient, info: object) -> str:
     response = _rpc(
         client,
@@ -227,6 +235,7 @@ def test_speak_tool_reports_busy_queue(client: TestClient) -> None:
         ({"text": "a" * 50_001}, "text"),
         ({"text": "hi", "voice": "nope"}, "Unknown voice"),
         ({"text": "hi", "extra": 1}, "extra"),
+        ({"text": "hi", "mode": "later"}, "mode"),
         ({"text": 5}, "text"),
     ],
 )

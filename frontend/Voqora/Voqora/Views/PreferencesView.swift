@@ -15,6 +15,7 @@ struct PreferencesView: View {
     @EnvironmentObject var updater: AppUpdater
     @EnvironmentObject var dictationTranscripts: DictationTranscriptStore
     @EnvironmentObject var inbox: InboxViewModel
+    @EnvironmentObject var studio: StudioViewModel
     @Environment(\.colorScheme) var colorScheme
     @Environment(\.colorSchemeContrast) var colorSchemeContrast
 
@@ -156,6 +157,10 @@ struct PreferencesView: View {
                             .foregroundStyle(accentColor)
                         }
                     }
+                }
+
+                PreferenceSection(title: "Speech Engines", icon: "cpu") {
+                    SpeechEnginesSection()
                 }
 
                 PreferenceSection(title: "AI", icon: "sparkles") {
@@ -736,6 +741,11 @@ struct PreferencesView: View {
             } catch {
                 failures.append("inbox articles")
             }
+            do {
+                try studio.eraseAllDrafts()
+            } catch {
+                failures.append("studio scripts")
+            }
             for key in KeychainKey.allCases where !KeychainService.delete(key) {
                 failures.append("saved credential")
             }
@@ -831,9 +841,14 @@ struct GroupedVoicePicker: View {
     @Binding var selection: String
     var includesBlends = true
     @ObservedObject private var blendStore = VoiceBlendStore.shared
+    @ObservedObject private var engineStore = SpeechEngineStore.shared
 
     private var showsUnknownBlend: Bool {
         includesBlends && VoiceBlendRules.isBlendID(selection) && blendStore.blend(id: selection) == nil
+    }
+
+    private var showsUnavailableSupertonicVoice: Bool {
+        includesBlends && SpeechEngineID.isSupertonicVoice(selection) && !engineStore.supertonicVoices.contains { $0.id == selection }
     }
 
     var body: some View {
@@ -845,6 +860,16 @@ struct GroupedVoicePicker: View {
                     }
                     if showsUnknownBlend {
                         Text(blendStore.displayName(for: selection)).tag(selection)
+                    }
+                }
+            }
+            if includesBlends, !engineStore.supertonicVoices.isEmpty || showsUnavailableSupertonicVoice {
+                Section("Supertonic") {
+                    ForEach(engineStore.supertonicVoices) { voice in
+                        Text(voice.name).tag(voice.id)
+                    }
+                    if showsUnavailableSupertonicVoice {
+                        Text(DashboardViewModel.voiceName(for: selection)).tag(selection)
                     }
                 }
             }
@@ -873,7 +898,7 @@ struct VoiceSampleButton: View {
 
     var body: some View {
         Button {
-            if VoiceBlendRules.isBlendID(voice) {
+            if VoiceBlendRules.isBlendID(voice) || SpeechEngineID.isSupertonicVoice(voice) {
                 player.stop()
                 Task { await vm.speak(text: DashboardViewModel.sampleSentence(forVoice: voice), voice: voice) }
             } else if isPlayingThisVoice {

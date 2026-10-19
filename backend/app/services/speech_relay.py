@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import unicodedata
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from app.core.config import settings
 from app.core.logging import get_logger
@@ -12,6 +12,7 @@ log = get_logger(__name__)
 
 RelayEvent = dict[str, Any]
 RelayQueue = asyncio.Queue[RelayEvent | None]
+SpeakMode = Literal["replace", "queue"]
 
 RELAY_UNAVAILABLE_MESSAGE = (
     "The Voqora app is not listening. Open Voqora and try again."
@@ -51,11 +52,17 @@ class SpeechRelay:
         if queue in self._subscribers:
             self._subscribers.remove(queue)
 
-    def speak(self, text: str, voice: str | None, client: str | None = None) -> str:
+    def speak(
+        self,
+        text: str,
+        voice: str | None,
+        client: str | None = None,
+        mode: SpeakMode = "replace",
+    ) -> str:
         self._require_subscriber()
         if any(queue.full() for queue in self._subscribers):
             raise RelayBusyError
-        event = _event("speak", text=text, voice=voice, client=client)
+        event = _event("speak", text=text, voice=voice, client=client, mode=mode)
         for queue in self._subscribers:
             queue.put_nowait(event)
         log.info("relay.speak_queued", extra={"text_len": len(text)})

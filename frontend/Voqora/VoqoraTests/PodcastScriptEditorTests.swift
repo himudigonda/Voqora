@@ -130,6 +130,17 @@ final class PodcastScriptEditorTests: XCTestCase {
         XCTAssertEqual(store.draft(withID: editor.id)?.script.title, "Autosaved")
     }
 
+    func test_autosaveStagesInTheStoreAndLeavesTheFileToTheStoreDebounce() async {
+        let editor = makeEditor(autosave: 1_000_000)
+
+        editor.script.title = "Staged"
+        await StudioFixtures.waitUntil { !editor.hasUnsavedChanges }
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        store.flush()
+        XCTAssertEqual(StudioDraftStore(storageURL: url).draft(withID: editor.id)?.script.title, "Staged")
+    }
+
     func test_invalidScriptDoesNotRender() async {
         var script = StudioFixtures.script()
         script.turns[0].text = " "

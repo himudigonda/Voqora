@@ -11,7 +11,7 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
     }
 
     private func makeVM() -> AudiobookViewModel {
-        AudiobookViewModel(service: LibraryStubURLProtocol.makeService(), audio: AudioService(startingEngine: false))
+        AudiobookViewModel(service: LibraryStubURLProtocol.makeService(), audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false))
     }
 
     private func waitUntil(_ condition: () -> Bool, attempts: Int = 150) async {
@@ -88,6 +88,7 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         let vm = AudiobookViewModel(
             service: LibraryStubURLProtocol.makeService(),
             audio: AudioService(startingEngine: false),
+            providers: StudioFixtures.providers(connected: false),
             subscribeToEvents: { _ in AsyncStream { $0.finish() } },
             listBooks: { [] }
         )

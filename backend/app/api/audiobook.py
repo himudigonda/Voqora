@@ -33,6 +33,7 @@ from app.services.article_errors import ArticleError
 from app.services.article_reader import audiobook_source
 from app.services.audiobook_service import WAV_HEADER_SIZE, AudiobookService
 from app.services.audiobook_store import AudiobookStore
+from app.services.engine_errors import EngineNotInstalledError, UnknownEngineError
 from app.services.engine_manager import EngineManager
 from app.services.import_limits import (
     ImportLimitError,
@@ -195,7 +196,7 @@ _OCR_CHARS_PER_PAGE = 1500  # ~250 words × 6 chars/word
 # would naively pass it to os.path.join, allowing path traversal in theory.
 _BOOK_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
-# Audiobook synthesis ultimately reaches the same Kokoro engine as /speak.
+# Audiobook synthesis ultimately reaches the same engines as /speak.
 # Keep its persisted snapshot within that public API's contract. A typo in
 # voice or an invalid speed must fail at upload time, rather than producing a
 # book full of fallback silence much later in the background pipeline.
@@ -237,10 +238,24 @@ def _validated_pause_scale(pause_scale: float | None) -> float:
     return scale
 
 
+def _require_engine_installed(engine: str) -> None:
+    try:
+        EngineManager.require_installed(engine)
+    except EngineNotInstalledError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except UnknownEngineError:
+        raise HTTPException(status_code=422, detail="Unknown narration engine.")
+
+
 def _validated_synthesis_settings(
     voice: str | None, speed: float | None, engine: str | None
 ) -> tuple[str, float, str, str]:
-    book_voice = voice or EngineManager.default_voice()
+    if engine is not None:
+        try:
+            EngineManager.require_known(engine)
+        except UnknownEngineError:
+            raise HTTPException(status_code=422, detail="Unknown narration engine.")
+    book_voice = voice or EngineManager.default_voice(engine or "kokoro")
     spec = resolve_voice(book_voice)
     if spec is None:
         raise HTTPException(status_code=422, detail="Unknown narration voice.")
@@ -258,10 +273,20 @@ def _validated_synthesis_settings(
             ),
         )
 
-    book_engine = engine or EngineManager.state().get("engine", "kokoro")
-    if book_engine != "kokoro":
-        raise HTTPException(status_code=422, detail="Unknown narration engine.")
+    book_engine = engine or spec.engine
+    if book_engine != spec.engine:
+        detail = (
+            "Voice blends work with Kokoro only."
+            if spec.is_blend
+            else "That voice belongs to a different narration engine."
+        )
+        raise HTTPException(status_code=422, detail=detail)
+    _require_engine_installed(book_engine)
     return book_voice, book_speed, book_engine, spec.fallback_voice
+
+
+def _require_book_engine_installed(meta: dict[str, Any]) -> None:
+    _require_engine_installed(meta.get("engine") or "kokoro")
 
 
 # ---------------------------------------------------------------------------
@@ -743,6 +768,7 @@ async def start_audiobook(
     meta = AudiobookStore.read_meta(book_id)
     if meta is None:
         raise HTTPException(status_code=404, detail="Book not found.")
+    _require_book_engine_installed(meta)
     uses_llm_cleanup = (x_voqora_llm_cleanup or "").lower() == "true"
     if uses_llm_cleanup:
         credential = _require_credential(credential)
@@ -958,6 +984,7 @@ async def retry_audiobook(
         raise HTTPException(status_code=404, detail="Book not found.")
     if AudiobookService.is_processing(book_id):
         raise HTTPException(status_code=409, detail="Book is already processing.")
+    _require_book_engine_installed(meta)
     cleanup = (x_voqora_llm_cleanup or "").strip().lower() != "false"
     if cleanup and bool(meta.get("uses_gemini_cleanup", True)):
         credential = _require_credential(credential)

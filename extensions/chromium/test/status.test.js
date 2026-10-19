@@ -2,36 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { ErrorCode, VoqoraError } from "../src/errors.js";
-import { Action, badgeText, errorStatus, idleStatus, readingStatus, runAction } from "../src/status.js";
+import { Action, badgeText, errorStatus, readingStatus, runAction } from "../src/status.js";
 
 test("readingStatus describes single and multi-part reading", () => {
-  assert.deepEqual(readingStatus({ part: 1, total: 1 }), {
-    kind: "info",
-    text: "Voqora is reading.",
-    badge: "",
-    progress: null,
-  });
-  const first = readingStatus({ part: 1, total: 3 });
-  assert.equal(first.badge, "1/3");
-  assert.deepEqual(first.progress, { part: 1, total: 3 });
-  assert.match(first.text, /part 1 of 3/);
-  const last = readingStatus({ part: 3, total: 3 });
-  assert.equal(last.badge, "");
-  assert.equal(last.progress, null);
-});
-
-test("idleStatus only reports unfinished sessions", () => {
-  assert.equal(idleStatus(null).kind, "idle");
-  assert.equal(idleStatus({ part: 2, total: 2 }).kind, "idle");
-  assert.equal(idleStatus({ part: 1, total: 2 }).badge, "1/2");
+  assert.deepEqual(readingStatus({ total: 1 }), { kind: "info", text: "Voqora is reading.", badge: "" });
+  assert.match(readingStatus({ total: 3 }).text, /3 parts in order/);
+  assert.equal(readingStatus({ total: 3 }).badge, "");
 });
 
 test("errorStatus exposes the user message and code only", () => {
   const status = errorStatus(new VoqoraError(ErrorCode.unauthorized, "Wrong key"));
-  assert.deepEqual(status, { kind: "error", text: "Wrong key", badge: "!", code: "unauthorized", progress: null });
+  assert.deepEqual(status, { kind: "error", text: "Wrong key", badge: "!", code: "unauthorized" });
   assert.equal(errorStatus(new Error("boom")).text, "Something went wrong. Try again.");
-  assert.deepEqual(errorStatus(new Error("boom"), { part: 1, total: 3 }).progress, { part: 1, total: 3 });
-  assert.equal(errorStatus(new Error("boom"), { part: 3, total: 3 }).progress, null);
 });
 
 test("badgeText fits the toolbar badge", () => {
@@ -44,21 +26,17 @@ test("runAction dispatches to the reader", async () => {
   const reader = {
     readSelection: async (args) => {
       calls.push(["selection", args]);
-      return { part: 1, total: 1 };
+      return { total: 1 };
     },
     readPage: async (args) => {
       calls.push(["page", args]);
-      return { part: 1, total: 2 };
+      return { total: 2 };
     },
-    readNextPart: async () => null,
     stop: async () => calls.push(["stop"]),
-    currentProgress: async () => ({ part: 1, total: 2 }),
   };
   assert.equal((await runAction(reader, { type: Action.readSelection, tabId: 4, selectionText: "x" })).kind, "info");
-  assert.equal((await runAction(reader, { type: Action.readPage, tabId: 4 })).badge, "1/2");
-  assert.equal((await runAction(reader, { type: Action.readNextPart })).kind, "idle");
+  assert.match((await runAction(reader, { type: Action.readPage, tabId: 4 })).text, /2 parts/);
   assert.equal((await runAction(reader, { type: Action.stop })).text, "Stopped.");
-  assert.equal((await runAction(reader, { type: Action.progress })).badge, "1/2");
   await assert.rejects(runAction(reader, { type: "nope" }), TypeError);
   assert.deepEqual(calls, [
     ["selection", { tabId: 4, selectionText: "x" }],

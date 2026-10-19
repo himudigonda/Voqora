@@ -7,6 +7,7 @@ struct DictationSettingsCard: View {
     @AppStorage(DictationPreferences.insertionModeKey) private var insertionMode: DictationInsertionMode = .paste
     @AppStorage(DictationPreferences.silenceTimeoutKey) private var silenceTimeout = DictationPreferences.defaultSilenceTimeout
     @AppStorage(DictationPreferences.allowsServerRecognitionKey) private var allowsServerRecognition = false
+    @AppStorage(DictationPreferences.tidiesWithAIKey) private var tidiesWithAI = false
     @State private var localeOptions: [DictationLocaleOption] = []
     @State private var localeSupport: DictationLocaleSupport = .onDevice
 
@@ -66,6 +67,20 @@ struct DictationSettingsCard: View {
                     Text("Allow Server Recognition")
                         .font(vm.font(.rowTitle))
                     Text("Off by default. When on, languages without on-device support send your audio to Apple to be transcribed.")
+                        .font(vm.font(.rowSubtitle))
+                        .foregroundStyle(Palette.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(.switch)
+
+            Divider()
+
+            Toggle(isOn: $tidiesWithAI) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Tidy with AI")
+                        .font(vm.font(.rowTitle))
+                    Text("Off by default. When on, each transcript goes to your AI provider to fix punctuation and filler words first. If that fails, Voqora inserts your original words.")
                         .font(vm.font(.rowSubtitle))
                         .foregroundStyle(Palette.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)

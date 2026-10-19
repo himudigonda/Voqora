@@ -18,7 +18,9 @@ final class InboxLinkParserTests: XCTestCase {
     }
 
     func test_bareDomainsBecomeWebLinks() {
-        XCTAssertEqual(InboxLinkParser.webURL(from: "example.com/article")?.scheme, "http")
+        let url = InboxLinkParser.webURL(from: "example.com/article")
+        XCTAssertEqual(url?.host, "example.com")
+        XCTAssertTrue(["http", "https"].contains(url?.scheme ?? ""))
     }
 
     func test_rejectsNonWebAndCredentialLinks() {

@@ -44,11 +44,14 @@ Everything in 2.0.0 is free, with no paid tier.
 - On-device Dictation into any app.
 - An optional local API (OpenAI speech API compatible, plus MCP) for other
   apps and AI agents, Audiobookshelf upload, and a Chrome and Edge extension.
+- Supertonic as a second, optional speech engine: a one-time download of about
+  400 MB under Preferences, Speech Engines, with 10 voices in 31 languages for
+  speech and audiobooks.
 
 ## Next
 
-1. **More speech engines** - Chatterbox, Qwen3-TTS, Dia2, and Supertonic as
-   optional downloads, and Parakeet for dictation.
+1. **More speech engines** - Chatterbox, Qwen3-TTS, and Dia2 as optional
+   downloads, and Parakeet for dictation.
 2. **Safari extension and an iPhone companion.**
 
 ## Next public-quality work

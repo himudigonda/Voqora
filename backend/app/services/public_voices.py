@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.engine_manager import EngineManager
+from app.services.engine_errors import EngineNotInstalledError
+from app.services.engine_manager import SUPERTONIC, EngineManager
 from app.services.languages import voice_catalog
+from app.services.supertonic_catalog import VOICES as SUPERTONIC_VOICES
 from app.services.voices import is_known_voice
+from app.services.voices import resolve_voice as resolve_spec
 
 MAX_VOICE_ID_CHARS = 64
 
@@ -34,7 +37,22 @@ def voice_list() -> list[dict[str, Any]]:
         }
         for voice in voice_catalog()
     ]
-    return builtin + custom_voices()
+    return builtin + supertonic_voices() + custom_voices()
+
+
+def supertonic_voices() -> list[dict[str, Any]]:
+    if not EngineManager.is_installed(SUPERTONIC):
+        return []
+    return [
+        {
+            "id": voice["id"],
+            "name": voice["name"],
+            "gender": voice["gender"],
+            "language": voice["lang"],
+            "type": "builtin",
+        }
+        for voice in SUPERTONIC_VOICES
+    ]
 
 
 def resolve_voice(value: str) -> str | None:
@@ -43,6 +61,9 @@ def resolve_voice(value: str) -> str | None:
         return alias
     # Built-in voices and saved blends, the same check /speak uses.
     if is_known_voice(value):
+        spec = resolve_spec(value)
+        if spec is not None and not EngineManager.is_installed(spec.engine):
+            raise ValueError(str(EngineNotInstalledError(spec.engine)))
         return value
     if any(voice["id"] == value for voice in custom_voices()):
         return value

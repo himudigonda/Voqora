@@ -2,6 +2,7 @@ import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     var stopOwnedBackend: (() -> Void)?
+    var flushStudioDrafts: (() -> Void)?
     var servicesProvider: NSObject?
 
     static func standDownIfAlreadyRunning() -> Bool {
@@ -80,6 +81,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        flushStudioDrafts?()
         stopOwnedBackend?()
         UsageStatsStore.shared.commitListening()
         UsageStatsStore.shared.saveNow()

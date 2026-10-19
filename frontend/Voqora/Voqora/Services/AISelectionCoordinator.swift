@@ -151,6 +151,6 @@ final class AISelectionCoordinator {
         }
         let voice = language.map { AIVoiceMatcher.voice(for: $0, current: speaker.selectedVoice) }
             ?? LanguageDetector.voiceForText(trimmed, fallback: speaker.selectedVoice)
-        await speaker.speak(text: trimmed, voice: voice)
+        await speaker.speakAIResult(text: trimmed, voice: voice)
     }
 }

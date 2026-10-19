@@ -1686,7 +1686,7 @@ class AudiobookService:
             cls._check_cancel(book_id)
             # Wait for any interactive /speak to finish before grabbing the engine.
             async with interactive_tts_lock:
-                await EngineManager.ensure_loaded()
+                await EngineManager.ensure_loaded(voice.engine)
 
             out_path = AudiobookStore.page_audio_path(book_id, n)
             if os.path.exists(out_path):
@@ -1764,7 +1764,7 @@ class AudiobookService:
                         cls._remove_quietly(timing_path)
                         cls._write_silence_wav(out_path, 0.5)
 
-            EngineManager.touch()
+            EngineManager.touch(voice.engine)
             await AudiobookStore.update_meta(
                 book_id,
                 phase_progress={"page_done": n, "page_total": page_count},
@@ -1817,6 +1817,7 @@ class AudiobookService:
         timings: list[tuple[int, str, int, int, bool]] = []
         failed_segments: list[str] = []
         cursor = 0
+        language = EngineManager.detected_language(voice, text)
         for paragraph, unit in _speech_units(text):
             segments = EngineManager.split_segments(unit)
             for index, segment in enumerate(segments):
@@ -1825,6 +1826,7 @@ class AudiobookService:
                     segment,
                     voice,
                     speed,
+                    language,
                     failed_segments=failed_segments,
                     pause_scale=pause_scale,
                     book_id=book_id,

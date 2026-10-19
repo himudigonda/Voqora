@@ -13,9 +13,15 @@ private final class AISpeakerSpy: SpeechInputSpeaking {
     var selectedVoice = "af_bella"
     var speechSpeed = 1.0
     private(set) var spoken: [Spoken] = []
+    private(set) var aiResults: [Spoken] = []
     private(set) var errors: [String] = []
 
     func speak(text: String, voice: String?) async {
+        spoken.append(Spoken(text: text, voice: voice))
+    }
+
+    func speakAIResult(text: String, voice: String?) async {
+        aiResults.append(Spoken(text: text, voice: voice))
         spoken.append(Spoken(text: text, voice: voice))
     }
 
@@ -78,6 +84,7 @@ final class AISelectionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(service.calls, [.summarize(.text("The selected passage."), .short, nil)])
         XCTAssertEqual(speaker.spoken, [.init(text: "A brief overview of the passage.", voice: "af_bella")])
+        XCTAssertEqual(speaker.aiResults, speaker.spoken, "AI results go through the path that pauses the audiobook")
         XCTAssertEqual(announcements.count, 1)
         XCTAssertNil(coordinator.activeAction)
     }

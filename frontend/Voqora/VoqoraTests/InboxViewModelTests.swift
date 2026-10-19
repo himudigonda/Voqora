@@ -8,18 +8,12 @@ final class InboxViewModelTests: XCTestCase {
     private var folder: URL!
     private var extractResults: [String: Result<ExtractedArticle, Error>] = [:]
     private var extracted: [URL] = []
-    private var estimate: Result<AudiobookEstimateResponse, Error> = .failure(ArticleServiceError(.rejected))
-    private var startError: Error?
-    private var createdURLs: [URL] = []
-    private var narrations: [AudiobookNarration] = []
-    private var started: [String] = []
-    private var discarded: [String] = []
+    private var importedAudiobooks: [URL] = []
+    private var speechAccepted = true
     private var spoken: [String] = []
     private var copied: [String] = []
     private var opened: [URL] = []
-    private var openedBooks: [String] = []
     private var notifications: [String] = []
-    private var libraryRefreshes = 0
     private var playback: PassthroughSubject<InboxPlaybackSample, Never>!
 
     override func setUp() {
@@ -43,23 +37,11 @@ final class InboxViewModelTests: XCTestCase {
                 }
                 return try result.get()
             },
-            createAudiobook: { [unowned self] url, narration in
-                createdURLs.append(url)
-                narrations.append(narration)
-                return try estimate.get()
+            importAudiobook: { [unowned self] url in importedAudiobooks.append(url) },
+            speak: { [unowned self] text in
+                spoken.append(text)
+                return speechAccepted
             },
-            startAudiobook: { [unowned self] bookID in
-                started.append(bookID)
-                if let startError {
-                    throw startError
-                }
-            },
-            discardAudiobook: { [unowned self] bookID in discarded.append(bookID) },
-            narration: { AudiobookNarration(voice: "af_bella", speed: 1.25) },
-            speak: { [unowned self] text in spoken.append(text) },
-            refreshLibrary: { [unowned self] in libraryRefreshes += 1 },
-            openAudiobook: { [unowned self] bookID in openedBooks.append(bookID) },
-            showLibrary: {},
             openURL: { [unowned self] url in opened.append(url) },
             copyText: { [unowned self] text in copied.append(text) },
             notify: { [unowned self] title, _ in notifications.append(title) },
@@ -71,13 +53,6 @@ final class InboxViewModelTests: XCTestCase {
 
     private func stub(_ link: String, title: String = "Story", text: String = "Body text.") {
         extractResults[link] = .success(InboxFixtures.article(url: link, title: title, text: text))
-    }
-
-    private func estimateResponse(bookID: String, duplicateOf: String?) throws -> AudiobookEstimateResponse {
-        try JSONDecoder().decode(
-            AudiobookEstimateResponse.self,
-            from: Data(InboxFixtureJSON.estimate(bookID: bookID, duplicateOf: duplicateOf).utf8)
-        )
     }
 
     func test_submittingADraftExtractsAndSavesTheArticle() async {
@@ -230,56 +205,88 @@ final class InboxViewModelTests: XCTestCase {
         XCTAssertEqual(inbox.store.items.first?.progress, 0.2)
     }
 
-    func test_makeAudiobookCreatesAndStartsTheBook() async throws {
+    func test_makeAudiobookHandsTheLinkToTheLibraryImport() async throws {
         stub("https://example.com/story")
-        estimate = try .success(estimateResponse(bookID: "book-1", duplicateOf: nil))
         let inbox = makeViewModel()
         try inbox.add(XCTUnwrap(URL(string: "https://example.com/story")))
         await inbox.waitUntilIdle()
         let item = try XCTUnwrap(inbox.store.items.first)
 
         inbox.makeAudiobook(from: item)
-        XCTAssertTrue(inbox.isMakingAudiobook(item))
-        await inbox.waitUntilIdle()
 
-        XCTAssertFalse(inbox.isMakingAudiobook(item))
-        XCTAssertEqual(createdURLs, [item.url])
-        XCTAssertEqual(narrations.first, AudiobookNarration(voice: "af_bella", speed: 1.25))
-        XCTAssertEqual(started, ["book-1"])
-        XCTAssertEqual(libraryRefreshes, 1)
-        XCTAssertEqual(inbox.notice?.action, .showLibrary)
+        XCTAssertEqual(importedAudiobooks, [item.url])
     }
 
-    func test_makeAudiobookDiscardsDuplicatesAndOffersTheExistingBook() async throws {
-        stub("https://example.com/story")
-        estimate = try .success(estimateResponse(bookID: "book-2", duplicateOf: "book-1"))
+    func test_theNoticeActionHandsAPDFLinkToTheLibraryImport() throws {
+        let link = try XCTUnwrap(URL(string: "https://example.com/paper.pdf"))
+        let inbox = makeViewModel()
+
+        inbox.perform(.makeAudiobook(link))
+
+        XCTAssertEqual(importedAudiobooks, [link])
+        XCTAssertNil(inbox.notice)
+    }
+
+    func test_listeningClearsWhenTheSpeechEngineIsOffline() async throws {
+        stub("https://example.com/story", title: "Big Story", text: "Body.")
+        speechAccepted = false
         let inbox = makeViewModel()
         try inbox.add(XCTUnwrap(URL(string: "https://example.com/story")))
         await inbox.waitUntilIdle()
+        let item = try XCTUnwrap(inbox.store.items.first)
 
-        try inbox.makeAudiobook(from: XCTUnwrap(inbox.store.items.first))
+        inbox.listen(to: item)
+        XCTAssertEqual(inbox.listeningItemID, item.id)
         await inbox.waitUntilIdle()
 
-        XCTAssertEqual(discarded, ["book-2"])
-        XCTAssertTrue(started.isEmpty)
-        XCTAssertEqual(inbox.notice?.action, .openAudiobook("book-1"))
-        inbox.perform(.openAudiobook("book-1"))
-        XCTAssertEqual(openedBooks, ["book-1"])
+        XCTAssertNil(inbox.listeningItemID)
     }
 
-    func test_makeAudiobookDiscardsTheBookWhenStartFails() async throws {
-        stub("https://example.com/story")
-        estimate = try .success(estimateResponse(bookID: "book-3", duplicateOf: nil))
-        startError = AudiobookServiceError.uploadFailed("Failed to start processing")
+    func test_listeningClearsWhenSpeechFailsAfterItStarted() async throws {
+        stub("https://example.com/story", title: "Big Story", text: "Body.")
         let inbox = makeViewModel()
         try inbox.add(XCTUnwrap(URL(string: "https://example.com/story")))
         await inbox.waitUntilIdle()
+        let item = try XCTUnwrap(inbox.store.items.first)
+        let text = InboxViewModel.listeningText(title: "Big Story", body: "Body.")
+        inbox.listen(to: item)
 
-        try inbox.makeAudiobook(from: XCTUnwrap(inbox.store.items.first))
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0, completed: false, isSpeechSession: true, phase: .active))
+        XCTAssertEqual(inbox.listeningItemID, item.id)
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0, completed: false, isSpeechSession: true, phase: .stopped))
+
+        XCTAssertNil(inbox.listeningItemID)
+    }
+
+    func test_listeningClearsAndKeepsProgressWhenPlaybackIsStopped() async throws {
+        stub("https://example.com/story", title: "Big Story", text: "Body.")
+        let inbox = makeViewModel()
+        try inbox.add(XCTUnwrap(URL(string: "https://example.com/story")))
         await inbox.waitUntilIdle()
+        let item = try XCTUnwrap(inbox.store.items.first)
+        let text = InboxViewModel.listeningText(title: "Big Story", body: "Body.")
+        inbox.listen(to: item)
 
-        XCTAssertEqual(discarded, ["book-3"])
-        XCTAssertEqual(inbox.notice, InboxNotice(message: "Failed to start processing", kind: .error))
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0, completed: false, isSpeechSession: true, phase: .active))
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0.3, completed: false, isSpeechSession: true, phase: .active))
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0.3, completed: false, isSpeechSession: true, phase: .stopped))
+
+        XCTAssertNil(inbox.listeningItemID)
+        XCTAssertEqual(inbox.store.items.first?.progress, 0.3)
+    }
+
+    func test_aStaleStoppedStatusBeforeSpeechStartsDoesNotEndListening() async throws {
+        stub("https://example.com/story", title: "Big Story", text: "Body.")
+        let inbox = makeViewModel()
+        try inbox.add(XCTUnwrap(URL(string: "https://example.com/story")))
+        await inbox.waitUntilIdle()
+        let item = try XCTUnwrap(inbox.store.items.first)
+        let text = InboxViewModel.listeningText(title: "Big Story", body: "Body.")
+        inbox.listen(to: item)
+
+        playback.send(InboxPlaybackSample(spokenText: text, progress: 0, completed: false, isSpeechSession: true, phase: .stopped))
+
+        XCTAssertEqual(inbox.listeningItemID, item.id)
     }
 
     func test_itemActionsUseTheStoredArticle() async throws {
@@ -303,6 +310,35 @@ final class InboxViewModelTests: XCTestCase {
         let inbox = makeViewModel()
 
         inbox.pasteLink(nil)
+
+        XCTAssertEqual(inbox.notice?.message, InboxViewModel.Message.noPastedLink)
+    }
+
+    func test_pastedTextLinksAreSavedLikeDroppedOnes() async {
+        stub("https://example.com/story")
+        let inbox = makeViewModel()
+
+        inbox.handlePaste([NSItemProvider(object: "https://example.com/story" as NSString)])
+        await inbox.waitUntilIdle()
+
+        XCTAssertEqual(extracted.map(\.absoluteString), ["https://example.com/story"])
+        XCTAssertEqual(inbox.store.items.count, 1)
+    }
+
+    func test_pastingSomethingThatIsNotALinkExplainsWhatToDo() async {
+        let inbox = makeViewModel()
+
+        inbox.handlePaste([NSItemProvider(object: "just some words" as NSString)])
+        await inbox.waitUntilIdle()
+
+        XCTAssertEqual(inbox.notice?.message, InboxViewModel.Message.noPastedLink)
+        XCTAssertTrue(extracted.isEmpty)
+    }
+
+    func test_pastingNothingExplainsWhatToDo() {
+        let inbox = makeViewModel()
+
+        inbox.handlePaste([])
 
         XCTAssertEqual(inbox.notice?.message, InboxViewModel.Message.noPastedLink)
     }

@@ -140,6 +140,10 @@ class Settings(BaseSettings):
         )
 
     @property
+    def MODELS_DIR(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "models")
+
+    @property
     def VOICE_BLENDS_PATH(self) -> str:
         return os.path.join(self.USER_DATA_DIR, "voice_blends.json")
 

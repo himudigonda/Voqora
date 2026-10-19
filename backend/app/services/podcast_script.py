@@ -10,7 +10,7 @@ from pydantic import (
 
 from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.voice_blends import is_blend_id
-from app.services.voices import is_known_voice
+from app.services.voices import is_known_voice, is_kokoro_voice
 
 PODCAST_KIND = "podcast"
 
@@ -23,6 +23,7 @@ MAX_SECTION_TITLE_CHARS = 120
 MAX_PAUSE_SECONDS = 3.0
 DEFAULT_PAUSE_SECONDS = 0.4
 _MAX_LISTED_UNKNOWN = 5
+PODCAST_KOKORO_ONLY_MESSAGE = "podcasts support Kokoro voices only"
 SPEAKER_ID_PATTERN = r"^[A-Za-z0-9_-]{1,32}$"
 STORED_SCRIPT_CONTEXT = {"stored": True}
 
@@ -32,6 +33,8 @@ def _single_line(value: str) -> str:
 
 
 def _require_voice(value: str, info: ValidationInfo) -> str:
+    if is_known_voice(value) and not is_kokoro_voice(value):
+        raise ValueError(PODCAST_KOKORO_ONLY_MESSAGE)
     if is_known_voice(value):
         return value
     if is_blend_id(value) and (info.context or {}).get("stored"):

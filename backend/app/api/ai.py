@@ -1,4 +1,4 @@
-"""AI reading tools: summarize, translate, ask, quiz, and flashcards.
+"""AI reading tools: summarize, translate, tidy, ask, quiz, and flashcards.
 
 Every route uses the provider, model, key, and base URL from the same
 `X-Voqora-LLM-*` request headers as audiobook cleanup. Nothing is stored.
@@ -31,6 +31,7 @@ from app.services.ai_reader import (
     Role,
     SummaryLength,
     SummaryResult,
+    TidyResult,
     TranslationResult,
 )
 from app.services.llm_providers import (
@@ -55,6 +56,7 @@ T = TypeVar("T")
 
 MAX_SOURCE_TEXT_CHARS = 200_000
 MAX_TRANSLATE_CHARS = 20_000
+MAX_TIDY_CHARS = 20_000
 MAX_QUESTION_CHARS = 1_000
 MAX_HISTORY_TURNS = 10
 MAX_HISTORY_TURN_CHARS = 4_000
@@ -121,6 +123,15 @@ class TranslateRequest(BaseModel):
     @classmethod
     def require_known_language(cls, value: str) -> str:
         return _require_language(value)
+
+
+class TidyRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TIDY_CHARS)
+
+    @field_validator("text")
+    @classmethod
+    def require_meaningful_text(cls, value: str) -> str:
+        return _require_meaningful(value)
 
 
 class HistoryTurnRequest(BaseModel):
@@ -408,6 +419,20 @@ async def translate(
         return await ai_reader.translate(session, body.text, body.target_language)
 
     return await _run_tool("translate", request, credential, work)
+
+
+@router.post("/tidy", response_model=TidyResult)
+async def tidy(
+    body: TidyRequest,
+    request: Request,
+    credential: LLMCredential | None = Depends(llm_credential),
+):
+    """Clean dictated text: punctuation, casing, and filler words removed."""
+
+    async def work(session: AISession) -> TidyResult:
+        return await ai_reader.tidy(session, body.text)
+
+    return await _run_tool("tidy", request, credential, work)
 
 
 @router.post("/ask", response_model=AnswerResult)

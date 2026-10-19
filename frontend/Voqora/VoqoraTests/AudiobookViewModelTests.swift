@@ -13,7 +13,7 @@ final class AudiobookViewModelTests: XCTestCase {
     }
 
     private func makeVM(localAudioURL: (@MainActor (String) async throws -> URL)? = nil) -> AudiobookViewModel {
-        AudiobookViewModel(audio: AudioService(startingEngine: false), localAudioURL: localAudioURL)
+        AudiobookViewModel(audio: AudioService(startingEngine: false), providers: StudioFixtures.providers(connected: false), localAudioURL: localAudioURL)
     }
 
     private func makeBook(id: String = "book-1", status: String = "done") -> Audiobook {

@@ -56,7 +56,7 @@ nonisolated enum WebPageLink {
         guard !trimmed.isEmpty else { return .failure(.empty) }
         guard !trimmed.contains(where: \.isWhitespace) else { return .failure(.notWebLink) }
         let candidate = trimmed.contains("://") ? trimmed : "https://\(trimmed)"
-        guard candidate.count <= maximumLength else { return .failure(.tooLong) }
+        guard candidate.scalarCount <= maximumLength else { return .failure(.tooLong) }
         guard let components = URLComponents(string: candidate),
               let scheme = components.scheme?.lowercased(),
               allowedSchemes.contains(scheme),
@@ -64,7 +64,7 @@ nonisolated enum WebPageLink {
               !host.isEmpty
         else { return .failure(.notWebLink) }
         guard components.user == nil, components.password == nil else { return .failure(.containsCredentials) }
-        guard let url = components.url, url.absoluteString.count <= maximumLength else { return .failure(.tooLong) }
+        guard let url = components.url, url.absoluteString.scalarCount <= maximumLength else { return .failure(.tooLong) }
         return .success(url)
     }
 
