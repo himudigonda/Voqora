@@ -11,9 +11,31 @@ protocol AIReadingServing: AnyObject {
     func flashcards(_ source: AISource, count: Int, credential: LLMCredential) async throws -> AIFlashcardDeck
 }
 
+@MainActor
+protocol AITidying: AnyObject {
+    func tidy(text: String, credential: LLMCredential) async throws -> AITidyResult
+}
+
+nonisolated struct AITidyResult: Equatable, Sendable {
+    let text: String
+    let usage: AIUsage
+}
+
+nonisolated extension AITidyResult: Decodable {
+    private enum CodingKeys: String, CodingKey {
+        case text
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(text: container.decode(String.self, forKey: .text), usage: AIUsage(from: decoder))
+    }
+}
+
 nonisolated enum AIReadingLimits {
     static let sourceCharacters = 200_000
     static let translateCharacters = 20000
+    static let tidyCharacters = 20000
     static let questionCharacters = 1000
     static let historyTurns = 10
     static let historyTurnCharacters = 4000
@@ -32,7 +54,7 @@ nonisolated enum AIReadingLimits {
 }
 
 @MainActor
-final class AIReadingClient: AIReadingServing {
+final class AIReadingClient: AIReadingServing, AITidying {
     private let connection: BackendConnection
     private let transport: AIReadingTransport
 
@@ -59,6 +81,17 @@ final class AIReadingClient: AIReadingServing {
             credential: credential,
             timeout: AIReadingLimits.toolTimeout
         )
+    }
+
+    func tidy(text: String, credential: LLMCredential) async throws -> AITidyResult {
+        let tidied: AITidyResult = try await send(
+            "tidy",
+            body: TidyBody(text: text),
+            credential: credential,
+            timeout: AIReadingLimits.toolTimeout
+        )
+        guard !tidied.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw AIReadingError.invalidResponse }
+        return tidied
     }
 
     func ask(bookID: String, question: String, history: [AIChatTurn], credential: LLMCredential) async throws -> AIAnswer {
@@ -190,6 +223,10 @@ private nonisolated struct TranslateBody: Encodable {
         case text
         case targetLanguage = "target_language"
     }
+}
+
+private nonisolated struct TidyBody: Encodable {
+    let text: String
 }
 
 private nonisolated struct AskBody: Encodable {

@@ -1,10 +1,16 @@
 import Foundation
 
+nonisolated enum RelaySpeakMode: String, Equatable, Sendable {
+    case replace
+    case queue
+}
+
 nonisolated struct RelaySpeakCommand: Equatable, Sendable {
     let id: String
     let text: String
     let voice: String?
     let client: String?
+    var mode: RelaySpeakMode = .replace
 }
 
 nonisolated enum IntegrationEvent: Equatable, Sendable {
@@ -24,6 +30,7 @@ nonisolated enum IntegrationEventParser {
         let text: String?
         let voice: String?
         let client: String?
+        let mode: String?
     }
 
     static func event(fromLine line: String) -> IntegrationEvent? {
@@ -41,7 +48,8 @@ nonisolated enum IntegrationEventParser {
                 id: id,
                 text: text,
                 voice: voiceID(payload.voice),
-                client: clientName(payload.client)
+                client: clientName(payload.client),
+                mode: payload.mode.flatMap(RelaySpeakMode.init(rawValue:)) ?? .replace
             ))
         case "stop":
             return payload.id.map { .stop(id: $0) }
@@ -52,7 +60,7 @@ nonisolated enum IntegrationEventParser {
 
     static func voiceID(_ raw: String?) -> String? {
         guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !trimmed.isEmpty, trimmed.count <= maximumVoiceLength
+              !trimmed.isEmpty, trimmed.scalarCount <= maximumVoiceLength
         else { return nil }
         return trimmed
     }
@@ -61,7 +69,7 @@ nonisolated enum IntegrationEventParser {
         guard let raw else { return nil }
         let printable = String(String.UnicodeScalarView(raw.unicodeScalars.map { CharacterSet.controlCharacters.contains($0) ? " " : $0 }))
         let collapsed = printable.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let limited = String(collapsed.prefix(maximumClientNameLength))
+        let limited = collapsed.scalarPrefix(maximumClientNameLength)
         return limited.isEmpty ? nil : limited
     }
 }

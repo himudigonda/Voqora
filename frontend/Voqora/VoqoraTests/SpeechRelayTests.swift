@@ -180,3 +180,206 @@ final class SpeechRelayPlayerTests: XCTestCase {
         XCTAssertTrue(speaker.spoken.isEmpty)
     }
 }
+
+@MainActor
+private final class ActivitySpeakerSpy: SpeechActivityReporting {
+    var isBackendOnline = true
+    var selectedVoice = "af_heart"
+    var speechSpeed = 1.0
+    var isSpeechActive = false
+    let interrupts = SpeechInterruptSignal()
+    private(set) var spoken: [String] = []
+    private(set) var stopCount = 0
+
+    func speak(text: String, voice _: String?) async {
+        interrupts.fire()
+        spoken.append(text)
+        isSpeechActive = true
+    }
+
+    func togglePlayback() {}
+
+    func stopPlayback() {
+        interrupts.fire()
+        stopCount += 1
+        isSpeechActive = false
+    }
+
+    func showTransientError(_: String) {}
+}
+
+@MainActor
+final class SpeechRelayQueueTests: XCTestCase {
+    private func command(_ text: String, _ mode: RelaySpeakMode, client: String? = nil) -> IntegrationEvent {
+        .speak(RelaySpeakCommand(id: text, text: text, voice: nil, client: client, mode: mode))
+    }
+
+    private func makePlayer(_ speaker: ActivitySpeakerSpy, announcements: AnnouncementLog? = nil) -> SpeechRelayPlayer {
+        SpeechRelayPlayer(speaker: speaker, announce: { announcements?.values.append($0) }, interrupts: speaker.interrupts, sleep: { _ in await Task.yield() })
+    }
+
+    func test_queuedSpeechWaitsForTheCurrentSpeechAndPlaysInOrder() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        player.handle(command("C", .queue))
+        for _ in 0 ..< 50 {
+            await Task.yield()
+        }
+        XCTAssertEqual(speaker.spoken, ["A"])
+        XCTAssertEqual(player.queuedCount, 2)
+
+        speaker.isSpeechActive = false
+        await yieldUntil { speaker.spoken == ["A", "B"] }
+        for _ in 0 ..< 50 {
+            await Task.yield()
+        }
+        XCTAssertEqual(speaker.spoken, ["A", "B"])
+
+        speaker.isSpeechActive = false
+        await yieldUntil { speaker.spoken == ["A", "B", "C"] }
+        XCTAssertEqual(speaker.spoken, ["A", "B", "C"])
+        XCTAssertEqual(player.queuedCount, 0)
+    }
+
+    func test_queuedSpeechStartsAtOnceWhenNothingIsPlaying() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .queue))
+        await yieldUntil { speaker.spoken == ["A"] }
+
+        XCTAssertEqual(speaker.spoken, ["A"])
+        XCTAssertEqual(speaker.stopCount, 0)
+    }
+
+    func test_stopClearsTheQueue() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        player.handle(.stop(id: "s"))
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(speaker.spoken, ["A"])
+        XCTAssertEqual(speaker.stopCount, 1)
+        XCTAssertEqual(player.queuedCount, 0)
+    }
+
+    func test_userStopClearsTheQueue() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        player.handle(command("C", .queue))
+        XCTAssertEqual(player.queuedCount, 2)
+
+        speaker.stopPlayback()
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(player.queuedCount, 0)
+        XCTAssertEqual(speaker.spoken, ["A"])
+    }
+
+    func test_userSpeechClearsQueuedRelayParts() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        XCTAssertEqual(player.queuedCount, 1)
+
+        speaker.interrupts.fire()
+        speaker.isSpeechActive = false
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(player.queuedCount, 0)
+        XCTAssertEqual(speaker.spoken, ["A"])
+    }
+
+    func test_relayedSpeechKeepsItsOwnQueue() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        player.handle(command("C", .queue))
+        speaker.isSpeechActive = false
+        await yieldUntil { speaker.spoken == ["A", "B"] }
+
+        XCTAssertEqual(player.queuedCount, 1)
+    }
+
+    func test_replaceDropsQueuedSpeech() async {
+        let speaker = ActivitySpeakerSpy()
+        let player = makePlayer(speaker)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue))
+        player.handle(command("C", .replace))
+        await yieldUntil { speaker.spoken == ["A", "C"] }
+        speaker.isSpeechActive = false
+        for _ in 0 ..< 100 {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(speaker.spoken, ["A", "C"])
+        XCTAssertEqual(player.queuedCount, 0)
+    }
+
+    func test_queuedClientIsAnnouncedWhenItsSpeechStarts() async {
+        let speaker = ActivitySpeakerSpy()
+        let announcements = AnnouncementLog()
+        let player = makePlayer(speaker, announcements: announcements)
+
+        player.handle(command("A", .replace))
+        await yieldUntil { speaker.spoken == ["A"] }
+        player.handle(command("B", .queue, client: "Raycast"))
+        for _ in 0 ..< 50 {
+            await Task.yield()
+        }
+        XCTAssertTrue(announcements.values.isEmpty)
+
+        speaker.isSpeechActive = false
+        await yieldUntil { speaker.spoken == ["A", "B"] }
+        XCTAssertEqual(announcements.values, ["Spoken by Raycast"])
+    }
+}
+
+@MainActor
+private final class AnnouncementLog {
+    var values: [String] = []
+}
+
+final class RelaySpeakModeParsingTests: XCTestCase {
+    func test_modeDefaultsToReplaceAndAcceptsQueue() {
+        XCTAssertEqual(
+            IntegrationEventParser.event(fromLine: #"data: {"type":"speak","id":"a","text":"Hi","mode":"queue"}"#),
+            .speak(RelaySpeakCommand(id: "a", text: "Hi", voice: nil, client: nil, mode: .queue))
+        )
+        XCTAssertEqual(
+            IntegrationEventParser.event(fromLine: #"data: {"type":"speak","id":"a","text":"Hi","mode":"replace"}"#),
+            .speak(RelaySpeakCommand(id: "a", text: "Hi", voice: nil, client: nil, mode: .replace))
+        )
+        XCTAssertEqual(
+            IntegrationEventParser.event(fromLine: #"data: {"type":"speak","id":"a","text":"Hi","mode":"later"}"#),
+            .speak(RelaySpeakCommand(id: "a", text: "Hi", voice: nil, client: nil, mode: .replace))
+        )
+    }
+}

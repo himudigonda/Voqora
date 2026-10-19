@@ -13,8 +13,15 @@ from pydantic import BaseModel, Field, field_validator
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
+from app.services.engine_errors import (
+    EngineBusyError,
+    EngineInstallError,
+    EngineNotInstalledError,
+    UnknownEngineError,
+)
 from app.services.engine_manager import EngineManager
 from app.services.languages import DEFAULT_VOICE, LANGUAGES
+from app.services.pronunciation import is_book_scope
 from app.services.speech_stream import (
     MAX_ENGINE_SPEED,
     MAX_SPEECH_CHARS,
@@ -32,6 +39,7 @@ log = get_logger(__name__)
 
 _LANGUAGE_CODES = frozenset(language["code"] for language in LANGUAGES)
 _MAX_VOICE_ID_CHARS = 64
+_MAX_BOOK_ID_CHARS = 32
 
 
 def _require_known_voice(value: str | None) -> str | None:
@@ -49,11 +57,19 @@ class SpeakRequest(BaseModel):
     volume: float = Field(default=1.0, ge=0.0, le=1.5)
     lang: str | None = None
     pause_scale: float = Field(default=1.0, ge=MIN_PAUSE_SCALE, le=MAX_PAUSE_SCALE)
+    book_id: str | None = Field(default=None, max_length=_MAX_BOOK_ID_CHARS)
 
     @field_validator("voice")
     @classmethod
     def require_known_voice(cls, value: str) -> str:
         return _require_known_voice(value)
+
+    @field_validator("book_id")
+    @classmethod
+    def require_book_id(cls, value: str | None) -> str | None:
+        if value is not None and not is_book_scope(value):
+            raise ValueError("book_id must be a book id")
+        return value
 
     @field_validator("lang")
     @classmethod
@@ -133,19 +149,48 @@ def get_engine():
 
 @router.post("/engine")
 async def set_engine(req: EngineRequest):
-    """Return current engine state. Only Kokoro is supported.
+    """Return current engine state. Kokoro stays the default engine.
 
-    Kept for backward compat with older Swift clients; deletion is tracked
-    by HARD-032.
+    A request names an engine only to check it is usable; each speech request
+    picks its engine through its voice id.
     """
-    if req.engine != "kokoro":
+    try:
+        EngineManager.require_installed(req.engine)
+    except UnknownEngineError:
         raise HTTPException(status_code=400, detail=f"Unknown engine: {req.engine}")
+    except EngineNotInstalledError as error:
+        raise HTTPException(status_code=409, detail=str(error))
     return EngineManager.state()
+
+
+@router.post("/engine/{engine_id}/install", status_code=202)
+async def install_engine(engine_id: str):
+    """Start downloading an optional engine. Poll GET /engine for progress."""
+    try:
+        return EngineManager.install(engine_id)
+    except UnknownEngineError:
+        raise HTTPException(status_code=404, detail=f"Unknown engine: {engine_id}")
+
+
+@router.delete("/engine/{engine_id}")
+async def uninstall_engine(engine_id: str):
+    try:
+        return EngineManager.uninstall(engine_id)
+    except UnknownEngineError:
+        raise HTTPException(status_code=404, detail=f"Unknown engine: {engine_id}")
+    except EngineBusyError as error:
+        raise HTTPException(status_code=409, detail=str(error))
+    except EngineInstallError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 async def _do_prewarm(req: PrewarmRequest | None) -> None:
     """Background task: ensure model is loaded, then optionally fill lookahead cache."""
-    await EngineManager.ensure_loaded()
+    engine = EngineManager.engine_for_voice(req.voice) if req and req.voice else None
+    try:
+        await EngineManager.ensure_loaded(engine or "kokoro")
+    except EngineNotInstalledError:
+        return
     if req and req.text and req.voice and req.speed is not None:
         await EngineManager.prewarm_with_lookahead(
             req.text, req.voice, req.speed, pause_scale=req.pause_scale
@@ -175,8 +220,15 @@ async def speak(req: SpeakRequest):
         # Hold the preemption lock so any in-flight audiobook TTS phase pauses
         # at its next inter-page checkpoint until this stream finishes.
         samples = await open_speech_samples(
-            req.text, req.voice, req.speed, req.lang, pause_scale=req.pause_scale
+            req.text,
+            req.voice,
+            req.speed,
+            req.lang,
+            pause_scale=req.pause_scale,
+            book_id=req.book_id,
         )
+    except EngineNotInstalledError as error:
+        raise HTTPException(status_code=409, detail=str(error))
     except Exception:
         log.error(
             "speak.request_error",

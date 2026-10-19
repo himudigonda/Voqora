@@ -216,11 +216,12 @@ extension LocalAPIController {
     static func live(
         speaker: any SpeechInputSpeaking,
         announce: @escaping @MainActor (String) -> Void,
+        interrupts: SpeechInterruptSignal? = nil,
         defaults: UserDefaults
     ) -> LocalAPIController {
         let service = IntegrationsService()
         let controller = LocalAPIController(backend: service, secrets: .keychain, defaults: defaults)
-        let player = SpeechRelayPlayer(speaker: speaker, announce: announce)
+        let player = SpeechRelayPlayer(speaker: speaker, announce: announce, interrupts: interrupts)
         let relay = SpeechRelaySubscriber(
             connect: { [weak service] in
                 service?.events() ?? AsyncThrowingStream { $0.finish() }

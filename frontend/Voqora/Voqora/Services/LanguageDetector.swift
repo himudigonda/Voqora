@@ -17,6 +17,7 @@ enum LanguageDetector {
         fallback: String,
         minConfidence: Double = 0.55
     ) -> String {
+        guard !SpeechEngineID.isSupertonicVoice(fallback) else { return fallback }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 4 else { return fallback }
 

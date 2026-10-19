@@ -106,6 +106,17 @@ final class StudioViewModel: ObservableObject {
         drafts.delete(id)
     }
 
+    func flushForTermination() {
+        closeEditorSaving()
+        drafts.flush()
+    }
+
+    func eraseAllDrafts() throws {
+        editor = nil
+        route = .home
+        try drafts.eraseAll()
+    }
+
     func goHome() {
         previewer.stop()
         briefModel?.cancel()

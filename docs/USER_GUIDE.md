@@ -48,7 +48,7 @@ name and email, and lets you pick an accent color and app icon.
 | Export the latest clip | `Command + Shift + M` |
 | Speak text on screen | `Command + Shift + 8` |
 | Speak clipboard | Not set |
-| Start or finish dictation | `Control + Option + Space` |
+| Start or finish dictation | `Command + Shift + 9` |
 
 Change any shortcut in Preferences. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
@@ -112,7 +112,7 @@ To listen, select text and right-click **Read selection with Voqora**, or press
 page with Voqora** to hear the main article without menus, sidebars, or
 footers. The toolbar button has **Read Selection**, **Read Page**, and **Stop**,
 and `Option + Shift + S` stops speech. Pages longer than 50,000 characters are
-read in parts: choose **Next Part** in the toolbar button when a part ends.
+sent in parts and read in order; **Stop** drops the parts still waiting.
 
 If the extension says it can't reach Voqora, make sure Voqora is open, Local
 API is on, and the port matches. If it says the key was not accepted, copy the
@@ -198,6 +198,27 @@ text's language when it differs from your voice's language.
 
 There is no universally right voice or speed. Voqora starts with Bella. Adjust
 the voice and speed until you can follow a paragraph without wanting to rewind it.
+
+### Speech engines
+
+Kokoro is built in. **Preferences -> Speech Engines** lists it next to
+**Supertonic**, an optional second engine with 10 voices that speak 31
+languages (English, Korean, Japanese, Arabic, German, French, Spanish, Hindi,
+Russian and more). Supertonic is a one-time download of about 400 MB, free like
+everything else in Voqora.
+
+1. Open **Preferences -> Speech Engines** and choose **Download** next to
+   Supertonic. A progress bar shows the download; you can keep using Voqora.
+2. When it finishes, the Supertonic voices (Male 1 to 5, Female 1 to 5) appear
+   under **Supertonic** in every voice picker: your speech voice, your audiobook
+   voice, and the voice for a new audiobook.
+3. Choose **Remove** to delete the download. Anything set to a Supertonic voice
+   switches to Bella, and you can download it again later.
+
+Supertonic voices always read in the language of the text. Voice blends and
+Studio podcasts use Kokoro voices only, and Auto-detect Language leaves a
+Supertonic voice alone. The Supertonic model is released under the OpenRAIL-M
+license, which carries use restrictions; see the third-party notices.
 
 ## Voices, pronunciations, and pacing
 
@@ -503,7 +524,9 @@ It is off until you turn it on and only accepts connections from this Mac.
 
 When a tool asks Voqora to speak, the text plays through Voqora like a spoken
 selection, with your current voice unless the tool names one. A new request
-replaces the one playing, and a stop request stops it. If the tool sends its
+replaces the one playing unless the tool asks to queue it, in which case it
+plays after what is already speaking. A stop request stops speech and clears the
+queue. The speech endpoint takes up to 4,096 characters per request. If the tool sends its
 name, a short note says which app asked.
 
 ### Audiobookshelf

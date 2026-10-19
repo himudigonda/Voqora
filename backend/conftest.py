@@ -35,6 +35,7 @@ def isolated_voice_preferences(tmp_path, monkeypatch):
     """Keep voice blends and pronunciations out of the real user data dir."""
     from app.core.config import Settings
     from app.services.pronunciation import pronunciations
+    from app.services.supertonic_installer import SupertonicInstaller
     from app.services.voice_blends import voice_blends
 
     blends_path = str(tmp_path / "voice_blends.json")
@@ -45,8 +46,12 @@ def isolated_voice_preferences(tmp_path, monkeypatch):
     monkeypatch.setattr(
         Settings, "PRONUNCIATIONS_PATH", property(lambda self: pronunciations_path)
     )
+    models_dir = str(tmp_path / "models")
+    monkeypatch.setattr(Settings, "MODELS_DIR", property(lambda self: models_dir))
+    SupertonicInstaller.reset()
     voice_blends.reset()
     pronunciations.reset()
     yield
+    SupertonicInstaller.reset()
     voice_blends.reset()
     pronunciations.reset()

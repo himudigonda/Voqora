@@ -60,7 +60,7 @@ final class PlaybackNavigationTests: XCTestCase {
 
     func test_aStoppedSessionCanNoLongerBeCreditedWithACompletion() {
         let audio = AudioService(startingEngine: false)
-        let viewModel = AudiobookViewModel(audio: audio)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let key = "bookPos_stale-session"
         UserDefaults.standard.set(30.0, forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
@@ -102,7 +102,7 @@ final class PlaybackNavigationTests: XCTestCase {
 
     func test_playbackSpeedDoesNotChangeTheNarrationSpeedForNewBooks() {
         let audio = AudioService(startingEngine: false)
-        let viewModel = AudiobookViewModel(audio: audio)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let narration = viewModel.defaultBookSpeed
         defer { viewModel.setSpeed(1) }
 
@@ -200,7 +200,7 @@ final class PlaybackNavigationTests: XCTestCase {
 
     func test_stoppingSavesTheResumePointAndNearTheEndClearsIt() {
         let audio = AudioService(startingEngine: false)
-        let viewModel = AudiobookViewModel(audio: audio)
+        let viewModel = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let key = "bookPos_resume-test"
         UserDefaults.standard.removeObject(forKey: key)
         defer { UserDefaults.standard.removeObject(forKey: key) }
@@ -220,7 +220,7 @@ final class PlaybackNavigationTests: XCTestCase {
 
     func test_openAudiobookSelectsTheLibraryAndPushesExactlyThatPlayer() {
         let audio = AudioService(startingEngine: false)
-        let books = AudiobookViewModel(audio: audio)
+        let books = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let dashboard = makeDashboard(audio: audio)
         dashboard.audiobookVM = books
         dashboard.selectedTab = "history"
@@ -240,7 +240,7 @@ final class PlaybackNavigationTests: XCTestCase {
 
     func test_openNowPlayingRoutesToTheActiveSource() {
         let audio = AudioService(startingEngine: false)
-        let books = AudiobookViewModel(audio: audio)
+        let books = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         let dashboard = makeDashboard(audio: audio)
         dashboard.audiobookVM = books
         dashboard.selectedTab = "preferences"

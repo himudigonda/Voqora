@@ -182,6 +182,44 @@ final class AudiobookLibraryAPITests: XCTestCase {
         XCTAssertEqual(reported.values, reported.values.sorted())
     }
 
+    func test_exportMP3_withoutContentLengthStillSavesAndFinishesAtOne() async throws {
+        let audio = Data((0 ..< 50000).map { UInt8($0 % 241) })
+        LibraryStubURLProtocol.install { _ in
+            LibraryStubURLProtocol.Reply(status: 200, headers: ["Content-Type": "audio/mpeg"], body: audio)
+        }
+        let destination = directory.appendingPathComponent("Chunked.mp3")
+        let reported = ProgressRecorder()
+
+        try await LibraryStubURLProtocol.makeService().exportMP3("book", bitrateKbps: 96, to: destination) { reported.append($0) }
+
+        XCTAssertEqual(try Data(contentsOf: destination), audio)
+        XCTAssertEqual(reported.values, [1])
+    }
+
+    func test_exportMP3_replacesAnExistingFileAndSendsAuthorization() async throws {
+        let destination = directory.appendingPathComponent("Book.mp3")
+        try Data("old".utf8).write(to: destination)
+        let audio = Data("new-audio".utf8)
+        LibraryStubURLProtocol.install { _ in
+            LibraryStubURLProtocol.Reply(status: 200, headers: ["Content-Length": String(audio.count)], body: audio)
+        }
+
+        try await LibraryStubURLProtocol.makeService().exportMP3("book", bitrateKbps: 128, to: destination) { _ in }
+
+        XCTAssertEqual(try Data(contentsOf: destination), audio)
+        XCTAssertEqual(LibraryStubURLProtocol.requests.first?.headers["X-Voqora-IPC-Token"], "stub-token")
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+        XCTAssertEqual(leftovers, ["Book.mp3"])
+    }
+
+    func test_downloadFraction_isDeterminateOnlyWhenTheLengthIsKnown() {
+        XCTAssertNil(BackendFileDownload.fraction(written: 10, expected: -1))
+        XCTAssertNil(BackendFileDownload.fraction(written: 10, expected: 0))
+        XCTAssertEqual(BackendFileDownload.fraction(written: 25, expected: 100), 0.25)
+        XCTAssertEqual(BackendFileDownload.fraction(written: 150, expected: 100), 1)
+        XCTAssertEqual(BackendFileDownload.fraction(written: -5, expected: 100), 0)
+    }
+
     func test_exportMP3_failureLeavesNoFileAndCarriesStatus() async {
         LibraryStubURLProtocol.install { _ in
             .json(429, #"{"detail":"Another MP3 export is in progress. Try again shortly."}"#)

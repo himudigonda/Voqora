@@ -142,6 +142,14 @@ final class IntegrationEventParserTests: XCTestCase {
         XCTAssertNil(IntegrationEventParser.event(fromLine: #"data: {"type":"other","id":"x"}"#))
     }
 
+    func test_clientNamesAndVoicesAreLimitedInUnicodeScalars() {
+        let combining = "e\u{301}"
+        let name = IntegrationEventParser.clientName(String(repeating: combining, count: 100))
+        XCTAssertEqual(name?.scalarCount, IntegrationEventParser.maximumClientNameLength)
+        XCTAssertNotNil(IntegrationEventParser.voiceID(String(repeating: combining, count: 32)))
+        XCTAssertNil(IntegrationEventParser.voiceID(String(repeating: combining, count: 33)))
+    }
+
     func test_clientNamesAreCleanedAndLimited() {
         XCTAssertEqual(IntegrationEventParser.clientName("  Claude\n\tCode  "), "Claude Code")
         XCTAssertNil(IntegrationEventParser.clientName(" \u{0007} "))

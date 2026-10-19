@@ -20,7 +20,7 @@ not a hosted Voqora API.
 
 ### AI reading tools
 
-`POST /ai/summarize`, `/ai/translate`, `/ai/ask`, `/ai/quiz`, and
+`POST /ai/summarize`, `/ai/translate`, `/ai/tidy`, `/ai/ask`, `/ai/quiz`, and
 `/ai/flashcards` take JSON and return JSON. They are not streamed. Each request
 sends the provider in the same headers as audiobook cleanup:
 `X-Voqora-LLM-Provider`, `X-Voqora-LLM-Key`, `X-Voqora-LLM-Model`, and
@@ -30,6 +30,7 @@ sends the provider in the same headers as audiobook cleanup:
 | --- | --- | --- |
 | `/ai/summarize` | `text` (up to 200,000 characters) or `book_id`; `length` `short`, `medium` (default) or `detailed`; optional `language` | `summary`, `chunks` |
 | `/ai/translate` | `text` (up to 20,000 characters), `target_language` | `text`, `detected_source_language` |
+| `/ai/tidy` | `text` (up to 20,000 characters) of dictated speech | `text`: punctuated, capitalized, filler words removed, nothing added |
 | `/ai/ask` | `book_id`, `question` (up to 1,000 characters), `history` (up to 10 turns of `role` and `content`) | `answer`, `found`, `citations` of `section_title`, `page`, `passage_index`, `quote` |
 | `/ai/quiz` | `text` or `book_id`; `count` 3 to 20 (default 5); `difficulty` `easy`, `medium` (default) or `hard` | `questions` of `question`, four `choices`, `answer_index`, `explanation` |
 | `/ai/flashcards` | `text` or `book_id`; `count` 5 to 40 (default 10) | `cards` of `front`, `back` |
@@ -101,11 +102,29 @@ Speech and voices:
 
 - `POST /speak` takes `text`, `voice`, `speed`, `volume`, `lang` and an
   optional `pause_scale` (0.5 to 2.0, default 1.0) that lengthens or shortens
-  the pause after each phrase and paragraph. It streams `audio/wav`.
+  the pause after each phrase and paragraph. It streams `audio/wav`. An
+  optional `book_id` also applies that book's pronunciation rules on top of the
+  global ones, as `POST /pronunciations/test` does.
 - `POST /prewarm` takes the same `voice`, `speed` and `pause_scale`. Use the
   values you will send to `/speak`, or the warm-up is not reused.
 - `GET /engine` also returns `blends`, the saved voice blends. `voices` still
-  lists only the 28 built-in voices.
+  lists only the 28 built-in voices. It also returns `engines`: `kokoro`
+  (built in) and `supertonic` (optional), each with `id`, `name`, `installed`,
+  `downloading`, `progress` (0 to 1), `size_bytes`, `license`, `languages`,
+  `voices` and `error`.
+- `POST /engine/supertonic/install` (202) starts a background download of the
+  pinned Supertone/supertonic-3 revision into
+  `~/Library/Application Support/com.himudigonda.Voqora/models/`. It downloads
+  into a partial directory that a retry resumes, then moves the verified files
+  into place. `DELETE /engine/supertonic` removes the model (409 while
+  downloading). Kokoro cannot be removed (400).
+- Supertonic voices are namespaced `supertonic:M1` to `supertonic:M5` and
+  `supertonic:F1` to `supertonic:F5`, so they never collide with Kokoro ids.
+  The voice picks the engine. Using one before the download finishes is a 409
+  (`/speak`, audiobook upload, start and retry); the local API reports it as a
+  rejected voice. Audiobook upload accepts `engine` `kokoro` or `supertonic`; it
+  must match the voice, and blends are Kokoro only. Podcasts are Kokoro only.
+  Supertonic output is resampled to 24 kHz so exports are unchanged.
 - Anywhere a voice id is accepted (`/speak`, `/prewarm`, audiobook upload), a
   blend id (`blend:<uuid4>`) works too. An unknown or deleted blend is a 422.
 
@@ -294,16 +313,19 @@ shape `{"error": {"message", "type", "param", "code"}}`.
   voices: alloy to af_heart, echo to am_michael, fable to bm_fable, onyx to
   am_adam, nova to af_bella, shimmer to af_nicole.
 - `POST /v1/audio/speech` takes `{model, input, voice, response_format?,
-  speed?, pause_scale?}`. `input` is up to 50,000 characters. `voice` is a
-  built-in voice, a voice blend id, or an OpenAI voice name. `response_format`
+  speed?, pause_scale?}`. `input` is up to 4,096 characters, as in the
+  OpenAI API. `voice` is a built-in voice, a voice blend id, or an OpenAI
+  voice name. `response_format`
   is `wav` (default), `pcm` (raw 24 kHz mono 16-bit little-endian), or `flac`;
   anything else is a 400 naming the supported formats. `speed` is 0.25 to 4.0
   and is clamped to the engine's 0.5 to 2.0. `pause_scale` is Voqora's pause
   length setting (0.5 to 2.0, default 1.0), as on `/speak`. The pronunciation
   dictionary applies, as it does on `/speak`. The audio is generated in full
   before it is sent, so a slow reader never holds the interactive speech lock.
-- `POST /v1/voqora/speak` takes `{text, voice?, client?}` and asks the app to
-  speak it on this Mac. `client` is up to 64 characters naming the caller; the
+- `POST /v1/voqora/speak` takes `{text, voice?, client?, mode?}` and asks the
+  app to speak it on this Mac. `mode` is `replace` (default, interrupts current
+  speech) or `queue` (speaks after what is playing; stop clears the queue).
+  `client` is up to 64 characters naming the caller; the
   app shows it as "Spoken by" the client. `POST /v1/voqora/stop` stops speech and drops queued commands.
   Both return 202 `{status: "queued", id}`, 503 when the app is not
   subscribed to `/integrations/events`, and 429 when 16 commands are queued.

@@ -24,6 +24,7 @@ final class DictationPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.insertionMode, .paste)
         XCTAssertEqual(preferences.silenceTimeout, 2)
         XCTAssertFalse(preferences.allowsServerRecognition)
+        XCTAssertFalse(preferences.tidiesWithAI)
     }
 
     func test_storedValuesAreRead() {
@@ -31,6 +32,7 @@ final class DictationPreferencesTests: XCTestCase {
         defaults.set(DictationInsertionMode.copy.rawValue, forKey: DictationPreferences.insertionModeKey)
         defaults.set(3.0, forKey: DictationPreferences.silenceTimeoutKey)
         defaults.set(true, forKey: DictationPreferences.allowsServerRecognitionKey)
+        defaults.set(true, forKey: DictationPreferences.tidiesWithAIKey)
 
         let preferences = DictationPreferences(defaults: defaults)
 
@@ -38,6 +40,7 @@ final class DictationPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.insertionMode, .copy)
         XCTAssertEqual(preferences.silenceTimeout, 3)
         XCTAssertTrue(preferences.allowsServerRecognition)
+        XCTAssertTrue(preferences.tidiesWithAI)
     }
 
     func test_invalidStoredValuesFallBackSafely() {

@@ -58,6 +58,16 @@ final class VoiceBlendModelTests: XCTestCase {
         XCTAssertEqual(draft.components.count, 2)
     }
 
+    func test_draftCountsNameLengthInUnicodeScalarsLikeTheBackend() {
+        let combining = "e\u{301}"
+        var draft = VoiceBlendDraft(name: String(repeating: combining, count: 21))
+        XCTAssertEqual(draft.trimmedName.count, 21)
+        XCTAssertEqual(draft.validationMessage, "Keep the name to 40 characters or fewer.")
+
+        draft.name = String(repeating: combining, count: 20)
+        XCTAssertNil(draft.validationMessage)
+    }
+
     func test_draftRejectsLongNamesDuplicatesAndBadWeights() {
         var draft = VoiceBlendDraft(name: String(repeating: "a", count: 41))
         XCTAssertEqual(draft.validationMessage, "Keep the name to 40 characters or fewer.")

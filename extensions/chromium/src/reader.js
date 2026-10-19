@@ -1,56 +1,24 @@
-import { MAX_PAGE_CHARS } from "./config.js";
+import { MAX_PAGE_CHARS, SPEAK_MODE } from "./config.js";
 import { splitIntoChunks } from "./chunking.js";
 import { noPageTextError, noSelectionError } from "./errors.js";
 import { requireSettings } from "./settings.js";
-
-export const SESSION_KEY = "readingSession";
 
 function cleaned(text) {
   return typeof text === "string" ? text.trim().slice(0, MAX_PAGE_CHARS).trim() : "";
 }
 
-function progress(session) {
-  return { part: session.index + 1, total: session.parts.length };
-}
-
-function isValidSession(session) {
-  return Boolean(session)
-    && Array.isArray(session.parts)
-    && session.parts.every((part) => typeof part === "string" && part.length > 0)
-    && Number.isInteger(session.index)
-    && session.index >= 0
-    && session.index < session.parts.length;
-}
-
-export function createReader({ settingsArea, sessionArea, createClient, pageAccess }) {
+export function createReader({ settingsArea, createClient, pageAccess }) {
   async function client() {
     return createClient(await requireSettings(settingsArea));
   }
 
-  async function loadSession() {
-    const stored = await sessionArea.get(SESSION_KEY);
-    const session = stored?.[SESSION_KEY];
-    return isValidSession(session) ? session : null;
-  }
-
-  async function saveSession(session) {
-    if (session.index < session.parts.length - 1) {
-      await sessionArea.set({ [SESSION_KEY]: session });
-    } else {
-      await sessionArea.remove(SESSION_KEY);
-    }
-  }
-
-  async function speakPart(session) {
-    const voqora = await client();
-    await voqora.speak(session.parts[session.index]);
-    await saveSession(session);
-    return progress(session);
-  }
-
   async function readText(text) {
-    await sessionArea.remove(SESSION_KEY);
-    return speakPart({ parts: splitIntoChunks(text), index: 0 });
+    const parts = splitIntoChunks(text);
+    const voqora = await client();
+    for (const [index, part] of parts.entries()) {
+      await voqora.speak(part, index === 0 ? SPEAK_MODE.replace : SPEAK_MODE.queue);
+    }
+    return { total: parts.length };
   }
 
   return Object.freeze({
@@ -73,24 +41,9 @@ export function createReader({ settingsArea, sessionArea, createClient, pageAcce
       return readText(text);
     },
 
-    async readNextPart() {
-      const session = await loadSession();
-      if (!session || session.index >= session.parts.length - 1) {
-        await sessionArea.remove(SESSION_KEY);
-        return null;
-      }
-      return speakPart({ parts: session.parts, index: session.index + 1 });
-    },
-
     async stop() {
-      await sessionArea.remove(SESSION_KEY);
       const voqora = await client();
       await voqora.stop();
-    },
-
-    async currentProgress() {
-      const session = await loadSession();
-      return session ? progress(session) : null;
     },
   });
 }

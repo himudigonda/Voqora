@@ -27,7 +27,7 @@ final class SystemMediaSessionTests: XCTestCase {
             startsBackgroundWork: false,
             defaults: defaults
         )
-        audiobooks = AudiobookViewModel(audio: audio)
+        audiobooks = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         dashboard.audiobookVM = audiobooks
         infoCenter = SessionInfoCenter()
         commandCenter = SessionCommandCenter()

@@ -6,6 +6,7 @@ export const MAX_KEY_LENGTH = 128;
 export const MAX_SPEAK_CHARS = 50000;
 export const MAX_PAGE_CHARS = 1000000;
 export const REQUEST_TIMEOUT_MS = 10000;
+export const SPEAK_MODE = Object.freeze({ replace: "replace", queue: "queue" });
 
 const KEY_PATTERN = /^[A-Za-z0-9._~+/=-]+$/;
 

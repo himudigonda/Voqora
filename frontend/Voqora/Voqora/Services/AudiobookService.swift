@@ -121,7 +121,14 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         var req = try connection.request(path: "audiobook/url", method: "POST", timeout: Self.webPageTimeout)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONEncoder().encode(
-            WebPageImportBody(url: url, voice: voice, speed: speed, engine: engine, pauseScale: pauseScale, cleanup: cleanup)
+            WebPageImportBody(
+                url: url,
+                voice: voice,
+                speed: speed,
+                engine: SpeechEngineID.resolvedEngine(voice: voice, requested: engine),
+                pauseScale: pauseScale,
+                cleanup: cleanup
+            )
         )
         let (data, response) = try await session.data(for: req)
         try AudiobookAPIFailure.check(response, body: data)
@@ -209,7 +216,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         if let speed {
             fields.append(("speed", String(speed)))
         }
-        if let engine {
+        if let engine = SpeechEngineID.resolvedEngine(voice: voice, requested: engine) {
             fields.append(("engine", engine))
         }
         if let pauseScale {

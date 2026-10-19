@@ -22,12 +22,16 @@ struct AudiobookM4BRenderer {
             sources: [source],
             chapters: markers,
             title: book.displayTitle,
-            author: book.displayAuthor ?? book.narratorName,
+            author: Self.credit(for: book),
             cover: artwork,
             bitrate: AudiobookExportSettings.clampedKbps(bitrateKbps()) * 1000,
             outputURL: destination
         )
         try await exporter.export(request, progress: progress)
+    }
+
+    static func credit(for book: Audiobook) -> String {
+        book.isPodcast ? book.creditLine : book.displayAuthor ?? book.narratorName
     }
 
     private func chapters(for book: Audiobook) async -> [M4BChapter] {

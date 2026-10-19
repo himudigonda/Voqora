@@ -15,9 +15,9 @@ Chrome, Microsoft Edge, and other Chromium browsers (version 116 or later).
 - **Stop.** Press `Option + Shift + S` or choose **Stop** in the popup.
 
 Voqora reads up to 50,000 characters per request. A longer page or selection
-is split into parts at paragraph or sentence breaks. The popup then shows
-**Next Part**, and the toolbar badge shows which part is playing, such as
-`1/3`.
+is split into parts at paragraph or sentence breaks. The extension sends every
+part at once, and Voqora reads them in order without a pause for you to
+continue. **Stop** ends the reading and drops the parts still waiting.
 
 You can change the shortcuts at `chrome://extensions/shortcuts` (in Edge,
 `edge://extensions/shortcuts`), or from the **Shortcuts** link in the popup.
@@ -56,8 +56,8 @@ card in `chrome://extensions`.
   standing access to any site.
 - The port and API key are kept in the browser's extension storage on this
   computer (`chrome.storage.local`). Remove the extension to delete them.
-- Long readings are kept in the browser's session storage until they finish or
-  you choose Stop, and are cleared when the browser quits.
+- The last error shown in the popup is kept in the browser's session storage
+  and is cleared when the browser quits.
 
 Permissions it asks for: `activeTab`, `contextMenus`, `storage`, `scripting`,
 and access to `http://127.0.0.1/*`.

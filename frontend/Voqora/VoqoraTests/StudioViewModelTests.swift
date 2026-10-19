@@ -183,6 +183,30 @@ final class StudioViewModelTests: XCTestCase {
         XCTAssertEqual(studio.drafts.draft(withID: editor.id)?.script.title, "Kept")
     }
 
+    func test_flushForTerminationPersistsPendingEditsToDisk() throws {
+        let studio = makeStudio()
+        studio.startBlankScript()
+        let editor = try XCTUnwrap(studio.editor)
+        editor.script.title = "Before Quit"
+
+        studio.flushForTermination()
+
+        XCTAssertEqual(StudioDraftStore(storageURL: url).draft(withID: editor.id)?.script.title, "Before Quit")
+    }
+
+    func test_eraseAllDraftsClosesTheEditorAndRemovesTheFile() throws {
+        let studio = makeStudio()
+        studio.startBlankScript()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        try studio.eraseAllDrafts()
+
+        XCTAssertNil(studio.editor)
+        XCTAssertEqual(studio.route, .home)
+        XCTAssertTrue(studio.drafts.drafts.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
     func test_deletingTheOpenDraftClosesTheEditor() throws {
         let studio = makeStudio()
         studio.startBlankScript()

@@ -26,6 +26,7 @@ from app.core.logging import configure as configure_logging
 from app.core.logging import get_logger
 from app.services.engine_manager import EngineManager
 from app.services.speech_relay import speech_relay
+from app.services.supertonic_engine import SupertonicEngine
 from app.services.tts import TTSEngine
 
 # Force asyncio backend for uvicorn compatibility
@@ -100,6 +101,7 @@ async def lifespan(app: FastAPI):
     # Kick off model load as a background task — uvicorn starts serving
     # immediately and /health returns "cold" until loading finishes (~2-3 s).
     _spawn_bg(_load_engine_background())
+    _spawn_bg(SupertonicEngine.idle_watcher())
 
     # Audiobook orchestrator + crash-recovery (fast, no I/O blocking)
     from app.services.audiobook_service import AudiobookService

@@ -65,6 +65,7 @@ def test_speak_delivers_to_every_subscriber() -> None:
             "text": "hello",
             "voice": "af_bella",
             "client": None,
+            "mode": "replace",
         }
 
 
@@ -73,6 +74,13 @@ def test_speak_carries_the_client_name() -> None:
     queue = relay.subscribe()
     relay.speak("hello", None, "Raycast")
     assert queue.get_nowait()["client"] == "Raycast"
+
+
+def test_speak_carries_the_queue_mode() -> None:
+    relay = SpeechRelay(queue_size=2, max_subscribers=1)
+    queue = relay.subscribe()
+    relay.speak("hello", None, None, "queue")
+    assert queue.get_nowait()["mode"] == "queue"
 
 
 @pytest.mark.parametrize(
@@ -268,6 +276,23 @@ def test_relay_speak_without_voice_lets_app_choose(public: TestClient) -> None:
     queue = speech_relay.subscribe()
     public.post("/v1/voqora/speak", json={"text": "hello"})
     assert queue.get_nowait()["voice"] is None
+
+
+def test_relay_speak_defaults_to_replace_and_accepts_queue(
+    public: TestClient,
+) -> None:
+    queue = speech_relay.subscribe()
+    public.post("/v1/voqora/speak", json={"text": "one"})
+    public.post("/v1/voqora/speak", json={"text": "two", "mode": "queue"})
+    assert queue.get_nowait()["mode"] == "replace"
+    assert queue.get_nowait()["mode"] == "queue"
+
+
+def test_relay_speak_rejects_an_unknown_mode(public: TestClient) -> None:
+    speech_relay.subscribe()
+    response = public.post("/v1/voqora/speak", json={"text": "hi", "mode": "later"})
+    assert response.status_code == 400
+    assert response.json()["error"]["param"] == "mode"
 
 
 def test_relay_stop_queues_for_app(public: TestClient) -> None:

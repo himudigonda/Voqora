@@ -123,7 +123,7 @@ nonisolated struct VoiceBlendDraft: Equatable, Sendable {
         if name.isEmpty {
             return "Give your voice a name."
         }
-        if name.count > VoiceBlendRules.maxNameLength {
+        if name.scalarCount > VoiceBlendRules.maxNameLength {
             return "Keep the name to \(VoiceBlendRules.maxNameLength) characters or fewer."
         }
         if name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {

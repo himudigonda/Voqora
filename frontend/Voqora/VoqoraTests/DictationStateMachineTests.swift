@@ -124,6 +124,23 @@ final class DictationStateMachineTests: XCTestCase {
         XCTAssertEqual(machine.phase, .inserting)
     }
 
+    func test_abandoningWhileInsertingReturnsToIdleAndClearsTheTranscript() {
+        var machine = listeningMachine()
+        _ = machine.handle(.recognitionEnded("Done"))
+
+        XCTAssertEqual(machine.handle(.abandonInsertion), .nothing)
+        XCTAssertEqual(machine.phase, .idle)
+        XCTAssertEqual(machine.transcript, "")
+        XCTAssertEqual(machine.handle(.insertionFinished), .nothing)
+    }
+
+    func test_abandoningOutsideInsertingDoesNothing() {
+        var machine = listeningMachine()
+
+        XCTAssertEqual(machine.handle(.abandonInsertion), .nothing)
+        XCTAssertEqual(machine.phase, .listening)
+    }
+
     func test_permissionFailureWhilePreparingReportsTheIssue() {
         var machine = DictationStateMachine()
         _ = machine.handle(.toggle)

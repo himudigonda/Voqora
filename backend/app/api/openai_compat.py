@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from fastapi import APIRouter
@@ -40,6 +40,7 @@ log = get_logger("voqora.local_api")
 
 SPEECH_MODELS = ("kokoro", "tts-1", "tts-1-hd")
 _MODEL_CREATED = 1735689600
+MAX_OPENAI_INPUT_CHARS = 4096
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,7 @@ AUDIO_FORMATS: dict[str, AudioFormat] = {
 
 class SpeechRequest(BaseModel):
     model: str = Field(min_length=1, max_length=64)
-    input: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
+    input: str = Field(min_length=1, max_length=MAX_OPENAI_INPUT_CHARS)
     voice: str = Field(min_length=1, max_length=MAX_VOICE_ID_CHARS)
     response_format: str = Field(default="wav", min_length=1, max_length=16)
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
@@ -98,6 +99,7 @@ class RelaySpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_SPEECH_CHARS)
     voice: str | None = Field(default=None, min_length=1, max_length=MAX_VOICE_ID_CHARS)
     client: str | None = Field(default=None, max_length=MAX_CLIENT_NAME_CHARS)
+    mode: Literal["replace", "queue"] = "replace"
 
     @field_validator("text")
     @classmethod
@@ -174,7 +176,7 @@ async def create_speech(req: SpeechRequest) -> Response:
 @router.post("/v1/voqora/speak", status_code=202)
 async def relay_speak(req: RelaySpeakRequest) -> JSONResponse:
     """Ask the Voqora app to speak text aloud on this Mac."""
-    return _relay(lambda: speech_relay.speak(req.text, req.voice, req.client))
+    return _relay(lambda: speech_relay.speak(req.text, req.voice, req.client, req.mode))
 
 
 @router.post("/v1/voqora/stop", status_code=202)

@@ -29,12 +29,12 @@ struct DictationHUDView: View {
                 message: issue.message,
                 settingsPane: issue.settingsPane
             )
-        } else if dictation.phase == .idle, let outcome = dictation.outcome {
+        } else if dictation.phase == .idle, let message = dictation.outcomeMessage {
             DictationMessageRow(
-                systemImage: "checkmark.circle.fill",
-                tint: Palette.success,
-                message: outcome.message,
-                settingsPane: outcome.settingsPane
+                systemImage: dictation.tidyFailure == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                tint: dictation.tidyFailure == nil ? Palette.success : Palette.warning,
+                message: message,
+                settingsPane: dictation.outcome?.settingsPane
             )
         } else {
             liveContent
@@ -68,7 +68,7 @@ struct DictationHUDView: View {
         case .idle, .preparing: "Getting ready…"
         case .listening: "Listening"
         case .finishing: "Finishing…"
-        case .inserting: "Inserting…"
+        case .inserting: dictation.isTidying ? "Tidying…" : "Inserting…"
         }
     }
 

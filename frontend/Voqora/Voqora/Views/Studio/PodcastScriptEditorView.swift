@@ -144,10 +144,10 @@ struct PodcastScriptEditorView: View {
     private func turnRows(issues: [PodcastScriptIssue]) -> some View {
         let positions = Dictionary(uniqueKeysWithValues: editor.script.turns.enumerated().map { ($1.id, $0) })
         let issuesByTurn = PodcastScriptValidator.issuesByTurn(issues)
-        ForEach($editor.script.turns) { $turn in
+        ForEach(editor.script.turns) { turn in
             let index = positions[turn.id] ?? 0
             PodcastTurnRow(
-                turn: $turn,
+                turn: turnBinding(turn),
                 index: index,
                 speakers: editor.script.speakers,
                 issues: issuesByTurn[index] ?? [],
@@ -166,7 +166,12 @@ struct PodcastScriptEditorView: View {
     private var turnActions: PodcastTurnRow.Actions {
         PodcastTurnRow.Actions(
             insertBelow: { id in focusedTurn = editor.insertTurn(after: id) },
-            delete: { id in editor.deleteTurn(id) },
+            delete: { id in
+                if focusedTurn == id {
+                    focusedTurn = nil
+                }
+                editor.deleteTurn(id)
+            },
             move: { id, offset in editor.moveTurn(id, by: offset) },
             setChapter: { id, title in editor.setChapter(title, forTurn: id) }
         )
@@ -181,6 +186,17 @@ struct PodcastScriptEditorView: View {
         .buttonStyle(.voqoraSecondary)
         .disabled(!editor.canAddTurn)
         .padding(.vertical, DesignTokens.Spacing.sm)
+    }
+
+    private func turnBinding(_ turn: PodcastTurn) -> Binding<PodcastTurn> {
+        Binding(
+            get: { editor.script.turns.first { $0.id == turn.id } ?? turn },
+            set: { updated in
+                if let index = editor.script.turns.firstIndex(where: { $0.id == turn.id }) {
+                    editor.script.turns[index] = updated
+                }
+            }
+        )
     }
 
     private func turnCountLabel(for speakerID: String) -> String {

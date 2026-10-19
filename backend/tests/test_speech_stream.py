@@ -72,7 +72,7 @@ async def test_pause_length_reaches_the_engine_without_a_book_scope() -> None:
     ):
         samples = await open_speech_samples("hi", "af_bella", 1.0, pause_scale=1.5)
         [chunk async for chunk in samples]
-    assert generate.call_args.kwargs == {"pause_scale": 1.5}
+    assert generate.call_args.kwargs == {"pause_scale": 1.5, "book_id": None}
 
 
 def _engine():

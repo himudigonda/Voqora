@@ -35,7 +35,15 @@ test("speak posts JSON text and returns the queued id", async () => {
   assert.equal(calls[0].url, "http://127.0.0.1:51851/v1/voqora/speak");
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.headers["Content-Type"], "application/json");
-  assert.deepEqual(JSON.parse(calls[0].init.body), { text: "Hello there." });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { text: "Hello there.", mode: "replace" });
+});
+
+test("speak sends the queue mode and rejects unknown modes", async () => {
+  const { api, calls } = client(() => jsonResponse(202, { status: "queued", id: "evt-2" }));
+  await api.speak("Next part.", "queue");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { text: "Next part.", mode: "queue" });
+  await assert.rejects(api.speak("Hi", "later"), { code: ErrorCode.invalidRequest });
+  assert.equal(calls.length, 1);
 });
 
 test("speak validates text before any request", async () => {

@@ -19,6 +19,26 @@ enum LibrarySheet: Identifiable {
         case let .completion(book): "completion-\(book.bookID)"
         }
     }
+
+    static func honorsDismissal(presentedID: String?, currentID: String?) -> Bool {
+        guard let presentedID, let currentID else { return false }
+        return presentedID == currentID
+    }
+}
+
+@MainActor
+final class LibrarySheetPresentation {
+    private(set) var presentedID: String?
+
+    func didAppear(_ id: String) {
+        presentedID = id
+    }
+
+    func didDisappear(_ id: String) {
+        if presentedID == id {
+            presentedID = nil
+        }
+    }
 }
 
 struct AudiobookLibraryView: View {
@@ -29,6 +49,7 @@ struct AudiobookLibraryView: View {
     @State private var searchText = ""
     @AppStorage("librarySortMode") private var sort: SortMode = .recent
     @State private var showDeleteAllConfirmation = false
+    @State private var sheetPresentation = LibrarySheetPresentation()
 
     enum SortMode: String, CaseIterable, Identifiable {
         case recent, alpha, duration
@@ -60,29 +81,9 @@ struct AudiobookLibraryView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: bookVM.libraryPath)
         .sheet(item: librarySheetBinding, onDismiss: { bookVM.offerResumeAfterFix() }) { sheet in
-            switch sheet {
-            case let .upload(source):
-                UploadEstimateModal(source: source)
-                    .environmentObject(vm)
-                    .environmentObject(bookVM)
-                    .environmentObject(bookVM.providers)
-            case .addFromURL:
-                AddFromURLSheet(
-                    initialAddress: bookVM.webPageDraft,
-                    voice: bookVM.importVoice(fallback: vm.selectedVoice),
-                    speed: bookVM.importSpeed(fallback: vm.speechSpeed)
-                )
-                .environmentObject(vm)
-                .environmentObject(bookVM)
-            case let .completion(book):
-                CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
-                    .environmentObject(vm)
-                    .environmentObject(bookVM)
-            case let .fixProvider(fix):
-                AddProviderSheet(provider: fix.provider, cleaningCount: bookVM.cleaningBookCount(using:))
-                    .environmentObject(vm)
-                    .environmentObject(bookVM.providers)
-            }
+            sheetContent(sheet)
+                .onAppear { sheetPresentation.didAppear(sheet.id) }
+                .onDisappear { sheetPresentation.didDisappear(sheet.id) }
         }
         .confirmationDialog(
             retryPromptTitle,
@@ -154,25 +155,59 @@ struct AudiobookLibraryView: View {
         .onExitCommand { bookVM.libraryPath = [] }
     }
 
+    @ViewBuilder
+    private func sheetContent(_ sheet: LibrarySheet) -> some View {
+        switch sheet {
+        case let .upload(source):
+            UploadEstimateModal(source: source)
+                .environmentObject(vm)
+                .environmentObject(bookVM)
+                .environmentObject(bookVM.providers)
+        case .addFromURL:
+            AddFromURLSheet(
+                initialAddress: bookVM.webPageDraft,
+                voice: bookVM.importVoice(fallback: vm.selectedVoice),
+                speed: bookVM.importSpeed(fallback: vm.speechSpeed)
+            )
+            .environmentObject(vm)
+            .environmentObject(bookVM)
+        case let .completion(book):
+            CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
+                .environmentObject(vm)
+                .environmentObject(bookVM)
+        case let .fixProvider(fix):
+            AddProviderSheet(provider: fix.provider, cleaningCount: bookVM.cleaningBookCount(using:))
+                .environmentObject(vm)
+                .environmentObject(bookVM.providers)
+        }
+    }
+
+    private var currentLibrarySheet: LibrarySheet? {
+        if let book = bookVM.completionSummary {
+            return .completion(book)
+        }
+        if let fix = bookVM.providerFix {
+            return .fixProvider(fix)
+        }
+        if let source = bookVM.pendingSource {
+            return .upload(source)
+        }
+        if bookVM.isWebPageImportPresented {
+            return .addFromURL
+        }
+        return nil
+    }
+
     private var librarySheetBinding: Binding<LibrarySheet?> {
         Binding(
-            get: {
-                if let book = bookVM.completionSummary {
-                    return .completion(book)
-                }
-                if let fix = bookVM.providerFix {
-                    return .fixProvider(fix)
-                }
-                if let source = bookVM.pendingSource {
-                    return .upload(source)
-                }
-                if bookVM.isWebPageImportPresented {
-                    return .addFromURL
-                }
-                return nil
-            },
+            get: { currentLibrarySheet },
             set: { newValue in
-                guard newValue == nil else { return }
+                guard newValue == nil,
+                      LibrarySheet.honorsDismissal(
+                          presentedID: sheetPresentation.presentedID,
+                          currentID: currentLibrarySheet?.id
+                      )
+                else { return }
                 if bookVM.completionSummary != nil {
                     bookVM.completionSummary = nil
                 } else if bookVM.providerFix != nil {

@@ -5,7 +5,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -69,6 +69,10 @@ class SpeakArguments(BaseModel):
         max_length=MAX_VOICE_ID_CHARS,
         description="Voice id from list_voices, or an OpenAI voice name. "
         "Omit to use the voice chosen in Voqora.",
+    )
+    mode: Literal["replace", "queue"] = Field(
+        default="replace",
+        description="replace interrupts current speech; queue speaks after it.",
     )
 
     @field_validator("text")
@@ -143,7 +147,7 @@ def _input_schema(model: type[BaseModel]) -> dict[str, Any]:
 
 def build_tools(relay: SpeechRelay) -> list[McpTool]:
     def speak(args: SpeakArguments, client: str | None) -> str:
-        relay.speak(args.text, args.voice, client)
+        relay.speak(args.text, args.voice, client, args.mode)
         return "Queued for speech on this Mac."
 
     def stop(_args: NoArguments, _client: str | None) -> str:

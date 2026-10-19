@@ -29,6 +29,12 @@ final class WebPageImportTests: XCTestCase {
         XCTAssertEqual(problem(for: "https://example.com/" + String(repeating: "a", count: 2100)), .tooLong)
     }
 
+    func test_validate_countsLinkLengthInUnicodeScalars() {
+        let combining = "e\u{301}"
+        XCTAssertEqual(problem(for: "https://example.com/" + String(repeating: combining, count: 1100)), .tooLong)
+        XCTAssertNil(problem(for: "https://example.com/" + String(repeating: combining, count: 250)))
+    }
+
     func test_problemMessagesAreReadable() {
         for problem in [WebPageLink.Problem.empty, .notWebLink, .containsCredentials, .tooLong] {
             XCTAssertFalse(problem.message.isEmpty)

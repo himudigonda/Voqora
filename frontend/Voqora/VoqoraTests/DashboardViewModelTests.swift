@@ -295,7 +295,7 @@ final class DashboardViewModelTests: XCTestCase {
             startsBackgroundWork: false,
             defaults: testDefaults
         )
-        let audiobookVM = AudiobookViewModel(audio: audio)
+        let audiobookVM = AudiobookViewModel(audio: audio, providers: StudioFixtures.providers(connected: false))
         vm.audiobookVM = audiobookVM
 
         audiobookVM.nowPlaying = Audiobook(

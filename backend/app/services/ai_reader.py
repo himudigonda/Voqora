@@ -48,6 +48,9 @@ _SUMMARY_MAX_OUTPUT_TOKENS: dict[str, int] = {
     "detailed": 3_072,
 }
 _TRANSLATE_MAX_OUTPUT_TOKENS = 8_192
+_TIDY_MAX_OUTPUT_TOKENS = 8_192
+_TIDY_GROWTH_FACTOR = 1.5
+_TIDY_GROWTH_SLACK_CHARS = 80
 _ASK_MAX_OUTPUT_TOKENS = 2_048
 _STUDY_MAX_OUTPUT_TOKENS = 6_144
 _PROMPT_OVERHEAD_CHARS = 2_400
@@ -103,6 +106,10 @@ class _TranslationOutput(_Output):
         if value and _LANGUAGE_TAG.fullmatch(value):
             return value.lower()
         return None
+
+
+class _TidyOutput(_Output):
+    text: str = Field(min_length=1, max_length=100_000)
 
 
 class _CitationOutput(_Output):
@@ -161,6 +168,10 @@ class SummaryResult(AIResult):
 class TranslationResult(AIResult):
     text: str
     detected_source_language: str | None
+
+
+class TidyResult(AIResult):
+    text: str
 
 
 class Citation(BaseModel):
@@ -588,6 +599,36 @@ async def translate(
         detected_source_language=detected,
         **session.usage(),
     )
+
+
+async def tidy(session: AISession, text: str) -> TidyResult:
+    source = text.strip()
+    if not source:
+        raise AIToolError("There is no text to tidy.", status=422, code="no_text")
+    task = (
+        "The DICTATION block holds raw speech-to-text output. Rewrite it as "
+        "clean written text: add punctuation and sentence capitalization, fix "
+        "obvious transcription casing, and remove filler words and false starts "
+        "such as um, uh, you know, and repeated words. Keep the speaker's "
+        "meaning, wording, language, and paragraph breaks. Do not add, explain, "
+        "answer, translate, or summarize anything. Put the result in text."
+    )
+    limit = len(source) * _TIDY_GROWTH_FACTOR + _TIDY_GROWTH_SLACK_CHARS
+
+    def not_padded(reply: _TidyOutput) -> str | None:
+        if len(reply.text) > limit:
+            return "it added text that was not in the dictation"
+        return None
+
+    reply = await session.json_reply(
+        task=task,
+        shape='{"text": "string"}',
+        user=session.fence("DICTATION", source),
+        model=_TidyOutput,
+        max_output_tokens=_TIDY_MAX_OUTPUT_TOKENS,
+        accept=not_padded,
+    )
+    return TidyResult(text=reply.text, **session.usage())
 
 
 def _ranking_query(question: str, history: Sequence[HistoryTurn]) -> str:

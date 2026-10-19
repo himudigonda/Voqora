@@ -54,12 +54,14 @@ nonisolated enum DictationInsertionOutcome: String, Sendable {
     case pasted
     case copied
     case copiedNeedsAccessibility = "copied_needs_accessibility"
+    case copiedAppChanged = "copied_app_changed"
 
     var message: String {
         switch self {
         case .pasted: "Inserted"
         case .copied: "Copied to the clipboard"
         case .copiedNeedsAccessibility: "Copied to the clipboard. Allow Accessibility so Voqora can paste for you."
+        case .copiedAppChanged: "Copied to the clipboard. You switched apps, so Voqora didn't paste."
         }
     }
 

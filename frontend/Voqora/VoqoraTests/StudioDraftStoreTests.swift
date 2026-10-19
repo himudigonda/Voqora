@@ -97,4 +97,84 @@ final class StudioDraftStoreTests: XCTestCase {
         XCTAssertNotNil(store.persistenceError)
         try? FileManager.default.removeItem(at: blocker)
     }
+
+    func test_eraseAllClearsMemoryAndFileAndIsIdempotent() throws {
+        let store = StudioDraftStore(storageURL: url)
+        store.save(PodcastDraft(script: StudioFixtures.script()))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+
+        try store.eraseAll()
+
+        XCTAssertTrue(store.drafts.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertNoThrow(try store.eraseAll())
+        XCTAssertTrue(StudioDraftStore(storageURL: url).drafts.isEmpty)
+    }
+
+    func test_eraseAllDiscardsAPendingAutosave() async throws {
+        let store = StudioDraftStore(storageURL: url, writeDelayNanoseconds: 20_000_000)
+        store.autosave(PodcastDraft(script: StudioFixtures.script()))
+
+        try store.eraseAll()
+        try await Task.sleep(nanoseconds: 120_000_000)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func test_autosaveUpdatesMemoryNowAndWritesTheFileLater() async {
+        let store = StudioDraftStore(storageURL: url, writeDelayNanoseconds: 40_000_000)
+        let draft = PodcastDraft(script: StudioFixtures.script())
+
+        store.autosave(draft)
+
+        XCTAssertEqual(store.drafts.map(\.id), [draft.id])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        await StudioFixtures.waitUntil { FileManager.default.fileExists(atPath: url.path) }
+        XCTAssertEqual(StudioDraftStore(storageURL: url).drafts.map(\.id), [draft.id])
+    }
+
+    func test_rapidAutosavesCoalesceIntoOneWriteOfTheLatestDraft() async {
+        let store = StudioDraftStore(storageURL: url, writeDelayNanoseconds: 60_000_000)
+        var draft = PodcastDraft(script: StudioFixtures.script())
+        for index in 0 ..< 20 {
+            draft.script.title = "Edit \(index)"
+            draft.updatedAt = Date()
+            store.autosave(draft)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        await StudioFixtures.waitUntil { FileManager.default.fileExists(atPath: url.path) }
+
+        XCTAssertEqual(StudioDraftStore(storageURL: url).drafts.first?.script.title, "Edit 19")
+    }
+
+    func test_flushWritesPendingAutosaveImmediately() {
+        let store = StudioDraftStore(storageURL: url, writeDelayNanoseconds: 60_000_000_000)
+        let draft = PodcastDraft(script: StudioFixtures.script())
+        store.autosave(draft)
+
+        store.flush()
+
+        XCTAssertEqual(StudioDraftStore(storageURL: url).drafts.map(\.id), [draft.id])
+        XCTAssertNil(store.persistenceError)
+    }
+
+    func test_flushWithNothingPendingDoesNotTouchTheFile() {
+        let store = StudioDraftStore(storageURL: url)
+
+        store.flush()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    func test_explicitSaveFlushesEarlierAutosavesToo() {
+        let store = StudioDraftStore(storageURL: url, writeDelayNanoseconds: 60_000_000_000)
+        let first = PodcastDraft(script: StudioFixtures.script(), updatedAt: Date(timeIntervalSince1970: 1000))
+        let second = PodcastDraft(script: StudioFixtures.script(), updatedAt: Date(timeIntervalSince1970: 2000))
+        store.autosave(first)
+
+        XCTAssertTrue(store.save(second))
+
+        XCTAssertEqual(StudioDraftStore(storageURL: url).drafts.map(\.id), [second.id, first.id])
+    }
 }

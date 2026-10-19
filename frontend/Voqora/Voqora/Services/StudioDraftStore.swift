@@ -23,12 +23,16 @@ nonisolated struct PodcastDraft: Codable, Identifiable, Hashable, Sendable {
 
 final class StudioDraftStore: ObservableObject {
     static let capacity = 100
+    nonisolated static let writeDelayNanoseconds: UInt64 = 600_000_000
     private static let schemaVersion = 1
 
     @Published private(set) var drafts: [PodcastDraft] = []
     @Published private(set) var persistenceError: String?
 
     private let storageURL: URL
+    private let writeDelay: UInt64
+    private var pendingWrite: Task<Void, Never>?
+    private var hasUnwrittenChanges = false
 
     private struct StoredFile: Encodable {
         let version: Int
@@ -54,8 +58,9 @@ final class StudioDraftStore: ObservableObject {
             .appendingPathComponent("studio-drafts.json")
     }
 
-    init(storageURL: URL? = nil) {
+    init(storageURL: URL? = nil, writeDelayNanoseconds: UInt64? = nil) {
         self.storageURL = storageURL ?? Self.defaultStorageURL()
+        writeDelay = writeDelayNanoseconds ?? Self.writeDelayNanoseconds
         load()
     }
 
@@ -65,11 +70,25 @@ final class StudioDraftStore: ObservableObject {
 
     @discardableResult
     func save(_ draft: PodcastDraft) -> Bool {
-        var updated = drafts.filter { $0.id != draft.id }
-        updated.insert(draft, at: 0)
-        updated.sort { $0.updatedAt > $1.updatedAt }
-        drafts = Array(updated.prefix(Self.capacity))
+        merge(draft)
         return persist()
+    }
+
+    func autosave(_ draft: PodcastDraft) {
+        merge(draft)
+        hasUnwrittenChanges = true
+        pendingWrite?.cancel()
+        let delay = writeDelay
+        pendingWrite = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            self?.flush()
+        }
+    }
+
+    func flush() {
+        guard hasUnwrittenChanges else { return }
+        persist()
     }
 
     func delete(_ id: UUID) {
@@ -77,12 +96,34 @@ final class StudioDraftStore: ObservableObject {
         persist()
     }
 
+    func eraseAll() throws {
+        cancelPendingWrite()
+        drafts = []
+        persistenceError = nil
+        guard FileManager.default.fileExists(atPath: storageURL.path) else { return }
+        try FileManager.default.removeItem(at: storageURL)
+    }
+
     func retryPersistence() {
         persist()
     }
 
+    private func merge(_ draft: PodcastDraft) {
+        var updated = drafts.filter { $0.id != draft.id }
+        updated.insert(draft, at: 0)
+        updated.sort { $0.updatedAt > $1.updatedAt }
+        drafts = Array(updated.prefix(Self.capacity))
+    }
+
+    private func cancelPendingWrite() {
+        pendingWrite?.cancel()
+        pendingWrite = nil
+        hasUnwrittenChanges = false
+    }
+
     @discardableResult
     private func persist() -> Bool {
+        cancelPendingWrite()
         do {
             try FileManager.default.createDirectory(
                 at: storageURL.deletingLastPathComponent(),
@@ -95,6 +136,7 @@ final class StudioDraftStore: ObservableObject {
             persistenceError = nil
             return true
         } catch {
+            hasUnwrittenChanges = true
             VoqoraLog.warn("StudioDraftStore", "Draft save failed", ["failureCode": "studio_draft_save_failed"])
             persistenceError = "Voqora couldn't save your scripts. Your changes stay open until you quit."
             return false

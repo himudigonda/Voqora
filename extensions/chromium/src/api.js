@@ -1,4 +1,4 @@
-import { MAX_SPEAK_CHARS, REQUEST_TIMEOUT_MS, endpointUrl } from "./config.js";
+import { MAX_SPEAK_CHARS, REQUEST_TIMEOUT_MS, SPEAK_MODE, endpointUrl } from "./config.js";
 import { ErrorCode, VoqoraError, errorFromFetchFailure, errorFromResponse } from "./errors.js";
 
 async function readJson(response) {
@@ -51,14 +51,17 @@ export function createVoqoraClient({ port, apiKey, fetchImpl = globalThis.fetch,
       return data.map((model) => model?.id).filter((id) => typeof id === "string");
     },
 
-    async speak(text) {
+    async speak(text, mode = SPEAK_MODE.replace) {
       if (typeof text !== "string" || text.trim().length === 0) {
         throw new VoqoraError(ErrorCode.invalidRequest, "There's no text to read.");
       }
       if (text.length > MAX_SPEAK_CHARS) {
         throw new VoqoraError(ErrorCode.tooLarge, "That text is too long to send in one request.");
       }
-      return queuedId(await request("POST", "/v1/voqora/speak", { text }));
+      if (!Object.values(SPEAK_MODE).includes(mode)) {
+        throw new VoqoraError(ErrorCode.invalidRequest, "Unknown way to speak the text.");
+      }
+      return queuedId(await request("POST", "/v1/voqora/speak", { text, mode }));
     },
 
     async stop() {

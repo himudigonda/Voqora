@@ -555,6 +555,25 @@ async def test_speak_path_speaks_replacement(recording_model):
 
 
 @pytest.mark.asyncio
+async def test_speaking_raw_text_applies_each_rule_exactly_once(recording_model):
+    _post(match="GIF", replacement="GIF jif")
+    preview = client.post("/pronunciations/test", json={"text": "I love GIF."}).json()
+    async for _ in EngineManager.generate(preview["text"], "af_bella", 1.0):
+        pass
+    assert preview["spoken"] == "I love GIF jif."
+    assert recording_model.texts == [preview["spoken"]]
+
+
+@pytest.mark.asyncio
+async def test_speaking_the_preview_output_would_apply_rules_twice(recording_model):
+    _post(match="GIF", replacement="GIF jif")
+    preview = client.post("/pronunciations/test", json={"text": "I love GIF."}).json()
+    async for _ in EngineManager.generate(preview["spoken"], "af_bella", 1.0):
+        pass
+    assert recording_model.texts == ["I love GIF jif jif."]
+
+
+@pytest.mark.asyncio
 async def test_segment_removed_entirely_is_skipped(recording_model):
     _post(match="um", replacement="")
     chunks = [

@@ -127,7 +127,7 @@ struct AIResultActions: View {
             }
             .buttonStyle(.voqoraSecondary)
             .accessibilityLabel("Speak aloud")
-            .help("Speak aloud with your current voice. This stops the audiobook.")
+            .help("Speak aloud with your current voice. The audiobook pauses; Continue Listening picks it up where you left off.")
         }
         .onChange(of: text) { _, _ in copied = false }
     }
@@ -135,7 +135,7 @@ struct AIResultActions: View {
     private func speak() {
         let voice = language.map { AIVoiceMatcher.voice(for: $0, current: vm.selectedVoice) }
             ?? LanguageDetector.voiceForText(text, fallback: vm.selectedVoice)
-        Task { await vm.speak(text: text, voice: voice) }
+        Task { await vm.speakAIResult(text: text, voice: voice) }
     }
 
     static func copy(_ text: String) {

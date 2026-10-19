@@ -28,6 +28,7 @@ nonisolated struct DictationPreferences: Equatable, Sendable {
     static let insertionModeKey = "dictationInsertionMode"
     static let silenceTimeoutKey = "dictationSilenceTimeout"
     static let allowsServerRecognitionKey = "dictationAllowsServerRecognition"
+    static let tidiesWithAIKey = "dictationTidyWithAI"
 
     static let defaultSilenceTimeout: TimeInterval = 2
     static let silenceTimeoutOptions: [TimeInterval] = [0, 1, 1.5, 2, 3, 5]
@@ -37,6 +38,7 @@ nonisolated struct DictationPreferences: Equatable, Sendable {
     let insertionMode: DictationInsertionMode
     let silenceTimeout: TimeInterval?
     let allowsServerRecognition: Bool
+    let tidiesWithAI: Bool
 
     init(defaults: UserDefaults) {
         let storedLocale = defaults.string(forKey: Self.localeKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -44,6 +46,7 @@ nonisolated struct DictationPreferences: Equatable, Sendable {
         insertionMode = defaults.string(forKey: Self.insertionModeKey).flatMap(DictationInsertionMode.init(rawValue:)) ?? .paste
         silenceTimeout = Self.validatedSilenceTimeout(defaults.object(forKey: Self.silenceTimeoutKey) as? Double)
         allowsServerRecognition = defaults.bool(forKey: Self.allowsServerRecognitionKey)
+        tidiesWithAI = defaults.bool(forKey: Self.tidiesWithAIKey)
     }
 
     static func validatedSilenceTimeout(_ stored: Double?) -> TimeInterval? {

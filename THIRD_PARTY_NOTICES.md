@@ -37,11 +37,32 @@ to every author and maintainer below; Voqora would not exist without them.
 | google-genai | Optional Gemini cleanup | Apache-2.0 |
 | httpx | Optional AI provider cleanup and web article download | BSD-3-Clause |
 | huggingface-hub | Model download | Apache-2.0 |
+| supertonic (Python package) | Runs the optional Supertonic speech engine | [MIT](https://github.com/supertone-inc/supertonic-py) |
+| Supertonic 3 weights (optional download) | Optional local speech model, fetched on request and never bundled | [BigScience OpenRAIL-M](https://huggingface.co/Supertone/supertonic-3) |
 
 The app bundle also contains this notice, the Voqora license, and the
 commercial-license notice. Before redistributing a modified bundle, review the
 licenses and notices shipped by each bundled dependency and preserve all terms
 that apply to it.
+
+## Supertonic (optional speech engine)
+
+Supertonic is an optional engine that Voqora downloads only when you choose
+**Download** under Preferences, Speech Engines. The model files are not part of
+the app bundle. Voqora fetches Supertone's `Supertone/supertonic-3` repository
+at a pinned revision (`724fb5abbf5502583fb520898d45929e62f02c0b`) from Hugging
+Face into `~/Library/Application Support/com.himudigonda.Voqora/models/` and
+keeps the license file that ships with the model next to the files.
+
+- The `supertonic` Python package (1.3.1, Supertone Inc.) is MIT licensed and is
+  bundled in the local speech server.
+- The model weights are released under the BigScience Open RAIL-M License. It
+  grants broad rights to use and redistribute the model, and it attaches
+  use-based restrictions (Attachment A of the license) that must travel with
+  the model and any derivative of it. Read those restrictions before relying on
+  Supertonic voices: <https://huggingface.co/Supertone/supertonic-3>. Voqora
+  does not relicense the weights, and removing the engine in Preferences deletes
+  the downloaded files.
 
 ## GPL components and source code
 
