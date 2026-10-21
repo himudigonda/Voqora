@@ -8,19 +8,21 @@ import os
 import time
 
 from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.config import settings
 from app.core.logging import get_logger
 from app.services.audio import AudioService
+from app.services.delivery import Delivery
 from app.services.engine_errors import (
     EngineBusyError,
     EngineInstallError,
     EngineNotInstalledError,
     UnknownEngineError,
 )
-from app.services.engine_manager import EngineManager
+from app.services.engine_manager import MING, EngineManager
 from app.services.languages import DEFAULT_VOICE, LANGUAGES
+from app.services.ming_catalog import ming_language
 from app.services.pronunciation import is_book_scope
 from app.services.speech_stream import (
     MAX_ENGINE_SPEED,
@@ -31,7 +33,7 @@ from app.services.speech_stream import (
 )
 from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.tts import MAX_PAUSE_SCALE, MIN_PAUSE_SCALE, TTSEngine
-from app.services.voices import is_known_voice
+from app.services.voices import is_known_voice, voice_spec
 
 router = APIRouter()
 log = get_logger(__name__)
@@ -58,6 +60,7 @@ class SpeakRequest(BaseModel):
     lang: str | None = None
     pause_scale: float = Field(default=1.0, ge=MIN_PAUSE_SCALE, le=MAX_PAUSE_SCALE)
     book_id: str | None = Field(default=None, max_length=_MAX_BOOK_ID_CHARS)
+    delivery: Delivery | None = None
 
     @field_validator("voice")
     @classmethod
@@ -74,9 +77,23 @@ class SpeakRequest(BaseModel):
     @field_validator("lang")
     @classmethod
     def require_known_lang(cls, value: str | None) -> str | None:
-        if value is not None and value not in _LANGUAGE_CODES:
+        if (
+            value is not None
+            and value not in _LANGUAGE_CODES
+            and ming_language(value) is None
+        ):
             raise ValueError(f"unsupported language: {value}")
         return value
+
+    @model_validator(mode="after")
+    def require_lang_supported_by_voice(self) -> "SpeakRequest":
+        if (
+            self.lang is not None
+            and self.lang not in _LANGUAGE_CODES
+            and voice_spec(self.voice).engine != MING
+        ):
+            raise ValueError(f"unsupported language: {self.lang}")
+        return self
 
     @field_validator("text")
     @classmethod
@@ -187,6 +204,8 @@ async def uninstall_engine(engine_id: str):
 async def _do_prewarm(req: PrewarmRequest | None) -> None:
     """Background task: ensure model is loaded, then optionally fill lookahead cache."""
     engine = EngineManager.engine_for_voice(req.voice) if req and req.voice else None
+    if engine == MING:
+        return
     try:
         await EngineManager.ensure_loaded(engine or "kokoro")
     except EngineNotInstalledError:
@@ -226,6 +245,7 @@ async def speak(req: SpeakRequest):
             req.lang,
             pause_scale=req.pause_scale,
             book_id=req.book_id,
+            delivery=req.delivery,
         )
     except EngineNotInstalledError as error:
         raise HTTPException(status_code=409, detail=str(error))

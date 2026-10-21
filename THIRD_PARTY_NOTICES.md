@@ -10,6 +10,8 @@ to every author and maintainer below; Voqora would not exist without them.
 | --- | --- | --- |
 | KeyboardShortcuts | macOS global shortcut support | [MIT](https://github.com/sindresorhus/KeyboardShortcuts/blob/main/license) |
 | Sparkle | Update framework, linked but not started in the early-access channel | [MIT and bundled notices](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE) |
+| FluidAudio | On-device Parakeet speech recognition for dictation | [Apache-2.0](https://github.com/FluidInference/FluidAudio/blob/main/LICENSE) |
+| Parakeet TDT 0.6B v3 (CoreML) | Optional dictation model, downloaded only when you choose Parakeet | [CC-BY-4.0](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), converted by [FluidInference](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml) |
 | Poppins | Bundled interface typeface | [SIL Open Font License 1.1](https://fonts.google.com/specimen/Poppins/about) |
 
 ## Local speech server
@@ -39,6 +41,8 @@ to every author and maintainer below; Voqora would not exist without them.
 | huggingface-hub | Model download | Apache-2.0 |
 | supertonic (Python package) | Runs the optional Supertonic speech engine | [MIT](https://github.com/supertone-inc/supertonic-py) |
 | Supertonic 3 weights (optional download) | Optional local speech model, fetched on request and never bundled | [BigScience OpenRAIL-M](https://huggingface.co/Supertone/supertonic-3) |
+| uv | Bundled tool that builds the optional Ming engine's Python runtime on your Mac | [MIT or Apache-2.0](https://github.com/astral-sh/uv) |
+| Ming-3.0-tts code and 0.5B weights (optional download) | Optional local speech model, fetched on request and never bundled | [MIT](https://github.com/inclusionAI/Ming-3.0-tts/blob/main/LICENSE) |
 
 The app bundle also contains this notice, the Voqora license, and the
 commercial-license notice. Before redistributing a modified bundle, review the
@@ -48,7 +52,7 @@ that apply to it.
 ## Supertonic (optional speech engine)
 
 Supertonic is an optional engine that Voqora downloads only when you choose
-**Download** under Preferences, Speech Engines. The model files are not part of
+**Download** under Settings -> Engines. The model files are not part of
 the app bundle. Voqora fetches Supertone's `Supertone/supertonic-3` repository
 at a pinned revision (`724fb5abbf5502583fb520898d45929e62f02c0b`) from Hugging
 Face into `~/Library/Application Support/com.himudigonda.Voqora/models/` and
@@ -61,8 +65,30 @@ keeps the license file that ships with the model next to the files.
   use-based restrictions (Attachment A of the license) that must travel with
   the model and any derivative of it. Read those restrictions before relying on
   Supertonic voices: <https://huggingface.co/Supertone/supertonic-3>. Voqora
-  does not relicense the weights, and removing the engine in Preferences deletes
+  does not relicense the weights, and removing the engine in Settings -> Engines deletes
   the downloaded files.
+
+## Ming (optional speech engine)
+
+Ming is an optional engine that Voqora downloads only when you choose
+**Download** under Settings -> Engines. Nothing from Ming is part of the
+app bundle except the small setup tool described below. Voqora fetches, at
+pinned revisions, into
+`~/Library/Application Support/com.himudigonda.Voqora/models/ming-3.0-tts/`:
+
+- the inference code from `inclusionAI/Ming-3.0-tts` on GitHub
+  (`e999c39fa676722aaa9ea29b5aa19a90525b271f`), with its `LICENSE` and
+  `LEGAL.md` kept next to it;
+- the `inclusionAI/Ming-3.0-tts-0.5B` weights from Hugging Face
+  (`e5bd8da31ecf1b9276cdbdda821fa891068f1368`);
+- an isolated Python 3.11 runtime with PyTorch and the other packages Ming
+  needs, which Voqora builds with uv from a pinned requirements list.
+
+Ming-3.0-tts is released by Ant Group under the MIT License. uv (Astral) is
+bundled in the local speech server as a standalone binary and is available
+under either the MIT or the Apache-2.0 license. The packages installed into the
+Ming runtime keep their own licenses. Removing the engine in Settings -> Engines deletes
+everything it downloaded.
 
 ## GPL components and source code
 

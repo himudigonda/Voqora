@@ -7,6 +7,7 @@ from starlette.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 
 from app.core.logging import get_logger
+from app.services.delivery import Delivery
 from app.services.engine_manager import EngineManager
 from app.services.text_normalizer import strip_markdown_for_narration
 from app.services.tts import interactive_tts_lock
@@ -98,12 +99,13 @@ async def open_speech_samples(
     *,
     pause_scale: float = 1.0,
     book_id: str | None = None,
+    delivery: Delivery | None = None,
 ) -> SpeechSamples:
     """Start interactive speech under the preemption lock.
 
-    `voice` may be a built-in voice, a blend id or a Supertonic voice. The
-    global pronunciation dictionary applies, plus the book's own rules when
-    `book_id` names one.
+    `voice` may be a built-in voice, a blend id, a Supertonic voice or a Ming
+    voice. The global pronunciation dictionary applies, plus the book's own
+    rules when `book_id` names one. `delivery` only affects Ming voices.
     """
     engine = EngineManager.engine_for_voice(voice)
     EngineManager.require_installed(engine)
@@ -111,8 +113,9 @@ async def open_speech_samples(
     try:
         await EngineManager.ensure_loaded(engine)
         EngineManager.touch(engine)
+        extras = {} if delivery is None else {"delivery": delivery}
         samples = EngineManager.generate(
-            text, voice, speed, lang, pause_scale=pause_scale, book_id=book_id
+            text, voice, speed, lang, pause_scale=pause_scale, book_id=book_id, **extras
         )
     except BaseException:
         interactive_tts_lock.release()

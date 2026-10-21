@@ -6,11 +6,39 @@ nonisolated struct SecretStore: Sendable {
     let set: @Sendable (String, KeychainKey) -> Bool
     let delete: @Sendable (KeychainKey) -> Bool
 
-    static let keychain = SecretStore(
+    static let keychain = RuntimeEnvironment.usesEphemeralSecrets ? memory() : SecretStore(
         get: { KeychainService.get($0) },
         set: { KeychainService.set($0, for: $1) },
         delete: { KeychainService.delete($0) }
     )
+
+    static func memory() -> SecretStore {
+        let box = MemorySecrets()
+        return SecretStore(
+            get: { box.get($0) },
+            set: { box.set($0, for: $1) },
+            delete: { box.delete($0) }
+        )
+    }
+}
+
+final nonisolated class MemorySecrets: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [KeychainKey: String] = [:]
+
+    func get(_ key: KeychainKey) -> String? {
+        lock.withLock { values[key] }
+    }
+
+    func set(_ value: String, for key: KeychainKey) -> Bool {
+        lock.withLock { values[key] = value }
+        return true
+    }
+
+    func delete(_ key: KeychainKey) -> Bool {
+        lock.withLock { values[key] = nil }
+        return true
+    }
 }
 
 @MainActor
@@ -25,6 +53,7 @@ final class LLMProviderStore: ObservableObject {
     private let defaults: UserDefaults
     private var legacyMigration: Task<Void, Never>?
     private let secrets: SecretStore
+    private var keyCache: [LLMProvider: String] = [:]
     private let verifier: @MainActor (LLMCredential) async -> LLMVerification
 
     init(
@@ -61,7 +90,12 @@ final class LLMProviderStore: ObservableObject {
     }
 
     func storedKey(for provider: LLMProvider) -> String {
-        secrets.get(provider.keychainKey) ?? ""
+        if let cached = keyCache[provider] {
+            return cached
+        }
+        let key = secrets.get(provider.keychainKey) ?? ""
+        keyCache[provider] = key
+        return key
     }
 
     func credential(for provider: LLMProvider) -> LLMCredential? {
@@ -85,6 +119,7 @@ final class LLMProviderStore: ObservableObject {
                 ? secrets.delete(provider.keychainKey)
                 : secrets.set(credential.apiKey, provider.keychainKey) && secrets.get(provider.keychainKey) == credential.apiKey
             guard stored else { return false }
+            keyCache[provider] = credential.apiKey
         }
         connected[provider] = LLMProviderSettings(model: credential.model, serverURL: credential.serverURL)
         saveCount += 1
@@ -103,6 +138,7 @@ final class LLMProviderStore: ObservableObject {
 
     func remove(_ provider: LLMProvider) {
         _ = secrets.delete(provider.keychainKey)
+        keyCache[provider] = nil
         connected[provider] = nil
         if activeProvider == provider || connected.count == 1 {
             activeProvider = connected.count == 1 ? connectedProviders.first : nil

@@ -54,7 +54,14 @@ class DashboardViewModel: ObservableObject {
     @Published var isModelLoaded = false // Model in ONNX session RAM
     private var lastPasteboardChangeCount = NSPasteboard.general.changeCount
     @Published private(set) var backendRecoveryMessage: String?
-    @Published var selectedTab: String? = "home"
+    @Published var selectedTab: String? = TabKey.home {
+        didSet {
+            if let canonical = TabKey.canonical(selectedTab), canonical != selectedTab {
+                selectedTab = canonical
+            }
+        }
+    }
+
     @Published private(set) var actionFeedback: String?
 
     weak var audiobookVM: AudiobookViewModel?
@@ -73,6 +80,11 @@ class DashboardViewModel: ObservableObject {
     private(set) var clipSpeed = 1.0
     @AppStorage("speechVolume") var speechVolume = 1.0
     @AppStorage("speechPauseScale") var speechPauseScale = PauseScale.standard
+    @AppStorage("mingEmotion") var mingEmotion = ""
+    @AppStorage("mingStyle") var mingStyle = ""
+    @AppStorage("mingPace") var mingPace = ""
+    @AppStorage("mingPitch") var mingPitch = ""
+    @AppStorage("mingDialect") var mingDialect = ""
     @AppStorage("enableDucking") var enableDucking = false
     @AppStorage("cleanURLs") var cleanURLs = true
     @AppStorage("appTheme") var appTheme = "system" // system, light, dark
@@ -208,6 +220,10 @@ class DashboardViewModel: ObservableObject {
         if VoiceBlendRules.isBlendID(id) {
             return langCode(forVoice: VoiceBlendDirectory.shared.fallbackVoice(for: id) ?? VoiceBlendRules.fallbackVoice)
         }
+        if SpeechEngineID.isMingVoice(id) {
+            let lang = EngineVoiceDirectory.shared.summary(for: id)?.lang ?? ""
+            return EngineVoiceLanguage.appCode(forEngineLanguage: lang) ?? "en-us"
+        }
         guard let first = id.first else { return "en-us" }
         return voicePrefixToLang[first] ?? "en-us"
     }
@@ -243,8 +259,12 @@ class DashboardViewModel: ObservableObject {
         if VoiceBlendRules.isBlendID(id) {
             return VoiceBlendDirectory.shared.name(for: id) ?? "Custom Voice"
         }
-        if let supertonic = SpeechEngineCatalog.displayName(forVoice: id) {
-            return supertonic
+        if let engineVoice = SpeechEngineCatalog.displayName(
+            forVoice: id,
+            in: SpeechEngineStore.shared.engines,
+            directory: .shared
+        ) {
+            return engineVoice
         }
         let name = id.split(separator: "_").last.map(String.init) ?? id
         return name.prefix(1).uppercased() + name.dropFirst()
@@ -252,19 +272,19 @@ class DashboardViewModel: ObservableObject {
 
     func showLibrary() {
         audiobookVM?.libraryPath = []
-        selectedTab = "books"
+        selectedTab = TabKey.books
     }
 
     func openAudiobook(_ bookID: String) {
         audiobookVM?.openPlayer(for: bookID)
-        selectedTab = "books"
+        selectedTab = TabKey.books
     }
 
     func openNowPlaying() {
         if let book = audiobookVM?.nowPlaying {
             openAudiobook(book.bookID)
         } else {
-            selectedTab = "home"
+            selectedTab = TabKey.home
         }
     }
 
@@ -390,7 +410,9 @@ class DashboardViewModel: ObservableObject {
             title: "Voqora is speaking",
             body: "Reading your selection."
         )
-        await speak(text: text)
+        await SpeechSource.$current.withValue(.selection) {
+            await speak(text: text)
+        }
     }
 
     func speak(text: String, voice: String? = nil) async {
@@ -402,7 +424,9 @@ class DashboardViewModel: ObservableObject {
     }
 
     func speakAIResult(text: String, voice: String?) async {
-        await speak(text: text, voice: voice, audiobook: .pause)
+        await SpeechSource.$current.withValue(.ai) {
+            await speak(text: text, voice: voice, audiobook: .pause)
+        }
     }
 
     private func speak(text: String, voice: String?, audiobook: AudiobookHandoff, bookID: String? = nil) async {
@@ -417,6 +441,7 @@ class DashboardViewModel: ObservableObject {
         speakGeneration &+= 1
         let generation = speakGeneration
         currentSpeakTask?.cancel()
+        let source = SpeechSource.current
 
         if let avm = audiobookVM, avm.nowPlaying != nil {
             switch audiobook {
@@ -449,6 +474,7 @@ class DashboardViewModel: ObservableObject {
                 ? LanguageDetector.voiceForText(cleaned, fallback: selectedVoice)
                 : selectedVoice
             let effectiveVoice = voice ?? preferredVoice
+            let engine = VoiceBlendRules.isBlendID(effectiveVoice) ? "blend" : SpeechEngineID.engine(forVoice: effectiveVoice)
             VoqoraLog.debug("DashboardViewModel", "Starting new speak task", ["voice": effectiveVoice, "speed": "\(speechSpeed)", "volume": "\(speechVolume)"])
             spokenText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -461,6 +487,7 @@ class DashboardViewModel: ObservableObject {
                 let speed = speechSpeed
                 let volume = speechVolume
                 let pauseScale = speechPauseScale
+                let delivery = speechDelivery(forVoice: effectiveVoice)
                 let stream = ChunkedSpeechStream.make(chunks: SpeechTextChunker.chunks(of: cleaned)) { [backend] chunk in
                     backend.streamAudio(
                         text: chunk,
@@ -468,14 +495,21 @@ class DashboardViewModel: ObservableObject {
                         speed: speed,
                         volume: volume,
                         pauseScale: pauseScale,
-                        bookID: bookID
+                        bookID: bookID,
+                        delivery: delivery
                     )
                 }
                 var receivedAudio = false
+                let streamStart = ContinuousClock.now
+                var firstAudioMs: Double?
 
                 for try await chunk in stream {
                     guard !Task.isCancelled, generation == speakGeneration else {
                         return
+                    }
+                    if firstAudioMs == nil {
+                        SoundPlayer.shared.play(.speechStart)
+                        firstAudioMs = streamStart.duration(to: .now) / .milliseconds(1)
                     }
                     awaitingFirstChunk = false
                     if status == .thinking {
@@ -486,8 +520,11 @@ class DashboardViewModel: ObservableObject {
                 }
 
                 guard !Task.isCancelled, generation == speakGeneration else { return }
+                let renderSeconds = streamStart.duration(to: .now) / .seconds(1)
                 guard receivedAudio else {
                     VoqoraLog.error("DashboardViewModel", "Stream completed with zero audio chunks", ["chars": "\(cleaned.count)", "voice": effectiveVoice])
+                    UsageStatsStore.shared.recordSpeechFailure(engine: engine)
+                    MetricsService.shared.trackSpeechFailed(engine: engine, source: source.rawValue, failureCode: "empty_audio")
                     audio.stop()
                     showTransientError("Voqora could not generate audio. Try again.")
                     return
@@ -507,19 +544,31 @@ class DashboardViewModel: ObservableObject {
                     chars: cleaned.count,
                     voice: VoiceBlendRules.telemetryVoice(effectiveVoice),
                     speed: speechSpeed,
-                    audioSeconds: audio.renderedAudioSeconds
+                    audioSeconds: audio.renderedAudioSeconds,
+                    engine: engine,
+                    source: source.rawValue,
+                    firstAudioMs: firstAudioMs.map { Int($0.rounded()) },
+                    renderMs: Int((renderSeconds * 1000).rounded()),
+                    words: UsageLedger.wordCount(spokenText ?? cleaned)
                 )
                 UsageStatsStore.shared.recordSpeech(
                     text: spokenText ?? cleaned,
                     voice: effectiveVoice,
                     speed: speechSpeed,
-                    audioSeconds: audio.renderedAudioSeconds
+                    audioSeconds: audio.renderedAudioSeconds,
+                    run: SpeechRun(engine: engine, source: source, firstAudioMs: firstAudioMs, renderSeconds: renderSeconds)
                 )
             } catch {
                 guard !Task.isCancelled, generation == speakGeneration else { return }
                 VoqoraLog.error("DashboardViewModel", "speak() failed", ["failureCode": "speech_request_failed", "voice": effectiveVoice, "chars": "\(cleaned.count)"])
                 awaitingFirstChunk = false
                 audio.stop()
+                UsageStatsStore.shared.recordSpeechFailure(engine: engine)
+                MetricsService.shared.trackSpeechFailed(
+                    engine: engine,
+                    source: source.rawValue,
+                    failureCode: MetricsService.Bucket.speechFailureCode(for: error)
+                )
                 showTransientError(Self.speechFailureMessage(for: error, voice: effectiveVoice))
                 if Self.isMissingBlendFailure(error, voice: effectiveVoice) {
                     Task { await VoiceBlendStore.shared.refresh() }
@@ -562,6 +611,17 @@ class DashboardViewModel: ObservableObject {
 
     func skipSpeech(by seconds: TimeInterval) {
         audio.skip(by: seconds)
+    }
+
+    func speechDelivery(forVoice voice: String, engines: SpeechEngineStore? = nil) -> SpeechDelivery? {
+        guard SpeechEngineID.isMingVoice(voice) else { return nil }
+        return SpeechDelivery(
+            emotionRaw: mingEmotion,
+            style: mingStyle,
+            paceRaw: mingPace,
+            pitchRaw: mingPitch,
+            dialectRaw: mingDialect
+        ).tailored(forVoice: voice, known: (engines ?? .shared).voice(id: voice))
     }
 
     func setSpeechSpeed(_ speed: Double) {

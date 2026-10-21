@@ -83,9 +83,19 @@ nonisolated struct WebPageImportBody: Encodable, Equatable, Sendable {
     let llmProvider: String?
     let llmModel: String?
     let llmBaseURL: String?
+    let delivery: SpeechDelivery?
 
-    init(url: URL, voice: String?, speed: Double?, engine: String?, pauseScale: Double? = nil, cleanup: LLMCredential?) {
+    init(
+        url: URL,
+        voice: String?,
+        speed: Double?,
+        engine: String?,
+        pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil,
+        cleanup: LLMCredential?
+    ) {
         self.url = url.absoluteString
+        self.delivery = SpeechDelivery.deliverable(delivery, forVoice: voice)
         self.voice = voice
         self.speed = speed
         self.engine = engine
@@ -100,7 +110,7 @@ nonisolated struct WebPageImportBody: Encodable, Equatable, Sendable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case url, voice, speed, engine
+        case url, voice, speed, engine, delivery
         case pauseScale = "pause_scale"
         case llmProvider = "llm_provider"
         case llmModel = "llm_model"

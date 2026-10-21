@@ -17,12 +17,12 @@ final class DictationPreferencesTests: XCTestCase {
         super.tearDown()
     }
 
-    func test_defaultsArePrivatePasteWithTwoSecondAutoStop() {
+    func test_defaultsArePrivatePasteWithAutoStopOff() {
         let preferences = DictationPreferences(defaults: defaults)
 
         XCTAssertNil(preferences.localeIdentifier)
         XCTAssertEqual(preferences.insertionMode, .paste)
-        XCTAssertEqual(preferences.silenceTimeout, 2)
+        XCTAssertNil(preferences.silenceTimeout)
         XCTAssertFalse(preferences.allowsServerRecognition)
         XCTAssertFalse(preferences.tidiesWithAI)
     }
@@ -62,7 +62,7 @@ final class DictationPreferencesTests: XCTestCase {
     func test_silenceTimeoutIsClampedIntoItsRange() {
         XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(0.1), 0.5)
         XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(90), 10)
-        XCTAssertEqual(DictationPreferences.validatedSilenceTimeout(nil), DictationPreferences.defaultSilenceTimeout)
+        XCTAssertNil(DictationPreferences.validatedSilenceTimeout(nil))
     }
 
     func test_silenceOptionSnapsToTheNearestChoice() {
@@ -102,5 +102,37 @@ final class DictationPreferencesTests: XCTestCase {
         XCTAssertTrue(blocked.contains("allow server recognition"))
         XCTAssertTrue(allowed.contains("Apple's servers"))
         XCTAssertTrue(DictationLocaleSupport.onDevice.note(allowsServerRecognition: true).contains("never leaves"))
+    }
+
+    func test_engineLiveInsertionAndSoundsDefaultToAppleOffAndOn() {
+        let preferences = DictationPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.engine, .apple)
+        XCTAssertFalse(preferences.livesInsertion)
+        XCTAssertTrue(preferences.playsSounds)
+    }
+
+    func test_engineLiveInsertionAndSoundsAreRead() {
+        defaults.set("parakeet", forKey: "dictationEngine")
+        defaults.set(true, forKey: "dictationLiveInsertion")
+        defaults.set(false, forKey: "voqoraPlaysSounds")
+
+        let preferences = DictationPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.engine, .parakeet)
+        XCTAssertTrue(preferences.livesInsertion)
+        XCTAssertFalse(preferences.playsSounds)
+    }
+
+    func test_unknownEngineFallsBackToApple() {
+        defaults.set("whisper", forKey: DictationPreferences.engineKey)
+
+        XCTAssertEqual(DictationPreferences(defaults: defaults).engine, .apple)
+    }
+
+    func test_parakeetIsEffectiveOnlyWhenInstalled() {
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, parakeetInstalled: true), .parakeet)
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, parakeetInstalled: false), .apple)
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .apple, parakeetInstalled: true), .apple)
     }
 }

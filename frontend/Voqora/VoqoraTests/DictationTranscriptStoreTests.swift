@@ -109,4 +109,27 @@ final class DictationTranscriptStoreTests: XCTestCase {
         XCTAssertEqual(DictationTranscriptStore.matching(transcripts, query: "  ").count, 2)
         XCTAssertTrue(DictationTranscriptStore.matching(transcripts, query: "taxes").isEmpty)
     }
+
+    func test_rawTextIsKeptOnlyWhenItDiffersFromTheText() throws {
+        let store = DictationTranscriptStore(storageURL: storageURL)
+        let tidied = try XCTUnwrap(store.add("Hello, world.", rawText: "hello world", localeIdentifier: nil))
+        let same = try XCTUnwrap(store.add("hello world", rawText: "hello world", localeIdentifier: nil))
+        let none = try XCTUnwrap(store.add("plain", localeIdentifier: nil))
+
+        XCTAssertEqual(tidied.rawText, "hello world")
+        XCTAssertNil(same.rawText)
+        XCTAssertNil(none.rawText)
+        XCTAssertEqual(DictationTranscriptStore(storageURL: storageURL).transcripts.first { $0.id == tidied.id }?.rawText, "hello world")
+    }
+
+    func test_filesWrittenBeforeRawTextExistedStillDecode() throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let legacy = #"[{"id":"\#(UUID().uuidString)","text":"Old note","createdAt":700000000,"localeIdentifier":"en_US"}]"#
+        try Data(legacy.utf8).write(to: storageURL)
+
+        let store = DictationTranscriptStore(storageURL: storageURL)
+
+        XCTAssertEqual(store.transcripts.map(\.text), ["Old note"])
+        XCTAssertNil(store.transcripts.first?.rawText)
+    }
 }

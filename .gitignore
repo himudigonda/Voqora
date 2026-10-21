@@ -66,3 +66,5 @@ backend/benchmarks/cache_stats.json
 
 # Local agent workspace
 .claude/
+
+/videos/

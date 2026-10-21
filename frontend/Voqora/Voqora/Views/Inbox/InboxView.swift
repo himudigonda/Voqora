@@ -3,8 +3,7 @@ import SwiftUI
 struct InboxView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var inbox: InboxViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
     @FocusState private var focusedField: Field?
     @State private var hoveringDrop = false
 
@@ -14,15 +13,10 @@ struct InboxView: View {
         case pasteTarget
     }
 
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
-
     var body: some View {
         let items = inbox.visibleItems
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignTokens.Layout.sectionGap) {
-                header
+        PageScaffold(title: "Inbox", subtitle: "Save articles to listen to later.") {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
                 addBar
                 if let notice = inbox.notice {
                     InboxNoticeBanner(notice: notice)
@@ -37,10 +31,6 @@ struct InboxView: View {
                     listSection(items)
                 }
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 28)
-            .frame(maxWidth: 800, alignment: .leading)
-            .frame(maxWidth: .infinity)
         }
         .navigationTitle("Inbox")
         .onDrop(of: InboxDropReader.acceptedTypes, isTargeted: $hoveringDrop) { providers in
@@ -48,133 +38,95 @@ struct InboxView: View {
         }
         .overlay {
             if hoveringDrop {
-                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.overlay, style: .continuous)
-                    .strokeBorder(accentColor.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
-                    .padding(DesignTokens.Spacing.lg)
+                RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous)
+                    .strokeBorder(theme.primary, style: StrokeStyle(lineWidth: 2, dash: [8, 6]))
+                    .background(theme.secondaryContainer.opacity(0.35), in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
+                    .padding(Theme.Space.card)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Inbox")
-                .font(vm.font(.pageTitle))
-                .foregroundStyle(Palette.textPrimary)
-            Text("Save articles to listen to later. Paste a link, drop one here, or choose Save to Voqora Inbox from the Services menu in any app.")
-                .font(vm.appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
     private var addBar: some View {
-        HStack(spacing: DesignTokens.Spacing.sm) {
-            TextField("Paste a link to an article", text: $inbox.linkDraft)
-                .textFieldStyle(.roundedBorder)
-                .font(vm.font(.rowTitle))
-                .focused($focusedField, equals: .link)
-                .onSubmit { inbox.submitDraft() }
-                .accessibilityLabel("Article link")
-            Button {
-                inbox.submitDraft()
-            } label: {
-                Label("Add", systemImage: "plus")
+        VoqoraCard {
+            HStack(spacing: Theme.Space.item) {
+                HStack(spacing: 10) {
+                    Image(systemName: "link")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(theme.onSurfaceVariant)
+                        .accessibilityHidden(true)
+                    TextField("Paste a link to an article", text: $inbox.linkDraft)
+                        .textFieldStyle(.plain)
+                        .font(vm.font(.body))
+                        .foregroundStyle(theme.onSurface)
+                        .focused($focusedField, equals: .link)
+                        .onSubmit { inbox.submitDraft() }
+                        .accessibilityLabel("Article link")
+                }
+                .padding(.horizontal, 16)
+                .frame(height: 40)
+                .background(theme.surfaceContainerHigh, in: Capsule())
+                Button {
+                    inbox.submitDraft()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(.voqoraFilled)
+                .disabled(inbox.linkDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help("Add this link to your Inbox")
             }
-            .buttonStyle(.voqoraPrimary)
-            .disabled(inbox.linkDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            .help("Add this link to your Inbox")
         }
     }
 
     private var controls: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            Picker("Show", selection: $inbox.filter) {
+        HStack(spacing: Theme.Space.item) {
+            HStack(spacing: 8) {
                 ForEach(InboxFilter.allCases) { filter in
-                    Text("\(filter.title) (\(inbox.count(for: filter)))").tag(filter)
+                    FilterChip(title: "\(filter.title) \(inbox.count(for: filter))", isSelected: inbox.filter == filter) {
+                        inbox.filter = filter
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: 340)
-            .accessibilityLabel("Show articles")
             Spacer(minLength: 0)
-            TextField("Search title or site", text: $inbox.searchText)
-                .textFieldStyle(.roundedBorder)
-                .font(vm.font(.rowTitle))
+            SearchField(text: $inbox.searchText, prompt: "Search title or site")
                 .focused($focusedField, equals: .search)
-                .frame(maxWidth: 220)
+                .frame(minWidth: 140, maxWidth: 240)
                 .accessibilityLabel("Search articles by title or site")
         }
     }
 
+    @ViewBuilder
     private func listSection(_ items: [InboxItem]) -> some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-            if items.isEmpty, inbox.pendingLinks.isEmpty {
-                Text(filteredEmptyMessage)
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(DesignTokens.Layout.cardInset)
-                    .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
-            } else {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(inbox.pendingLinks) { link in
-                        InboxPendingRow(link: link)
-                        Divider()
-                    }
-                    ForEach(items) { item in
-                        InboxItemRow(item: item, speed: vm.speechSpeed)
-                        if item.id != items.last?.id {
-                            Divider()
-                        }
-                    }
+        if items.isEmpty, inbox.pendingLinks.isEmpty {
+            filteredEmptyState
+        } else {
+            ListGroup {
+                ForEach(inbox.pendingLinks) { link in
+                    InboxPendingRow(link: link)
                 }
-                .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
+                ForEach(items) { item in
+                    InboxItemRow(item: item, speed: vm.speechSpeed)
+                }
             }
         }
     }
 
-    private var filteredEmptyMessage: String {
+    private var filteredEmptyState: some View {
         let query = inbox.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !query.isEmpty {
-            return "No articles match “\(query)”."
-        }
-        switch inbox.filter {
-        case .unread: return "You're all caught up. Finished and archived articles are under All."
-        case .archived: return "Articles you archive appear here."
-        case .all: return "Your Inbox is empty."
-        }
+        let content = query.isEmpty ? EmptyContent.forFilter(inbox.filter) : EmptyContent.noResults(for: query)
+        return EmptyStateView(symbol: content.symbol, title: content.title, message: content.message)
     }
 
     private var emptyState: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "tray")
-                .font(.system(size: 56, weight: .light))
-                .foregroundStyle(Palette.textTertiary)
-                .accessibilityHidden(true)
-            VStack(spacing: 6) {
-                Text("Your Inbox Is Empty")
-                    .font(vm.font(.sectionTitle))
-                    .foregroundStyle(Palette.textPrimary)
-                Text("Copy a link to an article, then press ⌘V here or choose Paste Link. You can also drop a link or .webloc file. Voqora keeps up to \(InboxStore.capacity) articles on this Mac.")
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button {
+        EmptyStateView(
+            symbol: "tray",
+            title: "Your Inbox is empty",
+            message: "Copy a link to an article, then press ⌘V here or choose Paste Link. You can also drop a link or .webloc file. Voqora keeps up to \(InboxStore.capacity) articles on this Mac.",
+            action: EmptyStateAction(title: "Paste Link") {
                 inbox.pasteLink(InboxDropReader.pasteboardLink(from: .general))
-            } label: {
-                Label("Paste Link", systemImage: "doc.on.clipboard")
             }
-            .buttonStyle(.voqoraSecondary)
-            .help("Paste a copied link")
-        }
-        .padding(.horizontal, 40)
-        .padding(.vertical, 48)
-        .frame(maxWidth: .infinity)
+        )
         .focusable()
         .focused($focusedField, equals: .pasteTarget)
         .focusEffectDisabled()
@@ -191,33 +143,32 @@ struct InboxView: View {
     private func persistenceBanner(_ message: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Palette.warning)
+                .foregroundStyle(theme.warning)
                 .accessibilityHidden(true)
             Text(message)
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurface)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             Button("Try Again") { inbox.store.retryPersistence() }
-                .buttonStyle(.voqoraSecondary)
+                .buttonStyle(.voqoraTonal)
         }
-        .padding(DesignTokens.Layout.cardInset)
-        .background(Palette.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
+        .padding(Theme.Space.item + 4)
+        .background(theme.warning.opacity(0.14), in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
     }
 }
 
 struct InboxNoticeBanner: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var inbox: InboxViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
     let notice: InboxNotice
 
     private var tint: Color {
         switch notice.kind {
-        case .error: Palette.danger
-        case .success: Palette.success
-        case .info: vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+        case .error: theme.danger
+        case .success: theme.success
+        case .info: theme.primary
         }
     }
 
@@ -235,49 +186,83 @@ struct InboxNoticeBanner: View {
                 .foregroundStyle(tint)
                 .accessibilityHidden(true)
             Text(notice.message)
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurface)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             if let action = notice.action {
-                Button(action.title) { inbox.perform(action) }
-                    .buttonStyle(.voqoraSecondary)
+                Button(action.title) { perform(action) }
+                    .buttonStyle(.voqoraTonal)
             }
             Button {
                 inbox.dismissNotice()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
+                    .font(.system(size: 12, weight: .semibold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.voqoraIcon)
             .help("Dismiss")
             .accessibilityLabel("Dismiss")
         }
-        .padding(DesignTokens.Layout.cardInset)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
+        .padding(.leading, Theme.Space.item + 4)
+        .padding(.trailing, 4)
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
         .accessibilityElement(children: .contain)
+    }
+
+    private func perform(_ action: InboxNotice.Action) {
+        switch action {
+        case let .makeAudiobook(url):
+            AudiobookCreateRequest.shared.pending = .link(url)
+            vm.selectedTab = TabKey.createAudiobook
+            inbox.dismissNotice()
+        }
     }
 }
 
 struct InboxPendingRow: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let link: InboxViewModel.PendingLink
 
     var body: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
+        HStack(spacing: 16) {
             ProgressView()
                 .controlSize(.small)
+                .frame(width: 40, height: 40)
             Text("Reading \(InboxLinkParser.displayHost(of: link.url) ?? link.url.absoluteString)…")
-                .font(vm.font(.rowTitle))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.body))
+                .foregroundStyle(theme.onSurfaceVariant)
                 .lineLimit(1)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, DesignTokens.Layout.cardInset)
-        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(minHeight: 56)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct EmptyContent {
+    let symbol: String
+    let title: String
+    let message: String
+
+    static func noResults(for query: String) -> EmptyContent {
+        EmptyContent(symbol: "magnifyingglass", title: "No Results", message: "No articles match “\(query)”.")
+    }
+
+    static func forFilter(_ filter: InboxFilter) -> EmptyContent {
+        switch filter {
+        case .unread:
+            EmptyContent(symbol: "checkmark.circle", title: "You're all caught up", message: "Finished and archived articles are under All.")
+        case .archived:
+            EmptyContent(symbol: "archivebox", title: "Nothing archived", message: "Articles you archive appear here.")
+        case .all:
+            EmptyContent(symbol: "tray", title: "Your Inbox is empty", message: "Paste a link above to save an article.")
+        }
     }
 }

@@ -24,7 +24,7 @@ You can change the shortcuts at `chrome://extensions/shortcuts` (in Edge,
 
 ## Install
 
-1. In Voqora, open **Preferences -> Integrations** and turn on **Local API**.
+1. In Voqora, open **Settings -> Integrations** and turn on **Local API**.
    Note the port (51851 unless you changed it) and copy the API key.
 2. Open `chrome://extensions` (in Edge, `edge://extensions`).
 3. Turn on **Developer mode**.
@@ -40,8 +40,8 @@ card in `chrome://extensions`.
 
 | Message | What to do |
 | --- | --- |
-| Can't reach Voqora on port ... | Open Voqora, turn on Local API in Preferences -> Integrations, and check that the port in the options matches. |
-| Voqora didn't accept the API key | Copy the key again from Preferences -> Integrations. Regenerating the key in Voqora makes the old one stop working. |
+| Can't reach Voqora on port ... | Open Voqora, turn on Local API in Settings -> Integrations, and check that the port in the options matches. |
+| Voqora didn't accept the API key | Copy the key again from Settings -> Integrations. Regenerating the key in Voqora makes the old one stop working. |
 | The app isn't listening | Voqora's speech service is running but the app window is not connected to it. Quit and reopen Voqora. |
 | Voqora is busy | Too many requests in a short time. Wait a moment and try again. |
 | Your browser doesn't let extensions read this page | Browser pages such as `chrome://` pages, the Chrome Web Store, and the built-in PDF viewer are off limits to extensions. Select text and use the right-click menu where it is offered, or open a regular web page. |

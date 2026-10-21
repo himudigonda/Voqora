@@ -39,7 +39,7 @@ nonisolated struct AIReadingError: LocalizedError, Equatable, Sendable {
 
     static let providerRequired = AIReadingError(
         kind: .providerRequired,
-        message: "Connect an AI provider in Preferences > AI to use AI reading tools.",
+        message: "Connect an AI provider in Settings > AI to use AI reading tools.",
         code: "ai_provider_required"
     )
 
@@ -98,7 +98,7 @@ nonisolated enum AIReadingErrorMapper {
             guard let detail, !detail.hasPrefix(missingProviderPrefix) else { return .providerRequired }
             return make(.providerSettings, detail)
         case "llm_config_failed":
-            return make(.providerSettings, "Check your AI provider in Preferences > AI.")
+            return make(.providerSettings, "Check your AI provider in Settings > AI.")
         case "ai_busy":
             return make(.busy, "Voqora is already working on other AI requests. Try again shortly.")
         case "ai_rate_limited":
@@ -131,13 +131,13 @@ nonisolated enum AIReadingErrorMapper {
     private static let missingProviderPrefix = "Choose an AI provider"
 
     private static func preferencesWording(_ detail: String) -> String {
-        detail.replacingOccurrences(of: " in Settings", with: " in Preferences > AI")
+        detail.replacingOccurrences(of: " in Settings", with: " in Settings > AI")
     }
 
     private static func error(statusCode: Int, detail: String?) -> AIReadingError {
         switch statusCode {
         case 400:
-            AIReadingError(kind: .providerSettings, message: detail ?? "Check your AI provider in Preferences > AI.")
+            AIReadingError(kind: .providerSettings, message: detail ?? "Check your AI provider in Settings > AI.")
         case 401, 403:
             .engineUnavailable
         case 413:

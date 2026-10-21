@@ -160,8 +160,8 @@ come from the matching changelog section.
 - Open the GitHub release page in a logged-out browser session and confirm the
   exact DMG asset can be downloaded before checking the appcast.
 - Download the DMG and confirm its SHA-256 matches the build receipt.
-- In the early-access channel, choose **Preferences → Download Latest
-  Version**. Confirm it opens only a digest-verified DMG in Finder and that
+- In the early-access channel, choose **Settings → General → Download
+  Latest Version**. Confirm it opens only a digest-verified DMG in Finder and that
   no app is replaced automatically.
 - In the notarized Sparkle channel, separately install an older build and
   verify the signed appcast offers the newer release.

@@ -35,7 +35,7 @@ final class DictationStateMachineTests: XCTestCase {
     func test_partialResultsUpdateTheLiveTranscript() {
         var machine = listeningMachine()
 
-        XCTAssertEqual(machine.handle(.transcriptChanged("hello there")), .nothing)
+        XCTAssertEqual(machine.handle(.volatileChanged("hello there")), .nothing)
         XCTAssertEqual(machine.transcript, "hello there")
     }
 
@@ -58,7 +58,8 @@ final class DictationStateMachineTests: XCTestCase {
         var machine = listeningMachine()
         _ = machine.handle(.toggle)
 
-        XCTAssertEqual(machine.handle(.recognitionEnded("  Hello there.  ")), .insert("Hello there."))
+        _ = machine.handle(.segmentFinalized("  Hello there.  "))
+        XCTAssertEqual(machine.handle(.recognitionEnded), .insert("Hello there."))
         XCTAssertEqual(machine.phase, .inserting)
         XCTAssertEqual(machine.handle(.insertionFinished), .nothing)
         XCTAssertEqual(machine.phase, .idle)
@@ -68,13 +69,14 @@ final class DictationStateMachineTests: XCTestCase {
         var machine = listeningMachine()
         _ = machine.handle(.toggle)
 
-        XCTAssertEqual(machine.handle(.recognitionEnded("   ")), .report(.nothingHeard))
+        _ = machine.handle(.segmentFinalized("   "))
+        XCTAssertEqual(machine.handle(.recognitionEnded), .report(.nothingHeard))
         XCTAssertEqual(machine.phase, .idle)
     }
 
     func test_failureWithPartialTranscriptStillInsertsWhatWasHeard() {
         var machine = listeningMachine()
-        _ = machine.handle(.transcriptChanged("Half a thought"))
+        _ = machine.handle(.volatileChanged("Half a thought"))
 
         XCTAssertEqual(machine.handle(.recognitionFailed), .insert("Half a thought"))
     }
@@ -94,7 +96,7 @@ final class DictationStateMachineTests: XCTestCase {
 
     func test_finishTimeoutInsertsTheLatestTranscript() {
         var machine = listeningMachine()
-        _ = machine.handle(.transcriptChanged("Almost done"))
+        _ = machine.handle(.volatileChanged("Almost done"))
         _ = machine.handle(.toggle)
 
         XCTAssertEqual(machine.handle(.finishTimedOut), .insert("Almost done"))
@@ -109,7 +111,7 @@ final class DictationStateMachineTests: XCTestCase {
 
     func test_toggleWhileFinishingInsertsWithoutWaiting() {
         var machine = listeningMachine()
-        _ = machine.handle(.transcriptChanged("Quick note"))
+        _ = machine.handle(.volatileChanged("Quick note"))
         _ = machine.handle(.toggle)
 
         XCTAssertEqual(machine.handle(.toggle), .insert("Quick note"))
@@ -117,7 +119,8 @@ final class DictationStateMachineTests: XCTestCase {
 
     func test_toggleWhileInsertingIsIgnored() {
         var machine = listeningMachine()
-        _ = machine.handle(.recognitionEnded("Done"))
+        _ = machine.handle(.segmentFinalized("Done"))
+        _ = machine.handle(.recognitionEnded)
 
         XCTAssertEqual(machine.handle(.toggle), .nothing)
         XCTAssertEqual(machine.handle(.cancel), .nothing)
@@ -126,7 +129,8 @@ final class DictationStateMachineTests: XCTestCase {
 
     func test_abandoningWhileInsertingReturnsToIdleAndClearsTheTranscript() {
         var machine = listeningMachine()
-        _ = machine.handle(.recognitionEnded("Done"))
+        _ = machine.handle(.segmentFinalized("Done"))
+        _ = machine.handle(.recognitionEnded)
 
         XCTAssertEqual(machine.handle(.abandonInsertion), .nothing)
         XCTAssertEqual(machine.phase, .idle)
@@ -151,7 +155,7 @@ final class DictationStateMachineTests: XCTestCase {
 
     func test_cancelWhileListeningDiscardsTheTranscript() {
         var machine = listeningMachine()
-        _ = machine.handle(.transcriptChanged("Never mind"))
+        _ = machine.handle(.volatileChanged("Never mind"))
 
         XCTAssertEqual(machine.handle(.cancel), .stop)
         XCTAssertEqual(machine.phase, .idle)
@@ -161,8 +165,9 @@ final class DictationStateMachineTests: XCTestCase {
     func test_eventsWhileIdleDoNothing() {
         var machine = DictationStateMachine()
 
-        XCTAssertEqual(machine.handle(.transcriptChanged("stray")), .nothing)
-        XCTAssertEqual(machine.handle(.recognitionEnded("stray")), .nothing)
+        XCTAssertEqual(machine.handle(.volatileChanged("stray")), .nothing)
+        XCTAssertEqual(machine.handle(.segmentFinalized("stray")), .nothing)
+        XCTAssertEqual(machine.handle(.recognitionEnded), .nothing)
         XCTAssertEqual(machine.handle(.failed(.recognitionFailed)), .nothing)
         XCTAssertEqual(machine.handle(.cancel), .nothing)
         XCTAssertEqual(machine.phase, .idle)

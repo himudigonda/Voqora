@@ -213,10 +213,10 @@ private struct TranscriptLineRow: View {
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
         .background(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                 .fill(isHovered && !isActive ? Palette.controlFill : Color.clear)
         )
-        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
         .gesture(
             DragGesture(minimumDistance: 0, coordinateSpace: .global)
                 .onEnded { value in

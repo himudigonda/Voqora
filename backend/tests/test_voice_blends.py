@@ -497,6 +497,110 @@ def test_speak_accepts_blend_and_rejects_deleted_blend(_ensure):
     assert rejected.status_code == 422
 
 
+def _preview_payload(**overrides):
+    payload = {"components": ["af_bella", "am_adam"], "weights": [0.75, 0.25]}
+    return {**payload, **overrides}
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_preview_speaks_unsaved_blend_without_storing_it(_ensure):
+    seen = []
+
+    async def fake_generate(text, voice, speed, lang=None, **kwargs):
+        seen.append((text, voice, lang))
+        yield np.zeros(10, dtype=np.float32)
+
+    with patch.object(EngineManager, "generate", side_effect=fake_generate):
+        response = client.post("/voices/blends/preview", json=_preview_payload())
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+        assert b"".join(response.iter_bytes())[:4] == b"RIFF"
+    text, spec, lang = seen[0]
+    assert text == "The quick brown fox jumps over the lazy dog."
+    assert spec.components[0][0] == "af_bella"
+    assert [round(w, 2) for _, w in spec.components] == [0.75, 0.25]
+    assert spec.is_blend
+    assert lang is None
+    assert voice_blends.list() == []
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_preview_uses_given_text_and_distinct_cache_tag_per_mix(_ensure):
+    seen = []
+
+    async def fake_generate(text, voice, speed, lang=None, **kwargs):
+        seen.append((text, voice.cache_tag))
+        yield np.zeros(10, dtype=np.float32)
+
+    with patch.object(EngineManager, "generate", side_effect=fake_generate):
+        for weights in ([0.75, 0.25], [0.25, 0.75], [0.75, 0.25]):
+            response = client.post(
+                "/voices/blends/preview",
+                json=_preview_payload(weights=weights, text="  Hello there.  "),
+            )
+            assert response.status_code == 200
+            b"".join(response.iter_bytes())
+    assert [text for text, _ in seen] == ["Hello there."] * 3
+    assert seen[0][1] == seen[2][1]
+    assert seen[0][1] != seen[1][1]
+
+
+@patch.object(EngineManager, "ensure_loaded")
+def test_preview_defaults_text_to_the_first_voice_language(_ensure):
+    seen = []
+
+    async def fake_generate(text, voice, speed, lang=None, **kwargs):
+        seen.append(text)
+        yield np.zeros(10, dtype=np.float32)
+
+    with patch.object(EngineManager, "generate", side_effect=fake_generate):
+        response = client.post(
+            "/voices/blends/preview",
+            json=_preview_payload(components=["ef_dora", "am_adam"]),
+        )
+        assert response.status_code == 200
+        b"".join(response.iter_bytes())
+    assert seen == ["El veloz zorro marrón salta sobre el perro perezoso."]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"components": ["af_bella"], "weights": [1.0]},
+        {"components": ["af_bella", "am_adam", "bf_emma", "ff_siwis", "bm_george"]},
+        {"weights": [0.5]},
+        {"weights": [0.5, 0.5, 0.5]},
+        {"weights": [0.01, 0.5]},
+        {"weights": [0.5, 1.5]},
+        {"components": ["af_bella", "af_bella"]},
+        {"components": ["af_bella", "../../x"]},
+        {"components": ["af_bella", f"blend:{'1' * 8}-1111-4111-8111-{'1' * 12}"]},
+        {"text": "   "},
+        {"lang": "xx"},
+    ],
+)
+def test_preview_rejects_what_creation_rejects(overrides):
+    response = client.post("/voices/blends/preview", json=_preview_payload(**overrides))
+    assert response.status_code == 422
+    assert voice_blends.list() == []
+
+
+@patch.object(EngineManager, "require_installed")
+def test_preview_reports_engine_not_installed(require_installed):
+    from app.services.engine_errors import EngineNotInstalledError
+
+    require_installed.side_effect = EngineNotInstalledError("Engine is not installed.")
+    response = client.post("/voices/blends/preview", json=_preview_payload())
+    assert response.status_code == 409
+
+
+@patch.object(EngineManager, "ensure_loaded", side_effect=RuntimeError("/private/x"))
+def test_preview_failure_is_generic(_ensure):
+    response = client.post("/voices/blends/preview", json=_preview_payload())
+    assert response.status_code == 500
+    assert "private" not in response.text
+
+
 @patch.object(EngineManager, "ensure_loaded")
 def test_prewarm_accepts_blend(_ensure):
     created = _create()

@@ -329,7 +329,8 @@ final class BackendService: NSObject, @unchecked Sendable {
         speed: Double,
         volume: Double,
         pauseScale: Double = PauseScale.standard,
-        bookID: String? = nil
+        bookID: String? = nil,
+        delivery: SpeechDelivery? = nil
     ) -> AsyncThrowingStream<Data, Error> {
         AsyncThrowingStream { continuation in
             guard var request = try? self.connection.request(
@@ -340,16 +341,15 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            var payload: [String: Any] = [
-                "text": text,
-                "voice": voice,
-                "speed": speed,
-                "volume": volume,
-                "pause_scale": PauseScale.clamped(pauseScale),
-            ]
-            if let scopedBookID = Self.scopedBookID(bookID) {
-                payload["book_id"] = scopedBookID
-            }
+            let payload = Self.speakPayload(
+                text: text,
+                voice: voice,
+                speed: speed,
+                volume: volume,
+                pauseScale: pauseScale,
+                bookID: bookID,
+                delivery: delivery
+            )
 
             do {
                 request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -373,6 +373,31 @@ final class BackendService: NSObject, @unchecked Sendable {
                 continuation.finish(throwing: StreamError.requestEncodingFailed)
             }
         }
+    }
+
+    static func speakPayload(
+        text: String,
+        voice: String,
+        speed: Double,
+        volume: Double,
+        pauseScale: Double = PauseScale.standard,
+        bookID: String? = nil,
+        delivery: SpeechDelivery? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "text": text,
+            "voice": voice,
+            "speed": speed,
+            "volume": volume,
+            "pause_scale": PauseScale.clamped(pauseScale),
+        ]
+        if let scopedBookID = scopedBookID(bookID) {
+            payload["book_id"] = scopedBookID
+        }
+        if SpeechEngineID.isMingVoice(voice), let delivery, !delivery.isEmpty {
+            payload["delivery"] = delivery.payload
+        }
+        return payload
     }
 
     static func scopedBookID(_ bookID: String?) -> String? {

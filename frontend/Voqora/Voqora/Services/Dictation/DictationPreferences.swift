@@ -23,14 +23,37 @@ nonisolated enum DictationInsertionMode: String, CaseIterable, Identifiable, Sen
     }
 }
 
+nonisolated enum DictationEngineChoice: String, CaseIterable, Identifiable, Sendable {
+    case apple
+    case parakeet
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .apple: "Apple"
+        case .parakeet: "Parakeet"
+        }
+    }
+
+    static func effective(preferred: DictationEngineChoice, parakeetInstalled: Bool) -> DictationEngineChoice {
+        preferred == .parakeet && parakeetInstalled ? .parakeet : .apple
+    }
+}
+
 nonisolated struct DictationPreferences: Equatable, Sendable {
     static let localeKey = "dictationLocaleIdentifier"
     static let insertionModeKey = "dictationInsertionMode"
     static let silenceTimeoutKey = "dictationSilenceTimeout"
     static let allowsServerRecognitionKey = "dictationAllowsServerRecognition"
     static let tidiesWithAIKey = "dictationTidyWithAI"
+    static let engineKey = "dictationEngine"
+    static let liveInsertionKey = "dictationLiveInsertion"
+    static let playsSoundsKey = "voqoraPlaysSounds"
 
-    static let defaultSilenceTimeout: TimeInterval = 2
+    static let defaultSilenceTimeout: TimeInterval = 0
     static let silenceTimeoutOptions: [TimeInterval] = [0, 1, 1.5, 2, 3, 5]
     static let silenceTimeoutRange: ClosedRange<TimeInterval> = 0.5 ... 10
 
@@ -39,6 +62,9 @@ nonisolated struct DictationPreferences: Equatable, Sendable {
     let silenceTimeout: TimeInterval?
     let allowsServerRecognition: Bool
     let tidiesWithAI: Bool
+    let engine: DictationEngineChoice
+    let livesInsertion: Bool
+    let playsSounds: Bool
 
     init(defaults: UserDefaults) {
         let storedLocale = defaults.string(forKey: Self.localeKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -47,10 +73,17 @@ nonisolated struct DictationPreferences: Equatable, Sendable {
         silenceTimeout = Self.validatedSilenceTimeout(defaults.object(forKey: Self.silenceTimeoutKey) as? Double)
         allowsServerRecognition = defaults.bool(forKey: Self.allowsServerRecognitionKey)
         tidiesWithAI = defaults.bool(forKey: Self.tidiesWithAIKey)
+        engine = defaults.string(forKey: Self.engineKey).flatMap(DictationEngineChoice.init(rawValue:)) ?? .apple
+        livesInsertion = defaults.bool(forKey: Self.liveInsertionKey)
+        playsSounds = Self.playsSounds(in: defaults)
+    }
+
+    static func playsSounds(in defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: playsSoundsKey) == nil ? true : defaults.bool(forKey: playsSoundsKey)
     }
 
     static func validatedSilenceTimeout(_ stored: Double?) -> TimeInterval? {
-        guard let stored else { return defaultSilenceTimeout }
+        guard let stored else { return defaultSilenceTimeout > 0 ? defaultSilenceTimeout : nil }
         guard stored.isFinite, stored > 0 else { return nil }
         return min(max(stored, silenceTimeoutRange.lowerBound), silenceTimeoutRange.upperBound)
     }

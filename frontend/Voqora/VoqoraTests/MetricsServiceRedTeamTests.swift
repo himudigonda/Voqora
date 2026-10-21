@@ -162,7 +162,7 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         XCTAssertNil(MetricsService.Event.fromSerialized(attacker))
     }
 
-    func test_redTeam_eventFromSerializedAlsoWhitelistsProps() {
+    func test_redTeam_eventFromSerializedAlsoAllowlistsProps() {
         let allowedName = "generation"
         let payload: [String: Any] = [
             "event": allowedName,
@@ -189,6 +189,84 @@ final class MetricsServiceRedTeamTests: XCTestCase {
         let raw: [String: Any] = ["chars": NSNull()]
         let cleaned = MetricsService.Props.sanitizedPayload(raw)
         XCTAssertNil(cleaned["chars"])
+    }
+
+    func test_redTeam_piiShapedValuesAreDroppedFromEveryNewProp() {
+        let raw: [String: Any] = [
+            "engine": "user@example.com",
+            "source": "Safari – Quarterly Report.pdf",
+            "failure_code": "Could not read /Users/alice/Documents/taxes.pdf",
+            "outcome": "pasted into Slack",
+            "language": "en-US",
+            "tool": "summarize my medical records",
+            "provider": "https://api.internal.example.com/v1",
+            "client": "Alice's Cursor",
+            "kind": "taxes-2025.pdf",
+            "day": "2026-10-19 alice",
+            "voice": "Mom's voice recording",
+        ]
+        XCTAssertEqual(MetricsService.Props.sanitizedPayload(raw).count, 0)
+    }
+
+    func test_redTeam_longStringsAreDropped() {
+        let long = String(repeating: "a", count: 5000)
+        for key in ["engine", "source", "failure_code", "outcome", "language", "tool", "provider", "client", "kind", "day", "voice"] {
+            XCTAssertNil(MetricsService.Props.sanitizedPayload([key: long])[key], key)
+        }
+    }
+
+    func test_redTeam_regionLocalesNeverReachTheWire() {
+        for locale in ["en-US", "en_US", "pt-BR", "zh-Hans-CN", "EN-us"] {
+            XCTAssertNil(MetricsService.Props.sanitizedPayload(["language": locale])["language"], locale)
+            let bucketed = MetricsService.Bucket.language(locale)
+            XCTAssertNotNil(bucketed)
+            XCTAssertNotNil(MetricsService.Props.sanitizedPayload(["language": bucketed as Any])["language"])
+            XCTAssertFalse(bucketed?.contains("-") ?? true)
+        }
+    }
+
+    func test_redTeam_trailingNewlineDoesNotSlipPastAnchoredPatterns() {
+        XCTAssertNil(MetricsService.Props.sanitizedPayload(["language": "en\n"])["language"])
+        XCTAssertNil(MetricsService.Props.sanitizedPayload(["failure_code": "oops\n"])["failure_code"])
+        XCTAssertNil(MetricsService.Props.sanitizedPayload(["day": "2026-10-19\n"])["day"])
+    }
+
+    func test_redTeam_wrongTypesAndNonFiniteNumbersAreDropped() {
+        let raw: [String: Any] = [
+            "words": "12",
+            "first_audio_ms": 12.5,
+            "render_ms": Double.nan,
+            "chapters": Int.max,
+            "speakers": "2",
+            "latency_ms": NSNull(),
+            "ok": "true",
+            "tidied": "yes",
+            "render_seconds": Double.infinity,
+            "listen_seconds": "600",
+            "speech_count": -1,
+            "active_minutes": true,
+        ]
+        XCTAssertEqual(MetricsService.Props.sanitizedPayload(raw).count, 0)
+    }
+
+    func test_redTeam_newEventsFromTheOutboxAreRevalidatedOnRestore() {
+        let payload: [String: Any] = [
+            "event": "relay_request",
+            "ts": "2026-10-20T00:00:00.000Z",
+            "props": ["client": "Alice's Cursor", "text": secrets[0]],
+        ]
+        let restored = MetricsService.Event.fromSerialized(payload)
+        XCTAssertNotNil(restored)
+        XCTAssertEqual(restored?.props.count, 0)
+    }
+
+    func test_redTeam_rawClientNamesAreBucketedBeforeTheyAreEnqueued() {
+        let names = ["Alice's Claude Desktop", "alice@example.com", "/Users/alice/bin/agent", "Cursor 0.45 (alice-mbp)"]
+        for name in names {
+            let bucket = MetricsService.Bucket.client(name)
+            XCTAssertTrue(MetricsService.Bucket.clients.contains(bucket))
+            XCTAssertNotEqual(bucket, name)
+        }
     }
 }
 

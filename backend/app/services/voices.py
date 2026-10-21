@@ -1,11 +1,14 @@
-"""One place that decides what a voice id means: a built-in voice, a blend, or a
-Supertonic voice."""
+"""One place that decides what a voice id means: a built-in voice, a blend, a
+Supertonic voice, or a Ming voice."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
 from app.services.languages import DEFAULT_VOICE, espeak_lang_for_voice, is_valid_voice
+from app.services.ming_catalog import ENGINE_ID as MING_ENGINE
+from app.services.ming_catalog import is_ming_voice, roster_record
+from app.services.ming_voices import ming_voices
 from app.services.supertonic_catalog import ENGINE_ID as SUPERTONIC_ENGINE
 from app.services.supertonic_catalog import is_supertonic_voice
 from app.services.voice_blends import VoiceBlend, is_blend_id, voice_blends
@@ -51,6 +54,18 @@ def supertonic_spec(voice_id: str) -> VoiceSpec:
     )
 
 
+def ming_spec(voice_id: str) -> VoiceSpec:
+    record = roster_record(voice_id)
+    custom = ming_voices.get(voice_id)
+    language = record["language"] if record else (custom.language if custom else "en")
+    return VoiceSpec(
+        id=voice_id,
+        lang=language,
+        components=((voice_id, 1.0),),
+        engine=MING_ENGINE,
+    )
+
+
 def blend_spec(blend: VoiceBlend) -> VoiceSpec:
     return VoiceSpec(
         id=blend.id,
@@ -70,6 +85,8 @@ def resolve_voice(voice_id: str) -> VoiceSpec | None:
         return builtin_spec(voice_id)
     if is_supertonic_voice(voice_id):
         return supertonic_spec(voice_id)
+    if is_ming_voice(voice_id) or ming_voices.get(voice_id) is not None:
+        return ming_spec(voice_id)
     if is_blend_id(voice_id):
         blend = voice_blends.get(voice_id)
         if blend is not None:

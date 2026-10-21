@@ -9,6 +9,14 @@ echo "🚀 STARTING BACKEND BUILD..."
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
+# The optional Ming engine builds its Python runtime on the user's Mac with uv,
+# so the backend bundle ships its own uv binary.
+UV_BINARY="$(command -v uv || true)"
+if [ -z "$UV_BINARY" ]; then
+    echo "❌ uv is required to bundle the Ming engine installer. Install it with 'brew install uv'." >&2
+    exit 1
+fi
+
 RESOURCE_DIR="frontend/Voqora/Voqora/Resources"
 ARCHIVE_PATH="$RESOURCE_DIR/VoqoraServer.zip"
 ARCHIVE_BUILD_ID_PATH="$RESOURCE_DIR/VoqoraServer.build-id"
@@ -26,9 +34,11 @@ compute_input_build_id() {
         # BSD sort on macOS does not support GNU's `-z`; Python source names
         # in this project are newline-free, so a normal stable line sort is
         # both portable and deterministic here.
-        find backend/app -type f -name '*.py' -print | LC_ALL=C sort | while IFS= read -r file; do
+        find backend/app -type f \( -name '*.py' -o -name '*.json' -o -name '*.txt' \) -print | LC_ALL=C sort | while IFS= read -r file; do
             shasum -a 256 "$file"
         done
+        printf '%s\n' 'bundled-uv'
+        shasum -a 256 "$UV_BINARY"
         printf '%s\n' 'dependency-lock'
         shasum -a 256 backend/pyproject.toml backend/uv.lock
         printf '%s\n' 'pinned-runtime-assets'
@@ -131,6 +141,9 @@ PYINSTALLER_FLAGS=(
     --paths .
     --add-data 'kokoro-v1.0.onnx:.'
     --add-data 'voices-v1.0.bin:.'
+    --add-binary "$UV_BINARY:."
+    --add-data 'app/engines/ming:app/engines/ming'
+    --add-data 'app/services/ming_voices.json:app/services'
     --add-data "$ESPEAK_PATH:espeakng_loader"
     --collect-all 'phonemizer'
     --collect-all 'language_tags'

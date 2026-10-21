@@ -19,12 +19,12 @@ nonisolated enum AudiobookshelfError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notConfigured: "Connect Audiobookshelf in Preferences first."
+        case .notConfigured: "Connect Audiobookshelf in Settings first."
         case .unauthorized: "Audiobookshelf rejected the API token. Create a new token in Audiobookshelf and paste it here."
         case .forbidden: "This Audiobookshelf account can't see the server's libraries."
         case .uploadNotAllowed: "This Audiobookshelf account isn't allowed to upload. Ask the server admin to allow uploads."
         case .notAudiobookshelf: "That address doesn't look like an Audiobookshelf server. Check it and try again."
-        case .libraryMissing: "The chosen library or folder no longer exists. Pick a library again in Preferences."
+        case .libraryMissing: "The chosen library or folder no longer exists. Pick a library again in Settings."
         case .noBookLibraries: "This server has no audiobook libraries yet. Create one in Audiobookshelf first."
         case .rejected: "Audiobookshelf didn't accept the upload. Check the library folder on the server."
         case .tooLarge: "The server refused a file this large. Raise the upload limit on the server or its proxy."

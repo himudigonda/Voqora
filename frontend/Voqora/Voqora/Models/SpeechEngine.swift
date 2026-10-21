@@ -4,18 +4,60 @@ nonisolated enum SpeechEngineID {
     static let kokoro = "kokoro"
     static let supertonic = "supertonic"
     static let supertonicVoicePrefix = "supertonic:"
+    static let ming = "ming"
+    static let mingVoicePrefix = "ming:"
+    static let mingCustomVoicePrefix = "ming:custom:"
+
+    static let downloadable = [supertonic, ming]
+
+    static func voicePrefix(forEngine engine: String) -> String {
+        "\(engine):"
+    }
 
     static func isSupertonicVoice(_ voice: String) -> Bool {
         voice.hasPrefix(supertonicVoicePrefix)
     }
 
+    static func isMingVoice(_ voice: String) -> Bool {
+        voice.hasPrefix(mingVoicePrefix)
+    }
+
+    static func isCustomMingVoice(_ voice: String) -> Bool {
+        voice.hasPrefix(mingCustomVoicePrefix)
+    }
+
+    static func downloadableEngine(forVoice voice: String) -> String? {
+        downloadable.first { voice.hasPrefix(voicePrefix(forEngine: $0)) }
+    }
+
+    static func isDownloadableEngineVoice(_ voice: String) -> Bool {
+        downloadableEngine(forVoice: voice) != nil
+    }
+
     static func engine(forVoice voice: String) -> String {
-        isSupertonicVoice(voice) ? supertonic : kokoro
+        downloadableEngine(forVoice: voice) ?? kokoro
     }
 
     static func resolvedEngine(voice: String?, requested: String?) -> String? {
-        guard let voice, isSupertonicVoice(voice) else { return requested }
-        return supertonic
+        guard let voice else { return requested }
+        if let engine = downloadableEngine(forVoice: voice) {
+            return engine
+        }
+        return requested.flatMap { downloadable.contains($0) ? nil : $0 }
+    }
+}
+
+nonisolated enum MingVoiceGroup: String, CaseIterable, Sendable {
+    case english
+    case chinese
+    case mine
+
+    var title: String {
+        switch self {
+        case .english: "Ming · English"
+        case .chinese: "Ming · Chinese"
+        case .mine: "Ming · My voices"
+        }
     }
 }
 
@@ -23,6 +65,60 @@ nonisolated struct SpeechEngineVoice: Decodable, Identifiable, Hashable, Sendabl
     let id: String
     let name: String
     let gender: String
+    let lang: String
+    let description: String?
+    let emotions: [String]
+    let custom: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case gender
+        case lang
+        case description
+        case emotions
+        case custom
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        gender = try container.decodeIfPresent(String.self, forKey: .gender) ?? ""
+        lang = try container.decodeIfPresent(String.self, forKey: .lang) ?? ""
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        emotions = (try? container.decodeIfPresent([String].self, forKey: .emotions)) ?? []
+        custom = try container.decodeIfPresent(Bool.self, forKey: .custom) ?? SpeechEngineID.isCustomMingVoice(id)
+    }
+
+    init(
+        id: String,
+        name: String,
+        gender: String,
+        lang: String = "",
+        description: String? = nil,
+        emotions: [String] = [],
+        custom: Bool = false
+    ) {
+        self.id = id
+        self.name = name
+        self.gender = gender
+        self.lang = lang
+        self.description = description
+        self.emotions = emotions
+        self.custom = custom
+    }
+
+    var isChinese: Bool {
+        lang.lowercased().hasPrefix("zh")
+    }
+
+    var mingGroup: MingVoiceGroup {
+        if custom {
+            return .mine
+        }
+        return isChinese ? .chinese : .english
+    }
 }
 
 nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
@@ -36,6 +132,8 @@ nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
     let languages: [String]
     let voices: [SpeechEngineVoice]
     let error: String?
+    let notice: String?
+    let capabilities: [String]
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -48,6 +146,8 @@ nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
         case languages
         case voices
         case error
+        case notice
+        case capabilities
     }
 
     init(from decoder: Decoder) throws {
@@ -62,6 +162,8 @@ nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
         languages = try container.decodeIfPresent([String].self, forKey: .languages) ?? []
         voices = (try? container.decodeIfPresent([SpeechEngineVoice].self, forKey: .voices)) ?? []
         error = try container.decodeIfPresent(String.self, forKey: .error)
+        notice = try container.decodeIfPresent(String.self, forKey: .notice)
+        capabilities = (try? container.decodeIfPresent([String].self, forKey: .capabilities)) ?? []
     }
 
     init(
@@ -74,7 +176,9 @@ nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
         license: String = "",
         languages: [String] = [],
         voices: [SpeechEngineVoice] = [],
-        error: String? = nil
+        error: String? = nil,
+        notice: String? = nil,
+        capabilities: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -86,6 +190,17 @@ nonisolated struct SpeechEngine: Decodable, Identifiable, Hashable, Sendable {
         self.languages = languages
         self.voices = voices
         self.error = error
+        self.notice = notice
+        self.capabilities = capabilities
+    }
+
+    var trimmedNotice: String? {
+        let trimmed = notice?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func supports(_ capability: String) -> Bool {
+        capabilities.contains(capability)
     }
 
     var isBuiltIn: Bool {
@@ -138,21 +253,38 @@ nonisolated enum SpeechEngineCatalog {
         return engine.voices
     }
 
+    static func voice(_ id: String, in engines: [SpeechEngine]) -> SpeechEngineVoice? {
+        guard let engineID = SpeechEngineID.downloadableEngine(forVoice: id) else { return nil }
+        return installedVoices(for: engineID, in: engines).first { $0.id == id }
+    }
+
     static func isAvailable(voice: String, in engines: [SpeechEngine]) -> Bool {
-        guard SpeechEngineID.isSupertonicVoice(voice) else { return true }
-        return installedVoices(for: SpeechEngineID.supertonic, in: engines).contains { $0.id == voice }
+        guard let engineID = SpeechEngineID.downloadableEngine(forVoice: voice) else { return true }
+        return installedVoices(for: engineID, in: engines).contains { $0.id == voice }
     }
 
     static func resolve(voice: String, in engines: [SpeechEngine]) -> String {
         isAvailable(voice: voice, in: engines) ? voice : fallbackVoice
     }
 
-    static func displayName(forVoice voice: String, in engines: [SpeechEngine] = []) -> String? {
-        guard SpeechEngineID.isSupertonicVoice(voice) else { return nil }
-        if let known = engine(SpeechEngineID.supertonic, in: engines)?.voices.first(where: { $0.id == voice }) {
-            return "Supertonic \(known.name)"
+    static func displayName(
+        forVoice voice: String,
+        in engines: [SpeechEngine] = [],
+        directory: EngineVoiceDirectory? = nil
+    ) -> String? {
+        guard let engineID = SpeechEngineID.downloadableEngine(forVoice: voice) else { return nil }
+        let engineName = engineID == SpeechEngineID.ming ? "Ming" : "Supertonic"
+        if let known = self.voice(voice, in: engines) {
+            return known.custom ? known.name : "\(engineName) \(known.name)"
         }
-        let style = voice.dropFirst(SpeechEngineID.supertonicVoicePrefix.count)
-        return style.isEmpty ? "Supertonic" : "Supertonic \(style)"
+        if let remembered = directory?.summary(for: voice) {
+            return remembered.custom ? remembered.name : "\(engineName) \(remembered.name)"
+        }
+        if SpeechEngineID.isCustomMingVoice(voice) {
+            return "\(engineName) custom voice"
+        }
+        let suffix = voice.dropFirst(SpeechEngineID.voicePrefix(forEngine: engineID).count)
+        let label = engineID == SpeechEngineID.ming ? suffix.split(separator: "_").last.map(String.init) ?? "" : String(suffix)
+        return label.isEmpty ? engineName : "\(engineName) \(label)"
     }
 }

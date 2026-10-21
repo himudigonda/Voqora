@@ -2,7 +2,6 @@ import KeyboardShortcuts
 import SwiftUI
 
 struct DictationSettingsCard: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @AppStorage(DictationPreferences.localeKey) private var localeIdentifier = ""
     @AppStorage(DictationPreferences.insertionModeKey) private var insertionMode: DictationInsertionMode = .paste
     @AppStorage(DictationPreferences.silenceTimeoutKey) private var silenceTimeout = DictationPreferences.defaultSilenceTimeout
@@ -11,118 +10,67 @@ struct DictationSettingsCard: View {
     @State private var localeOptions: [DictationLocaleOption] = []
     @State private var localeSupport: DictationLocaleSupport = .onDevice
 
+    private var languageLabel: String {
+        guard !localeIdentifier.isEmpty else { return "System Default" }
+        return localeOptions.first { $0.id == localeIdentifier }?.name ?? localeIdentifier
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
-            DictationSettingRow(title: "Shortcut", icon: "keyboard") {
-                KeyboardShortcuts.Recorder(for: .toggleDictation)
-            }
-            caption("Press once to start listening and again to finish.")
-
-            Divider()
-
-            DictationSettingRow(title: "Language", icon: "globe") {
-                Picker("Language", selection: $localeIdentifier) {
-                    Text("System Default").tag("")
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
+            SettingsSection(title: "Start and finish") {
+                SettingsRowShell(title: "Shortcut", detail: "Press once to start listening and again to finish.") {
+                    KeyboardShortcuts.Recorder(for: .toggleDictation)
+                }
+                SettingsPickerRow(
+                    title: "Language",
+                    detail: localeSupport.note(allowsServerRecognition: allowsServerRecognition),
+                    valueLabel: languageLabel
+                ) {
+                    Button("System Default") { localeIdentifier = "" }
                     Divider()
                     ForEach(localeOptions) { option in
-                        Text(option.name).tag(option.id)
+                        Button(option.name) { localeIdentifier = option.id }
                     }
                 }
-                .labelsHidden()
-                .frame(width: 240)
-            }
-            caption(localeSupport.note(allowsServerRecognition: allowsServerRecognition))
-
-            Divider()
-
-            DictationSettingRow(title: "After Dictation", icon: "text.cursor") {
-                Picker("After Dictation", selection: $insertionMode) {
-                    ForEach(DictationInsertionMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 240)
-            }
-            caption(insertionMode.detail)
-
-            Divider()
-
-            DictationSettingRow(title: "Auto-Stop", icon: "timer") {
-                Picker("Auto-Stop", selection: $silenceTimeout) {
+                SettingsPickerRow(
+                    title: "Auto-Stop",
+                    detail: "Stops listening after a pause of this length.",
+                    valueLabel: DictationPreferences.silenceLabel(for: silenceTimeout)
+                ) {
                     ForEach(DictationPreferences.silenceTimeoutOptions, id: \.self) { seconds in
-                        Text(DictationPreferences.silenceLabel(for: seconds)).tag(seconds)
+                        Button(DictationPreferences.silenceLabel(for: seconds)) { silenceTimeout = seconds }
                     }
                 }
-                .labelsHidden()
-                .frame(width: 240)
             }
-            caption("Stops listening after a pause of this length.")
-
-            Divider()
-
-            Toggle(isOn: $allowsServerRecognition) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Allow Server Recognition")
-                        .font(vm.font(.rowTitle))
-                    Text("Off by default. When on, languages without on-device support send your audio to Apple to be transcribed.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
+            SettingsSection(title: "After you speak") {
+                SettingsPickerRow(title: "After Dictation", detail: insertionMode.detail, valueLabel: insertionMode.title) {
+                    ForEach(DictationInsertionMode.allCases) { mode in
+                        Button(mode.title) { insertionMode = mode }
+                    }
                 }
+                SettingsSwitchRow(
+                    title: "Tidy with AI",
+                    detail: "Off by default. When on, each transcript goes to your AI provider to fix punctuation and filler words first. If that fails, Voqora inserts your original words.",
+                    isOn: $tidiesWithAI
+                )
             }
-            .toggleStyle(.switch)
-
-            Divider()
-
-            Toggle(isOn: $tidiesWithAI) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Tidy with AI")
-                        .font(vm.font(.rowTitle))
-                    Text("Off by default. When on, each transcript goes to your AI provider to fix punctuation and filler words first. If that fails, Voqora inserts your original words.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            SettingsSection(title: "Privacy") {
+                SettingsSwitchRow(
+                    title: "Allow Server Recognition",
+                    detail: "Off by default. When on, languages without on-device support send your audio to Apple to be transcribed.",
+                    isOn: $allowsServerRecognition
+                )
             }
-            .toggleStyle(.switch)
         }
-        .padding(20)
-        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
         .onAppear(perform: loadOptions)
         .task(id: localeIdentifier) {
             localeSupport = DictationLocaleCatalog.support(forLocaleIdentifier: localeIdentifier.isEmpty ? nil : localeIdentifier)
         }
     }
 
-    private func caption(_ text: String) -> some View {
-        Text(text)
-            .font(vm.font(.rowSubtitle))
-            .foregroundStyle(Palette.textSecondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private func loadOptions() {
         localeOptions = DictationLocaleCatalog.supportedOptions()
         localeIdentifier = DictationLocaleCatalog.validatedSelection(localeIdentifier, among: localeOptions)
         silenceTimeout = DictationPreferences.silenceOption(closestTo: silenceTimeout)
-    }
-}
-
-struct DictationSettingRow<Control: View>: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    let title: String
-    let icon: String
-    @ViewBuilder var control: Control
-
-    var body: some View {
-        HStack {
-            Label(title, systemImage: icon)
-                .font(vm.font(.rowTitle))
-            Spacer()
-            control
-        }
     }
 }

@@ -223,11 +223,18 @@ final class LLMProviderStoreTests: XCTestCase {
     }
 
     func testCloudProviderWithoutKeyHasNoCredential() {
+        makeStore().save(LLMCredential(provider: .cerebras, apiKey: "csk", model: "", serverURL: ""))
+        secrets.write(KeychainKey.llmAPIKey(.cerebras).rawValue, nil)
+
+        XCTAssertNil(makeStore().activeCredential)
+    }
+
+    func testStoredKeyIsReadFromKeychainOnce() {
         let store = makeStore()
         store.save(LLMCredential(provider: .cerebras, apiKey: "csk", model: "", serverURL: ""))
         secrets.write(KeychainKey.llmAPIKey(.cerebras).rawValue, nil)
 
-        XCTAssertNil(store.activeCredential)
+        XCTAssertEqual(store.activeCredential?.apiKey, "csk")
     }
 
     func testEveryProviderKeyIsErasedWithLocalData() {

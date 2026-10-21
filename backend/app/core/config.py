@@ -148,6 +148,14 @@ class Settings(BaseSettings):
         return os.path.join(self.USER_DATA_DIR, "voice_blends.json")
 
     @property
+    def MING_VOICES_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "ming_voices.json")
+
+    @property
+    def MING_VOICES_DIR(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "ming_voices")
+
+    @property
     def PRONUNCIATIONS_PATH(self) -> str:
         return os.path.join(self.USER_DATA_DIR, "pronunciations.json")
 

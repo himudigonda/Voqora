@@ -58,11 +58,14 @@ class SpeechRelay:
         voice: str | None,
         client: str | None = None,
         mode: SpeakMode = "replace",
+        delivery: dict[str, str] | None = None,
     ) -> str:
         self._require_subscriber()
         if any(queue.full() for queue in self._subscribers):
             raise RelayBusyError
         event = _event("speak", text=text, voice=voice, client=client, mode=mode)
+        if delivery:
+            event["delivery"] = delivery
         for queue in self._subscribers:
             queue.put_nowait(event)
         log.info("relay.speak_queued", extra={"text_len": len(text)})

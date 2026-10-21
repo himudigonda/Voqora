@@ -4,8 +4,7 @@ struct AddProviderSheet: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var providers: LLMProviderStore
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
     private let opensDirectly: Bool
     private let cleaningCount: (LLMProvider) -> Int
@@ -22,15 +21,11 @@ struct AddProviderSheet: View {
             if let selected {
                 ProviderConnectForm(
                     provider: selected,
-                    backTitle: opensDirectly ? "Cancel" : "Back",
                     cleaningCount: cleaningCount,
-                    onBack: {
-                        if opensDirectly {
-                            dismiss()
-                        } else {
-                            withAnimation(DesignTokens.Animation.standard) { self.selected = nil }
-                        }
+                    onBack: opensDirectly ? nil : {
+                        withAnimation(Theme.Motion.selection) { self.selected = nil }
                     },
+                    onClose: { dismiss() },
                     onFinished: { dismiss() }
                 )
                 .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -39,9 +34,7 @@ struct AddProviderSheet: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
             }
         }
-        .padding(32)
-        .frame(width: 760, height: selected == nil ? 700 : 560)
-        .voqoraSurface(.floating, in: Rectangle())
+        .voqoraTheme()
     }
 
     private var audiobookFooter: String {
@@ -49,44 +42,31 @@ struct AddProviderSheet: View {
             return "Audiobooks keep using \(active.displayName) until you choose another."
         }
         if providers.needsActiveChoice {
-            return "Choose which provider audiobooks use in Preferences."
+            return "Choose which provider audiobooks use in Settings."
         }
         return "Audiobooks will use the first provider you connect."
     }
 
     private var chooser: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(alignment: .top, spacing: 18) {
-                Image(systemName: "square.3.layers.3d")
-                    .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast))
-                    .frame(width: 52, height: 52)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Add a provider")
-                        .font(vm.appFont(size: 24, weight: .bold))
-                        .foregroundStyle(Palette.textPrimary)
-                    Text("Your preferred models, connected to Voqora.")
-                        .font(vm.appFont(size: 14))
-                        .foregroundStyle(Palette.textSecondary)
+        VoqoraSheet(
+            title: "Add a provider",
+            supporting: "Pick the service behind AI cleanup, summaries and translation.",
+            width: 640,
+            onClose: { dismiss() }
+        ) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                ScrollView {
+                    ProviderPickerGrid { provider in
+                        withAnimation(Theme.Motion.selection) { selected = provider }
+                    }
+                    .padding(.vertical, 2)
                 }
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.voqoraSecondary)
-                    .keyboardShortcut(.cancelAction)
+                .scrollIndicators(.never)
+                .frame(height: 380)
+                Label(audiobookFooter, systemImage: "info.circle")
+                    .voqoraFont(.bodySmall)
+                    .foregroundStyle(theme.onSurfaceVariant)
             }
-            Divider()
-            Text("Choose a provider")
-                .font(vm.appFont(size: 15, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary)
-            ScrollView {
-                ProviderPickerGrid { provider in
-                    withAnimation(DesignTokens.Animation.standard) { selected = provider }
-                }
-                .padding(.vertical, 2)
-            }
-            Label(audiobookFooter, systemImage: "info.circle")
-                .font(vm.appFont(size: 12))
-                .foregroundStyle(Palette.textSecondary)
         }
     }
 }

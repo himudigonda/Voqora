@@ -11,7 +11,7 @@ class EngineNotInstalledError(Exception):
     def __init__(self, engine: str) -> None:
         super().__init__(
             f"{engine.capitalize()} is not installed. "
-            "Download it in Voqora Preferences, then try again."
+            "Download it in Voqora Settings, then try again."
         )
         self.engine = engine
 
@@ -21,4 +21,8 @@ class EngineBusyError(Exception):
 
 
 class EngineInstallError(Exception):
+    pass
+
+
+class EngineWorkerError(Exception):
     pass

@@ -199,6 +199,10 @@ final class AudiobookExportController: ObservableObject {
         }
         do {
             try await perform(book, format: format, to: destination)
+            if format == .m4b {
+                UsageStatsStore.shared.recordM4BExport()
+            }
+            SoundPlayer.shared.play(.audiobookReady)
             dependencies.notify("Exported \(destination.lastPathComponent)", .success)
         } catch {
             guard !(error is CancellationError), !Task.isCancelled else {
@@ -300,7 +304,7 @@ enum AudiobookExportFailureMessage {
         case 409:
             return "This audiobook is still being generated. Export it once it's ready."
         case 422:
-            return "Choose an MP3 quality in Preferences, then try again."
+            return "Choose an MP3 quality in Settings, then try again."
         case 429:
             return "Another MP3 export is in progress. Try again shortly."
         case 503:

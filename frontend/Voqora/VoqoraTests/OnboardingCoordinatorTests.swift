@@ -67,37 +67,123 @@ final class OnboardingCoordinatorTests: XCTestCase {
         XCTAssertTrue(coord.needsOnboarding)
     }
 
-    func test_revokedAccessibility_keepsCompletedOnboardingAndUsesDashboardRecovery() {
-        defaults.set(true, forKey: "hasOnboarded")
-        defaults.set(5, forKey: "onboardingVersion")
+    func test_revokedAccessibility_keepsCompletedOnboarding() {
+        defaults.set(true, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(7, forKey: OnboardingCoordinator.versionKey)
 
         let coord = makeCoordinator()
         XCTAssertFalse(coord.needsOnboarding,
                        "a completed setup must not trap someone in onboarding when Accessibility is revoked")
     }
 
-    func test_resumeStep_defaultsToZero() {
+    func test_v6Upgrade_showsOnlyNewSteps() {
+        defaults.set(true, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(6, forKey: OnboardingCoordinator.versionKey)
+        defaults.set(4, forKey: OnboardingCoordinator.legacyStepKey)
+
         let coord = makeCoordinator()
-        XCTAssertEqual(coord.resumeStep, 0)
+
+        XCTAssertTrue(coord.needsOnboarding)
+        XCTAssertEqual(coord.seenStepKeys, OnboardingCoordinator.keysSeenInVersion6)
+        XCTAssertNil(defaults.object(forKey: OnboardingCoordinator.legacyStepKey))
+        XCTAssertEqual(OnboardingStep.firstUnseen(in: coord.seenStepKeys), .privacy)
+        XCTAssertEqual(OnboardingStep.privacy.nextUnseen(in: coord.seenStepKeys), .dictation)
+        XCTAssertEqual(OnboardingStep.dictation.nextUnseen(in: coord.seenStepKeys), .done)
+        let unseen = OnboardingStep.allCases.filter { !coord.seenStepKeys.contains($0.key) }
+        XCTAssertEqual(unseen, [.privacy, .dictation, .done])
+    }
+
+    func test_v6UpgradeThatNeverFinished_replaysEverything() {
+        defaults.set(false, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(6, forKey: OnboardingCoordinator.versionKey)
+
+        let coord = makeCoordinator()
+
+        XCTAssertTrue(coord.needsOnboarding)
+        XCTAssertTrue(coord.seenStepKeys.isEmpty)
+    }
+
+    func test_completedV5Upgrade_showsStepsThatShippedVersionLacked() {
+        defaults.set(true, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(5, forKey: OnboardingCoordinator.versionKey)
+        defaults.set(6, forKey: OnboardingCoordinator.legacyStepKey)
+
+        let coord = makeCoordinator()
+
+        XCTAssertTrue(coord.needsOnboarding)
+        XCTAssertEqual(coord.seenStepKeys, OnboardingCoordinator.keysSeenInVersion5)
+        XCTAssertNil(coord.resumeStepKey)
+        XCTAssertNil(defaults.object(forKey: OnboardingCoordinator.legacyStepKey))
+        let unseen = OnboardingStep.allCases.filter { !coord.seenStepKeys.contains($0.key) }
+        XCTAssertEqual(unseen, [.privacy, .engine, .dictation, .audiobooks, .ai, .done])
+    }
+
+    func test_unfinishedV5Upgrade_fullReplay() {
+        defaults.set(false, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(5, forKey: OnboardingCoordinator.versionKey)
+        defaults.set(["welcome", "engine"], forKey: OnboardingCoordinator.seenKey)
+
+        let coord = makeCoordinator()
+
+        XCTAssertTrue(coord.needsOnboarding)
+        XCTAssertTrue(coord.seenStepKeys.isEmpty)
+        XCTAssertEqual(OnboardingStep.firstUnseen(in: coord.seenStepKeys), .welcome)
+    }
+
+    func test_upgradeWritesCurrentVersionSoItRunsOnce() {
+        defaults.set(true, forKey: OnboardingCoordinator.hasOnboardedKey)
+        defaults.set(6, forKey: OnboardingCoordinator.versionKey)
+
+        _ = makeCoordinator()
+        let second = makeCoordinator()
+
+        XCTAssertEqual(defaults.integer(forKey: OnboardingCoordinator.versionKey), OnboardingCoordinator.currentVersion)
+        XCTAssertEqual(second.seenStepKeys, OnboardingCoordinator.keysSeenInVersion6)
+    }
+
+    func test_resumeStepKey_defaultsToNil() {
+        XCTAssertNil(makeCoordinator().resumeStepKey)
     }
 
     func test_recordStep_persistsForResume() {
         let coord = makeCoordinator()
-        coord.recordStep(3)
-        XCTAssertEqual(coord.resumeStep, 3, "quitting mid-wizard must resume, not restart from step 0")
+        coord.recordStep(key: "voice")
+        XCTAssertEqual(makeCoordinator().resumeStepKey, "voice", "quitting mid-wizard must resume, not restart from the first step")
+    }
+
+    func test_resumeByKeySurvivesReorder() {
+        let coord = makeCoordinator()
+        coord.recordStep(key: OnboardingStep.dictation.key)
+
+        let resumed = makeCoordinator().resumeStepKey.flatMap(OnboardingStep.init(key:))
+
+        XCTAssertEqual(resumed, .dictation)
+        XCTAssertNil(OnboardingStep(key: "retired-step"))
+    }
+
+    func test_markSeen_persistsAcrossLaunches() {
+        let coord = makeCoordinator()
+        coord.markSeen(key: "welcome")
+        coord.markSeen(key: "welcome")
+        XCTAssertEqual(makeCoordinator().seenStepKeys, ["welcome"])
     }
 
     func test_markCompleted_clearsResumeStep() {
         let coord = makeCoordinator()
-        coord.recordStep(3)
+        coord.recordStep(key: "voice")
         coord.markCompleted()
-        XCTAssertEqual(coord.resumeStep, 0, "a finished wizard must not carry stale progress into a future forced re-run")
+        XCTAssertNil(coord.resumeStepKey, "a finished wizard must not carry stale progress into a future forced re-run")
     }
 
-    func test_reset_clearsResumeStep() {
+    func test_reset_clearsSeen() {
         let coord = makeCoordinator()
-        coord.recordStep(3)
+        coord.markSeen(key: "welcome")
+        coord.recordStep(key: "voice")
+        coord.markCompleted()
         coord.reset()
-        XCTAssertEqual(coord.resumeStep, 0, "'Run onboarding again' is a deliberate full replay, not a resume")
+        XCTAssertTrue(coord.needsOnboarding)
+        XCTAssertTrue(coord.seenStepKeys.isEmpty)
+        XCTAssertNil(coord.resumeStepKey, "'Run setup again' is a deliberate full replay, not a resume")
+        XCTAssertNil(defaults.object(forKey: OnboardingCoordinator.seenKey))
     }
 }

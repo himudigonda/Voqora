@@ -11,7 +11,7 @@ final class AISelectionCoordinator {
     enum Message {
         static let noSelection = "Select text in any app, then try again."
         static let needsAccessibility = "Voqora needs Accessibility access to read your selection. Opening System Settings…"
-        static let needsProvider = "Connect an AI provider in Preferences > AI to summarize or translate selections."
+        static let needsProvider = "Connect an AI provider in Settings > AI to summarize or translate selections."
         static let engineStarting = "Voqora is still starting. Try again in a moment."
         static let selectionTooLong = "That selection is too long to summarize. Select a shorter passage."
         static let translationTooLong = "That selection is too long to translate. Select up to 20,000 characters."

@@ -15,7 +15,7 @@ enum AccentColorOption: String, CaseIterable {
         }
     }
 
-    fileprivate var seed: AccentSeed {
+    var seed: AccentSeed {
         switch self {
         case .clay: AccentSeed(hue: 38.8, chroma: 0.131)
         case .sage: AccentSeed(hue: 137.7, chroma: 0.085)

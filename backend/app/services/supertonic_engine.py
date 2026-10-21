@@ -14,7 +14,7 @@ from supertonic.config import MAX_SPEED, MIN_SPEED
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.services.audio import AudioService
+from app.services.audio import AudioService, resample
 from app.services.engine_errors import EngineNotInstalledError
 from app.services.pronunciation import EMPTY_RULES, PronunciationRules
 from app.services.supertonic_catalog import (
@@ -36,18 +36,6 @@ CHUNK_GAP_SECONDS = 0.1
 
 def clamp_speed(speed: float) -> float:
     return min(max(speed, MIN_SPEED), MAX_SPEED)
-
-
-def resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
-    if source_rate == target_rate or audio.size == 0:
-        return audio
-    target_length = max(1, round(audio.size * target_rate / source_rate))
-    spectrum = np.fft.rfft(audio)
-    resized = np.zeros(target_length // 2 + 1, dtype=spectrum.dtype)
-    kept = min(len(resized), len(spectrum))
-    resized[:kept] = spectrum[:kept]
-    scaled = np.fft.irfft(resized, target_length) * (target_length / audio.size)
-    return scaled.astype(np.float32)
 
 
 class SupertonicEngine:

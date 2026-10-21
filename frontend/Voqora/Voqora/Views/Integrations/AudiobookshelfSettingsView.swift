@@ -1,27 +1,17 @@
 import SwiftUI
 
 struct AudiobookshelfSettingsView: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var shelf: AudiobookshelfSettingsStore
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @State private var tokenDraft = ""
     @State private var replacingToken = false
     @State private var confirmingDisconnect = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Audiobookshelf")
-                    .font(vm.font(.rowTitle))
-                Text("Send finished audiobooks to your Audiobookshelf server from a book's Export menu.")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
-            }
-
-            serverRow
-            tokenRow
-            actionRow
-            connectionStatus
-            libraryPicker
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
+            connectionSection
+            destinationSection
         }
         .task {
             if shelf.isConfigured, shelf.libraries.isEmpty {
@@ -40,97 +30,89 @@ struct AudiobookshelfSettingsView: View {
         }
     }
 
-    private var serverRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Server", systemImage: "server.rack")
-                    .font(vm.font(.rowTitle))
-                Spacer(minLength: 12)
-                TextField("https://abs.example.com", text: $shelf.serverText)
-                    .textFieldStyle(.roundedBorder)
+    private var connectionSection: some View {
+        SettingsSection(
+            title: "Audiobookshelf",
+            footer: "Send finished audiobooks to your Audiobookshelf server from a book's Export menu. " +
+                "Create an API key in Audiobookshelf under Settings, then API Keys. The account needs permission to upload."
+        ) {
+            SettingsValueRow(title: "Server", systemImage: "server.rack") {
+                TextField("Server", text: $shelf.serverText, prompt: Text("https://abs.example.com"))
+                    .labelsHidden()
                     .autocorrectionDisabled()
-                    .font(vm.font(.rowTitle))
-                    .frame(maxWidth: 320)
+                    .settingsField(width: 320)
                     .onSubmit(test)
                     .accessibilityLabel("Audiobookshelf server address")
             }
-            if !shelf.serverText.trimmingCharacters(in: .whitespaces).isEmpty {
-                if let error = shelf.address.error {
-                    Text(error)
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.danger)
-                } else if let warning = shelf.address.warning {
-                    Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.warning)
-                        .fixedSize(horizontal: false, vertical: true)
+            serverMessage
+            tokenRow
+            tokenMessage
+            SettingsRowShell(title: "Connection", detail: "Check that Voqora can reach your server.", systemImage: "bolt.horizontal.circle") {
+                HStack(spacing: 8) {
+                    connectionStatus
+                    Button(action: test) {
+                        Label("Test Connection", systemImage: "bolt.horizontal.circle")
+                    }
+                    .buttonStyle(.voqoraTonal)
+                    .disabled(shelf.connection == .testing || shelf.address.url == nil || !shelf.hasToken || shelf.needsTokenForAddress)
+                    if shelf.hasToken || !shelf.serverText.isEmpty {
+                        Button("Disconnect…") { confirmingDisconnect = true }
+                            .buttonStyle(.voqoraDangerOutlined)
+                    }
                 }
+            }
+            failureMessage
+        }
+    }
+
+    @ViewBuilder
+    private var serverMessage: some View {
+        if !shelf.serverText.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let error = shelf.address.error {
+                SettingsNoticeRow(text: error, kind: .danger)
+            } else if let warning = shelf.address.warning {
+                SettingsNoticeRow(text: warning, kind: .warning)
             }
         }
     }
 
     private var tokenRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("API Token", systemImage: "key")
-                    .font(vm.font(.rowTitle))
-                Spacer(minLength: 12)
-                if shelf.hasToken, !replacingToken, !shelf.needsTokenForAddress {
-                    Text("Saved in your Keychain")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
+        SettingsValueRow(title: "API Token", systemImage: "key") {
+            if shelf.hasToken, !replacingToken, !shelf.needsTokenForAddress {
+                HStack(spacing: 8) {
+                    StatusChip(text: "Saved in your Keychain", kind: .success, systemImage: "lock.fill")
                     Button("Replace…") { replacingToken = true }
-                        .buttonStyle(.voqoraSecondary)
+                        .buttonStyle(.voqoraTonal)
                         .accessibilityLabel("Replace API token")
-                } else {
-                    SecureField("Paste token", text: $tokenDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 240)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    SecureField("API Token", text: $tokenDraft, prompt: Text("Paste token"))
+                        .labelsHidden()
+                        .settingsField(width: 240)
                         .onSubmit(saveToken)
                         .accessibilityLabel("Audiobookshelf API token")
                     Button("Save", action: saveToken)
-                        .buttonStyle(.voqoraSecondary)
+                        .buttonStyle(.voqoraFilled)
                         .disabled(tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     if replacingToken {
                         Button("Cancel") {
                             tokenDraft = ""
                             replacingToken = false
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.voqoraText)
                     }
                 }
-            }
-            if let tokenError = shelf.tokenError {
-                Text(tokenError)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.danger)
-            } else if shelf.needsTokenForAddress {
-                Text(AudiobookshelfSettingsStore.tokenForNewServerMessage)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.warning)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                Text("Create an API key in Audiobookshelf under Settings, then API Keys. The account needs permission to upload.")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
-    private var actionRow: some View {
-        HStack {
-            Button(action: test) {
-                Label("Test Connection", systemImage: "bolt.horizontal.circle")
-            }
-            .buttonStyle(.voqoraPrimary)
-            .disabled(shelf.connection == .testing || shelf.address.url == nil || !shelf.hasToken || shelf.needsTokenForAddress)
-            Spacer()
-            if shelf.hasToken || !shelf.serverText.isEmpty {
-                Button("Disconnect…", role: .destructive) { confirmingDisconnect = true }
-                    .buttonStyle(.borderless)
-                    .font(vm.font(.rowSubtitle))
-            }
+    @ViewBuilder
+    private var tokenMessage: some View {
+        if let tokenError = shelf.tokenError {
+            SettingsNoticeRow(text: tokenError, kind: .danger)
+        } else if shelf.needsTokenForAddress {
+            SettingsNoticeRow(text: AudiobookshelfSettingsStore.tokenForNewServerMessage, kind: .warning)
         }
     }
 
@@ -143,67 +125,71 @@ struct AudiobookshelfSettingsView: View {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small)
                 Text("Connecting…")
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurfaceVariant)
             }
-            .font(vm.appFont(size: 12, weight: .semibold))
-            .foregroundStyle(Palette.textSecondary)
         case .connected:
-            Label("Connected", systemImage: "checkmark.circle.fill")
-                .font(vm.appFont(size: 12, weight: .semibold))
-                .foregroundStyle(Palette.success)
-        case let .failed(message):
-            Label(message, systemImage: "exclamationmark.triangle.fill")
-                .font(vm.appFont(size: 12, weight: .semibold))
-                .foregroundStyle(Palette.danger)
-                .fixedSize(horizontal: false, vertical: true)
+            StatusChip(text: "Connected", kind: .success, systemImage: "checkmark.circle.fill")
+        case .failed:
+            StatusChip(text: "Failed", kind: .danger, systemImage: "exclamationmark.triangle.fill")
         }
     }
 
     @ViewBuilder
-    private var libraryPicker: some View {
+    private var failureMessage: some View {
+        if case let .failed(message) = shelf.connection {
+            SettingsNoticeRow(text: message, kind: .danger)
+        }
+    }
+
+    @ViewBuilder
+    private var destinationSection: some View {
         if !shelf.bookLibraries.isEmpty {
-            Divider()
-            HStack {
-                Label("Library", systemImage: "books.vertical")
-                    .font(vm.font(.rowTitle))
-                Spacer()
-                Picker("Library", selection: Binding(
-                    get: { shelf.libraryID ?? "" },
-                    set: { shelf.selectLibrary($0) }
-                )) {
-                    ForEach(shelf.bookLibraries) { library in
-                        Text(library.name).tag(library.id)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 220)
-            }
-            if let library = shelf.selectedLibrary, library.folders.count > 1 {
-                HStack {
-                    Label("Folder", systemImage: "folder")
-                        .font(vm.font(.rowTitle))
-                    Spacer()
-                    Picker("Folder", selection: Binding(
-                        get: { shelf.folderID ?? "" },
-                        set: { shelf.selectFolder($0) }
+            SettingsSection(title: "Upload destination", footer: emptyFolderMessage) {
+                SettingsPickerRow(
+                    title: "Library",
+                    systemImage: "books.vertical",
+                    valueLabel: shelf.selectedLibrary?.name ?? "Choose…"
+                ) {
+                    Picker("Library", selection: Binding(
+                        get: { shelf.libraryID ?? "" },
+                        set: { shelf.selectLibrary($0) }
                     )) {
-                        ForEach(library.folders) { folder in
-                            Text(folder.displayName).tag(folder.id)
+                        ForEach(shelf.bookLibraries) { library in
+                            Text(library.name).tag(library.id)
                         }
                     }
-                    .labelsHidden()
-                    .frame(width: 220)
+                    .pickerStyle(.inline)
+                }
+                if let library = shelf.selectedLibrary, library.folders.count > 1 {
+                    SettingsPickerRow(
+                        title: "Folder",
+                        systemImage: "folder",
+                        valueLabel: library.folders.first { $0.id == shelf.folderID }?.displayName ?? "Choose…"
+                    ) {
+                        Picker("Folder", selection: Binding(
+                            get: { shelf.folderID ?? "" },
+                            set: { shelf.selectFolder($0) }
+                        )) {
+                            ForEach(library.folders) { folder in
+                                Text(folder.displayName).tag(folder.id)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
                 }
             }
-            if shelf.selectedLibrary?.folders.isEmpty == true {
-                Text("This library has no folders, so Voqora can't upload to it.")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.danger)
-            }
         } else if let libraryName = shelf.libraryName, shelf.isConfigured {
-            Text("Uploads go to the \(libraryName) library.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+            SettingsSection(title: "Upload destination", footer: "Uploads go to the \(libraryName) library.") {
+                SettingsValueRow(title: "Library", systemImage: "books.vertical") {
+                    SettingsTextValue(text: libraryName)
+                }
+            }
         }
+    }
+
+    private var emptyFolderMessage: String? {
+        shelf.selectedLibrary?.folders.isEmpty == true ? "This library has no folders, so Voqora can't upload to it." : nil
     }
 
     private func saveToken() {

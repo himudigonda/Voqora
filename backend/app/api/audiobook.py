@@ -24,7 +24,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from app.api.article import article_error_response, run_reader
 from app.core.config import settings
@@ -33,6 +33,7 @@ from app.services.article_errors import ArticleError
 from app.services.article_reader import audiobook_source
 from app.services.audiobook_service import WAV_HEADER_SIZE, AudiobookService
 from app.services.audiobook_store import AudiobookStore
+from app.services.delivery import Delivery
 from app.services.engine_errors import EngineNotInstalledError, UnknownEngineError
 from app.services.engine_manager import EngineManager
 from app.services.import_limits import (
@@ -145,6 +146,7 @@ class AudiobookURLRequest(BaseModel):
     speed: float | None = None
     engine: str | None = Field(default=None, max_length=32)
     pause_scale: float | None = None
+    delivery: Delivery | None = None
     llm_provider: str | None = Field(default=None, max_length=32)
     llm_model: str | None = Field(default=None, max_length=200)
     llm_base_url: str | None = Field(default=None, max_length=MAX_URL_CHARS)
@@ -343,6 +345,16 @@ class _Synthesis(NamedTuple):
     engine: str
     voice_fallback: str
     pause_scale: float
+    delivery: dict[str, str] | None = None
+
+
+def _validated_delivery_form(raw: str | None) -> Delivery | None:
+    if raw is None or not raw.strip():
+        return None
+    try:
+        return Delivery.model_validate_json(raw)
+    except ValidationError:
+        raise HTTPException(status_code=422, detail="Invalid delivery settings.")
 
 
 def _validated_synthesis(
@@ -350,10 +362,12 @@ def _validated_synthesis(
     speed: float | None,
     engine: str | None,
     pause_scale: float | None,
+    delivery: Delivery | None = None,
 ) -> _Synthesis:
     return _Synthesis(
         *_validated_synthesis_settings(voice, speed, engine),
         _validated_pause_scale(pause_scale),
+        delivery.to_record() if delivery and not delivery.is_empty else None,
     )
 
 
@@ -595,6 +609,8 @@ async def _import_staged(
             meta["author"] = author
         meta["voice_fallback"] = synthesis.voice_fallback
         meta["pause_scale"] = synthesis.pause_scale
+        if synthesis.delivery:
+            meta["delivery"] = synthesis.delivery
         meta.update(extra_meta or {})
         AudiobookStore.write_meta(book_id, meta)
 
@@ -657,6 +673,7 @@ async def upload_audiobook(
     speed: float | None = Form(default=None),
     engine: str | None = Form(default=None),
     pause_scale: float | None = Form(default=None),
+    delivery: str | None = Form(default=None),
     llm_provider: str | None = Form(default=None),
     llm_model: str | None = Form(default=None),
     llm_base_url: str | None = Form(default=None),
@@ -677,7 +694,9 @@ async def upload_audiobook(
 
     # Validate before allocating a book directory or buffering a potentially
     # large upload. These fields are persisted settings, not client hints.
-    synthesis = _validated_synthesis(voice, speed, engine, pause_scale)
+    synthesis = _validated_synthesis(
+        voice, speed, engine, pause_scale, _validated_delivery_form(delivery)
+    )
     pricing_credential = _pricing_credential(llm_provider, llm_model, llm_base_url)
 
     staged_path: str | None = None
@@ -708,7 +727,7 @@ async def create_audiobook_from_url(
     Articles are stored as Markdown so their headings become sections.
     """
     synthesis = _validated_synthesis(
-        body.voice, body.speed, body.engine, body.pause_scale
+        body.voice, body.speed, body.engine, body.pause_scale, body.delivery
     )
     pricing_credential = _pricing_credential(
         body.llm_provider, body.llm_model, body.llm_base_url

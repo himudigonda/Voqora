@@ -5,6 +5,7 @@ protocol VoiceBlendServing {
     func create(_ request: VoiceBlendRequest) async throws -> VoiceBlend
     func update(id: String, with request: VoiceBlendRequest) async throws -> VoiceBlend
     func delete(id: String) async throws
+    func previewAudio(_ request: VoiceBlendPreviewRequest) async throws -> Data
 }
 
 final class VoiceBlendService: VoiceBlendServing {
@@ -30,6 +31,14 @@ final class VoiceBlendService: VoiceBlendServing {
     func delete(id: String) async throws {
         let path = try Self.path(for: id)
         try await client.delete(path: path)
+    }
+
+    func previewAudio(_ request: VoiceBlendPreviewRequest) async throws -> Data {
+        let data = try await client.sendForData(path: "voices/blends/preview", body: request, accept: "audio/wav")
+        guard let wav = PodcastPreviewAudio.finalizedWAV(data) else {
+            throw BackendAPIError.invalidResponse
+        }
+        return wav
     }
 
     static func path(for id: String) throws -> String {

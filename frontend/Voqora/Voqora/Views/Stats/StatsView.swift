@@ -1,236 +1,196 @@
 import SwiftUI
 
+enum StatsSection: String, CaseIterable, Identifiable {
+    case overview
+    case listen
+    case dictate
+    case create
+    case ai
+    case engines
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .overview: "Overview"
+        case .listen: "Listen"
+        case .dictate: "Dictate"
+        case .create: "Create"
+        case .ai: "AI"
+        case .engines: "Engines"
+        }
+    }
+
+    static var initial: StatsSection {
+        #if DEBUG
+            if let raw = ProcessInfo.processInfo.environment["VOQORA_STATS_SECTION"], let section = StatsSection(rawValue: raw) {
+                return section
+            }
+        #endif
+        return .overview
+    }
+}
+
+struct StatsBookInfo: Equatable {
+    let title: String
+    let totalSeconds: Double
+    let progress: Double
+}
+
+struct StatsContext {
+    let data: StatsAggregates
+    let theme: StatsTheme
+    let calendar: Calendar
+    let books: [String: StatsBookInfo]
+    let library: LibraryStats
+
+    var current: PeriodAggregate {
+        data.current
+    }
+
+    func tile(
+        _ title: String,
+        value: String,
+        icon: String,
+        change: Double? = nil,
+        footnote: String,
+        tint: Color? = nil
+    ) -> StatsHeroTile {
+        StatsHeroTile(
+            title: title,
+            value: value,
+            icon: icon,
+            change: change,
+            comparison: data.comparison,
+            footnote: footnote,
+            theme: theme,
+            tint: tint
+        )
+    }
+
+    func rangeCaption() -> String {
+        StatsFormat.rangeCaption(data.interval, range: data.range)
+    }
+}
+
 struct StatsView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var stats: UsageStatsStore
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.voqoraTheme) private var baseTheme
     @AppStorage("statsRange") private var range: StatsRange = .week
+    @State private var section = StatsSection.initial
     @State private var confirmingReset = false
 
     var body: some View {
-        let now = Date()
-        let theme = StatsTheme(option: vm.accentColorID, scheme: colorScheme, contrast: contrast)
-        let summary = UsageSummary.make(ledger: stats.ledger, range: range, now: now, calendar: stats.calendar)
-        let library = LibraryStats(books: bookVM.books)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                header(summary)
+        let theme = StatsTheme(base: baseTheme)
+        let data = StatsAggregates.make(ledger: stats.ledger, range: range, now: Date(), calendar: stats.calendar)
+        let context = StatsContext(data: data, theme: theme, calendar: stats.calendar, books: bookInfo(), library: LibraryStats(books: bookVM.books))
+        PageScaffold(
+            title: "Stats",
+            subtitle: subtitle(data),
+            accessory: {
+                PageActionsMenu {
+                    Button("Reset Stats…", role: .destructive) { confirmingReset = true }
+                        .disabled(stats.ledger.days.isEmpty)
+                }
+            },
+            tabs: { controls },
+            content: {
                 if let error = stats.persistenceError {
                     StatsInsight(icon: "exclamationmark.triangle", text: error, theme: theme)
                 }
-                if summary.isEmpty, library.books == 0 {
-                    emptyState(theme)
+                if !data.lifetime.hasActivity, bookVM.books.isEmpty {
+                    emptyState
                 } else {
-                    heroTiles(summary, theme: theme)
-                    StatsActivityCard(summary: summary, theme: theme)
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 330), spacing: 20, alignment: .top)], spacing: 20) {
-                        StatsStreakCard(
-                            summary: summary,
-                            heatmap: UsageSummary.heatmap(ledger: stats.ledger, weeks: 18, now: now, calendar: stats.calendar),
-                            theme: theme
-                        )
-                        StatsRhythmCard(summary: summary, theme: theme)
-                        StatsVoicesCard(summary: summary, theme: theme)
-                        StatsMilestonesCard(summary: summary, theme: theme)
-                    }
-                    StatsLibraryCard(
-                        summary: summary,
-                        library: library,
-                        titles: Dictionary(bookVM.books.map { ($0.bookID, $0.displayTitle) }, uniquingKeysWith: { first, _ in first }),
-                        theme: theme
-                    )
+                    sectionContent(context)
                 }
-                footer
+                footer(theme)
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 28)
-            .frame(maxWidth: 1080)
-            .frame(maxWidth: .infinity)
-            .animation(DesignTokens.Animation.standard, value: range)
-        }
+        )
+        .animation(Theme.Motion.selection, value: range)
+        .navigationTitle("Stats")
         .confirmationDialog("Reset Stats?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset Stats", role: .destructive) { stats.reset() }
         } message: {
-            Text("This clears your listening stats on this Mac. Your history and audiobooks stay as they are.")
+            Text("This clears your usage stats on this Mac. Your history and audiobooks stay as they are.")
         }
     }
 
-    private func header(_ summary: UsageSummary) -> some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .bottom) {
-                titleBlock(summary)
-                Spacer(minLength: 20)
-                rangePicker.frame(width: 340)
-            }
-            VStack(alignment: .leading, spacing: 16) {
-                titleBlock(summary)
-                rangePicker
-            }
-        }
-    }
-
-    private func titleBlock(_ summary: UsageSummary) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Stats")
-                .font(vm.font(.pageTitle))
-                .foregroundStyle(Palette.textPrimary)
-            Text(subtitle(summary))
-                .font(vm.appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-        }
-    }
-
-    private func subtitle(_ summary: UsageSummary) -> String {
-        guard let first = summary.firstRecorded else {
-            return "How you listen with Voqora, counted on this Mac."
-        }
-        return "How you listen with Voqora, counted on this Mac since \(first.formatted(.dateTime.month(.wide).day().year()))."
-    }
-
-    private var rangePicker: some View {
-        Picker("Range", selection: $range) {
-            ForEach(StatsRange.allCases) { option in
-                Text(option.title).tag(option)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-    }
-
-    private func heroTiles(_ summary: UsageSummary, theme: StatsTheme) -> some View {
-        let tiles = heroTileModels(summary)
+    private var controls: some View {
+        let sections = SegmentedTabs(selection: $section, options: StatsSection.allCases, title: { $0.title })
+        let ranges = SegmentedTabs(selection: $range, options: StatsRange.allCases, title: { $0.title })
         return ViewThatFits(in: .horizontal) {
-            HStack(alignment: .top, spacing: 16) {
-                ForEach(tiles.indices, id: \.self) { index in
-                    heroTile(tiles[index], summary: summary, theme: theme)
-                        .frame(minWidth: 180)
-                }
+            HStack(spacing: Theme.Space.card) {
+                sections
+                Spacer(minLength: Theme.Space.item)
+                ranges
             }
-            .fixedSize(horizontal: false, vertical: true)
-            Grid(horizontalSpacing: 16, verticalSpacing: 16) {
-                ForEach([0, 2], id: \.self) { row in
-                    GridRow {
-                        heroTile(tiles[row], summary: summary, theme: theme)
-                        heroTile(tiles[row + 1], summary: summary, theme: theme)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+            VStack(alignment: .leading, spacing: Theme.Space.item) {
+                sections
+                ranges
+            }
+            VStack(alignment: .leading, spacing: Theme.Space.item) {
+                ScrollView(.horizontal, showsIndicators: false) { sections }
+                ScrollView(.horizontal, showsIndicators: false) { ranges }
             }
         }
     }
 
-    private func heroTile(_ tile: HeroTileModel, summary: UsageSummary, theme: StatsTheme) -> some View {
-        StatsHeroTile(
-            title: tile.title,
-            value: tile.value,
-            icon: tile.icon,
-            change: tile.change,
-            comparison: summary.range.comparisonLabel,
-            footnote: tile.footnote,
-            theme: theme
+    @ViewBuilder
+    private func sectionContent(_ context: StatsContext) -> some View {
+        switch section {
+        case .overview: StatsOverviewSection(context: context)
+        case .listen: StatsListenSection(context: context)
+        case .dictate: StatsDictateSection(context: context)
+        case .create: StatsCreateSection(context: context)
+        case .ai: StatsAISection(context: context)
+        case .engines: StatsEnginesSection(context: context)
+        }
+    }
+
+    private func bookInfo() -> [String: StatsBookInfo] {
+        var info = Dictionary(
+            bookVM.books.map { ($0.bookID, StatsBookInfo(title: $0.displayTitle, totalSeconds: $0.totalAudioSeconds, progress: bookVM.listenedFraction(for: $0))) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        #if DEBUG
+            if stats.isDemo {
+                info.merge(UsageStatsDemo.books, uniquingKeysWith: { first, _ in first })
+            }
+        #endif
+        return info
+    }
+
+    private func subtitle(_ data: StatsAggregates) -> String {
+        guard let first = data.firstRecorded else {
+            return "How you listen, dictate, and create with Voqora, counted on this Mac."
+        }
+        return "How you listen, dictate, and create with Voqora, counted on this Mac since \(first.formatted(.dateTime.month(.wide).day().year()))."
+    }
+
+    private var emptyState: some View {
+        EmptyStateView(
+            symbol: "chart.bar.xaxis",
+            title: "Your stats start here",
+            message: "Listen to selected text, dictate a note, or create an audiobook, and Voqora will chart your time saved, favorite voices, streaks, and more.",
+            action: EmptyStateAction(title: "Hear a Sample") {
+                vm.selectedTab = TabKey.home
+                Task { await vm.speak(text: OnboardingCopy.sampleText) }
+            }
         )
     }
 
-    private func heroTileModels(_ summary: UsageSummary) -> [HeroTileModel] {
-        let totals = summary.totals
-        let previous = summary.previous
-        let rangeDays = max(1, Int((summary.interval.duration / 86400).rounded()))
-        let averageWords = totals.speechCount > 0 ? totals.speechWords / totals.speechCount : 0
-        let pages = Int((Double(totals.speechWords) / StatsFormat.wordsPerPaperbackPage).rounded())
-        return [
-            HeroTileModel(
-                title: "Listening time",
-                value: StatsFormat.duration(totals.totalSeconds),
-                icon: "headphones",
-                change: UsageSummary.change(totals.totalSeconds, previous?.totalSeconds),
-                footnote: "\(StatsFormat.duration(totals.speechSeconds)) selected text · \(StatsFormat.duration(totals.listeningSeconds)) audiobooks"
-            ),
-            HeroTileModel(
-                title: "Words spoken",
-                value: StatsFormat.count(totals.speechWords),
-                icon: "text.quote",
-                change: UsageSummary.change(Double(totals.speechWords), previous.map { Double($0.speechWords) }),
-                footnote: pages > 0 ? "About \(pages) paperback \(pages == 1 ? "page" : "pages")" : "Selected text read aloud"
-            ),
-            HeroTileModel(
-                title: "Selections read",
-                value: StatsFormat.count(totals.speechCount),
-                icon: "text.cursor",
-                change: UsageSummary.change(Double(totals.speechCount), previous.map { Double($0.speechCount) }),
-                footnote: averageWords > 0 ? "\(averageWords) words on average" : "Select text, then press your shortcut"
-            ),
-            HeroTileModel(
-                title: "Active days",
-                value: summary.range.bucket == .day ? "\(totals.activeDays) / \(rangeDays)" : "\(totals.activeDays)",
-                icon: "calendar",
-                change: UsageSummary.change(Double(totals.activeDays), previous.map { Double($0.activeDays) }),
-                footnote: summary.currentStreak > 0
-                    ? "\(summary.currentStreak)-day streak going"
-                    : "\(totals.documentsAdded) \(totals.documentsAdded == 1 ? "audiobook" : "audiobooks") started"
-            ),
-        ]
-    }
-
-    private func emptyState(_ theme: StatsTheme) -> some View {
-        VStack(spacing: 18) {
-            ZStack {
-                Circle()
-                    .fill(theme.accent.opacity(0.12))
-                    .frame(width: 96, height: 96)
-                Image(systemName: "chart.bar.xaxis")
-                    .font(.system(size: 38, weight: .medium))
-                    .foregroundStyle(theme.accent)
-            }
-            VStack(spacing: 6) {
-                Text("Your Stats Start Here")
-                    .font(vm.appFont(size: 20, weight: .semibold))
-                    .foregroundStyle(Palette.textPrimary)
-                Text("Listen to selected text or an audiobook, and Voqora will chart your listening time, favorite voices, streaks, and milestones.")
-                    .font(vm.appFont(size: 13))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 420)
-            }
-            HStack(spacing: 12) {
-                Button("Hear a Sample") {
-                    vm.selectedTab = "home"
-                    Task { await vm.speak(text: OnboardingCopy.sampleText) }
-                }
-                .buttonStyle(.voqoraPrimary)
-                .disabled(!vm.isBackendOnline)
-                Button("Add a Document…") {
-                    bookVM.isImporterPresented = true
-                }
-                .buttonStyle(.voqoraSecondary)
-            }
-        }
-        .padding(.vertical, 56)
-        .frame(maxWidth: .infinity)
-        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
-    }
-
-    private var footer: some View {
-        HStack(spacing: 10) {
+    private func footer(_ theme: StatsTheme) -> some View {
+        HStack(spacing: Theme.Space.unit * 2) {
             Image(systemName: "lock.fill")
                 .font(.system(size: 11))
+                .accessibilityHidden(true)
             Text("Stats are counted on this Mac and never leave it. Analytics settings don't affect them.")
-                .font(vm.font(.rowSubtitle))
-            Spacer()
-            Button("Reset Stats…") { confirmingReset = true }
-                .buttonStyle(.voqoraSecondary)
-                .disabled(stats.ledger.days.isEmpty)
+                .font(vm.font(.bodySmall))
         }
-        .foregroundStyle(Palette.textTertiary)
-        .padding(.top, 4)
+        .foregroundStyle(theme.tertiaryText)
     }
-}
-
-private struct HeroTileModel {
-    let title: String
-    let value: String
-    let icon: String
-    let change: Double?
-    let footnote: String
 }

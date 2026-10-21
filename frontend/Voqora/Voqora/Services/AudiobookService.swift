@@ -116,6 +116,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         speed: Double?,
         engine: String?,
         pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook/url", method: "POST", timeout: Self.webPageTimeout)
@@ -127,6 +128,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
                 speed: speed,
                 engine: SpeechEngineID.resolvedEngine(voice: voice, requested: engine),
                 pauseScale: pauseScale,
+                delivery: delivery,
                 cleanup: cleanup
             )
         )
@@ -203,6 +205,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         speed: Double?,
         engine: String?,
         pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil,
         cleanup: LLMCredential? = nil
     ) async throws -> AudiobookEstimateResponse {
         var req = try connection.request(path: "audiobook", method: "POST", timeout: 60)
@@ -221,6 +224,9 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         }
         if let pauseScale {
             fields.append(("pause_scale", String(PauseScale.clamped(pauseScale))))
+        }
+        if let deliveryJSON = SpeechDelivery.deliverable(delivery, forVoice: voice)?.formValue {
+            fields.append(("delivery", deliveryJSON))
         }
         if let cleanup {
             fields.append(("llm_provider", cleanup.provider.rawValue))

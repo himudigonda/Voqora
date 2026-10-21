@@ -16,9 +16,10 @@ nonisolated enum DictationEvent: Equatable, Sendable {
     case toggle
     case cancel
     case ready
-    case transcriptChanged(String)
+    case volatileChanged(String)
+    case segmentFinalized(String)
     case silenceDetected
-    case recognitionEnded(String)
+    case recognitionEnded
     case recognitionFailed
     case finishTimedOut
     case failed(DictationIssue)
@@ -37,7 +38,11 @@ nonisolated enum DictationEffect: Equatable, Sendable {
 
 nonisolated struct DictationStateMachine: Equatable, Sendable {
     private(set) var phase: DictationPhase = .idle
-    private(set) var transcript = ""
+    private(set) var ledger = DictationLedger()
+
+    var transcript: String {
+        ledger.text
+    }
 
     mutating func handle(_ event: DictationEvent) -> DictationEffect {
         switch event {
@@ -47,16 +52,18 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
             cancel()
         case .ready:
             becomeReady()
-        case let .transcriptChanged(text):
-            update(text)
+        case let .volatileChanged(text):
+            revise(text)
+        case let .segmentFinalized(text):
+            commit(text)
         case .silenceDetected:
             phase == .listening ? beginFinishing() : .nothing
-        case let .recognitionEnded(text):
-            end(with: text, ifEmpty: .nothingHeard)
+        case .recognitionEnded:
+            end(ifEmpty: .nothingHeard, recognizerFinished: true)
         case .recognitionFailed:
-            end(with: transcript, ifEmpty: phase == .finishing ? .nothingHeard : .recognitionFailed)
+            end(ifEmpty: phase == .finishing ? .nothingHeard : .recognitionFailed)
         case .finishTimedOut:
-            phase == .finishing ? end(with: transcript, ifEmpty: .nothingHeard) : .nothing
+            phase == .finishing ? end(ifEmpty: .nothingHeard) : .nothing
         case let .failed(issue):
             fail(issue)
         case .insertionFinished:
@@ -70,14 +77,14 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
         switch phase {
         case .idle:
             phase = .preparing
-            transcript = ""
+            ledger = DictationLedger()
             return .prepare
         case .preparing:
             return cancel()
         case .listening:
             return beginFinishing()
         case .finishing:
-            return end(with: transcript, ifEmpty: .nothingHeard)
+            return end(ifEmpty: .nothingHeard)
         case .inserting:
             return .nothing
         }
@@ -86,7 +93,7 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
     private mutating func cancel() -> DictationEffect {
         guard phase != .idle, phase != .inserting else { return .nothing }
         phase = .idle
-        transcript = ""
+        ledger = DictationLedger()
         return .stop
     }
 
@@ -98,9 +105,15 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
         return .nothing
     }
 
-    private mutating func update(_ text: String) -> DictationEffect {
+    private mutating func revise(_ text: String) -> DictationEffect {
         guard phase.isCapturing else { return .nothing }
-        transcript = text
+        ledger.revise(text)
+        return .nothing
+    }
+
+    private mutating func commit(_ text: String) -> DictationEffect {
+        guard phase.isCapturing else { return .nothing }
+        ledger.commit(text)
         return .nothing
     }
 
@@ -109,10 +122,14 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
         return .finishListening
     }
 
-    private mutating func end(with text: String, ifEmpty issue: DictationIssue) -> DictationEffect {
+    private mutating func end(ifEmpty issue: DictationIssue, recognizerFinished: Bool = false) -> DictationEffect {
         guard phase.isCapturing else { return .nothing }
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        transcript = cleaned
+        if recognizerFinished {
+            ledger.sealAfterRecognitionEnded()
+        } else {
+            ledger.sealAfterInterruption()
+        }
+        let cleaned = ledger.text
         guard !cleaned.isEmpty else {
             phase = .idle
             return .report(issue)
@@ -124,14 +141,14 @@ nonisolated struct DictationStateMachine: Equatable, Sendable {
     private mutating func fail(_ issue: DictationIssue) -> DictationEffect {
         guard phase != .idle, phase != .inserting else { return .nothing }
         phase = .idle
-        transcript = ""
+        ledger = DictationLedger()
         return .report(issue)
     }
 
     private mutating func abandonInsertion() -> DictationEffect {
         guard phase == .inserting else { return .nothing }
         phase = .idle
-        transcript = ""
+        ledger = DictationLedger()
         return .nothing
     }
 

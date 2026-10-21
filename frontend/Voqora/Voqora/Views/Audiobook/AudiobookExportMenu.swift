@@ -45,8 +45,8 @@ struct AudiobookExportMenuItems: View {
 struct AudiobookExportButton: View {
     @ObservedObject var exports: AudiobookExportController
     @EnvironmentObject var shelfUploads: AudiobookshelfUploadController
+    @Environment(\.voqoraTheme) private var theme
     let book: Audiobook
-    let tint: Color
 
     private var isEnabled: Bool {
         book.status == "done"
@@ -56,28 +56,25 @@ struct AudiobookExportButton: View {
         Menu {
             AudiobookExportMenuItems(exports: exports, book: book)
         } label: {
-            Group {
+            PlayerActionLabel(isActive: activeProgress != nil) {
                 if let progress = activeProgress {
                     if progress > 0 {
                         ProgressView(value: progress)
                             .progressViewStyle(.circular)
                             .controlSize(.small)
-                            .tint(tint)
+                            .tint(theme.primary)
                     } else {
                         ProgressView()
                             .progressViewStyle(.circular)
                             .controlSize(.small)
-                            .tint(tint)
+                            .tint(theme.primary)
                     }
                 } else {
                     Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
                 }
+            } caption: {
+                Text("Export")
             }
-            .frame(width: 30, height: 30)
-            .background(Circle().fill(Palette.controlFill))
-            .contentShape(Circle())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -105,31 +102,20 @@ struct AudiobookExportButton: View {
 }
 
 struct AudiobookExportQualityPicker: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @AppStorage(AudiobookExportSettings.bitrateKey) private var bitrateKbps = AudiobookExportSettings.defaultBitrateKbps
     @AppStorage(AudiobookExportSettings.mp3BitrateKey) private var mp3BitrateKbps = AudiobookExportSettings.defaultMP3BitrateKbps
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            qualityRow(
-                "Export Quality",
-                systemImage: "square.and.arrow.up",
-                selection: $bitrateKbps,
-                options: AudiobookExportSettings.bitrateOptionsKbps
-            )
-            Text("M4B exports are encoded as mono AAC at this bitrate. 64 kbps keeps narration clear and files small.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
-            qualityRow(
-                "MP3 Quality",
-                systemImage: "music.note",
-                selection: mp3Selection,
-                options: AudiobookExportSettings.mp3BitrateOptionsKbps
-            )
-            .padding(.top, 8)
-            Text("MP3 exports play on almost any device. 96 kbps suits spoken word; higher rates make larger files.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+        Section {
+            qualityPicker("Export Quality", selection: $bitrateKbps, options: AudiobookExportSettings.bitrateOptionsKbps)
+            qualityPicker("MP3 Quality", selection: mp3Selection, options: AudiobookExportSettings.mp3BitrateOptionsKbps)
+        } header: {
+            Text("Export")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("M4B exports are encoded as mono AAC at this bitrate. 64 kbps keeps narration clear and files small.")
+                Text("MP3 exports play on almost any device. 96 kbps suits spoken word; higher rates make larger files.")
+            }
         }
     }
 
@@ -140,18 +126,11 @@ struct AudiobookExportQualityPicker: View {
         )
     }
 
-    private func qualityRow(_ title: String, systemImage: String, selection: Binding<Int>, options: [Int]) -> some View {
-        HStack {
-            Label(title, systemImage: systemImage)
-                .font(vm.font(.rowTitle))
-            Spacer()
-            Picker(title, selection: selection) {
-                ForEach(options, id: \.self) { kbps in
-                    Text("\(kbps) kbps").tag(kbps)
-                }
+    private func qualityPicker(_ title: String, selection: Binding<Int>, options: [Int]) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(options, id: \.self) { kbps in
+                Text("\(kbps) kbps").tag(kbps)
             }
-            .labelsHidden()
-            .fixedSize()
         }
     }
 }

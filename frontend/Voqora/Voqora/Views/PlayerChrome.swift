@@ -1,116 +1,41 @@
 import SwiftUI
 
-struct PlayerScaffold<Artwork: View, Header: View, Controls: View, Content: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
-    var tint: Color?
-    @ViewBuilder let artwork: (CGFloat) -> Artwork
-    @ViewBuilder let header: (HorizontalAlignment) -> Header
-    @ViewBuilder let controls: (Bool) -> Controls
-    @ViewBuilder let content: (CGFloat) -> Content
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                background
-                if AudiobookPlayerLayout.columnVisibility(for: geometry.size.width).showCover {
-                    wide(height: geometry.size.height)
-                } else {
-                    compact
-                }
-            }
-        }
-        .frame(minWidth: AudiobookPlayerLayout.minWidth, minHeight: 480)
-    }
-
-    private var background: some View {
-        ZStack {
-            Palette.surfaceBase
-            if let tint {
-                RadialGradient(
-                    colors: [tint.opacity(colorScheme == .dark ? 0.22 : 0.12), .clear],
-                    center: .topLeading,
-                    startRadius: 0,
-                    endRadius: 900
-                )
-                .transition(.opacity)
-            }
-        }
-        .ignoresSafeArea()
-    }
-
-    private func wide(height: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            VStack(spacing: 22) {
-                Spacer(minLength: 0)
-                artwork(AudiobookPlayerLayout.artworkHeight(forAvailableHeight: height))
-                header(.center)
-                controls(false)
-                Spacer(minLength: 0)
-            }
-            .frame(width: AudiobookPlayerLayout.controlsColumnWidth)
-            .padding(.leading, 40)
-            .padding(.trailing, 16)
-            .padding(.vertical, 24)
-
-            content(26)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(.trailing, 16)
-        }
-    }
-
-    private var compact: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .center, spacing: 14) {
-                artwork(84)
-                header(.leading)
-                Spacer(minLength: 0)
-            }
-            controls(true)
-            content(22)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 20)
-    }
-}
-
 struct PlayerTitle: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let title: String
     let subtitle: String
-    let alignment: HorizontalAlignment
     var byline: String?
 
     var body: some View {
-        VStack(alignment: alignment, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
-                .font(vm.appFont(size: alignment == .center ? 19 : 16, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.headline))
+                .foregroundStyle(theme.onSurface)
                 .lineLimit(2)
-                .multilineTextAlignment(alignment == .center ? .center : .leading)
+                .multilineTextAlignment(.leading)
                 .help(title)
             if let byline {
                 Text(byline)
-                    .font(vm.appFont(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.textPrimary.opacity(0.8))
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurfaceVariant)
                     .lineLimit(1)
                     .help(byline)
             }
             Text(subtitle)
-                .font(vm.appFont(size: 13, weight: .medium))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.body))
+                .foregroundStyle(theme.onSurfaceVariant)
                 .lineLimit(1)
                 .contentTransition(.opacity)
-                .animation(.easeInOut(duration: 0.25), value: subtitle)
+                .animation(Theme.Motion.selection, value: subtitle)
+                .help(subtitle)
         }
-        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 struct PlayerPlayButton: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.voqoraTheme) private var theme
     let isPlaying: Bool
     let isLoading: Bool
     let size: CGFloat
@@ -119,21 +44,21 @@ struct PlayerPlayButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().fill(vm.accentColor(scheme: colorScheme, contrast: contrast))
+                Circle().fill(theme.primary)
                 if isLoading {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
+                        .tint(theme.onPrimary)
                 } else {
                     Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: size * 0.36, weight: .bold))
-                        .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: contrast))
+                        .font(.system(size: size * 0.38, weight: .bold))
+                        .foregroundStyle(theme.onPrimary)
                         .offset(x: isPlaying ? 0 : size * 0.03)
                         .contentTransition(.symbolEffect(.replace))
                 }
             }
             .frame(width: size, height: size)
-            .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+            .contentShape(Circle())
         }
         .buttonStyle(PressScaleButtonStyle())
         .accessibilityLabel(isPlaying ? "Pause" : "Play")
@@ -142,6 +67,7 @@ struct PlayerPlayButton: View {
 }
 
 struct TransportGlyph: View {
+    @Environment(\.voqoraTheme) private var theme
     let systemName: String
     let label: String
     var size: CGFloat = 18
@@ -152,14 +78,14 @@ struct TransportGlyph: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: .semibold))
-                .foregroundStyle(Palette.textPrimary.opacity(hovering ? 1 : 0.8))
+                .foregroundStyle(theme.onSurface)
                 .frame(width: size * 2.2, height: size * 2.2)
-                .background(Circle().fill(hovering ? Palette.controlFill : Color.clear))
+                .background(theme.onSurface.opacity(hovering ? 0.08 : 0), in: Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(PressScaleButtonStyle())
         .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .animation(Theme.Motion.hover, value: hovering)
         .help(label)
         .accessibilityLabel(label)
     }
@@ -168,8 +94,8 @@ struct TransportGlyph: View {
 struct PressScaleButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.92 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed ? 0.94 : 1)
+            .animation(Theme.Motion.selection, value: configuration.isPressed)
     }
 }
 
@@ -210,22 +136,68 @@ struct PlayerCircleMenu<Content: View>: View {
 }
 
 private struct PlayerCircleIcon: View {
+    @Environment(\.voqoraTheme) private var theme
     let systemName: String
 
     var body: some View {
         Image(systemName: systemName)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(Palette.textPrimary)
-            .frame(width: 30, height: 30)
-            .background(Circle().fill(Palette.controlFill))
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(theme.onPrimaryContainer)
+            .frame(width: 32, height: 32)
+            .background(theme.primaryContainer.opacity(0.65), in: Circle())
             .contentShape(Circle())
+    }
+}
+
+struct PlayerActionLabel<Icon: View, Caption: View>: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
+    var isActive = false
+    let icon: Icon
+    let caption: Caption
+
+    init(isActive: Bool = false, @ViewBuilder icon: () -> Icon, @ViewBuilder caption: () -> Caption) {
+        self.isActive = isActive
+        self.icon = icon()
+        self.caption = caption()
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            icon
+                .font(.system(size: 16, weight: .medium))
+                .foregroundStyle(theme.onPrimaryContainer)
+                .frame(width: 60, height: 36)
+                .background(isActive ? theme.primaryContainer : theme.primaryContainer.opacity(0.55), in: Capsule())
+            caption
+                .font(vm.font(.labelSmall))
+                .foregroundStyle(theme.onSurfaceVariant)
+                .monospacedDigit()
+                .lineLimit(1)
+        }
+        .frame(minWidth: 64)
+        .contentShape(Rectangle())
+    }
+}
+
+extension PlayerActionLabel where Icon == Image, Caption == Text {
+    init(systemImage: String, title: String, isActive: Bool = false) {
+        self.init(isActive: isActive, icon: { Image(systemName: systemImage) }, caption: { Text(title) })
+    }
+}
+
+extension PlayerActionLabel where Icon == Image {
+    init(systemImage: String, isActive: Bool = false, @ViewBuilder caption: () -> Caption) {
+        self.init(isActive: isActive, icon: { Image(systemName: systemImage) }, caption: caption)
     }
 }
 
 struct PlayerSpeedMenu: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     static let options = [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     let speed: Double
+    var showsCaption = false
     let onSelect: (Double) -> Void
 
     var body: some View {
@@ -242,13 +214,18 @@ struct PlayerSpeedMenu: View {
                 }
             }
         } label: {
-            Text(Self.label(speed))
-                .font(vm.appFont(size: 12, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(Palette.textPrimary)
-                .frame(minWidth: 44, minHeight: 30)
-                .background(Capsule().fill(Palette.controlFill))
-                .contentShape(Capsule())
+            if showsCaption {
+                PlayerActionLabel(systemImage: "speedometer", title: Self.label(speed))
+            } else {
+                Text(Self.label(speed))
+                    .font(vm.font(.label))
+                    .monospacedDigit()
+                    .foregroundStyle(theme.onPrimaryContainer)
+                    .padding(.horizontal, 12)
+                    .frame(minWidth: 48, minHeight: 32)
+                    .background(theme.primaryContainer.opacity(0.65), in: Capsule())
+                    .contentShape(Capsule())
+            }
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -266,36 +243,70 @@ struct PlayerSpeedMenu: View {
 
 struct PlayerVolumeControl: View {
     @EnvironmentObject var audio: AudioService
+    @Environment(\.voqoraTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "speaker.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.textSecondary)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.onSurfaceVariant)
             Slider(value: Binding(get: { Double(audio.volume) }, set: { audio.setVolume(Float($0)) }), in: 0 ... 1.5)
-                .controlSize(.mini)
-                .frame(maxWidth: 110)
+                .controlSize(.small)
+                .frame(width: 140)
                 .accessibilityLabel("Volume")
             Image(systemName: "speaker.wave.3.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(Palette.textSecondary)
+                .font(.system(size: 12))
+                .foregroundStyle(theme.onSurfaceVariant)
         }
     }
 }
 
-struct PlayerSegmentedHeader<Selection: Hashable & Identifiable & RawRepresentable & CaseIterable>: View
-    where Selection.RawValue == String, Selection.AllCases: RandomAccessCollection
-{
-    @Binding var selection: Selection
+struct PlayerVolumeButton: View {
+    @EnvironmentObject var audio: AudioService
+    @State private var showing = false
+
+    private var symbol: String {
+        switch audio.volume {
+        case 0: "speaker.slash"
+        case ..<0.5: "speaker.wave.1"
+        case ..<1.1: "speaker.wave.2"
+        default: "speaker.wave.3"
+        }
+    }
 
     var body: some View {
-        Picker("View", selection: $selection) {
-            ForEach(Selection.allCases) { Text($0.rawValue).tag($0) }
+        Button {
+            showing.toggle()
+        } label: {
+            PlayerActionLabel(systemImage: symbol, title: "Volume")
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(width: 110 * CGFloat(Selection.allCases.count))
-        .padding(.top, 16)
-        .padding(.bottom, 8)
+        .buttonStyle(.plain)
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            PlayerVolumeControl()
+                .padding(Theme.Space.card)
+        }
+        .help("Volume")
+        .accessibilityLabel("Volume")
+    }
+}
+
+struct PlayerProgressBar: View {
+    @Environment(\.voqoraTheme) private var theme
+    let fraction: Double
+    var height: CGFloat = 4
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(theme.onSurface.opacity(0.12))
+                Capsule()
+                    .fill(theme.primary)
+                    .frame(width: geometry.size.width * min(1, max(0, fraction)))
+            }
+        }
+        .frame(height: height)
+        .accessibilityElement()
+        .accessibilityLabel("Progress")
+        .accessibilityValue("\(Int((min(1, max(0, fraction)) * 100).rounded())) percent")
     }
 }

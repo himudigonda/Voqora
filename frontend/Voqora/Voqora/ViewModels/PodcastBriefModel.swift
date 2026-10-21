@@ -84,6 +84,8 @@ final class PodcastBriefModel: ObservableObject {
         do {
             let result = try await service.writeScript(request, credential: credential)
             guard !Task.isCancelled else { return }
+            UsageStatsStore.shared.recordPodcastScript()
+            MetricsService.shared.trackPodcastScript(speakers: request.hosts.count, provider: credential.provider.rawValue, ok: true)
             state = .editing
             generation = nil
             onScript(result)
@@ -91,6 +93,7 @@ final class PodcastBriefModel: ObservableObject {
             return
         } catch {
             guard !Task.isCancelled else { return }
+            MetricsService.shared.trackPodcastScript(speakers: request.hosts.count, provider: credential.provider.rawValue, ok: false)
             VoqoraLog.warn("Studio", "Podcast script failed", ["failureCode": PodcastServiceError.logLabel(for: error)])
             state = .failed(error.localizedDescription)
             generation = nil

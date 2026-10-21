@@ -8,7 +8,8 @@ you still need to get through the material, but do not want to keep staring at
 it.
 
 - **Private, on-device speech.** Your text is turned into speech on your Mac,
-  never on a server, and it works offline.
+  never on a server, and it works offline. Optional engines download once,
+  then run offline too.
 - **Unlimited.** No character quotas, no credits, no subscription.
 - **Smarter audiobooks with your AI provider.** Connect OpenAI, Anthropic, xAI,
   Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or your own
@@ -64,11 +65,11 @@ a screen.
 | Make long reading portable | A resumable document-to-audiobook workflow. |
 | Follow along | A transcript that highlights the sentence being read. Click any sentence to jump there. |
 | Find your place in a long book | Sections, scrub previews with the chapter name, and a sleep timer that stops at the end of a section. |
-| Tune the experience | Voice, speed, volume, The Vault (local history), and WAV export. |
+| Tune the experience | Voice, speed, volume, History (stored on your Mac), and WAV export. |
 | Listen as much as you want | An on-device speech engine for Apple silicon, with no usage limits. |
 | Turn books and web pages into audio | EPUB, PDF, Word, HTML, text, and web links, exported as M4B with chapters, MP3, or subtitles. |
 | Make it sound like yours | Voice blends, a pronunciation dictionary, and pause length. |
-| Understand what you read | AI summaries, questions with citations, quizzes, flashcards, and two-voice podcasts in Studio. |
+| Understand what you read | AI summaries, questions with citations, quizzes, flashcards, and two-voice podcasts in Create. |
 | Read anything on screen | Speak Text on Screen, Speak Clipboard, Services, Shortcuts actions, and media keys. |
 | Talk instead of type | On-device dictation into any app. |
 | Plug Voqora into other tools | An optional local API for apps and AI agents, Audiobookshelf upload, and a Chrome and Edge extension. |
@@ -82,7 +83,7 @@ a screen.
 | Stop | `Command + Shift + ,` |
 | Export the latest clip | `Command + Shift + M` |
 
-All four are remappable in Preferences.
+All four are remappable in Settings -> Shortcuts.
 
 ## How it works
 

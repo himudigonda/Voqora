@@ -24,7 +24,7 @@ checksums. Those assets are intentionally ignored by Git.
 
 | If you are changing… | Start in… |
 | --- | --- |
-| Native UI, shortcuts, playback, or Preferences | `frontend/Voqora/Voqora/` |
+| Native UI, shortcuts, playback, or Settings | `frontend/Voqora/Voqora/` |
 | Speech API, local engine, or audiobook processing | `backend/app/` |
 | Deterministic Python behavior | `backend/tests/` |
 | Swift services or view models | `frontend/Voqora/VoqoraTests/` |

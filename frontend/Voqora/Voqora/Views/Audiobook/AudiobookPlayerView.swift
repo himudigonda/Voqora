@@ -3,21 +3,23 @@ import SwiftUI
 struct AudiobookPlayerView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @Environment(\.voqoraTheme) private var theme
 
     let book: Audiobook
+    var onBack: () -> Void = {}
     @State private var panel: Panel = .transcript
-    @State private var tint: Color?
     @StateObject private var assistant: AIAssistantViewModel
     @State private var pendingCitation: AICitation?
 
-    init(book: Audiobook) {
+    init(book: Audiobook, onBack: @escaping () -> Void = {}) {
         self.book = book
+        self.onBack = onBack
         _assistant = StateObject(wrappedValue: AIAssistantViewModel.restoring(bookID: book.bookID))
     }
 
     enum Panel: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
-        case sections = "Sections"
+        case chapters = "Chapters"
         case assistant = "Assistant"
 
         var id: String {
@@ -25,43 +27,20 @@ struct AudiobookPlayerView: View {
         }
     }
 
+    private static let wideBreakpoint: CGFloat = 820
+    private static let controlsWidth: CGFloat = 360
+
     var body: some View {
-        PlayerScaffold(tint: tint) { height in
-            PlayerArtwork(book: book, height: height)
-        } header: { alignment in
-            AudiobookTitle(book: book, alignment: alignment)
-        } controls: { compact in
-            VStack(spacing: compact ? 14 : 22) {
-                PlaybackScrubber(
-                    markers: bookVM.chapters(for: book).map(\.startTime),
-                    isEnabled: isCurrentBook,
-                    chapterTitle: chapterTitle(at:),
-                    onScrub: { bookVM.follower.scrub(to: $0) },
-                    onCommit: { bookVM.seek(toSeconds: $0) }
-                )
-                PlayerTransport(book: book, compact: compact)
-                PlayerSecondaryControls(book: book)
-                    .frame(maxWidth: compact ? 420 : .infinity)
-            }
-        } content: { fontSize in
-            VStack(spacing: 0) {
-                PlayerSegmentedHeader(selection: $panel)
-                    .frame(maxWidth: .infinity)
-                    .overlay(alignment: .trailing) {
-                        ReadingModeButton()
-                            .padding(.top, DesignTokens.Spacing.sm)
-                            .padding(.trailing, DesignTokens.Spacing.md)
-                    }
-                switch panel {
-                case .transcript:
-                    transcript(fontSize: fontSize)
-                case .sections:
-                    PlayerSectionsList(book: book)
-                case .assistant:
-                    AIAssistantPanel(model: assistant, onCitation: open(_:))
+        PageScaffold(title: "Now Playing", scrolls: false) {
+            GeometryReader { geometry in
+                if geometry.size.width >= Self.wideBreakpoint {
+                    wideLayout(height: geometry.size.height)
+                } else {
+                    compactLayout
                 }
             }
         }
+        .backButton("Library", action: onBack)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.space) { bookVM.togglePlayback(); return .handled }
@@ -95,12 +74,72 @@ struct AudiobookPlayerView: View {
             guard let citation = pendingCitation, isCurrentBook, state == .loaded || state == .unavailable else { return }
             jump(to: citation)
         }
-        .task(id: book.bookID) {
-            let color = await CoverColorExtractor.shared.dominantColor(forBackendPath: "audiobook/\(book.bookID)/cover")
-            withAnimation(.easeInOut(duration: 0.6)) {
-                tint = color
+    }
+
+    private func wideLayout(height: CGFloat) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.section) {
+            ScrollView {
+                controlsColumn(coverHeight: min(280, max(150, height * 0.34)))
+                    .padding(.bottom, Theme.Space.card)
+            }
+            .scrollIndicators(.never)
+            .frame(width: Self.controlsWidth)
+            rightPanel(fontSize: 24)
+        }
+        .padding(.horizontal, Theme.Space.gutter)
+        .padding(.bottom, Theme.Space.card)
+    }
+
+    private var compactLayout: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.section) {
+                controlsColumn(coverHeight: 150)
+                    .frame(maxWidth: Self.controlsWidth)
+                    .frame(maxWidth: .infinity)
+                rightPanel(fontSize: 20)
+                    .frame(height: 440)
+            }
+            .padding(.horizontal, Theme.Space.gutter)
+            .padding(.bottom, Theme.Space.gutter)
+        }
+    }
+
+    private func controlsColumn(coverHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.card) {
+            PlayerArtwork(book: book, height: coverHeight)
+                .frame(maxWidth: .infinity)
+            AudiobookTitle(book: book)
+            PlaybackScrubber(
+                markers: bookVM.chapters(for: book).map(\.startTime),
+                isEnabled: isCurrentBook,
+                chapterTitle: chapterTitle(at:),
+                onScrub: { bookVM.follower.scrub(to: $0) },
+                onCommit: { bookVM.seek(toSeconds: $0) }
+            )
+            PlayerTransport(book: book)
+                .frame(maxWidth: .infinity)
+            PlayerSecondaryControls(book: book)
+                .frame(maxWidth: .infinity)
+        }
+    }
+
+    private func rightPanel(fontSize: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item + 4) {
+            HStack {
+                SegmentedTabs(selection: $panel, options: Panel.allCases, title: { $0.rawValue })
+                Spacer(minLength: 0)
+                ReadingModeButton()
+            }
+            switch panel {
+            case .transcript:
+                transcript(fontSize: fontSize)
+            case .chapters:
+                PlayerChaptersList(book: book)
+            case .assistant:
+                AIAssistantPanel(model: assistant, onCitation: open(_:))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var isCurrentBook: Bool {
@@ -150,20 +189,19 @@ struct AudiobookPlayerView: View {
                 bookVM.play(fromLine: line)
             }
         case (true, .unavailable):
-            VStack(spacing: 12) {
-                Text("Transcript Unavailable")
-                    .font(vm.appFont(size: 15, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                Button("Try Again") { bookVM.loadTranscript(for: book.bookID) }
-                    .buttonStyle(.voqoraSecondary)
-            }
+            EmptyStateView(
+                symbol: "text.page.slash",
+                title: "Transcript Unavailable",
+                message: "Voqora could not load the text for this audiobook.",
+                action: EmptyStateAction(title: "Try Again") { bookVM.loadTranscript(for: book.bookID) }
+            )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         default:
             VStack(spacing: 10) {
                 ProgressView().controlSize(.small)
                 Text("Loading Transcript…")
-                    .font(vm.appFont(size: 12, weight: .medium))
-                    .foregroundStyle(Palette.textTertiary)
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurfaceMuted)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -174,13 +212,11 @@ private struct AudiobookTitle: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
     let book: Audiobook
-    let alignment: HorizontalAlignment
 
     var body: some View {
         PlayerTitle(
             title: book.displayTitle,
             subtitle: book.subtitle(at: audio.currentTime, chapters: bookVM.chapters(for: book)),
-            alignment: alignment,
             byline: book.displayAuthor.map { "by \($0)" }
         )
     }
@@ -198,42 +234,18 @@ private struct SectionSleepCountdown: View {
 }
 
 private struct PlayerArtwork: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let book: Audiobook
     let height: CGFloat
 
-    private var width: CGFloat {
-        height * AudiobookCardView.coverAspectRatio
-    }
-
-    private var radius: CGFloat {
-        height > 120 ? 14 : 8
-    }
-
     var body: some View {
         let playing = audio.isPlaying
-        let ramp = Palette.accentRamp(for: vm.accentColorID, appearance: colorScheme, increaseContrast: contrast == .increased)
-        AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            ZStack {
-                LinearGradient(colors: [Color(ramp.muted), Color(ramp.subtle)], startPoint: .topLeading, endPoint: .bottomTrailing)
-                Image(systemName: "book.fill")
-                    .font(.system(size: height * 0.18, weight: .ultraLight))
-                    .foregroundStyle(Palette.textPrimary.opacity(0.7))
-            }
-        }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).stroke(Palette.separator, lineWidth: 1))
-        .shadow(color: .black.opacity(playing ? 0.35 : 0.2), radius: playing ? 24 : 12, y: playing ? 12 : 6)
-        .scaleEffect(playing || height <= 120 ? 1 : 0.94)
-        .animation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.8), value: playing)
-        .accessibilityHidden(true)
+        BookCover(bookID: book.bookID, radius: Theme.Shape.lg)
+            .frame(width: height * BookCover.aspectRatio, height: height)
+            .shadow(color: .black.opacity(playing ? 0.24 : 0.12), radius: playing ? 22 : 10, y: playing ? 10 : 4)
+            .scaleEffect(playing ? 1 : 0.96)
+            .animation(reduceMotion ? nil : Theme.Motion.selection, value: playing)
     }
 }
 
@@ -241,24 +253,23 @@ private struct PlayerTransport: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
     let book: Audiobook
-    let compact: Bool
 
     private var isCurrentBook: Bool {
         bookVM.nowPlaying?.bookID == book.bookID
     }
 
     var body: some View {
-        HStack(spacing: compact ? 14 : 22) {
-            TransportGlyph(systemName: "backward.end.fill", label: "Previous Section") {
+        HStack(spacing: 14) {
+            TransportGlyph(systemName: "backward.end.fill", label: "Previous Section", size: 15) {
                 bookVM.jumpToPreviousSection(in: book)
             }
-            TransportGlyph(systemName: "gobackward.15", label: "Back 15 Seconds") {
+            TransportGlyph(systemName: "gobackward.15", label: "Back 15 Seconds", size: 20) {
                 bookVM.skip(by: -15)
             }
             PlayerPlayButton(
                 isPlaying: isCurrentBook && audio.isPlaying,
                 isLoading: bookVM.isLoadingAudio,
-                size: compact ? 48 : 64
+                size: 68
             ) {
                 if isCurrentBook {
                     bookVM.togglePlayback()
@@ -266,10 +277,10 @@ private struct PlayerTransport: View {
                     bookVM.play(book)
                 }
             }
-            TransportGlyph(systemName: "goforward.30", label: "Forward 30 Seconds") {
+            TransportGlyph(systemName: "goforward.30", label: "Forward 30 Seconds", size: 20) {
                 bookVM.skip(by: 30)
             }
-            TransportGlyph(systemName: "forward.end.fill", label: "Next Section") {
+            TransportGlyph(systemName: "forward.end.fill", label: "Next Section", size: 15) {
                 bookVM.jumpToNextSection(in: book)
             }
         }
@@ -281,23 +292,15 @@ private struct PlayerSecondaryControls: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
     let book: Audiobook
     @State private var showingPronunciations = false
 
-    private var accent: Color {
-        vm.accentColor(scheme: colorScheme, contrast: contrast)
-    }
-
     var body: some View {
-        HStack(spacing: 10) {
-            PlayerSpeedMenu(speed: Double(audio.playbackRate)) { bookVM.setSpeed($0) }
-            Spacer(minLength: 0)
-            PlayerVolumeControl()
-            Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 8) {
+            PlayerSpeedMenu(speed: Double(audio.playbackRate), showsCaption: true) { bookVM.setSpeed($0) }
+            PlayerVolumeButton()
             sleepMenu
-            AudiobookExportButton(exports: bookVM.exports, book: book, tint: accent)
+            AudiobookExportButton(exports: bookVM.exports, book: book)
             moreMenu
         }
         .sheet(isPresented: $showingPronunciations) {
@@ -308,9 +311,18 @@ private struct PlayerSecondaryControls: View {
     }
 
     private var moreMenu: some View {
-        PlayerCircleMenu(systemName: "ellipsis", label: "More") {
+        Menu {
             Button("Pronunciations for This Book…") { showingPronunciations = true }
+            ReadingModeMenuButton()
+        } label: {
+            PlayerActionLabel(systemImage: "ellipsis", title: "More")
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("More")
+        .accessibilityLabel("More")
     }
 
     private var sleepIsArmed: Bool {
@@ -327,27 +339,11 @@ private struct PlayerSecondaryControls: View {
                 Button("Turn Off Sleep Timer") { bookVM.cancelSleepTimer() }
             }
         } label: {
-            HStack(spacing: 5) {
+            PlayerActionLabel(isActive: sleepIsArmed) {
                 Image(systemName: sleepIsArmed ? "moon.zzz.fill" : "moon.zzz")
-                    .font(.system(size: 13, weight: .medium))
-                if let endsAt = bookVM.sleepTimerEndsAt {
-                    Text(timerInterval: Date() ... max(Date(), endsAt), countsDown: true)
-                        .font(vm.appFont(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                } else if bookVM.sleepAtEndOfSection {
-                    SectionSleepCountdown(book: book)
-                        .font(vm.appFont(size: 11, weight: .semibold))
-                        .monospacedDigit()
-                } else if bookVM.sleepUntilEndOfBook {
-                    Text("End")
-                        .font(vm.appFont(size: 11, weight: .semibold))
-                }
+            } caption: {
+                sleepCaption
             }
-            .foregroundStyle(sleepIsArmed ? accent : Palette.textPrimary)
-            .padding(.horizontal, sleepIsArmed ? 10 : 0)
-            .frame(minWidth: 30, minHeight: 30)
-            .background(Capsule().fill(Palette.controlFill))
-            .contentShape(Capsule())
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -356,10 +352,22 @@ private struct PlayerSecondaryControls: View {
         .help("Sleep Timer")
         .accessibilityLabel("Sleep Timer")
     }
+
+    @ViewBuilder
+    private var sleepCaption: some View {
+        if let endsAt = bookVM.sleepTimerEndsAt {
+            Text(timerInterval: Date() ... max(Date(), endsAt), countsDown: true)
+        } else if bookVM.sleepAtEndOfSection {
+            SectionSleepCountdown(book: book)
+        } else if bookVM.sleepUntilEndOfBook {
+            Text("End")
+        } else {
+            Text("Sleep")
+        }
+    }
 }
 
-private struct PlayerSectionsList: View {
-    @EnvironmentObject var vm: DashboardViewModel
+private struct PlayerChaptersList: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var audio: AudioService
     let book: Audiobook
@@ -368,42 +376,40 @@ private struct PlayerSectionsList: View {
         let sections = bookVM.chapters(for: book)
         let isCurrentBook = bookVM.nowPlaying?.bookID == book.bookID
         let currentID = isCurrentBook ? sections.section(at: audio.currentTime)?.id : nil
-        ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
-                    PlayerSectionRow(
-                        section: section,
-                        number: index + 1,
-                        isCurrent: section.id == currentID,
-                        isPlaying: audio.isPlaying
-                    ) {
-                        guard isCurrentBook else { return }
-                        bookVM.seek(toSeconds: section.startTime)
-                        if !audio.isPlaying {
-                            audio.resume()
+        if sections.isEmpty {
+            EmptyStateView(
+                symbol: "list.number",
+                title: "No chapters",
+                message: "This audiobook has no chapter markers."
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                ListGroup {
+                    ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+                        PlayerChapterRow(
+                            section: section,
+                            number: index + 1,
+                            isCurrent: section.id == currentID,
+                            isPlaying: audio.isPlaying
+                        ) {
+                            guard isCurrentBook else { return }
+                            bookVM.seek(toSeconds: section.startTime)
+                            if !audio.isPlaying {
+                                audio.resume()
+                            }
                         }
                     }
                 }
-            }
-            .frame(maxWidth: 640)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-        }
-        .overlay {
-            if sections.isEmpty {
-                Text("No Sections")
-                    .font(vm.appFont(size: 15, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
+                .padding(.bottom, Theme.Space.card)
             }
         }
     }
 }
 
-private struct PlayerSectionRow: View {
+private struct PlayerChapterRow: View {
     @EnvironmentObject var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.voqoraTheme) private var theme
     let section: AudiobookSection
     let number: Int
     let isCurrent: Bool
@@ -412,45 +418,50 @@ private struct PlayerSectionRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        let accent = vm.accentColor(scheme: colorScheme, contrast: contrast)
         let title = AudiobookImportStaging.displayName(from: section.title)
         Button(action: action) {
-            HStack(spacing: 14) {
+            HStack(spacing: 16) {
                 Group {
                     if isCurrent, isPlaying {
                         Image(systemName: "waveform")
                             .symbolEffect(.variableColor.iterative, isActive: true)
-                            .foregroundStyle(accent)
                     } else {
                         Text("\(number)")
-                            .foregroundStyle(isCurrent ? accent : Palette.textTertiary)
                     }
                 }
-                .font(vm.appFont(size: 12, weight: .semibold))
+                .font(vm.font(.label))
                 .monospacedDigit()
-                .frame(width: 24)
+                .foregroundStyle(isCurrent ? theme.onPrimaryContainer : theme.onSurfaceMuted)
+                .frame(width: 28)
                 Text(title)
-                    .font(vm.appFont(size: 14, weight: isCurrent ? .semibold : .regular))
-                    .foregroundStyle(isCurrent ? accent : Palette.textPrimary)
+                    .font(vm.font(isCurrent ? .titleSmall : .body))
+                    .foregroundStyle(isCurrent ? theme.onPrimaryContainer : theme.onSurface)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
+                    .help(title)
                 Spacer(minLength: 12)
                 Text(DurationFormatter.clock(section.startTime))
-                    .font(vm.appFont(size: 12, weight: .medium))
+                    .font(vm.font(.label))
                     .monospacedDigit()
-                    .foregroundStyle(Palette.textSecondary)
+                    .foregroundStyle(theme.onSurfaceVariant)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(isHovered ? Palette.controlFill : Color.clear)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background, in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
+        .animation(Theme.Motion.hover, value: isHovered)
         .accessibilityLabel("\(title), \(DurationFormatter.clock(section.startTime))")
         .accessibilityAddTraits(isCurrent ? [.isSelected] : [])
+    }
+
+    private var background: Color {
+        if isCurrent {
+            return theme.secondaryContainer
+        }
+        return isHovered ? theme.surfaceContainerHigh : theme.surfaceContainer
     }
 }

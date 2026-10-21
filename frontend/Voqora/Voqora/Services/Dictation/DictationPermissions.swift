@@ -18,6 +18,7 @@ protocol DictationAuthorizing {
 
 struct DictationPermissionGate {
     let authorizer: any DictationAuthorizing
+    var requiresSpeechRecognition = true
 
     func missingAccess() async -> DictationIssue? {
         switch authorizer.microphoneStatus() {
@@ -28,6 +29,7 @@ struct DictationPermissionGate {
         case .notDetermined:
             guard await authorizer.requestMicrophoneAccess() else { return .microphoneDenied }
         }
+        guard requiresSpeechRecognition else { return nil }
         switch authorizer.speechRecognitionStatus() {
         case .granted:
             break

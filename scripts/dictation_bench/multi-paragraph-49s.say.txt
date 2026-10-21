@@ -1,0 +1,6 @@
+The quarterly planning meeting starts at nine tomorrow morning. Please bring the updated revenue forecast and the hiring plan. [[slnc 1800]]
+We agreed that the mobile release will slip by two weeks. The payment flow still has three open defects that block the launch. [[slnc 2500]]
+Marketing wants a short video for the landing page. Sarah will draft the script and share it by Friday afternoon. [[slnc 1200]]
+The database migration finished overnight without errors. Latency on the search endpoint dropped by forty percent. [[slnc 3000]]
+Next, we need to decide on the vendor for customer support tooling. Both proposals are within budget, but only one supports single sign on. [[slnc 1500]]
+Finally, remember that the office will be closed on Monday for maintenance. Everyone should work from home that day.

@@ -57,13 +57,6 @@ final class DictationRecognitionTests: XCTestCase {
         }
     }
 
-    func test_recognitionCallbacksMapToEvents() {
-        XCTAssertEqual(SpeechRecognitionEvent.from(transcript: "Hi", isFinal: false, hasError: false), .transcript("Hi", isFinal: false))
-        XCTAssertEqual(SpeechRecognitionEvent.from(transcript: "Hi.", isFinal: true, hasError: false), .transcript("Hi.", isFinal: true))
-        XCTAssertEqual(SpeechRecognitionEvent.from(transcript: nil, isFinal: false, hasError: true), .failed)
-        XCTAssertNil(SpeechRecognitionEvent.from(transcript: nil, isFinal: false, hasError: false))
-    }
-
     func test_permissionGatePassesWhenEverythingIsGranted() async {
         let authorizer = StubAuthorizer()
 

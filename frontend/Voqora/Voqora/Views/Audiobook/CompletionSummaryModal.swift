@@ -4,84 +4,67 @@ struct CompletionSummaryModal: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
     let book: Audiobook
     var onListenNow: ((Audiobook) -> Void)?
-    @State private var bouncing = false
-
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
 
     var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(accentColor)
-                .symbolEffect(.bounce, value: bouncing)
-                .padding(.top, 12)
-
-            VStack(spacing: 4) {
-                Text("Ready to Listen")
-                    .font(vm.font(.sectionHeader))
-                    .foregroundStyle(accentColor)
-                Text(prettyTitle)
-                    .font(vm.appFont(size: 20, weight: .bold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .padding(.horizontal, 16)
-            }
-
-            if !book.failedPages.isEmpty {
-                failedPagesWarning
-            }
-
-            statsGrid
-
-            HStack(spacing: 12) {
-                Button { dismiss() } label: {
-                    Text("Later")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+        VoqoraSheet(title: "Ready to Listen", supporting: book.displayTitle) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                if !book.failedPages.isEmpty {
+                    failedPagesWarning
                 }
-                .buttonStyle(.voqoraSecondary)
-
-                Button {
-                    let callback = onListenNow
-                    let snapshot = book
-                    dismiss()
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(250))
-                        callback?(snapshot)
+                VoqoraCard {
+                    VStack(spacing: Theme.Space.item) {
+                        statRow("Pages", "\(book.pageCount)", "doc.text")
+                        statRow("Words", numberFormat(book.actual?.words ?? 0), "textformat")
+                        statRow("Length", DurationFormatter.short(book.totalAudioSeconds), "waveform")
+                        statRow("Processing", DurationFormatter.short(book.actual?.processingSeconds ?? 0), "clock")
+                        if book.sections.count > 1 {
+                            statRow("Sections", "\(book.sections.count)", "list.bullet.rectangle")
+                        }
+                        if let cost = book.actual?.costUsd, cost > 0 {
+                            statRow("Cost", cost < 0.01 ? "Under $0.01" : String(format: "$%.2f", cost), "dollarsign.circle")
+                        }
                     }
-                } label: {
-                    Label("Listen Now", systemImage: "play.fill")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
                 }
-                .buttonStyle(.voqoraPrimary)
-                .keyboardShortcut(.defaultAction)
+                actions
             }
         }
-        .padding(28)
-        .frame(width: 520)
-        .fixedSize(horizontal: false, vertical: true)
-        .voqoraSurface(.floating, in: Rectangle())
-        .onAppear { bouncing.toggle() }
+    }
+
+    private var actions: some View {
+        HStack(spacing: Theme.Space.item) {
+            Spacer(minLength: 0)
+            Button("Later") { dismiss() }
+                .buttonStyle(.voqoraText)
+                .keyboardShortcut(.cancelAction)
+            Button {
+                let callback = onListenNow
+                let snapshot = book
+                dismiss()
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(250))
+                    callback?(snapshot)
+                }
+            } label: {
+                Label("Listen Now", systemImage: "play.fill")
+            }
+            .buttonStyle(.voqoraFilled)
+            .keyboardShortcut(.defaultAction)
+        }
     }
 
     private var failedPagesWarning: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: Theme.Space.item) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Palette.warning)
-                .font(.system(size: 14))
-            VStack(alignment: .leading, spacing: 2) {
+                .foregroundStyle(theme.warning)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Theme.Space.unit) {
                 Text("\(book.failedPages.count) \(book.failedPages.count == 1 ? "page" : "pages") didn't process fully")
-                    .font(vm.appFont(size: 12, weight: .bold))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurface)
                 Button {
                     let snapshot = book
                     dismiss()
@@ -94,62 +77,37 @@ struct CompletionSummaryModal: View {
                         "Retry \(book.failedPages.count) failed \(book.failedPages.count == 1 ? "page" : "pages")",
                         systemImage: "arrow.clockwise"
                     )
-                    .font(vm.appFont(size: 11, weight: .semibold))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(accentColor)
-                .padding(.top, 2)
+                .buttonStyle(.voqoraTonal)
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
-        .background(Palette.warning.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-                .stroke(Palette.warning.opacity(0.3), lineWidth: 1)
-        )
-        .padding(.horizontal, 4)
-    }
-
-    private var statsGrid: some View {
-        VStack(spacing: 10) {
-            statRow("Pages", "\(book.pageCount)", "doc.text")
-            statRow("Words", numberFormat(book.actual?.words ?? 0), "textformat")
-            statRow("Length", DurationFormatter.short(book.totalAudioSeconds), "waveform")
-            statRow("Processing", DurationFormatter.short(book.actual?.processingSeconds ?? 0), "clock")
-            if book.sections.count > 1 {
-                statRow("Sections", "\(book.sections.count)", "list.bullet.rectangle")
-            }
-            if let cost = book.actual?.costUsd, cost > 0 {
-                statRow("Cost", cost < 0.01 ? "Under $0.01" : String(format: "$%.2f", cost), "dollarsign.circle")
-            }
-        }
-        .padding(16)
-        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
+        .padding(Theme.Space.item + 4)
+        .background(theme.warning.opacity(0.14), in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
     }
 
     private func statRow(_ label: String, _ value: String, _ icon: String) -> some View {
-        HStack {
-            Image(systemName: icon).foregroundStyle(accentColor).font(.system(size: 11)).frame(width: 18)
+        HStack(spacing: Theme.Space.item) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(theme.onPrimaryContainer)
+                .frame(width: 28, height: 28)
+                .background(theme.primaryContainer.opacity(0.65), in: Circle())
+                .accessibilityHidden(true)
             Text(label)
-                .font(vm.font(.chip))
-                .foregroundStyle(Palette.textSecondary)
-            Spacer()
+                .font(vm.font(.body))
+                .foregroundStyle(theme.onSurfaceVariant)
+            Spacer(minLength: 0)
             Text(value)
-                .font(vm.appFont(size: 14, weight: .bold).monospaced())
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.label))
+                .monospacedDigit()
+                .foregroundStyle(theme.onSurface)
                 .contentTransition(.numericText())
         }
-    }
-
-    private var prettyTitle: String {
-        book.displayTitle
+        .accessibilityElement(children: .combine)
     }
 
     private func numberFormat(_ n: Int) -> String {
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        return f.string(from: NSNumber(value: n)) ?? "\(n)"
+        n.formatted(.number)
     }
 }

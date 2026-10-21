@@ -14,6 +14,41 @@ protocol DictationHUDPresenting: AnyObject {
     func hide(after delay: TimeInterval)
 }
 
+@MainActor
+protocol EscapeKeyRegistering: AnyObject {
+    func enable(onPress: @escaping @MainActor () -> Void)
+    func disable()
+}
+
+@MainActor
+final class InertEscapeKey: EscapeKeyRegistering {
+    func enable(onPress _: @escaping @MainActor () -> Void) {}
+    func disable() {}
+}
+
+@MainActor
+final class SystemEscapeKey: EscapeKeyRegistering {
+    private var onPress: (@MainActor () -> Void)?
+    private var isHandlerInstalled = false
+
+    func enable(onPress: @escaping @MainActor () -> Void) {
+        self.onPress = onPress
+        if !isHandlerInstalled {
+            isHandlerInstalled = true
+            KeyboardShortcuts.onKeyDown(for: .cancelDictation) { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.onPress?()
+                }
+            }
+        }
+        KeyboardShortcuts.setShortcut(.init(.escape), for: .cancelDictation)
+    }
+
+    func disable() {
+        KeyboardShortcuts.setShortcut(nil, for: .cancelDictation)
+    }
+}
+
 struct FrontmostApplication: Equatable {
     let processIdentifier: pid_t
     let bundleIdentifier: String?
@@ -35,21 +70,45 @@ struct DictationDependencies {
     var tidy: (@MainActor (String) async throws -> String)?
     var tidyTimeout: TimeInterval = 15
     var frontmostApplication: () -> FrontmostApplication? = { nil }
+    var sounds: any SoundPlaying = SilentSoundPlayer()
+    var recovery: DictationRecoveryStore?
+    var parakeetInstalled: @MainActor () -> Bool = { false }
+    var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    var escapeKey: any EscapeKeyRegistering = InertEscapeKey()
 
     static func system(defaults: UserDefaults = .standard) -> DictationDependencies {
         DictationDependencies(
-            recognizer: SystemSpeechRecognizer(),
+            recognizer: SystemSpeechRecognizer(defaults: defaults),
             authorizer: SystemDictationAuthorizer(),
             inserter: TranscriptInserter(),
             defaults: defaults,
             clock: { ProcessInfo.processInfo.systemUptime },
             finishTimeout: 2.5,
-            frontmostApplication: { FrontmostApplication.current() }
+            frontmostApplication: { FrontmostApplication.current() },
+            sounds: SoundPlayer.shared,
+            recovery: DictationRecoveryStore(),
+            parakeetInstalled: { ParakeetModelStore.shared.isInstalled },
+            escapeKey: SystemEscapeKey()
         )
     }
 }
 
+nonisolated struct TidyWordCounts: Equatable, Sendable {
+    let before: Int
+    let after: Int
+}
+
+private struct LiveInsertion {
+    let target: FrontmostApplication?
+    var deliveredText = ""
+    var stopOutcome: DictationInsertionOutcome?
+}
+
 final class DictationController: ObservableObject {
+    static let holdToTalkThreshold: TimeInterval = 0.45
+    static let staleKeyDownSeconds: TimeInterval = 1
+    static let continuationWindowSeconds: TimeInterval = 60
+
     static let outcomeDisplaySeconds: TimeInterval = 1.6
     static let issueDisplaySeconds: TimeInterval = 4
     static let actionableIssueDisplaySeconds: TimeInterval = 8
@@ -61,6 +120,7 @@ final class DictationController: ObservableObject {
     @Published private(set) var outcome: DictationInsertionOutcome?
     @Published private(set) var tidyFailure: String?
     @Published private(set) var isTidying = false
+    @Published private(set) var tidiedWords: TidyWordCounts?
 
     let transcripts: DictationTranscriptStore
     weak var speechPauser: (any DictationSpeechPausing)?
@@ -71,12 +131,41 @@ final class DictationController: ObservableObject {
     private var silenceDetector: SilenceDetector?
     private var finishTimeoutTask: Task<Void, Never>?
     private var sessionLocaleIdentifier: String?
-    private var tidyTask: Task<String, Never>?
+    private var tidyTask: Task<String?, Never>?
+    private var tidySkippedByUser = false
+    private var tidyCancelledByUser = false
+
+    var tidyWasDropped: Bool {
+        tidyFailure != nil || tidySkippedByUser || tidyCancelledByUser
+    }
+
+    var tidyWasCancelled: Bool {
+        tidyCancelledByUser
+    }
+
     private var targetApplication: FrontmostApplication?
+    private var pendingEvents: [SpeechRecognitionEvent] = []
+    private var sessionID = 0
+    private var drainTask: Task<Void, Never>?
+    private var live: LiveInsertion?
+    private var liveDrain: Task<Void, Never>?
+    private var lastPaste: (application: FrontmostApplication, at: TimeInterval)?
+    private var committedSegmentsSeen = 0
+    private var sessionStartedAt = Date()
+    private var isTraceOpen = false
+    private var sessionSavedToHistory = false
+    private var isShortcutDown = false
+    private var isHoldArmed = false
+    private var holdSession: Int?
+    private var holdStartedAt: TimeInterval = 0
+    private var finishesWhenReady = false
+    private var isEscapeEnabled = false
 
     init(transcripts: DictationTranscriptStore, dependencies: DictationDependencies = .system()) {
         self.transcripts = transcripts
         self.dependencies = dependencies
+        dependencies.escapeKey.disable()
+        recoverUnsavedDictation()
     }
 
     static var shortcutLabel: String {
@@ -84,43 +173,113 @@ final class DictationController: ObservableObject {
     }
 
     func registerShortcut() {
+        KeyboardShortcuts.onKeyDown(for: .toggleDictation) { [weak self] in
+            Task { @MainActor [weak self] in
+                VoqoraLog.info("KeyboardShortcuts", "toggleDictation pressed")
+                await self?.shortcutPressed()
+            }
+        }
         KeyboardShortcuts.onKeyUp(for: .toggleDictation) { [weak self] in
             Task { @MainActor [weak self] in
-                VoqoraLog.info("KeyboardShortcuts", "toggleDictation triggered")
-                await self?.toggle()
+                await self?.shortcutReleased()
+            }
+        }
+        KeyboardShortcuts.onKeyUp(for: .pasteLastDictation) { [weak self] in
+            Task { @MainActor [weak self] in
+                await self?.pasteLastTranscript()
             }
         }
     }
 
     func toggle() async {
         if isTidying {
-            abandonTidy()
+            skipTidy()
             return
         }
         await send(.toggle)
     }
 
+    func shortcutPressed() async {
+        let pressedAt = dependencies.now()
+        guard !isShortcutDown || pressedAt - holdStartedAt >= Self.staleKeyDownSeconds else { return }
+        isShortcutDown = true
+        isHoldArmed = machine.phase == .idle && !isTidying
+        holdSession = nil
+        holdStartedAt = pressedAt
+        await toggle()
+        isHoldArmed = false
+    }
+
+    func shortcutReleased() async {
+        guard isShortcutDown else { return }
+        isShortcutDown = false
+        guard let session = holdSession else { return }
+        holdSession = nil
+        guard session == sessionID,
+              dependencies.now() - holdStartedAt >= Self.holdToTalkThreshold
+        else { return }
+        switch machine.phase {
+        case .preparing:
+            finishesWhenReady = true
+        case .listening:
+            await send(.toggle)
+        case .idle, .finishing, .inserting:
+            break
+        }
+    }
+
     func cancel() async {
         if isTidying {
-            abandonTidy()
+            VoqoraLog.info("Dictation", "Tidy cancelled by the user; inserting nothing")
+            tidyCancelledByUser = true
+            tidyTask?.cancel()
             return
         }
         await send(.cancel)
     }
 
-    private func abandonTidy() {
-        VoqoraLog.info("Dictation", "Tidy abandoned by the user")
+    private func skipTidy() {
+        VoqoraLog.info("Dictation", "Tidy skipped by the user; inserting the original words")
+        tidySkippedByUser = true
         tidyTask?.cancel()
-        _ = machine.handle(.abandonInsertion)
-        phase = machine.phase
-        liveTranscript = machine.transcript
-        hud?.hide(after: 0)
     }
 
     var outcomeMessage: String? {
         guard let outcome else { return nil }
-        guard let tidyFailure else { return outcome.message }
-        return "\(outcome.message)\nTidy with AI was skipped, so Voqora used your original words. \(tidyFailure)"
+        var message = outcome.message
+        if let tidiedWords {
+            message += "\nTidied: \(tidiedWords.before) → \(tidiedWords.after) words"
+        }
+        if let tidyFailure {
+            message += "\nTidy with AI was skipped, so Voqora used your original words. \(tidyFailure)"
+        }
+        return message
+    }
+
+    func pasteLastTranscript() async {
+        guard machine.phase == .idle, let text = transcripts.transcripts.first?.text else { return }
+        let preferences = DictationPreferences(defaults: dependencies.defaults)
+        let delivered = await dependencies.inserter.insert(text, mode: preferences.insertionMode)
+        issue = nil
+        tidyFailure = nil
+        tidiedWords = nil
+        outcome = delivered
+        playOutcomeSound(delivered)
+        VoqoraLog.info("Dictation", "Pasted the last transcript again", ["outcome": delivered.rawValue])
+        hud?.show()
+        hud?.hide(after: delivered.settingsPane != nil ? Self.actionableIssueDisplaySeconds : Self.outcomeDisplaySeconds)
+    }
+
+    func flushForTermination() {
+        if machine.phase.isCapturing {
+            dependencies.recognizer.stop()
+            _ = machine.handle(.recognitionFailed)
+        }
+        guard machine.phase == .inserting, !sessionSavedToHistory else { return }
+        let text = machine.transcript
+        VoqoraLog.info("Dictation", "Saving the dictation in progress before quitting", ["chars": "\(text.count)"])
+        saveToHistory(text, rawText: nil)
+        closeTrace(outcome: "cancelled")
     }
 
     func connectTidy(_ tidy: @escaping @MainActor (String) async throws -> String) {
@@ -131,6 +290,7 @@ final class DictationController: ObservableObject {
         issue = nil
         outcome = nil
         tidyFailure = nil
+        tidiedWords = nil
         hud?.hide(after: 0)
     }
 
@@ -146,23 +306,114 @@ final class DictationController: ObservableObject {
         case let .level(value):
             level = value
             await detectSilence(level: value)
-        case let .transcript(text, isFinal):
-            silenceDetector?.registerActivity(at: dependencies.clock())
-            await send(isFinal ? .recognitionEnded(text) : .transcriptChanged(text))
+        case let .volatile(text):
+            registerRecognitionActivity()
+            await send(.volatileChanged(text))
+        case let .finalized(text):
+            registerRecognitionActivity()
+            await send(.segmentFinalized(text))
+        case .ended:
+            await send(.recognitionEnded)
         case .failed:
             VoqoraLog.warn("Dictation", "Recognizer reported an error", ["phase": "\(machine.phase)"])
             await send(.recognitionFailed)
         }
     }
 
-    private func send(_ event: DictationEvent) async {
-        let effect = machine.handle(event)
-        phase = machine.phase
-        liveTranscript = machine.transcript
-        await perform(effect)
+    private func registerRecognitionActivity() {
+        silenceDetector?.registerActivity(at: dependencies.clock())
+        if machine.phase == .finishing {
+            scheduleFinishTimeout()
+        }
     }
 
-    private func perform(_ effect: DictationEffect) async {
+    private func enqueue(_ event: SpeechRecognitionEvent) {
+        pendingEvents.append(event)
+        guard drainTask == nil else { return }
+        drainTask = Task { [weak self] in
+            await self?.drainEvents()
+        }
+    }
+
+    private func drainEvents() async {
+        while !pendingEvents.isEmpty {
+            await receive(pendingEvents.removeFirst())
+        }
+        drainTask = nil
+    }
+
+    private func send(_ event: DictationEvent) async {
+        let heardBefore = machine.transcript
+        let effect = machine.handle(event)
+        if effect == .prepare {
+            openTrace()
+        }
+        syncState()
+        await perform(effect, after: event, heardBefore: heardBefore)
+    }
+
+    private func syncState() {
+        let previous = phase
+        phase = machine.phase
+        liveTranscript = machine.transcript
+        setEscapeEnabled(phase != .idle)
+        if phase != previous {
+            DictationTrace.event("phase", ["from": "\(previous)", "to": "\(phase)"])
+            switch phase {
+            case .listening: play(.dictationStart)
+            case .finishing: play(.dictationStop)
+            default: break
+            }
+        }
+        observeLedger()
+    }
+
+    private func setEscapeEnabled(_ enabled: Bool) {
+        guard enabled != isEscapeEnabled else { return }
+        isEscapeEnabled = enabled
+        if enabled {
+            dependencies.escapeKey.enable { [weak self] in
+                Task { @MainActor [weak self] in
+                    await self?.cancel()
+                }
+            }
+        } else {
+            dependencies.escapeKey.disable()
+        }
+    }
+
+    private func observeLedger() {
+        let ledger = machine.ledger
+        let hasNewCommit = ledger.committedSegments > committedSegmentsSeen
+        committedSegmentsSeen = ledger.committedSegments
+        if hasNewCommit {
+            DictationTrace.event("ledger.commit", [
+                "words": "\(Self.wordCount(ledger.committed))",
+                "segments": "\(ledger.committedSegments)",
+                "text": ledger.committed,
+            ])
+        }
+        if machine.phase.isCapturing, !ledger.isEmpty {
+            recordInflight(ledger.text, force: false)
+        }
+        if hasNewCommit {
+            pumpLiveInsertion()
+        }
+    }
+
+    private func recordInflight(_ text: String, force: Bool) {
+        dependencies.recovery?.record(
+            DictationInflightSession(
+                sessionID: sessionID,
+                startedAt: sessionStartedAt,
+                localeIdentifier: sessionLocaleIdentifier,
+                text: text
+            ),
+            force: force
+        )
+    }
+
+    private func perform(_ effect: DictationEffect, after event: DictationEvent, heardBefore: String) async {
         switch effect {
         case .nothing:
             break
@@ -174,48 +425,156 @@ final class DictationController: ObservableObject {
             await insert(text)
         case .stop:
             stopCapture()
-            hud?.hide(after: 0)
+            discardLiveInsertion()
+            saveToHistory(heardBefore, rawText: nil)
+            closeTrace(outcome: "cancelled")
+            presentCancelled(savedText: heardBefore)
         case let .report(reported):
             stopCapture()
+            discardLiveInsertion()
+            saveToHistory(heardBefore, rawText: nil)
+            closeTrace(outcome: Self.traceOutcome(for: reported, after: event))
             present(reported)
         }
     }
 
+    private func presentCancelled(savedText: String) {
+        guard !savedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            hud?.hide(after: 0)
+            return
+        }
+        outcome = .cancelledSaved
+        hud?.hide(after: Self.outcomeDisplaySeconds)
+    }
+
+    private static func traceOutcome(for issue: DictationIssue, after event: DictationEvent) -> String {
+        guard issue == .nothingHeard else { return "error" }
+        return event == .finishTimedOut ? "timeout" : "empty"
+    }
+
+    private func openTrace() {
+        closeTrace(outcome: "cancelled")
+        let preferences = DictationPreferences(defaults: dependencies.defaults)
+        DictationTrace.beginSession(engine: effectiveEngine(for: preferences).rawValue, locale: preferences.localeIdentifier)
+        isTraceOpen = true
+    }
+
+    private func closeTrace(outcome: String) {
+        guard isTraceOpen else { return }
+        isTraceOpen = false
+        DictationTrace.endSession(outcome: outcome)
+    }
+
+    private func effectiveEngine(for preferences: DictationPreferences) -> DictationEngineChoice {
+        DictationEngineChoice.effective(preferred: preferences.engine, parakeetInstalled: dependencies.parakeetInstalled())
+    }
+
+    private func play(_ sound: VoqoraSound) {
+        DictationTrace.event("sound", ["name": sound.fileName])
+        dependencies.sounds.play(sound)
+    }
+
+    private func playOutcomeSound(_ delivered: DictationInsertionOutcome) {
+        play(delivered == .copiedNeedsAccessibility ? .dictationError : .dictationInserted)
+    }
+
+    private func saveToHistory(_ text: String, rawText: String?) {
+        let added = transcripts.add(text, rawText: rawText, localeIdentifier: sessionLocaleIdentifier)
+        if added != nil {
+            guard transcripts.persistenceError == nil else {
+                VoqoraLog.warn("Dictation", "History could not be saved; keeping the recovery file")
+                return
+            }
+            sessionSavedToHistory = true
+        }
+        dependencies.recovery?.clear()
+    }
+
+    private func recoverUnsavedDictation() {
+        guard let recovery = dependencies.recovery, let inflight = recovery.pending() else { return }
+        let recovered = inflight.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newest = transcripts.transcripts.first
+        guard !recovered.isEmpty, recovered != newest?.text, recovered != newest?.rawText else {
+            recovery.clear()
+            return
+        }
+        transcripts.add(inflight.text, rawText: nil, localeIdentifier: inflight.localeIdentifier, at: inflight.startedAt)
+        guard transcripts.persistenceError == nil else {
+            VoqoraLog.warn("Dictation", "Recovered dictation could not be saved; keeping the recovery file")
+            return
+        }
+        recovery.clear()
+        VoqoraLog.info("Dictation", "Recovered unsaved dictation", ["chars": "\(inflight.text.count)"])
+        DictationTrace.beginSession(engine: "recovery", locale: inflight.localeIdentifier)
+        DictationTrace.endSession(outcome: "recovered")
+    }
+
     private func prepare() async {
+        sessionID += 1
+        let session = sessionID
+        sessionStartedAt = Date()
         issue = nil
         outcome = nil
         tidyFailure = nil
+        tidiedWords = nil
+        tidySkippedByUser = false
+        tidyCancelledByUser = false
+        finishesWhenReady = false
+        holdSession = isHoldArmed ? session : nil
+        isHoldArmed = false
+        sessionSavedToHistory = false
         level = 0
         targetApplication = nil
+        live = nil
+        liveDrain = nil
+        pendingEvents.removeAll()
         speechPauser?.pauseSpeechForDictation()
         hud?.show()
-        if let missing = await DictationPermissionGate(authorizer: dependencies.authorizer).missingAccess() {
+        let preferences = DictationPreferences(defaults: dependencies.defaults)
+        let engine = effectiveEngine(for: preferences)
+        let missing = await DictationPermissionGate(
+            authorizer: dependencies.authorizer,
+            requiresSpeechRecognition: engine == .apple
+        ).missingAccess()
+        guard session == sessionID else { return }
+        if let missing {
             await send(.failed(missing))
             return
         }
         guard machine.phase == .preparing else { return }
-        let preferences = DictationPreferences(defaults: dependencies.defaults)
         do {
-            try dependencies.recognizer.start(
+            try await dependencies.recognizer.start(
                 localeIdentifier: preferences.localeIdentifier,
                 allowsServer: preferences.allowsServerRecognition
             ) { [weak self] event in
-                Task { [weak self] in
-                    await self?.receive(event)
-                }
+                self?.enqueue(event)
             }
         } catch {
-            await send(.failed(error as? DictationIssue ?? .audioInputUnavailable))
+            guard session == sessionID else { return }
+            let reported: DictationIssue = engine == .parakeet
+                ? .parakeetUnavailable
+                : error as? DictationIssue ?? .audioInputUnavailable
+            await send(.failed(reported))
             return
         }
+        guard session == sessionID else { return }
         sessionLocaleIdentifier = preferences.localeIdentifier
         silenceDetector = preferences.silenceTimeout.map { SilenceDetector(timeout: $0, startedAt: dependencies.clock()) }
+        if preferences.livesInsertion, preferences.insertionMode == .paste {
+            live = LiveInsertion(target: dependencies.frontmostApplication())
+        }
         VoqoraLog.info("Dictation", "Listening", [
             "mode": preferences.insertionMode.rawValue,
             "locale": preferences.localeIdentifier ?? "system",
             "autoStop": preferences.silenceTimeout.map { "\($0)" } ?? "off",
+            "engine": engine.rawValue,
+            "live": "\(live != nil)",
         ])
         await send(.ready)
+        if finishesWhenReady, session == sessionID, machine.phase == .listening {
+            finishesWhenReady = false
+            await send(.toggle)
+        }
     }
 
     private func detectSilence(level value: Float) async {
@@ -230,6 +589,10 @@ final class DictationController: ObservableObject {
         targetApplication = dependencies.frontmostApplication()
         dependencies.recognizer.finish()
         level = 0
+        scheduleFinishTimeout()
+    }
+
+    private func scheduleFinishTimeout() {
         finishTimeoutTask?.cancel()
         let timeout = dependencies.finishTimeout
         finishTimeoutTask = Task { [weak self] in
@@ -241,54 +604,171 @@ final class DictationController: ObservableObject {
 
     private func insert(_ text: String) async {
         stopCapture()
+        recordInflight(text, force: true)
         let preferences = DictationPreferences(defaults: dependencies.defaults)
-        let target = targetApplication ?? dependencies.frontmostApplication()
-        let deliverable = preferences.tidiesWithAI ? await tidied(text) : text
-        guard machine.phase == .inserting else {
-            transcripts.add(text, localeIdentifier: sessionLocaleIdentifier)
+        let isLive = live != nil
+        if isLive {
+            await liveDrain?.value
+        }
+        let target = live?.target ?? targetApplication ?? dependencies.frontmostApplication()
+        let tidy = preferences.tidiesWithAI && !isLive ? await tidied(text) : text
+        if tidyCancelledByUser {
+            saveToHistory(text, rawText: nil)
+            closeTrace(outcome: "cancelled")
+            await send(.abandonInsertion)
+            presentCancelled(savedText: text)
             return
         }
-        let applicationChanged = preferences.insertionMode == .paste && dependencies.frontmostApplication() != target
-        let delivered: DictationInsertionOutcome
-        if applicationChanged {
-            VoqoraLog.info("Dictation", "Frontmost app changed before insertion; copying instead of pasting")
-            _ = await dependencies.inserter.insert(deliverable, mode: .copy)
-            delivered = .copiedAppChanged
-        } else {
-            delivered = await dependencies.inserter.insert(deliverable, mode: preferences.insertionMode)
+        guard machine.phase == .inserting else {
+            saveToHistory(text, rawText: nil)
+            closeTrace(outcome: "cancelled")
+            return
         }
-        transcripts.add(deliverable, localeIdentifier: sessionLocaleIdentifier)
-        VoqoraLog.info("Dictation", "Transcript delivered", ["chars": "\(deliverable.count)", "outcome": delivered.rawValue])
+        saveToHistory(tidy, rawText: text)
+        let delivered = isLive
+            ? await finishLiveInsertion(text)
+            : await deliver(tidy, mode: preferences.insertionMode, target: target)
+        VoqoraLog.info("Dictation", "Transcript delivered", ["chars": "\(tidy.count)", "outcome": delivered.rawValue])
         outcome = delivered
+        live = nil
+        playOutcomeSound(delivered)
+        closeTrace(outcome: delivered == .pasted ? "inserted" : "copied")
         await send(.insertionFinished)
         let needsAttention = delivered.settingsPane != nil || delivered == .copiedAppChanged || tidyFailure != nil
         hud?.hide(after: needsAttention ? Self.actionableIssueDisplaySeconds : Self.outcomeDisplaySeconds)
     }
 
+    private func deliver(
+        _ text: String,
+        mode: DictationInsertionMode,
+        target: FrontmostApplication?,
+        startsDictation: Bool = true
+    ) async -> DictationInsertionOutcome {
+        guard mode == .paste else {
+            return await dependencies.inserter.insert(text, mode: mode)
+        }
+        guard dependencies.frontmostApplication() == target else {
+            VoqoraLog.info("Dictation", "Frontmost app changed before insertion; copying instead of pasting")
+            _ = await dependencies.inserter.insert(text.trimmingCharacters(in: .whitespacesAndNewlines), mode: .copy)
+            return .copiedAppChanged
+        }
+        let outgoing = startsDictation ? continuationPrefixed(text, target: target) : text
+        let result = await dependencies.inserter.insert(outgoing, mode: .paste)
+        if result == .pasted {
+            recordPaste(into: target)
+        }
+        return result
+    }
+
+    private func continuationPrefixed(_ text: String, target: FrontmostApplication?) -> String {
+        guard let lastPaste, let target, lastPaste.application == target,
+              dependencies.clock() - lastPaste.at < Self.continuationWindowSeconds,
+              let first = text.first, first.isLetter || first.isNumber
+        else { return text }
+        return " " + text
+    }
+
+    private func recordPaste(into target: FrontmostApplication?) {
+        guard let target else { return }
+        lastPaste = (target, dependencies.clock())
+    }
+
+    private func pumpLiveInsertion() {
+        guard live != nil, liveDrain == nil else { return }
+        let session = sessionID
+        liveDrain = Task { [weak self] in
+            await self?.drainLiveInsertion(session: session)
+        }
+    }
+
+    private func drainLiveInsertion(session: Int) async {
+        defer {
+            if session == sessionID {
+                liveDrain = nil
+            }
+        }
+        while session == sessionID, let current = live, current.stopOutcome == nil {
+            let committed = machine.ledger.committed
+            guard committed.hasPrefix(current.deliveredText), committed.count > current.deliveredText.count else { return }
+            let delta = String(committed.dropFirst(current.deliveredText.count))
+            guard dependencies.frontmostApplication() == current.target else {
+                live?.stopOutcome = .copiedAppChanged
+                DictationTrace.event("live.stopped", ["reason": "app_changed"])
+                return
+            }
+            let outgoing = current.deliveredText.isEmpty ? continuationPrefixed(delta, target: current.target) : delta
+            let result = await dependencies.inserter.insert(outgoing, mode: .paste)
+            guard session == sessionID, live != nil else { return }
+            guard result == .pasted else {
+                live?.stopOutcome = result
+                DictationTrace.event("live.stopped", ["reason": result.rawValue])
+                return
+            }
+            live?.deliveredText += delta
+            recordPaste(into: current.target)
+            DictationTrace.event("live.paste", ["chars": "\(delta.count)"])
+        }
+    }
+
+    private func finishLiveInsertion(_ text: String) async -> DictationInsertionOutcome {
+        guard let current = live else { return .copied }
+        let remaining = text.hasPrefix(current.deliveredText) ? String(text.dropFirst(current.deliveredText.count)) : text
+        guard !remaining.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return .pasted }
+        if let stopped = current.stopOutcome {
+            _ = await dependencies.inserter.insert(text.trimmingCharacters(in: .whitespacesAndNewlines), mode: .copy)
+            return stopped == .pasted ? .copied : stopped
+        }
+        return await deliver(remaining, mode: .paste, target: current.target, startsDictation: current.deliveredText.isEmpty)
+    }
+
+    private func discardLiveInsertion() {
+        live = nil
+    }
+
     private func tidied(_ text: String) async -> String {
         guard let tidy = dependencies.tidy else { return text }
         isTidying = true
+        tidySkippedByUser = false
+        tidyCancelledByUser = false
         defer {
             isTidying = false
             tidyTask = nil
         }
         let timeout = dependencies.tidyTimeout
-        let task = Task { [weak self] () -> String in
+        let task = Task { [weak self] () -> String? in
             do {
                 let result = try await Self.withTimeout(timeout) { try await tidy(text) }
                 let cleaned = result.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !cleaned.isEmpty else { throw AIReadingError.invalidResponse }
                 return cleaned
             } catch {
-                guard !Task.isCancelled else { return text }
+                guard !Task.isCancelled else { return nil }
                 let failure = AIReadingError.wrapping(error)
                 VoqoraLog.warn("Dictation", "Tidy with AI failed", ["failureCode": failure.code ?? "dictation_tidy_failed"])
                 self?.tidyFailure = failure.message
-                return text
+                return nil
             }
         }
         tidyTask = task
-        return await task.value
+        let result = await task.value
+        guard !tidySkippedByUser, !tidyCancelledByUser, let cleaned = result else {
+            DictationTrace.event("tidy", [
+                "result": tidyFailure != nil ? "failed" : "skipped",
+                "wordsIn": "\(Self.wordCount(text))",
+            ])
+            return text
+        }
+        let before = Self.wordCount(text)
+        let after = Self.wordCount(cleaned)
+        DictationTrace.event("tidy", ["result": "used", "wordsIn": "\(before)", "wordsOut": "\(after)"])
+        if before != after {
+            tidiedWords = TidyWordCounts(before: before, after: after)
+        }
+        return cleaned
+    }
+
+    private static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: \.isWhitespace).count
     }
 
     private static func withTimeout(
@@ -317,6 +797,7 @@ final class DictationController: ObservableObject {
 
     private func present(_ reported: DictationIssue) {
         issue = reported
+        play(.dictationError)
         VoqoraLog.warn("Dictation", "Dictation stopped", ["reason": reported.rawValue])
         hud?.hide(after: reported.settingsPane == nil ? Self.issueDisplaySeconds : Self.actionableIssueDisplaySeconds)
     }

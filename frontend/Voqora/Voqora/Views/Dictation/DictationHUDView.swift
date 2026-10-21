@@ -3,21 +3,21 @@ import SwiftUI
 struct DictationHUDView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var dictation: DictationController
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
 
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
+    private var theme: Theme {
+        vm.theme
     }
 
     var body: some View {
         content
-            .padding(DesignTokens.Layout.cardInset)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .frame(width: DictationHUDLayout.cardWidth, alignment: .leading)
-            .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
+            .voqoraCardBackground(.elevated, radius: Theme.Shape.xl)
             .padding(DictationHUDLayout.shadowInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .animation(DesignTokens.Animation.quick, value: dictation.phase)
+            .animation(Theme.Motion.selection, value: dictation.phase)
+            .voqoraTheme()
     }
 
     @ViewBuilder
@@ -25,14 +25,14 @@ struct DictationHUDView: View {
         if dictation.phase == .idle, let issue = dictation.issue {
             DictationMessageRow(
                 systemImage: "exclamationmark.triangle.fill",
-                tint: Palette.warning,
+                tint: theme.warning,
                 message: issue.message,
                 settingsPane: issue.settingsPane
             )
         } else if dictation.phase == .idle, let message = dictation.outcomeMessage {
             DictationMessageRow(
                 systemImage: dictation.tidyFailure == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-                tint: dictation.tidyFailure == nil ? Palette.success : Palette.warning,
+                tint: dictation.tidyFailure == nil ? theme.success : theme.warning,
                 message: message,
                 settingsPane: dictation.outcome?.settingsPane
             )
@@ -42,34 +42,22 @@ struct DictationHUDView: View {
     }
 
     private var liveContent: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                Image(systemName: dictation.phase == .listening ? "mic.fill" : "waveform")
-                    .font(vm.font(.button))
-                    .foregroundStyle(accentColor)
-                Text(statusTitle)
-                    .font(vm.font(.button))
-                    .foregroundStyle(Palette.textPrimary)
-                Spacer(minLength: 0)
-                DictationLevelMeter(level: dictation.phase == .listening ? dictation.level : 0, color: accentColor)
+        HStack(alignment: .center, spacing: Theme.Space.item + 4) {
+            DictationLiveDot(level: dictation.phase == .listening ? dictation.level : 0, color: theme.primary)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(DictationStateLabel.title(for: dictation.phase, isTidying: dictation.isTidying))
+                    .font(vm.font(.labelSmall))
+                    .foregroundStyle(theme.onSurfaceVariant)
+                Text(dictation.liveTranscript.isEmpty ? placeholder : dictation.liveTranscript)
+                    .font(vm.font(.body))
+                    .foregroundStyle(dictation.liveTranscript.isEmpty ? theme.onSurfaceMuted : theme.onSurface)
+                    .lineLimit(3)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Text(dictation.liveTranscript.isEmpty ? placeholder : dictation.liveTranscript)
-                .font(vm.appFont(size: 15, weight: .medium))
-                .foregroundStyle(dictation.liveTranscript.isEmpty ? Palette.textTertiary : Palette.textPrimary)
-                .lineLimit(3)
-                .truncationMode(.head)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            DictationLevelMeter(level: dictation.phase == .listening ? dictation.level : 0, color: theme.primary, track: theme.outlineVariant)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private var statusTitle: String {
-        switch dictation.phase {
-        case .idle, .preparing: "Getting ready…"
-        case .listening: "Listening"
-        case .finishing: "Finishing…"
-        case .inserting: dictation.isTidying ? "Tidying…" : "Inserting…"
-        }
     }
 
     private var placeholder: String {
@@ -86,20 +74,21 @@ struct DictationMessageRow: View {
     let settingsPane: PrivacySettingsPane?
 
     var body: some View {
-        HStack(alignment: .top, spacing: DesignTokens.Spacing.md) {
+        HStack(alignment: .top, spacing: Theme.Space.item + 4) {
             Image(systemName: systemImage)
-                .font(vm.font(.button))
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(tint)
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: Theme.Space.item) {
                 Text(message)
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(vm.font(.body))
+                    .foregroundStyle(vm.theme.onSurface)
                     .fixedSize(horizontal: false, vertical: true)
                 if let settingsPane {
                     Button("Open System Settings") {
                         dictation.openSystemSettings(settingsPane)
                     }
-                    .buttonStyle(.voqoraSecondary)
+                    .buttonStyle(.voqoraTonal)
                 }
             }
             Spacer(minLength: 0)
@@ -107,8 +96,8 @@ struct DictationMessageRow: View {
                 dictation.dismissMessage()
             } label: {
                 Image(systemName: "xmark")
-                    .font(vm.font(.caption))
-                    .foregroundStyle(Palette.textSecondary)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(vm.theme.onSurfaceVariant)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Dismiss")
@@ -117,23 +106,46 @@ struct DictationMessageRow: View {
     }
 }
 
+struct DictationLiveDot: View {
+    let level: Float
+    let color: Color
+
+    var body: some View {
+        let clamped = CGFloat(min(1, max(0, level)))
+        ZStack {
+            Circle()
+                .fill(color.opacity(0.18))
+                .frame(width: 36, height: 36)
+                .scaleEffect(0.7 + clamped * 0.3)
+            Circle()
+                .fill(color)
+                .frame(width: 14, height: 14)
+                .scaleEffect(1 + clamped * 0.35)
+        }
+        .frame(width: 36, height: 36)
+        .animation(Theme.Motion.hover, value: clamped)
+        .accessibilityHidden(true)
+    }
+}
+
 struct DictationLevelMeter: View {
-    private static let barCount = 12
+    private static let barCount = 10
 
     let level: Float
     let color: Color
+    let track: Color
 
     var body: some View {
         let lit = Int((Double(min(1, max(0, level))) * Double(Self.barCount)).rounded())
         HStack(alignment: .center, spacing: 2) {
             ForEach(0 ..< Self.barCount, id: \.self) { index in
                 Capsule()
-                    .fill(index < lit ? color : Palette.separator)
+                    .fill(index < lit ? color : track)
                     .frame(width: 3, height: 6 + CGFloat(index % 4) * 3)
             }
         }
         .frame(height: 16)
-        .animation(DesignTokens.Animation.quick, value: lit)
+        .animation(Theme.Motion.hover, value: lit)
         .accessibilityHidden(true)
     }
 }

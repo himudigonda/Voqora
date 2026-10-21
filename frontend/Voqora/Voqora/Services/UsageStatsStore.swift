@@ -20,6 +20,9 @@ final class UsageStatsStore: ObservableObject {
     private var lastListeningTick: Date?
     private var pendingListening: Double = 0
     private var isErased = false
+    #if DEBUG
+        private(set) var isDemo = false
+    #endif
     static let maxTickGap: TimeInterval = 5
     static let listeningCommitSeconds: Double = 15
 
@@ -34,11 +37,67 @@ final class UsageStatsStore: ObservableObject {
         self.storageURL = storageURL ?? Self.defaultStorageURL()
         self.calendar = calendar
         self.saveDelay = saveDelay
+        #if DEBUG
+            if UsageStatsDemo.isRequested, !RuntimeEnvironment.isRunningTests {
+                isDemo = true
+                ledger = UsageStatsDemo.ledger(now: Date(), calendar: calendar, variant: UsageStatsDemo.variant ?? .full)
+                return
+            }
+        #endif
         load()
     }
 
-    func recordSpeech(text: String, voice: String, speed: Double, audioSeconds: Double, at date: Date = Date()) {
-        mutate { $0.recordSpeech(SpeechSample(text: text, voice: voice, speed: speed, audioSeconds: audioSeconds), at: date, calendar: calendar) }
+    func recordSpeech(text: String, voice: String, speed: Double, audioSeconds: Double, run: SpeechRun? = nil, at date: Date = Date()) {
+        mutate { $0.recordSpeech(SpeechSample(text: text, voice: voice, speed: speed, audioSeconds: audioSeconds), run: run, at: date, calendar: calendar) }
+    }
+
+    func recordSpeechFailure(engine: String, at date: Date = Date()) {
+        mutate { $0.recordSpeechFailure(engine: engine, at: date, calendar: calendar) }
+    }
+
+    func recordRelay(client: String, at date: Date = Date()) {
+        mutate { $0.recordRelay(client: client, at: date, calendar: calendar) }
+    }
+
+    func recordDictation(_ session: DictationSession, at date: Date = Date()) {
+        mutate { $0.recordDictation(session, at: date, calendar: calendar) }
+    }
+
+    func recordDictationCancelled(at date: Date = Date()) {
+        mutate { $0.recordDictationCancelled(at: date, calendar: calendar) }
+    }
+
+    func importDictationHistoryIfNeeded(_ transcripts: [DictationTranscript]) {
+        guard !ledger.importedDictation else { return }
+        mutate { $0.importDictationHistory(transcripts, calendar: calendar) }
+    }
+
+    func recordAI(_ run: AIRun, at date: Date = Date()) {
+        mutate { $0.recordAI(run, at: date, calendar: calendar) }
+    }
+
+    func recordBookGenerated(chapters: Int, audioSeconds: Double, renderSeconds: Double, at date: Date = Date()) {
+        mutate { $0.recordBookGenerated(chapters: chapters, audioSeconds: audioSeconds, renderSeconds: renderSeconds, at: date, calendar: calendar) }
+    }
+
+    func recordBookFinished(at date: Date = Date()) {
+        mutate { $0.recordBookFinished(at: date, calendar: calendar) }
+    }
+
+    func recordPodcastScript(at date: Date = Date()) {
+        mutate { $0.recordPodcastScript(at: date, calendar: calendar) }
+    }
+
+    func recordPodcastRender(speakers: Int, audioSeconds: Double, at date: Date = Date()) {
+        mutate { $0.recordPodcastRender(speakers: speakers, audioSeconds: audioSeconds, at: date, calendar: calendar) }
+    }
+
+    func recordM4BExport(at date: Date = Date()) {
+        mutate { $0.recordM4BExport(at: date, calendar: calendar) }
+    }
+
+    func recordImport(kind: String, at date: Date = Date()) {
+        mutate { $0.recordImport(kind: kind, at: date, calendar: calendar) }
     }
 
     func recordExport(at date: Date = Date()) {
@@ -83,14 +142,24 @@ final class UsageStatsStore: ObservableObject {
     }
 
     func reset() {
+        #if DEBUG
+            if isDemo {
+                return
+            }
+        #endif
         listeningBookID = nil
         lastListeningTick = nil
         pendingListening = 0
-        ledger = UsageLedger(importedHistory: true)
+        ledger = UsageLedger(importedHistory: true, importedDictation: true)
         saveNow()
     }
 
     func eraseAll() throws {
+        #if DEBUG
+            if isDemo {
+                return
+            }
+        #endif
         saveTask?.cancel()
         saveTask = nil
         listeningBookID = nil
@@ -111,6 +180,11 @@ final class UsageStatsStore: ObservableObject {
         saveTask?.cancel()
         saveTask = nil
         guard !isErased else { return }
+        #if DEBUG
+            if isDemo {
+                return
+            }
+        #endif
         do {
             try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
@@ -124,11 +198,21 @@ final class UsageStatsStore: ObservableObject {
 
     private func mutate(_ change: (inout UsageLedger) -> Void) {
         guard !isErased else { return }
+        #if DEBUG
+            if isDemo {
+                return
+            }
+        #endif
         change(&ledger)
         scheduleSave()
     }
 
     private func scheduleSave() {
+        #if DEBUG
+            if isDemo {
+                return
+            }
+        #endif
         guard saveTask == nil else { return }
         let delay = saveDelay
         saveTask = Task { [weak self] in

@@ -214,9 +214,13 @@ final class SpeechRelayPlayer {
         if let client = command.client {
             announce(Self.announcement(for: client))
         }
+        UsageStatsStore.shared.recordRelay(client: command.client ?? "")
+        MetricsService.shared.trackRelayRequest(client: command.client)
         isStartingRelayedSpeech = true
         defer { isStartingRelayedSpeech = false }
-        await speaker.speak(text: command.text, voice: command.voice)
+        await SpeechSource.$current.withValue(.relay) {
+            await speaker.speak(text: command.text, voice: command.voice)
+        }
     }
 
     static func announcement(for client: String) -> String {

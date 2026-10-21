@@ -131,6 +131,32 @@ final class AIReadingClient: AIReadingServing, AITidying {
         credential: LLMCredential,
         timeout: TimeInterval
     ) async throws -> Response {
+        let started = ContinuousClock.now
+        do {
+            let response: Response = try await perform(tool, body: body, credential: credential, timeout: timeout)
+            recordRequest(tool: tool, credential: credential, ok: true, since: started)
+            return response
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            recordRequest(tool: tool, credential: credential, ok: false, since: started)
+            throw error
+        }
+    }
+
+    private func recordRequest(tool: String, credential: LLMCredential, ok: Bool, since started: ContinuousClock.Instant) {
+        let latencyMs = started.duration(to: .now) / .milliseconds(1)
+        let provider = MetricsService.Bucket.provider(credential.provider.rawValue)
+        UsageStatsStore.shared.recordAI(AIRun(tool: tool, provider: provider, ok: ok, latencyMs: latencyMs, wordsIn: 0, wordsOut: 0))
+        MetricsService.shared.trackAIRequest(tool: tool, provider: provider, ok: ok, latencyMs: Int(latencyMs.rounded()))
+    }
+
+    private func perform<Response: Decodable>(
+        _ tool: String,
+        body: some Encodable,
+        credential: LLMCredential,
+        timeout: TimeInterval
+    ) async throws -> Response {
         var request: URLRequest
         do {
             request = try connection.request(path: "ai/\(tool)", method: "POST", timeout: timeout)

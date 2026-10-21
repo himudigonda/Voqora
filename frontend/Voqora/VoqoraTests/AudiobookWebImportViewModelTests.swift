@@ -30,18 +30,18 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         }
     }
 
-    func test_importWebPage_closesTheSheetAndShowsTheEstimate() async throws {
+    private func importPage(_ vm: AudiobookViewModel, voice: String = "af_bella", speed: Double = 1) {
+        vm.presentEstimate(for: .webPage(page), voice: voice, speed: speed, engine: "kokoro")
+    }
+
+    func test_webPageImportShowsTheEstimate() async throws {
         LibraryStubURLProtocol.install(Self.reply())
         let vm = makeVM()
-        vm.presentWebPageImport()
-        XCTAssertTrue(vm.isWebPageImportPresented)
 
-        vm.importWebPage(page, voice: "am_adam", speed: 1.5)
+        importPage(vm, voice: "am_adam", speed: 1.5)
 
-        XCTAssertFalse(vm.isWebPageImportPresented)
         XCTAssertEqual(vm.pendingSource, .webPage(page))
         XCTAssertNil(vm.pendingDocument)
-        XCTAssertEqual(vm.webPageDraft, page.absoluteString)
         XCTAssertTrue(vm.uploadInProgress)
         await waitUntil { vm.pendingEstimate != nil }
 
@@ -56,11 +56,11 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         XCTAssertNil(vm.pendingSource)
     }
 
-    func test_importWebPage_failureShowsTheMappedMessageWithoutAToast() async {
+    func test_webPageImportFailureShowsTheMappedMessageWithoutAToast() async {
         LibraryStubURLProtocol.install(Self.reply(failing: .json(422, #"{"detail":"raw","code":"paywalled"}"#)))
         let vm = makeVM()
 
-        vm.importWebPage(page, voice: "af_bella", speed: 1)
+        importPage(vm)
         await waitUntil { vm.loadingError != nil }
 
         XCTAssertEqual(vm.loadingError, WebPageImportMessage.codeMessages["paywalled"])
@@ -69,21 +69,7 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         XCTAssertEqual(vm.pendingSource, .webPage(page))
     }
 
-    func test_editWebPageLink_reopensTheSheetWithTheLastAddress() async {
-        LibraryStubURLProtocol.install(Self.reply(failing: .json(504, #"{"detail":"raw","code":"timeout"}"#)))
-        let vm = makeVM()
-        vm.importWebPage(page, voice: "af_bella", speed: 1)
-        await waitUntil { vm.loadingError != nil }
-
-        vm.editWebPageLink()
-
-        XCTAssertNil(vm.pendingSource)
-        XCTAssertNil(vm.loadingError)
-        XCTAssertTrue(vm.isWebPageImportPresented)
-        XCTAssertEqual(vm.webPageDraft, page.absoluteString)
-    }
-
-    func test_startingAWebPageImportClearsTheLinkDraft() async {
+    func test_startingAWebPageImportClearsThePendingSource() async {
         LibraryStubURLProtocol.install(Self.reply())
         let vm = AudiobookViewModel(
             service: LibraryStubURLProtocol.makeService(),
@@ -92,24 +78,13 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
             subscribeToEvents: { _ in AsyncStream { $0.finish() } },
             listBooks: { [] }
         )
-        vm.importWebPage(page, voice: "af_bella", speed: 1)
+        importPage(vm)
         await waitUntil { vm.pendingEstimate != nil }
 
         vm.startProcessing(useCleanup: false)
         await waitUntil { vm.pendingSource == nil }
 
         XCTAssertNil(vm.pendingSource)
-        XCTAssertEqual(vm.webPageDraft, "")
-    }
-
-    func test_editWebPageLink_ignoresDocumentImports() {
-        let vm = makeVM()
-        vm.pendingDocument = URL(fileURLWithPath: "/tmp/book.pdf")
-
-        vm.editWebPageLink()
-
-        XCTAssertNotNil(vm.pendingDocument)
-        XCTAssertFalse(vm.isWebPageImportPresented)
     }
 
     func test_webPageWhileAnotherImportIsPendingIsQueued() {
@@ -117,10 +92,7 @@ final class AudiobookWebImportViewModelTests: XCTestCase {
         let vm = makeVM()
         vm.pendingDocument = URL(fileURLWithPath: "/tmp/book.pdf")
 
-        vm.presentWebPageImport()
-        XCTAssertFalse(vm.isWebPageImportPresented)
-
-        vm.importWebPage(page, voice: "af_bella", speed: 1)
+        importPage(vm)
 
         XCTAssertEqual(vm.queuedUploadCount, 1)
         XCTAssertEqual(vm.toast?.message, "Queued example.com")

@@ -18,6 +18,7 @@ nonisolated enum DictationIssue: String, Error, Sendable {
     case recognizerUnavailable = "recognizer_unavailable"
     case audioInputUnavailable = "audio_input_unavailable"
     case recognitionFailed = "recognition_failed"
+    case parakeetUnavailable = "parakeet_unavailable"
     case nothingHeard = "nothing_heard"
 
     var message: String {
@@ -36,6 +37,8 @@ nonisolated enum DictationIssue: String, Error, Sendable {
             "Voqora couldn't start your microphone. Check the input device in System Settings, then try again."
         case .recognitionFailed:
             "Voqora couldn't transcribe that. Try again."
+        case .parakeetUnavailable:
+            "The Parakeet model could not be loaded. Reinstall it in Settings → Dictation, or switch to Apple."
         case .nothingHeard:
             "Voqora didn't hear anything. Press the shortcut and start speaking."
         }
@@ -55,6 +58,7 @@ nonisolated enum DictationInsertionOutcome: String, Sendable {
     case copied
     case copiedNeedsAccessibility = "copied_needs_accessibility"
     case copiedAppChanged = "copied_app_changed"
+    case cancelledSaved = "cancelled_saved"
 
     var message: String {
         switch self {
@@ -62,6 +66,7 @@ nonisolated enum DictationInsertionOutcome: String, Sendable {
         case .copied: "Copied to the clipboard"
         case .copiedNeedsAccessibility: "Copied to the clipboard. Allow Accessibility so Voqora can paste for you."
         case .copiedAppChanged: "Copied to the clipboard. You switched apps, so Voqora didn't paste."
+        case .cancelledSaved: "Cancelled. Saved to history."
         }
     }
 

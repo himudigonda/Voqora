@@ -77,6 +77,13 @@ nonisolated struct VoiceBlendRequest: Encodable, Equatable, Sendable {
     let components: [Component]
 }
 
+nonisolated struct VoiceBlendPreviewRequest: Encodable, Equatable, Sendable {
+    let components: [String]
+    let weights: [Double]
+    var text: String?
+    var lang: String?
+}
+
 nonisolated struct VoiceBlendDraft: Equatable, Sendable {
     nonisolated struct Component: Identifiable, Equatable, Sendable {
         let id: UUID
@@ -129,6 +136,10 @@ nonisolated struct VoiceBlendDraft: Equatable, Sendable {
         if name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) {
             return "The name can't contain control characters."
         }
+        return componentsMessage
+    }
+
+    var componentsMessage: String? {
         if !(VoiceBlendRules.minComponents ... VoiceBlendRules.maxComponents).contains(components.count) {
             return "Mix \(VoiceBlendRules.minComponents) to \(VoiceBlendRules.maxComponents) voices."
         }
@@ -146,6 +157,10 @@ nonisolated struct VoiceBlendDraft: Equatable, Sendable {
         return nil
     }
 
+    var isPreviewable: Bool {
+        componentsMessage == nil
+    }
+
     var isValid: Bool {
         validationMessage == nil
     }
@@ -154,6 +169,13 @@ nonisolated struct VoiceBlendDraft: Equatable, Sendable {
         VoiceBlendRequest(
             name: trimmedName,
             components: components.map { VoiceBlendRequest.Component(voice: $0.voice, weight: Self.rounded($0.weight)) }
+        )
+    }
+
+    var previewRequest: VoiceBlendPreviewRequest {
+        VoiceBlendPreviewRequest(
+            components: components.map(\.voice),
+            weights: components.map { Self.rounded($0.weight) }
         )
     }
 

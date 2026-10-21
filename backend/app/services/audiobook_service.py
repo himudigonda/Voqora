@@ -35,6 +35,7 @@ from app.core.config import settings as _settings
 from app.core.logging import get_logger
 from app.services import podcast_library
 from app.services.audiobook_store import AudiobookStore, _now_iso
+from app.services.delivery import Delivery, delivery_from_record
 from app.services.engine_manager import EngineManager
 from app.services.llm_cleaner import FLEX_HTTP_OPTIONS, LLMCleaner
 from app.services.llm_providers import (
@@ -1663,6 +1664,7 @@ class AudiobookService:
         voice = cls._book_voice(book_id, meta)
         speed = float(meta.get("speed") or 1.0)
         pause_scale = _book_pause_scale(meta)
+        delivery = delivery_from_record(meta.get("delivery"))
         # A podcast speaks each turn (one page) in its host's voice.
         plan = (
             podcast_library.turn_plan(book_id)
@@ -1718,6 +1720,7 @@ class AudiobookService:
                             plan[n - 1].voice if plan else voice,
                             speed,
                             pause_scale=pause_scale,
+                            delivery=delivery,
                         )
                         if plan:
                             samples = _with_trailing_pause(
@@ -1797,6 +1800,7 @@ class AudiobookService:
         speed: float,
         *,
         pause_scale: float = 1.0,
+        delivery: Delivery | None = None,
     ) -> tuple[np.ndarray, list[dict[str, Any]]]:
         """Synthesize a page into one float32 array plus per-sentence timings.
 
@@ -1822,6 +1826,7 @@ class AudiobookService:
             segments = EngineManager.split_segments(unit)
             for index, segment in enumerate(segments):
                 start = cursor
+                extras = {} if delivery is None else {"delivery": delivery}
                 async for chunk in EngineManager.generate(
                     segment,
                     voice,
@@ -1830,6 +1835,7 @@ class AudiobookService:
                     failed_segments=failed_segments,
                     pause_scale=pause_scale,
                     book_id=book_id,
+                    **extras,
                 ):
                     cls._check_cancel(book_id)
                     chunks.append(chunk)

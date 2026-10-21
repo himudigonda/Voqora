@@ -1,14 +1,16 @@
 """EngineManager — TTS dispatch layer.
 
-Single point of dispatch for inference. Routes each request to Kokoro or
-Supertonic by engine id, so endpoints never import an engine directly.
+Single point of dispatch for inference. Routes each request to Kokoro,
+Supertonic or Ming by engine id, so endpoints never import an engine directly.
 """
 
 from collections.abc import AsyncGenerator
 
 import numpy as np
 
+from app.services import ming_catalog
 from app.services import supertonic_catalog as catalog
+from app.services.delivery import Delivery
 from app.services.engine_errors import (
     EngineBusyError,
     EngineInstallError,
@@ -21,6 +23,9 @@ from app.services.languages import (
     language_catalog,
     voice_catalog,
 )
+from app.services.ming_engine import MingEngine
+from app.services.ming_installer import MingInstaller
+from app.services.ming_voices import ming_voices
 from app.services.pronunciation import pronunciations
 from app.services.supertonic_engine import SupertonicEngine
 from app.services.supertonic_installer import SupertonicInstaller
@@ -30,7 +35,8 @@ from app.services.voices import KOKORO_ENGINE as KOKORO
 from app.services.voices import VoiceSpec, voice_spec
 
 SUPERTONIC = catalog.ENGINE_ID
-ENGINE_IDS = (KOKORO, SUPERTONIC)
+MING = ming_catalog.ENGINE_ID
+ENGINE_IDS = (KOKORO, SUPERTONIC, MING)
 KOKORO_VOICES = [voice["id"] for voice in VOICES]
 KOKORO_DEFAULT_VOICE = DEFAULT_VOICE
 KOKORO_LICENSE = "Apache 2.0"
@@ -47,6 +53,8 @@ class EngineManager:
     @classmethod
     def is_installed(cls, engine: str) -> bool:
         cls.require_known(engine)
+        if engine == MING:
+            return MingInstaller.is_installed()
         return engine == KOKORO or SupertonicInstaller.is_installed()
 
     @classmethod
@@ -68,16 +76,28 @@ class EngineManager:
         cls.require_known(engine)
         if engine == SUPERTONIC:
             return [voice["id"] for voice in catalog.VOICES]
+        if engine == MING:
+            return [voice["id"] for voice in cls.ming_voice_entries()]
         return KOKORO_VOICES
 
     @classmethod
     def default_voice(cls, engine: str = KOKORO) -> str:
         cls.require_known(engine)
-        return catalog.DEFAULT_VOICE if engine == SUPERTONIC else KOKORO_DEFAULT_VOICE
+        if engine == SUPERTONIC:
+            return catalog.DEFAULT_VOICE
+        if engine == MING:
+            return ming_catalog.DEFAULT_VOICE
+        return KOKORO_DEFAULT_VOICE
+
+    @classmethod
+    def ming_voice_entries(cls) -> list[dict]:
+        builtin = [dict(voice) for voice in ming_catalog.VOICES]
+        return builtin + [voice.to_entry() for voice in ming_voices.list()]
 
     @classmethod
     def engines(cls) -> list[dict]:
         supertonic = SupertonicInstaller.status()
+        ming = MingInstaller.status()
         return [
             {
                 "id": KOKORO,
@@ -103,6 +123,21 @@ class EngineManager:
                 "voices": [dict(voice) for voice in catalog.VOICES],
                 "error": supertonic["error"],
             },
+            {
+                "id": MING,
+                "name": ming_catalog.ENGINE_NAME,
+                "installed": ming["installed"],
+                "downloading": ming["downloading"],
+                "progress": ming["progress"],
+                "size_bytes": ming_catalog.SIZE_BYTES,
+                "license": ming_catalog.LICENSE_SUMMARY,
+                "languages": list(ming_catalog.LANGUAGES),
+                "voices": cls.ming_voice_entries(),
+                "error": ming["error"],
+                "notice": ming_catalog.NOTICE,
+                "capabilities": list(ming_catalog.CAPABILITIES),
+                "tags": list(ming_catalog.PARALINGUISTIC_TAGS),
+            },
         ]
 
     @classmethod
@@ -122,6 +157,8 @@ class EngineManager:
         cls.require_known(engine)
         if engine == SUPERTONIC:
             SupertonicInstaller.start()
+        if engine == MING:
+            MingInstaller.start()
         return cls.engine_info(engine)
 
     @classmethod
@@ -136,6 +173,13 @@ class EngineManager:
                 )
             SupertonicInstaller.uninstall()
             SupertonicEngine.unload()
+        if engine == MING:
+            if MingEngine.is_busy():
+                raise EngineBusyError(
+                    "Ming is loading or speaking. Try again when it finishes."
+                )
+            MingInstaller.uninstall()
+            MingEngine.unload()
         return cls.engine_info(engine)
 
     @classmethod
@@ -148,6 +192,8 @@ class EngineManager:
         cls.require_installed(engine)
         if engine == SUPERTONIC:
             await SupertonicEngine.ensure_loaded()
+        elif engine == MING:
+            await MingEngine.ensure_loaded()
         else:
             await TTSEngine.ensure_loaded()
 
@@ -155,6 +201,8 @@ class EngineManager:
     def touch(cls, engine: str = KOKORO) -> None:
         if engine == SUPERTONIC:
             SupertonicEngine.touch()
+        elif engine == MING:
+            MingEngine.touch()
         else:
             TTSEngine.touch()
 
@@ -169,6 +217,7 @@ class EngineManager:
         *,
         pause_scale: float = 1.0,
         book_id: str | None = None,
+        delivery: Delivery | None = None,
     ) -> AsyncGenerator[np.ndarray, None]:
         spec = voice_spec(voice)
         rules = pronunciations.rules_for(book_id)
@@ -181,6 +230,17 @@ class EngineManager:
                 failed_segments,
                 pause_scale=pause_scale,
                 pronunciation=rules,
+            )
+        elif spec.engine == MING:
+            chunks = MingEngine.generate(
+                text,
+                spec,
+                speed,
+                lang,
+                failed_segments,
+                pause_scale=pause_scale,
+                pronunciation=rules,
+                delivery=delivery,
             )
         else:
             chunks = TTSEngine.generate(
@@ -210,7 +270,7 @@ class EngineManager:
         cls, text: str, voice: str, speed: float, *, pause_scale: float = 1.0
     ) -> None:
         spec = voice_spec(voice)
-        if spec.engine == SUPERTONIC:
+        if spec.engine in (SUPERTONIC, MING):
             return
         await TTSEngine.prewarm_with_lookahead(
             text,

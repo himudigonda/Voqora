@@ -33,7 +33,9 @@ nonisolated enum DictationLocaleCatalog {
     }
 
     static func validatedSelection(_ stored: String, among options: [DictationLocaleOption]) -> String {
-        options.contains { $0.id == stored } ? stored : ""
+        guard !stored.isEmpty, !options.contains(where: { $0.id == stored }) else { return stored }
+        DictationTrace.event("locale.reset", ["stored": stored])
+        return ""
     }
 
     static func supportedOptions() -> [DictationLocaleOption] {

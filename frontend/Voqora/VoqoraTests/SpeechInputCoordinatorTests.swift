@@ -39,17 +39,6 @@ private final class SpeakerSpy: SpeechInputSpeaking {
 @MainActor
 private final class LibrarySpy: LibraryTextImporting {
     var defaultBookVoice = "ef_dora"
-    private(set) var importedContents: [String] = []
-    private(set) var importedNames: [String] = []
-    private(set) var importedVoice: String?
-    private(set) var importedSpeed: Double?
-
-    func importDocument(_ url: URL, defaultVoice: String, defaultSpeed: Double) {
-        importedContents.append((try? String(contentsOf: url, encoding: .utf8)) ?? "")
-        importedNames.append(url.lastPathComponent)
-        importedVoice = defaultVoice
-        importedSpeed = defaultSpeed
-    }
 }
 
 private struct StubError: Error {}
@@ -116,7 +105,7 @@ final class SpeechInputCoordinatorTests: XCTestCase {
     private var suiteName: String!
     private var root: URL!
     private var pasteboardText: String?
-    private var libraryPresentations = 0
+    private var presentedSources: [AudiobookCreateSource] = []
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -130,7 +119,7 @@ final class SpeechInputCoordinatorTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("SpeechInputCoordinatorTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         pasteboardText = nil
-        libraryPresentations = 0
+        presentedSources = []
     }
 
     override func tearDownWithError() throws {
@@ -150,7 +139,7 @@ final class SpeechInputCoordinatorTests: XCTestCase {
         SpeechInputCoordinator(
             speaker: speaker,
             library: library,
-            presentLibrary: { [weak self] in self?.libraryPresentations += 1 },
+            presentNewAudiobook: { [weak self] in self?.presentedSources.append($0) },
             capturer: capturer,
             recognizer: recognizer,
             permission: permission,
@@ -301,24 +290,18 @@ final class SpeechInputCoordinatorTests: XCTestCase {
         XCTAssertNotNil(capturer.capturedURL)
     }
 
-    func test_addToLibraryImportsTextFileAndCleansUp() throws {
+    func test_addToLibraryHandsTrimmedTextToNewAudiobook() {
         let outcome = makeCoordinator().addToLibrary("  A Short Story\nOnce upon a time.  ")
 
         XCTAssertEqual(outcome, .started)
-        XCTAssertEqual(library.importedContents, ["A Short Story\nOnce upon a time."])
-        XCTAssertEqual(library.importedNames, ["A Short Story.txt"])
-        XCTAssertEqual(library.importedVoice, "ff_siwis")
-        XCTAssertEqual(library.importedSpeed, 1.25)
-        XCTAssertEqual(libraryPresentations, 1)
-        XCTAssertEqual(try rootContents(), [])
+        XCTAssertEqual(presentedSources, [.text("A Short Story\nOnce upon a time.", title: "A Short Story")])
     }
 
     func test_addToLibraryRejectsEmptyText() {
         let outcome = makeCoordinator().addToLibrary(" \n\t ")
 
         XCTAssertEqual(outcome, .failed(SpeechInputCoordinator.Message.noText))
-        XCTAssertTrue(library.importedContents.isEmpty)
-        XCTAssertEqual(libraryPresentations, 0)
+        XCTAssertTrue(presentedSources.isEmpty)
     }
 
     func test_playbackControlsForwardToSpeaker() {

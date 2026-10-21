@@ -11,6 +11,7 @@ private final class FakeBlendService: VoiceBlendServing {
     var deleteError: Error?
     private(set) var created: [VoiceBlendRequest] = []
     private(set) var deletedIDs: [String] = []
+    private(set) var previewed: [VoiceBlendPreviewRequest] = []
 
     func list() async throws -> VoiceBlendList {
         if let listError {
@@ -42,6 +43,11 @@ private final class FakeBlendService: VoiceBlendServing {
         }
         deletedIDs.append(id)
         blends.removeAll { $0.id == id }
+    }
+
+    func previewAudio(_ request: VoiceBlendPreviewRequest) async throws -> Data {
+        previewed.append(request)
+        return Data()
     }
 
     private static func listJSON(_ blends: [VoiceBlend], max: Int) throws -> Data {
@@ -261,7 +267,7 @@ final class VoiceBlendStoreTests: XCTestCase {
     }
 
     func test_voicesPagesMapToSidebarTabs() {
-        XCTAssertEqual(VoicesPage.allCases.map(\.tab), ["voices", "voices.catalog", "voices.pronunciations"])
+        XCTAssertEqual(VoicesPage.allCases.map(\.tab), ["voices.catalog", "voices.mine", "voices.pronunciations"])
         XCTAssertEqual(VoicesPage(tab: "voices.catalog"), .catalog)
         XCTAssertNil(VoicesPage(tab: "home"))
     }
