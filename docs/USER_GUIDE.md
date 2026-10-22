@@ -177,6 +177,23 @@ Server Recognition** only if you are comfortable with Apple transcribing that
 audio. The page also keeps your last 200 transcripts on this Mac, with search,
 copy, and delete. **Erase All Local Data** removes them too.
 
+### Pick a recognition engine
+
+The top of **Settings → Dictation** (and the Dictation step of onboarding)
+lists four engines. Apple is built in. The other three download once from
+Hugging Face and then run fully on your Mac:
+
+| Engine | Best for | Download |
+| --- | --- | --- |
+| Apple | Many languages, nothing to download | Built in |
+| Parakeet | 25 European languages | about 470 MB |
+| Bark | English, every word kept, strongest on natural conversation | about 440 MB |
+| Bark Clean | English dictation: leaves out "um", "uh", false starts and repeats | about 450 MB |
+
+Until the engine you pick is downloaded, dictation uses Apple. The first use
+after a download takes a minute or two while macOS prepares the model; after
+that it starts in about a second.
+
 ## Choose a voice and speed
 
 Open **Settings** (`Command + ,`, or **Settings…** in the app menu and the menu

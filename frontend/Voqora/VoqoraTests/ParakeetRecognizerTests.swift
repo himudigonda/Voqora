@@ -60,9 +60,9 @@ enum ParakeetReplay {
         return status == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : 0
     }
 
-    static func installedTranscriber() async throws -> ParakeetAsrTranscriber {
-        let store = ParakeetModelStore.shared
-        guard store.isInstalled else { throw XCTSkip("The Parakeet model is not installed") }
+    static func installedTranscriber(_ model: LocalSpeechModel = .parakeet) async throws -> ParakeetAsrTranscriber {
+        let store = LocalSpeechModelStore.store(for: model)
+        guard store.isInstalled else { throw XCTSkip("The \(model.title) model is not installed") }
         let models = try await store.loadedModels()
         return ParakeetAsrTranscriber(manager: AsrManager(models: models))
     }
@@ -304,14 +304,14 @@ final class ParakeetRecognizerTests: XCTestCase {
         guard ProcessInfo.processInfo.environment["VOQORA_PARAKEET_DOWNLOAD"] == "1" else {
             throw XCTSkip("Set TEST_RUNNER_VOQORA_PARAKEET_DOWNLOAD=1 to download the Parakeet model")
         }
-        let store = ParakeetModelStore.shared
+        let store = LocalSpeechModelStore.parakeet
         await store.download()
         XCTAssertEqual(store.state, .installed)
     }
 
     func test_startWithoutModelThrowsRecognizerUnavailable() async throws {
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("parakeet-missing-\(UUID().uuidString)")
-        let recognizer = ParakeetSpeechRecognizer(models: ParakeetModelStore(directory: missing))
+        let recognizer = ParakeetSpeechRecognizer(models: LocalSpeechModelStore(directory: missing))
         do {
             try await recognizer.start(localeIdentifier: nil, allowsServer: false) { _ in }
             XCTFail("start should throw")
@@ -331,5 +331,26 @@ final class ParakeetRecognizerTests: XCTestCase {
         XCTAssertEqual(score.droppedSentences, 0, outcome.transcript)
         XCTAssertEqual(score.repeatedInsertions, 0, outcome.transcript)
         XCTAssertLessThanOrEqual(score.wordErrorRate, 0.06, outcome.transcript)
+    }
+
+    func test_recordedAudioThroughBarkKeepsEverySentence() async throws {
+        for model in [LocalSpeechModel.bark, .barkClean] {
+            let transcriber = try await ParakeetReplay.installedTranscriber(model)
+            let url = try DictationFixtures.url("multi-paragraph-49s", "m4a")
+            let outcome = try await ParakeetReplay.run(url: url, transcriber: transcriber)
+
+            XCTAssertEqual(outcome.events.last, .ended, model.title)
+            XCTAssertFalse(outcome.transcript.contains("<unk>"), model.title)
+            let score = try TranscriptScoring.score(reference: DictationFixtures.reference("multi-paragraph-49s"), hypothesis: outcome.transcript)
+            XCTAssertEqual(score.droppedSentences, 0, "\(model.title): \(outcome.transcript)")
+            XCTAssertEqual(score.repeatedInsertions, 0, "\(model.title): \(outcome.transcript)")
+            XCTAssertLessThanOrEqual(score.wordErrorRate, 0.06, "\(model.title): \(outcome.transcript)")
+        }
+    }
+
+    func test_transcriberDropsTheUnknownToken() {
+        XCTAssertEqual(ParakeetAsrTranscriber.cleaned(" He said <unk>hello<unk> to me. "), "He said hello to me.")
+        XCTAssertEqual(ParakeetAsrTranscriber.cleaned("a <unk> b"), "a b")
+        XCTAssertEqual(ParakeetAsrTranscriber.cleaned("a <unk> <unk> b"), "a b")
     }
 }

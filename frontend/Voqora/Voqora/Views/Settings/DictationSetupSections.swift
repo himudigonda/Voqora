@@ -93,7 +93,7 @@ struct DictationPermissionRows: View {
     static func kinds(for engine: DictationEngineChoice) -> [PermissionKind] {
         switch engine {
         case .apple: [.microphone, .speechRecognition, .accessibility]
-        case .parakeet: [.microphone, .accessibility]
+        case .parakeet, .bark, .barkClean: [.microphone, .accessibility]
         }
     }
 }

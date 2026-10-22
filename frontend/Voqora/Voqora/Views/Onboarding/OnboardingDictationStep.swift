@@ -9,6 +9,7 @@ struct OnboardingDictationStep: View {
                 .padding(Theme.Space.card)
                 .frame(maxWidth: .infinity)
                 .background(theme.surfaceContainerLow, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
+            DictationEnginePicker()
             DictationPermissionRows()
             DictationCaptureSection()
             Text(OnboardingCopy.dictationServerNote)

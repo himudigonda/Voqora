@@ -72,7 +72,7 @@ struct DictationDependencies {
     var frontmostApplication: () -> FrontmostApplication? = { nil }
     var sounds: any SoundPlaying = SilentSoundPlayer()
     var recovery: DictationRecoveryStore?
-    var parakeetInstalled: @MainActor () -> Bool = { false }
+    var localModelInstalled: @MainActor (LocalSpeechModel) -> Bool = { _ in false }
     var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var escapeKey: any EscapeKeyRegistering = InertEscapeKey()
 
@@ -87,7 +87,7 @@ struct DictationDependencies {
             frontmostApplication: { FrontmostApplication.current() },
             sounds: SoundPlayer.shared,
             recovery: DictationRecoveryStore(),
-            parakeetInstalled: { ParakeetModelStore.shared.isInstalled },
+            localModelInstalled: { LocalSpeechModelStore.isInstalled($0) },
             escapeKey: SystemEscapeKey()
         )
     }
@@ -466,7 +466,7 @@ final class DictationController: ObservableObject {
     }
 
     private func effectiveEngine(for preferences: DictationPreferences) -> DictationEngineChoice {
-        DictationEngineChoice.effective(preferred: preferences.engine, parakeetInstalled: dependencies.parakeetInstalled())
+        DictationEngineChoice.effective(preferred: preferences.engine, installed: dependencies.localModelInstalled)
     }
 
     private func play(_ sound: VoqoraSound) {
@@ -551,8 +551,8 @@ final class DictationController: ObservableObject {
             }
         } catch {
             guard session == sessionID else { return }
-            let reported: DictationIssue = engine == .parakeet
-                ? .parakeetUnavailable
+            let reported: DictationIssue = engine.localModel != nil
+                ? .localModelUnavailable
                 : error as? DictationIssue ?? .audioInputUnavailable
             await send(.failed(reported))
             return

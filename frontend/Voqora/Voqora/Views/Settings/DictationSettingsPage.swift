@@ -6,6 +6,7 @@ struct DictationSettingsPage: View {
 
     var body: some View {
         SettingsPage(.dictation) {
+            DictationEnginePicker()
             DictationPermissionRows()
             DictationCaptureSection()
             SettingsSection(title: "Cleanup") {

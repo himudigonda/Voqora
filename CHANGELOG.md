@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [2.1.0]
+
+### New
+
+- Dictation: two new on-device engines, Bark and Bark Clean (Underdog Bark 3.0 by
+  Conway Research). Bark is the most accurate engine on conversational speech and
+  meetings; Bark Clean also leaves out "um", "uh", false starts and repeats, so
+  dictated text reads cleanly without Tidy with AI. Both are English only and
+  download once (about 440 MB each), with every file checked against a pinned
+  SHA-256.
+- Dictation engine picker in onboarding and at the top of Settings -> Dictation,
+  with download, progress and remove for each local engine.
+
+## [2.0.0]
+
 ### New
 
 - Voices: a new sidebar section with the Voice Catalog of all 28 voices and

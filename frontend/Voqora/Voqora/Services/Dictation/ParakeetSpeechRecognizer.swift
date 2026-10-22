@@ -166,7 +166,13 @@ nonisolated struct ParakeetAsrTranscriber: ParakeetTranscribing {
         var state = await TdtDecoderState.make(decoderLayers: manager.decoderLayerCount)
         let padded = samples.count < Self.minimumSamples ? samples + [Float](repeating: 0, count: Self.minimumSamples - samples.count) : samples
         let result = try await manager.transcribe(padded, decoderState: &state)
-        return result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self.cleaned(result.text)
+    }
+
+    static func cleaned(_ text: String) -> String {
+        text.replacingOccurrences(of: "<unk>", with: "")
+            .replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -481,7 +487,7 @@ final nonisolated class ParakeetSegmentPipeline: @unchecked Sendable {
 }
 
 final class ParakeetSpeechRecognizer: SpeechRecognizing {
-    private let models: ParakeetModelStore
+    private let models: LocalSpeechModelStore
     private var session: MicrophoneSession?
     private var pipeline: ParakeetSegmentPipeline?
     private var converter: ParakeetAudioConverter?
@@ -490,8 +496,8 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
     private var transcriber: (revision: Int, value: ParakeetAsrTranscriber)?
     private var generation = 0
 
-    init(models: ParakeetModelStore? = nil) {
-        self.models = models ?? .shared
+    init(models: LocalSpeechModelStore? = nil) {
+        self.models = models ?? .parakeet
     }
 
     func start(localeIdentifier _: String?, allowsServer _: Bool, onEvent: @escaping SpeechRecognitionHandler) async throws {
@@ -574,7 +580,7 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
             transcriber = (revision, value)
             return value
         } catch {
-            VoqoraLog.warn("ParakeetRecognizer", "Parakeet model could not be loaded", ["error": "\(error)"])
+            VoqoraLog.warn("ParakeetRecognizer", "Local speech model could not be loaded", ["error": "\(error)"])
             throw DictationIssue.recognizerUnavailable
         }
     }

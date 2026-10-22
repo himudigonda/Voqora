@@ -16,6 +16,7 @@ as I can, and everything below that leaves your Mac is optional.
 | Update check | Automatically, at most every six hours, and when you ask. | api.github.com | To tell you a newer version exists. Sends no personal data beyond what any web request reveals, such as your IP address. |
 | Installer download | Only when you choose **Download Latest Version**. | github.com | To fetch the official DMG. |
 | Parakeet dictation model | Only when you choose **Download** for the Parakeet engine in dictation settings. | huggingface.co | To fetch the speech model (about 470 MB). After that, dictation with Parakeet runs entirely on your Mac. |
+| Bark and Bark Clean dictation models | Only when you choose **Download** for Bark or Bark Clean in dictation settings or onboarding. | huggingface.co | To fetch the speech model (about 440 MB each), pinned to one revision and checked against a SHA-256 for every file. After that, dictation with Bark runs entirely on your Mac. |
 | Optional speech engines | Only when you choose **Download** for Supertonic or Ming in Settings -> Engines. | huggingface.co for the model files; for Ming also github.com for its code and the Python package index (pypi.org and files.pythonhosted.org) for its dependencies | To install the engine. After that, speech with that engine runs entirely on your Mac. |
 | Dictation transcripts and AI tool text | Only when you connect your own AI provider and use AI tidy for dictation, or an AI tool (summarize, translate, ask, quiz, flashcards, podcast scripts). Ollama and LM Studio keep this text on your Mac. | The provider you connected | To do the task you asked for, under that provider's terms. |
 | Page text and scanned-page images | Only for audiobooks where you connect your own AI provider and switch on AI cleanup. Ollama and LM Studio keep this text on your Mac; a Custom server receives it at the address you enter. | The provider you connected (OpenAI, Anthropic, xAI, Groq, Cerebras, Google Gemini, or OpenRouter) | To clean up the document, under that provider's terms. |
@@ -62,7 +63,7 @@ model that ships inside the app or by an optional engine you downloaded, so no
 text you have Voqora read aloud is sent anywhere.
 
 Dictation turns speech into text on your Mac, using Apple's on-device speech
-recognition or the optional Parakeet model. Your audio is not stored or sent.
+recognition or an optional local model (Parakeet, Bark or Bark Clean). Your audio is not stored or sent.
 Transcripts are kept in your dictation history, together with the original
 wording when AI tidy changed it, until you delete them. While you dictate,
 the text so far is saved to a recovery file that is removed once the

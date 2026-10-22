@@ -131,8 +131,8 @@ final class DictationPreferencesTests: XCTestCase {
     }
 
     func test_parakeetIsEffectiveOnlyWhenInstalled() {
-        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, parakeetInstalled: true), .parakeet)
-        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, parakeetInstalled: false), .apple)
-        XCTAssertEqual(DictationEngineChoice.effective(preferred: .apple, parakeetInstalled: true), .apple)
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, installed: { _ in true }), .parakeet)
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, installed: { _ in false }), .apple)
+        XCTAssertEqual(DictationEngineChoice.effective(preferred: .apple, installed: { _ in true }), .apple)
     }
 }

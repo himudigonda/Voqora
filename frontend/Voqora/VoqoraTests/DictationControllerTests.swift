@@ -994,7 +994,7 @@ final class DictationControllerTests: XCTestCase {
     func test_parakeetSkipsTheSpeechRecognitionPermission() async {
         defaults.set(DictationEngineChoice.parakeet.rawValue, forKey: DictationPreferences.engineKey)
         authorizer.speech = .denied
-        let parakeet = makeController(named: "parakeet.json") { $0.parakeetInstalled = { true } }
+        let parakeet = makeController(named: "parakeet.json") { $0.localModelInstalled = { _ in true } }
 
         await parakeet.toggle()
 
@@ -1005,7 +1005,7 @@ final class DictationControllerTests: XCTestCase {
     func test_parakeetNotInstalledFallsBackToApplesPermissionCheck() async {
         defaults.set(DictationEngineChoice.parakeet.rawValue, forKey: DictationPreferences.engineKey)
         authorizer.speech = .denied
-        let fallback = makeController(named: "fallback.json") { $0.parakeetInstalled = { false } }
+        let fallback = makeController(named: "fallback.json") { $0.localModelInstalled = { _ in false } }
 
         await fallback.toggle()
 
@@ -1324,20 +1324,36 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertNil(controller.tidiedWords)
     }
 
-    func test_aParakeetStartFailureNamesParakeetAndDoesNotFallBack() async {
-        defaults.set(DictationEngineChoice.parakeet.rawValue, forKey: DictationPreferences.engineKey)
-        recognizer.startError = .recognizerUnavailable
-        let parakeet = makeController(named: "parakeet-failure.json") { $0.parakeetInstalled = { true } }
+    func test_aLocalModelStartFailureIsReportedAndDoesNotFallBack() async {
+        for engine in [DictationEngineChoice.parakeet, .bark, .barkClean] {
+            defaults.set(engine.rawValue, forKey: DictationPreferences.engineKey)
+            recognizer.startError = .recognizerUnavailable
+            let controller = makeController(named: "\(engine.rawValue)-failure.json") { $0.localModelInstalled = { _ in true } }
 
-        await parakeet.toggle()
+            await controller.toggle()
 
-        XCTAssertEqual(parakeet.phase, .idle)
-        XCTAssertEqual(parakeet.issue, .parakeetUnavailable)
+            XCTAssertEqual(controller.phase, .idle, engine.rawValue)
+            XCTAssertEqual(controller.issue, .localModelUnavailable, engine.rawValue)
+            XCTAssertTrue(recognizer.startedLocales.isEmpty, engine.rawValue)
+        }
+        XCTAssertEqual(DictationIssue.localModelUnavailable.rawValue, "parakeet_unavailable")
         XCTAssertEqual(
-            DictationIssue.parakeetUnavailable.message,
-            "The Parakeet model could not be loaded. Reinstall it in Settings → Dictation, or switch to Apple."
+            DictationIssue.localModelUnavailable.message,
+            "The local speech model could not be loaded. Reinstall it in Settings → Dictation, or switch to Apple."
         )
-        XCTAssertTrue(recognizer.startedLocales.isEmpty)
+    }
+
+    func test_barkSkipsTheSpeechRecognitionPermissionOnlyWhenInstalled() async {
+        defaults.set(DictationEngineChoice.barkClean.rawValue, forKey: DictationPreferences.engineKey)
+        authorizer.speech = .denied
+        let installed = makeController(named: "bark-installed.json") { $0.localModelInstalled = { $0 == .barkClean } }
+        await installed.toggle()
+        XCTAssertEqual(installed.phase, .listening)
+        XCTAssertNil(installed.issue)
+
+        let missing = makeController(named: "bark-missing.json") { $0.localModelInstalled = { $0 == .parakeet } }
+        await missing.toggle()
+        XCTAssertEqual(missing.issue, .speechRecognitionDenied)
     }
 
     func test_theRecoveryFileSurvivesWhenHistoryCannotBeSaved() async throws {

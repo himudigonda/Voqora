@@ -12,6 +12,7 @@ to every author and maintainer below; Voqora would not exist without them.
 | Sparkle | Update framework, linked but not started in the early-access channel | [MIT and bundled notices](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE) |
 | FluidAudio | On-device Parakeet speech recognition for dictation | [Apache-2.0](https://github.com/FluidInference/FluidAudio/blob/main/LICENSE) |
 | Parakeet TDT 0.6B v3 (CoreML) | Optional dictation model, downloaded only when you choose Parakeet | [CC-BY-4.0](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3), converted by [FluidInference](https://huggingface.co/FluidInference/parakeet-tdt-0.6b-v3-coreml) |
+| Underdog Bark 3.0 and Bark 3.0 Clean (CoreML) | Optional dictation models, downloaded only when you choose Bark or Bark Clean | [CC-BY-4.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0) by Conway Research, derived from NVIDIA parakeet-tdt-0.6b-v3 through moondream/parakeet-ultra, converted by [FluidInference](https://huggingface.co/FluidInference/bark-3.0-coreml) |
 | Poppins | Bundled interface typeface | [SIL Open Font License 1.1](https://fonts.google.com/specimen/Poppins/about) |
 
 ## Local speech server

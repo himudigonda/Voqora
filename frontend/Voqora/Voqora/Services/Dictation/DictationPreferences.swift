@@ -26,20 +26,29 @@ nonisolated enum DictationInsertionMode: String, CaseIterable, Identifiable, Sen
 nonisolated enum DictationEngineChoice: String, CaseIterable, Identifiable, Sendable {
     case apple
     case parakeet
+    case bark
+    case barkClean
 
     var id: String {
         rawValue
     }
 
     var title: String {
+        localModel?.title ?? "Apple"
+    }
+
+    var localModel: LocalSpeechModel? {
         switch self {
-        case .apple: "Apple"
-        case .parakeet: "Parakeet"
+        case .apple: nil
+        case .parakeet: .parakeet
+        case .bark: .bark
+        case .barkClean: .barkClean
         }
     }
 
-    static func effective(preferred: DictationEngineChoice, parakeetInstalled: Bool) -> DictationEngineChoice {
-        preferred == .parakeet && parakeetInstalled ? .parakeet : .apple
+    static func effective(preferred: DictationEngineChoice, installed: (LocalSpeechModel) -> Bool) -> DictationEngineChoice {
+        guard let model = preferred.localModel, installed(model) else { return .apple }
+        return preferred
     }
 }
 

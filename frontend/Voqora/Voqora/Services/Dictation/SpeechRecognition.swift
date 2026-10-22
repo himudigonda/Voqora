@@ -39,28 +39,28 @@ final class SystemSpeechRecognizer: SpeechRecognizing {
     private var active: (any SpeechRecognizing)?
     private var generation = 0
     private let defaults: UserDefaults
-    private let parakeetInstalled: @MainActor () -> Bool
+    private let localModelInstalled: @MainActor (LocalSpeechModel) -> Bool
 
-    init(defaults: UserDefaults = .standard, parakeetInstalled: @escaping @MainActor () -> Bool = { ParakeetModelStore.shared.isInstalled }) {
+    init(defaults: UserDefaults = .standard, localModelInstalled: @escaping @MainActor (LocalSpeechModel) -> Bool = { LocalSpeechModelStore.isInstalled($0) }) {
         self.defaults = defaults
-        self.parakeetInstalled = parakeetInstalled
+        self.localModelInstalled = localModelInstalled
     }
 
     func start(localeIdentifier: String?, allowsServer: Bool, onEvent: @escaping SpeechRecognitionHandler) async throws {
         stop()
         let token = generation
         let preferred = DictationPreferences(defaults: defaults).engine
-        if DictationEngineChoice.effective(preferred: preferred, parakeetInstalled: parakeetInstalled()) == .parakeet {
-            let parakeet = ParakeetSpeechRecognizer()
-            active = parakeet
-            try await parakeet.start(localeIdentifier: localeIdentifier, allowsServer: allowsServer, onEvent: onEvent)
+        if let model = DictationEngineChoice.effective(preferred: preferred, installed: localModelInstalled).localModel {
+            let local = ParakeetSpeechRecognizer(models: LocalSpeechModelStore.store(for: model))
+            active = local
+            try await local.start(localeIdentifier: localeIdentifier, allowsServer: allowsServer, onEvent: onEvent)
             if token != generation {
-                parakeet.stop()
+                local.stop()
             }
             return
         }
-        if preferred == .parakeet {
-            DictationTrace.event("engine.fallback", ["from": "parakeet", "to": "apple", "reason": "model_not_installed"])
+        if preferred != .apple {
+            DictationTrace.event("engine.fallback", ["from": preferred.rawValue, "to": "apple", "reason": "model_not_installed"])
         }
         let engine = await Self.engine(forLocaleIdentifier: localeIdentifier)
         guard token == generation else { return }
