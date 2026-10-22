@@ -59,6 +59,7 @@ private final class GatedRecognizer: SpeechRecognizing {
 private final class FakeAuthorizer: DictationAuthorizing {
     var microphone = DictationPermissionStatus.granted
     var speech = DictationPermissionStatus.granted
+    private(set) var speechRequests = 0
 
     func microphoneStatus() -> DictationPermissionStatus {
         microphone
@@ -73,7 +74,8 @@ private final class FakeAuthorizer: DictationAuthorizing {
     }
 
     func requestSpeechRecognitionAccess() async -> Bool {
-        true
+        speechRequests += 1
+        return true
     }
 }
 
@@ -83,8 +85,10 @@ private final class FakeInserter: TranscriptInserting {
     private(set) var inserted: [String] = []
     private(set) var modes: [DictationInsertionMode] = []
     var onInsert: ((String) -> Void)?
+    private(set) var insertedFromCancelledTask = false
 
     func insert(_ text: String, mode: DictationInsertionMode) async -> DictationInsertionOutcome {
+        insertedFromCancelledTask = insertedFromCancelledTask || Task.isCancelled
         onInsert?(text)
         inserted.append(text)
         modes.append(mode)
@@ -1004,14 +1008,26 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertNil(parakeet.issue)
     }
 
-    func test_parakeetNotInstalledFallsBackToApplesPermissionCheck() async {
+    func test_aLocalEngineThatIsNotInstalledSaysSoInsteadOfSwitchingToApple() async {
         defaults.set(DictationEngineChoice.parakeet.rawValue, forKey: DictationPreferences.engineKey)
         authorizer.speech = .denied
-        let fallback = makeController(named: "fallback.json") { $0.localModelInstalled = { _ in false } }
+        let missing = makeController(named: "fallback.json") { $0.localModelInstalled = { _ in false } }
 
-        await fallback.toggle()
+        await missing.toggle()
 
-        XCTAssertEqual(fallback.issue, .speechRecognitionDenied)
+        XCTAssertEqual(missing.issue, .localModelNotInstalled)
+        XCTAssertTrue(recognizer.startedLocales.isEmpty)
+        XCTAssertEqual(authorizer.speechRequests, 0)
+    }
+
+    func test_aMicrophoneFailureWithALocalEngineIsReportedAsAMicrophoneProblem() async {
+        defaults.set(DictationEngineChoice.barkClean.rawValue, forKey: DictationPreferences.engineKey)
+        recognizer.startError = .audioInputUnavailable
+        let controller = makeController(named: "mic.json") { $0.localModelInstalled = { _ in true } }
+
+        await controller.toggle()
+
+        XCTAssertEqual(controller.issue, .audioInputUnavailable)
     }
 
     func test_appleEngineStillRequiresSpeechRecognition() async {
@@ -1336,12 +1352,26 @@ final class DictationControllerTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(controller.phase, .finishing)
         XCTAssertNil(controller.issue)
+        await controller.toggle()
+        XCTAssertEqual(controller.phase, .finishing)
 
         recognizer.isWarmingUp = false
         await controller.receive(.finalized("words spoken while loading"))
         await controller.receive(.ended)
 
         XCTAssertEqual(inserter.inserted, ["words spoken while loading"])
+    }
+
+    func test_aTimedOutFinishInsertsFromATaskThatIsNotCancelled() async throws {
+        let controller = makeController(named: "timeout.json") { $0.finishTimeout = 0.05 }
+        await controller.toggle()
+        await controller.receive(.finalized("kept words"))
+        await controller.toggle()
+
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(inserter.inserted, ["kept words"])
+        XCTAssertFalse(inserter.insertedFromCancelledTask)
     }
 
     func test_finishingTimesOutOnceTheModelHasLoaded() async throws {
@@ -1396,7 +1426,9 @@ final class DictationControllerTests: XCTestCase {
 
         let missing = makeController(named: "bark-missing.json") { $0.localModelInstalled = { $0 == .parakeet } }
         await missing.toggle()
-        XCTAssertEqual(missing.issue, .speechRecognitionDenied)
+        XCTAssertEqual(missing.issue, .localModelNotInstalled)
+        XCTAssertEqual(missing.phase, .idle)
+        XCTAssertEqual(authorizer.speechRequests, 0)
     }
 
     func test_theRecoveryFileSurvivesWhenHistoryCannotBeSaved() async throws {

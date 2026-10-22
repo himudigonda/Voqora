@@ -57,8 +57,11 @@ nonisolated enum DictationStateLabel {
         if phase == .preparing {
             return "Loading speech recognition. Start speaking when this says Listening."
         }
-        if isWarmingUp {
+        if isWarmingUp, phase == .listening {
             return "Keep talking. The speech model is still loading, so your words will appear in a moment."
+        }
+        if isWarmingUp, phase == .finishing {
+            return "Got it. Your words will appear as soon as the speech model finishes loading."
         }
         return "Start speaking. Press \(shortcut) when you're done."
     }

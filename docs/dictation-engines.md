@@ -71,7 +71,9 @@ so treat it as a floor.
 The first load after a download compiles the encoder for the Neural Engine:
 90 s for Bark and 134 s for Bark Clean in the full run above, longer when the Mac is busy.
 Voqora starts that compile in the background right after the download and
-shows "Getting ready for first use" until it finishes.
+shows "Loading the model" until it finishes. The same compile runs again after
+every app update, so Voqora also starts it at launch, and a dictation started
+before it finishes records audio and transcribes it once the model is ready.
 
 ## Takeaways
 

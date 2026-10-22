@@ -150,15 +150,20 @@ final class ParakeetRecognizerTests: XCTestCase {
         return events
     }
 
-    private func collectWhileLoading(_ load: Task<any ParakeetTranscribing, Error>, release: () -> Void) async -> [SpeechRecognitionEvent] {
+    private func collectWhileLoading(
+        _ load: Task<any ParakeetTranscribing, Error>,
+        samples: [Float]? = nil,
+        failure: ParakeetLoadFailure = ParakeetLoadFailure(),
+        release: () -> Void
+    ) async -> [SpeechRecognitionEvent] {
         let (stream, continuation) = AsyncStream<SpeechRecognitionEvent>.makeStream()
-        let pipeline = ParakeetSegmentPipeline(transcriber: DeferredParakeetTranscriber(load: load)) { event in
+        let pipeline = ParakeetSegmentPipeline(transcriber: DeferredParakeetTranscriber(load: load, failure: failure)) { event in
             continuation.yield(event)
             if event == .ended || event == .failed {
                 continuation.finish()
             }
         }
-        pipeline.append(speechSignal())
+        pipeline.append(samples ?? speechSignal())
         pipeline.finish()
         release()
         Task {
@@ -198,6 +203,20 @@ final class ParakeetRecognizerTests: XCTestCase {
         XCTAssertTrue(finalizedTexts(events).isEmpty)
         XCTAssertEqual(events.last, .failed)
         XCTAssertFalse(events.contains(.ended))
+    }
+
+    func test_oneSentenceAndAModelThatFailsToLoadReportsFailedNotNothingHeard() async {
+        let sentence = Array(speechSignal().prefix(48000))
+        let failure = ParakeetLoadFailure()
+        let load = Task<any ParakeetTranscribing, Error> {
+            try await Task.sleep(for: .milliseconds(50))
+            throw ASRError.processingFailed("compile failed")
+        }
+        let events = await collectWhileLoading(load, samples: sentence, failure: failure) {}
+
+        XCTAssertEqual(events.last, .failed)
+        XCTAssertFalse(events.contains(.ended))
+        XCTAssertTrue(failure.isSet)
     }
 
     func test_finalsArriveOnceInOrderAndEndedComesLast() async {
@@ -314,6 +333,25 @@ final class ParakeetRecognizerTests: XCTestCase {
             events.append(event)
         }
         XCTAssertTrue(events.isEmpty)
+    }
+
+    func test_aMicrophoneFailureMidSessionStillTranscribesWhatWasCaptured() async {
+        let (stream, continuation) = AsyncStream<SpeechRecognitionEvent>.makeStream()
+        let pipeline = ParakeetSegmentPipeline(transcriber: ParakeetFakeTranscriber(delay: .milliseconds(20))) { event in
+            continuation.yield(event)
+            if event == .ended || event == .failed {
+                continuation.finish()
+            }
+        }
+        pipeline.append(speechSignal())
+        pipeline.reportFailure()
+        pipeline.append(speechSignal())
+        var events: [SpeechRecognitionEvent] = []
+        for await event in stream {
+            events.append(event)
+        }
+        XCTAssertEqual(finalizedTexts(events).count, 4)
+        XCTAssertEqual(events.last, .failed)
     }
 
     func test_conversionFailureIsReportedAsFailed() async {

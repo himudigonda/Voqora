@@ -54,6 +54,17 @@ nonisolated struct BarkModelDownloader: Sendable {
                 progress(Double(completed) / Double(total))
                 continue
             }
+            let existing = directory.appendingPathComponent(file.path)
+            if Self.matches(file, at: existing) {
+                try manager.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if manager.fileExists(atPath: target.path) {
+                    try manager.removeItem(at: target)
+                }
+                try manager.copyItem(at: existing, to: target)
+                completed += file.size
+                progress(Double(completed) / Double(total))
+                continue
+            }
             let base = completed
             let (temporary, status) = try await fetch(BarkModelManifest.downloadURL(folder: folder, path: file.path)) { written in
                 progress(Double(base + min(written, file.size)) / Double(total))

@@ -21,11 +21,15 @@ nonisolated enum DictationEngineCopy {
 
     static let recommended: DictationEngineChoice = .barkClean
 
-    static let footer = "Parakeet, Bark and Bark Clean download once from Hugging Face, then run fully on this Mac. Until the one you pick is installed, dictation uses Apple."
+    static let footer = "Parakeet, Bark and Bark Clean download once from Hugging Face, then run fully on this Mac. Dictation starts working with the one you pick once its download finishes."
 
     static func footer(engine: DictationEngineChoice, localeIdentifier: String) -> String {
         guard engine == .bark || engine == .barkClean, !isEnglish(localeIdentifier) else { return footer }
         return "\(engine.title) understands English only, and your dictation language isn't English. Pick Apple or Parakeet for other languages. " + footer
+    }
+
+    static func isRecommended(_ model: LocalSpeechModel, localeIdentifier: String) -> Bool {
+        DictationEngineChoice.allCases.first { $0.localModel == model } == recommended && isEnglish(localeIdentifier)
     }
 
     static func isEnglish(_ localeIdentifier: String) -> Bool {
@@ -42,7 +46,7 @@ struct DictationEnginePicker: View {
         SettingsSection(title: "Recognition engine", footer: DictationEngineCopy.footer(engine: engine, localeIdentifier: localeIdentifier)) {
             DictationAppleEngineRow(selection: $engine)
             ForEach(LocalSpeechModel.allCases) { model in
-                DictationLocalEngineRow(model: model, models: .store(for: model), selection: $engine)
+                DictationLocalEngineRow(model: model, models: .store(for: model), selection: $engine, isRecommended: DictationEngineCopy.isRecommended(model, localeIdentifier: localeIdentifier))
             }
         }
     }
@@ -69,6 +73,7 @@ private struct DictationLocalEngineRow: View {
     let model: LocalSpeechModel
     @ObservedObject var models: LocalSpeechModelStore
     @Binding var selection: DictationEngineChoice
+    let isRecommended: Bool
     @State private var installedBytes: Int64?
     @State private var removalFailure: String?
 
@@ -83,7 +88,7 @@ private struct DictationLocalEngineRow: View {
     var body: some View {
         SettingsRowShell(title: model.title, detail: detail, systemImage: DictationEngineCopy.systemImage(choice), isInteractive: !isSelected) {
             HStack(spacing: Theme.Space.item) {
-                if choice == DictationEngineCopy.recommended, !isSelected {
+                if isRecommended, !isSelected {
                     StatusChip(text: "Recommended", kind: .success, systemImage: "star.fill")
                 }
                 trailing
@@ -98,9 +103,23 @@ private struct DictationLocalEngineRow: View {
     @ViewBuilder
     private var trailing: some View {
         switch models.state {
-        case .notInstalled, .failed:
+        case .notInstalled:
             Button(action: download) {
-                Label(models.state == .notInstalled ? "Download" : "Try Again", systemImage: "arrow.down.circle")
+                Label("Download", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.voqoraTonal)
+        case .failed:
+            Button("Remove", action: remove)
+                .buttonStyle(.voqoraText)
+            Button(action: download) {
+                Label("Try Again", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.voqoraTonal)
+        case .loadFailed:
+            Button("Remove", action: remove)
+                .buttonStyle(.voqoraText)
+            Button(action: download) {
+                Label("Repair", systemImage: "wrench.and.screwdriver")
             }
             .buttonStyle(.voqoraTonal)
         case let .downloading(fraction):
@@ -129,9 +148,14 @@ private struct DictationLocalEngineRow: View {
             return fraction.map { "Downloading… \(Int($0 * 100))%" } ?? "Downloading…"
         case let .failed(message):
             return "Download failed. \(message)"
+        case let .loadFailed(message):
+            let repair = model.manifest == nil
+                ? "Repair downloads it again and keeps the current copy if that fails."
+                : "Repair checks every file and downloads only what's damaged."
+            return "Couldn't load the model. \(message) \(repair)"
         case .installed:
             if models.isPreparing {
-                return "Getting ready for first use. This can take a minute or two."
+                return "Loading the model. After a download or an app update this can take a minute or two."
             }
             if let removalFailure {
                 return removalFailure
@@ -143,9 +167,12 @@ private struct DictationLocalEngineRow: View {
 
     private func choose() {
         selection = choice
-        if models.state == .notInstalled {
+        switch models.state {
+        case .notInstalled, .failed:
             download()
-        } else {
+        case .downloading:
+            break
+        case .installed, .loadFailed:
             LocalSpeechModelStore.warmUp(choice)
         }
     }

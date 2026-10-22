@@ -19,6 +19,7 @@ nonisolated enum DictationIssue: String, Error, Sendable {
     case audioInputUnavailable = "audio_input_unavailable"
     case recognitionFailed = "recognition_failed"
     case localModelUnavailable = "parakeet_unavailable"
+    case localModelNotInstalled = "local_model_not_installed"
     case nothingHeard = "nothing_heard"
 
     var message: String {
@@ -39,6 +40,8 @@ nonisolated enum DictationIssue: String, Error, Sendable {
             "Voqora couldn't transcribe that. Try again."
         case .localModelUnavailable:
             "The local speech model could not be loaded. Reinstall it in Settings → Dictation, or switch to Apple."
+        case .localModelNotInstalled:
+            "Your speech model isn't installed yet. Finish the download in Settings → Dictation, or switch to Apple."
         case .nothingHeard:
             "Voqora didn't hear anything. Press the shortcut and start speaking."
         }
