@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [2.1.1]
+
+### Fixed
+
+- Dictation with a local engine no longer looks stuck after an app update.
+  Voqora loads the model when it opens, and if you dictate before macOS has
+  finished preparing it, the microphone records right away and your words
+  appear once the model is ready.
+- The dictation panel only says "Start speaking" once the microphone is on.
+- Picking a local engine that isn't installed yet now says so instead of
+  quietly switching to Apple and asking for Speech Recognition access.
+- A model that fails to load shows **Repair**, which checks every file and
+  downloads only damaged ones. Parakeet no longer re-downloads on its own.
+- Only the engine you selected stays loaded in memory.
+- Parakeet download progress no longer stalls at 50% while the model compiles.
+- A failed download can be removed, so partial files don't stay on disk.
+- When a dictation ends on its own after a pause, the paste is reported
+  correctly and your previous clipboard is restored.
+- A microphone that drops mid-dictation keeps the speech already captured.
+- Microphone problems with a local engine are reported as microphone problems,
+  not as a broken model.
+- The dictation panel no longer disappears when you start dictating right after
+  pasting the last transcript.
+- With live insertion, switching apps before you stop copies the whole
+  transcript, not just the last part.
+- Bark Clean is marked Recommended only when your dictation language is
+  English.
+
 ## [2.1.0]
 
 ### New
@@ -10,7 +38,7 @@
   Conway Research). Bark is the most accurate engine on conversational speech and
   meetings; Bark Clean also leaves out "um", "uh", false starts and repeats, so
   dictated text reads cleanly without Tidy with AI. Both are English only and
-  download once (about 440 MB each), with every file checked against a pinned
+  download once (about 440 MB for Bark, 450 MB for Bark Clean), with every file checked against a pinned
   SHA-256.
 - Dictation engine picker in onboarding and at the top of Settings -> Dictation,
   with download, progress and remove for each local engine.

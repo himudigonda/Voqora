@@ -164,6 +164,7 @@ struct VoqoraApp: App {
             setupShortcuts(vm: vmInstance, inputs: inputsInstance, aiSelection: aiSelection)
             systemMedia?.start()
             dictationInstance.installSystemIntegrations(dashboard: vmInstance)
+            LocalSpeechModelStore.warmUp(DictationPreferences(defaults: .standard).engine)
             localAPIInstance.observeEngine(vmInstance.$isBackendOnline.eraseToAnyPublisher())
             UsageStatsStore.shared.importHistoryIfNeeded(historyInstance.history)
             UsageStatsStore.shared.recordLaunch()

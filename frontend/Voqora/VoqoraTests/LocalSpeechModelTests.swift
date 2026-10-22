@@ -48,6 +48,18 @@ final class LocalSpeechModelTests: XCTestCase {
         XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, installed: onlyParakeet), .parakeet)
     }
 
+    func test_barkCleanIsRecommendedOnlyForEnglishDictation() {
+        XCTAssertTrue(DictationEngineCopy.isRecommended(.barkClean, localeIdentifier: "en-US"))
+        XCTAssertFalse(DictationEngineCopy.isRecommended(.barkClean, localeIdentifier: "de-DE"))
+        XCTAssertFalse(DictationEngineCopy.isRecommended(.bark, localeIdentifier: "en-US"))
+        XCTAssertFalse(DictationEngineCopy.isRecommended(.parakeet, localeIdentifier: "en-US"))
+    }
+
+    @MainActor
+    func test_warmUpIgnoresTheAppleEngine() {
+        XCTAssertNil(LocalSpeechModelStore.warmUp(.apple))
+    }
+
     func test_localEnginesSkipSpeechRecognitionPermission() {
         XCTAssertEqual(DictationPermissionRows.kinds(for: .bark), [.microphone, .accessibility])
         XCTAssertEqual(DictationPermissionRows.kinds(for: .barkClean), [.microphone, .accessibility])
@@ -112,6 +124,112 @@ final class LocalSpeechModelTests: XCTestCase {
 
         XCTAssertEqual(source.requested, ["bark-3.0/b.bin"])
         XCTAssertTrue(BarkModelDownloader.isInstalled(files, in: target))
+    }
+
+    func test_repairReusesInstalledFilesThatStillVerifyAndRefetchesDamagedOnes() async throws {
+        let files = [Self.file("a.bin", "alpha"), Self.file("b.bin", "beta")]
+        let target = root.appendingPathComponent("bark-3.0")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try Data("alpha".utf8).write(to: target.appendingPathComponent("a.bin"))
+        try Data("bxta".utf8).write(to: target.appendingPathComponent("b.bin"))
+        let source = FakeSource(contents: ["a.bin": "alpha", "b.bin": "beta"], root: root)
+
+        try await BarkModelDownloader(fetch: source.fetch).install(files, folder: "bark-3.0", into: target) { _ in }
+
+        XCTAssertEqual(source.requested, ["bark-3.0/b.bin"])
+        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("b.bin"), encoding: .utf8), "beta")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: BarkModelDownloader.stagingDirectory(for: target).path))
+    }
+
+    @MainActor
+    func test_aModelThatFailsToLoadStaysInstalledAndOffersRepair() async throws {
+        let directory = root.appendingPathComponent("bark-3.0")
+        try Self.writePlaceholders(BarkModelManifest.bark, in: directory)
+        let store = LocalSpeechModelStore(model: .bark, directory: directory)
+        XCTAssertEqual(store.state, .installed)
+
+        do {
+            _ = try await store.loadedModels()
+            XCTFail("load should throw")
+        } catch {}
+
+        guard case .loadFailed = store.state else { return XCTFail("expected loadFailed, got \(store.state)") }
+        XCTAssertTrue(store.isInstalled)
+        XCTAssertFalse(store.isPreparing)
+        store.refresh()
+        guard case .loadFailed = store.state else { return XCTFail("refresh hid the load failure") }
+        try store.remove()
+        XCTAssertEqual(store.state, .notInstalled)
+    }
+
+    @MainActor
+    func test_aFailedRepairKeepsTheInstalledBarkFilesAndStaysRepairable() async throws {
+        let directory = root.appendingPathComponent("bark-3.0")
+        try Self.writePlaceholders(BarkModelManifest.bark, in: directory)
+        let source = FakeSource(contents: [:], root: root, status: 503)
+        let store = LocalSpeechModelStore(
+            model: .bark,
+            directory: directory,
+            downloader: BarkModelDownloader(fetch: source.fetch),
+            defaults: Self.isolatedDefaults()
+        )
+        _ = try? await store.loadedModels()
+
+        await store.download()
+
+        guard case let .loadFailed(message) = store.state else { return XCTFail("expected loadFailed, got \(store.state)") }
+        XCTAssertTrue(message.hasPrefix("Repair didn't finish."))
+        XCTAssertTrue(store.isInstalled)
+        XCTAssertFalse(store.isPreparing)
+        XCTAssertTrue(BarkModelDownloader.isInstalled(BarkModelManifest.bark, in: directory))
+    }
+
+    @MainActor
+    func test_replacingOnSuccessRestoresTheOldCopyWhenTheNewOneFails() async throws {
+        let directory = root.appendingPathComponent("parakeet-tdt-0.6b-v3")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: directory.appendingPathComponent("Encoder.bin"))
+
+        do {
+            try await LocalSpeechModelStore.replacingOnSuccess(directory, when: true) {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                try Data("half".utf8).write(to: directory.appendingPathComponent("partial.bin"))
+                throw URLError(.notConnectedToInternet)
+            }
+            XCTFail("operation should throw")
+        } catch {}
+
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("Encoder.bin"), encoding: .utf8), "old")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("partial.bin").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".parakeet-tdt-0.6b-v3.backup").path))
+
+        try await LocalSpeechModelStore.replacingOnSuccess(directory, when: true) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data("new".utf8).write(to: directory.appendingPathComponent("Encoder.bin"))
+        }
+        XCTAssertEqual(try String(contentsOf: directory.appendingPathComponent("Encoder.bin"), encoding: .utf8), "new")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".parakeet-tdt-0.6b-v3.backup").path))
+    }
+
+    @MainActor
+    func test_parakeetLoadsOnlyFromDiskAndNeverDownloadsOnItsOwn() async throws {
+        let directory = root.appendingPathComponent("parakeet-tdt-0.6b-v3")
+        for name in ["Preprocessor.mlmodelc", "Encoder.mlmodelc", "Decoder.mlmodelc", "JointDecisionv3.mlmodelc"] {
+            try FileManager.default.createDirectory(at: directory.appendingPathComponent(name), withIntermediateDirectories: true)
+        }
+        try Data("{}".utf8).write(to: directory.appendingPathComponent("parakeet_vocab.json"))
+        let store = LocalSpeechModelStore(model: .parakeet, directory: directory)
+        guard store.isInstalled else { throw XCTSkip("FluidAudio needs more files to call Parakeet installed") }
+        let started = Date()
+
+        do {
+            _ = try await store.loadedModels()
+            XCTFail("load should throw")
+        } catch {}
+
+        guard case .loadFailed = store.state else { return XCTFail("expected loadFailed, got \(store.state)") }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("config.json").path))
     }
 
     @MainActor
@@ -182,6 +300,23 @@ final class LocalSpeechModelTests: XCTestCase {
             XCTFail("load should throw")
         } catch {
             XCTAssertEqual(error as? LocalSpeechModelError, .notInstalled("Bark Clean"))
+        }
+    }
+
+    private static func isolatedDefaults() -> UserDefaults {
+        let defaults = UserDefaults(suiteName: "LocalSpeechModelTests.\(UUID().uuidString)")!
+        defaults.set(DictationEngineChoice.apple.rawValue, forKey: DictationPreferences.engineKey)
+        return defaults
+    }
+
+    private static func writePlaceholders(_ files: [BarkModelFile], in directory: URL) throws {
+        for file in files {
+            let url = directory.appendingPathComponent(file.path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: url.path, contents: nil)
+            let handle = try FileHandle(forWritingTo: url)
+            try handle.truncate(atOffset: UInt64(file.size))
+            try handle.close()
         }
     }
 

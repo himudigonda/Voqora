@@ -164,8 +164,9 @@ Inbox too.
    the transcript where your cursor is and then puts your previous clipboard
    back.
 
-The first time, macOS asks for microphone and Speech Recognition access. If you
-said no, the panel offers **Open System Settings** so you can turn them on.
+The first time, macOS asks for microphone access, and for Speech Recognition
+access when you use the Apple engine (Parakeet, Bark and Bark Clean don't need
+it). If you said no, the panel offers **Open System Settings** so you can turn them on.
 Pasting uses the same Accessibility access as speaking a selection; without it,
 Voqora copies the transcript so you can paste it yourself.
 
@@ -190,9 +191,11 @@ Hugging Face and then run fully on your Mac:
 | Bark | English, every word kept, strongest on natural conversation | about 440 MB |
 | Bark Clean | English dictation: leaves out "um", "uh", false starts and repeats | about 450 MB |
 
-Until the engine you pick is downloaded, dictation uses Apple. The first use
-after a download takes a minute or two while macOS prepares the model; after
-that it starts in about a second.
+Dictation starts using the engine you pick once its download finishes; until
+then the shortcut tells you the model isn't installed yet. After a download or
+an app update, macOS prepares the model for a minute or two. Voqora starts that
+as soon as it opens, and if you dictate before it finishes, keep talking: your
+words are recorded and appear once the model is ready.
 
 ## Choose a voice and speed
 

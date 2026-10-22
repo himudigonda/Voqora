@@ -21,6 +21,7 @@ final class LocalSpeechModelStore: ObservableObject {
         case downloading(Double?)
         case installed
         case failed(String)
+        case loadFailed(String)
     }
 
     static let parakeet = LocalSpeechModelStore(model: .parakeet)
@@ -39,6 +40,13 @@ final class LocalSpeechModelStore: ObservableObject {
         store(for: model).isInstalled
     }
 
+    @discardableResult
+    static func warmUp(_ engine: DictationEngineChoice) -> Task<Void, Never>? {
+        guard let model = engine.localModel, isInstalled(model) else { return nil }
+        let store = store(for: model)
+        return Task { _ = try? await store.loadedModels() }
+    }
+
     @Published private(set) var state: State
     @Published private(set) var isPreparing = false
     private(set) var revision = 0
@@ -49,15 +57,30 @@ final class LocalSpeechModelStore: ObservableObject {
     private var cachedModels: AsrModels?
     private var loadTask: Task<AsrModels, Error>?
 
-    init(model: LocalSpeechModel = .parakeet, directory: URL? = nil, downloader: BarkModelDownloader = BarkModelDownloader()) {
+    private let defaults: UserDefaults
+
+    init(
+        model: LocalSpeechModel = .parakeet,
+        directory: URL? = nil,
+        downloader: BarkModelDownloader = BarkModelDownloader(),
+        defaults: UserDefaults = .standard
+    ) {
         self.model = model
         self.directory = directory ?? model.defaultDirectory
         self.downloader = downloader
+        self.defaults = defaults
         state = Self.installedState(model: model, directory: self.directory)
     }
 
     var isInstalled: Bool {
-        state == .installed
+        switch state {
+        case .installed, .loadFailed: true
+        case .notInstalled, .downloading, .failed: false
+        }
+    }
+
+    private var isSelected: Bool {
+        DictationPreferences(defaults: defaults).engine.localModel == model
     }
 
     var isDownloading: Bool {
@@ -69,11 +92,19 @@ final class LocalSpeechModelStore: ObservableObject {
 
     func refresh() {
         guard !isDownloading else { return }
-        state = Self.installedState(model: model, directory: directory)
+        let current = Self.installedState(model: model, directory: directory)
+        if case .loadFailed = state, current == .installed {
+            return
+        }
+        state = current
     }
 
     func download() async {
         guard !isDownloading else { return }
+        var force = false
+        if case .loadFailed = state {
+            force = true
+        }
         state = .downloading(nil)
         let (updates, continuation) = AsyncStream<Double?>.makeStream()
         let consumer = Task { @MainActor [weak self] in
@@ -83,21 +114,26 @@ final class LocalSpeechModelStore: ObservableObject {
         }
         defer { continuation.finish() }
         do {
-            try await fetch { continuation.yield($0) }
+            try await fetch(force: force) { continuation.yield($0) }
             continuation.finish()
             await consumer.value
+            loadTask?.cancel()
+            loadTask = nil
+            isPreparing = false
             revision += 1
             cachedModels = nil
             state = .installed
             VoqoraLog.info("LocalSpeechModelStore", "Speech model installed", ["model": model.rawValue])
-            if model.manifest != nil {
+            if isSelected {
                 Task { try? await self.loadedModels() }
             }
         } catch is CancellationError {
             state = Self.installedState(model: model, directory: directory)
         } catch {
             VoqoraLog.warn("LocalSpeechModelStore", "Speech model download failed", ["model": model.rawValue, "error": "\(error)"])
-            state = .failed(error.localizedDescription)
+            state = Self.installedState(model: model, directory: directory) == .installed
+                ? .loadFailed("Repair didn't finish. \(error.localizedDescription)")
+                : .failed(error.localizedDescription)
         }
     }
 
@@ -126,9 +162,7 @@ final class LocalSpeechModelStore: ObservableObject {
         let model = model
         let directory = directory
         let task = Task.detached {
-            model.manifest == nil
-                ? try await AsrModels.load(from: directory, version: model.loadVersion)
-                : try AsrModels.loadLocal(from: directory, version: model.loadVersion)
+            try AsrModels.loadLocal(from: directory, version: model.loadVersion)
         }
         let startedRevision = revision
         loadTask = task
@@ -142,15 +176,20 @@ final class LocalSpeechModelStore: ObservableObject {
         do {
             let models = try await task.value
             guard revision == startedRevision else { throw CancellationError() }
-            cachedModels = models
-            for other in LocalSpeechModel.allCases where other != model {
-                Self.store(for: other).releaseModels()
+            if case .loadFailed = state {
+                state = .installed
+            }
+            if isSelected {
+                cachedModels = models
+                for other in LocalSpeechModel.allCases where other != model {
+                    Self.store(for: other).releaseModels()
+                }
             }
             return models
         } catch {
             if revision == startedRevision, !(error is CancellationError) {
                 VoqoraLog.warn("LocalSpeechModelStore", "Speech model failed to load", ["model": model.rawValue, "error": "\(error)"])
-                state = .failed(error.localizedDescription)
+                state = .loadFailed(error.localizedDescription)
             }
             throw error
         }
@@ -161,15 +200,40 @@ final class LocalSpeechModelStore: ObservableObject {
         cachedModels = nil
     }
 
-    private func fetch(progress: @escaping @Sendable (Double?) -> Void) async throws {
+    private func fetch(force: Bool, progress: @escaping @Sendable (Double?) -> Void) async throws {
         let target = directory
         guard let files = model.manifest, let folder = model.repositoryFolder else {
-            try await AsrModels.download(to: target, version: model.loadVersion) { update in
-                progress(Self.determinateFraction(update))
+            try await Self.replacingOnSuccess(target, when: force) {
+                _ = try await AsrModels.download(to: target, version: self.model.loadVersion) { update in
+                    progress(Self.determinateFraction(update))
+                }
             }
             return
         }
         try await downloader.install(files, folder: folder, into: target) { progress($0) }
+    }
+
+    static func replacingOnSuccess(_ directory: URL, when replacing: Bool, _ operation: () async throws -> Void) async throws {
+        let manager = FileManager.default
+        let backup = directory.deletingLastPathComponent().appendingPathComponent(".\(directory.lastPathComponent).backup", isDirectory: true)
+        guard replacing, manager.fileExists(atPath: directory.path) else {
+            try await operation()
+            return
+        }
+        if manager.fileExists(atPath: backup.path) {
+            try manager.removeItem(at: backup)
+        }
+        try manager.moveItem(at: directory, to: backup)
+        do {
+            try await operation()
+            try? manager.removeItem(at: backup)
+        } catch {
+            if manager.fileExists(atPath: directory.path) {
+                try? manager.removeItem(at: directory)
+            }
+            try? manager.moveItem(at: backup, to: directory)
+            throw error
+        }
     }
 
     private func applyProgress(_ fraction: Double?) {
@@ -177,8 +241,8 @@ final class LocalSpeechModelStore: ObservableObject {
         state = .downloading(max(current ?? 0, fraction))
     }
 
-    private nonisolated static func determinateFraction(_ progress: DownloadProgress) -> Double? {
-        guard case .downloading = progress.phase else { return nil }
+    nonisolated static func determinateFraction(_ progress: DownloadProgress) -> Double? {
+        guard progress.fractionCompleted.isFinite else { return nil }
         return min(1, max(0, progress.fractionCompleted))
     }
 

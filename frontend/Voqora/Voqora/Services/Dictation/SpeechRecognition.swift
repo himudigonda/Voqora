@@ -30,9 +30,21 @@ typealias SpeechRecognitionHandler = @MainActor @Sendable (SpeechRecognitionEven
 
 @MainActor
 protocol SpeechRecognizing: AnyObject {
+    var isWarmingUp: Bool { get }
+    var failureIssue: DictationIssue? { get }
     func start(localeIdentifier: String?, allowsServer: Bool, onEvent: @escaping SpeechRecognitionHandler) async throws
     func finish()
     func stop()
+}
+
+extension SpeechRecognizing {
+    var isWarmingUp: Bool {
+        false
+    }
+
+    var failureIssue: DictationIssue? {
+        nil
+    }
 }
 
 final class SystemSpeechRecognizer: SpeechRecognizing {
@@ -85,6 +97,14 @@ final class SystemSpeechRecognizer: SpeechRecognizing {
             engine.stop()
             return
         }
+    }
+
+    var isWarmingUp: Bool {
+        active?.isWarmingUp ?? false
+    }
+
+    var failureIssue: DictationIssue? {
+        active?.failureIssue
     }
 
     func finish() {

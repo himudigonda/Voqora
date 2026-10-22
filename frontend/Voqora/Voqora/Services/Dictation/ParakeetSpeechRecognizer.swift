@@ -325,6 +325,19 @@ final nonisolated class ParakeetSegmentPipeline: @unchecked Sendable {
     func reportFailure() {
         lock.withLock {
             guard isOpen else { return }
+            isFinishing = true
+            preview = nil
+            if let last = segmenter.finish() {
+                enqueue(last)
+            }
+            failurePending = true
+        }
+        wake.yield()
+    }
+
+    func failToLoad() {
+        lock.withLock {
+            guard !isCancelled, !isFailed else { return }
             fail()
         }
         wake.yield()
@@ -427,6 +440,13 @@ final nonisolated class ParakeetSegmentPipeline: @unchecked Sendable {
         let text: String
         do {
             text = try await transcribeWithRetry(samples)
+        } catch is ParakeetModelLoadError {
+            lock.withLock {
+                isBusy = false
+                finals = []
+                failurePending = true
+            }
+            return
         } catch {
             lock.withLock {
                 isBusy = false
@@ -479,10 +499,43 @@ final nonisolated class ParakeetSegmentPipeline: @unchecked Sendable {
             return try await transcriber.transcribe(samples)
         } catch is CancellationError {
             throw CancellationError()
+        } catch is ParakeetModelLoadError {
+            throw ParakeetModelLoadError()
         } catch {
             try Task.checkCancellation()
             return try await transcriber.transcribe(samples)
         }
+    }
+}
+
+nonisolated struct ParakeetModelLoadError: Error {}
+
+final nonisolated class ParakeetLoadFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failed = false
+
+    var isSet: Bool {
+        lock.withLock { failed }
+    }
+
+    func set() {
+        lock.withLock { failed = true }
+    }
+}
+
+nonisolated struct DeferredParakeetTranscriber: ParakeetTranscribing {
+    let load: Task<any ParakeetTranscribing, Error>
+    var failure = ParakeetLoadFailure()
+
+    func transcribe(_ samples: [Float]) async throws -> String {
+        let transcriber: any ParakeetTranscribing
+        do {
+            transcriber = try await load.value
+        } catch {
+            failure.set()
+            throw ParakeetModelLoadError()
+        }
+        return try await transcriber.transcribe(samples)
     }
 }
 
@@ -495,6 +548,12 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
     private var eventsTask: Task<Void, Never>?
     private var transcriber: (revision: Int, value: ParakeetAsrTranscriber)?
     private var generation = 0
+    private(set) var isWarmingUp = false
+    private var loadFailure: ParakeetLoadFailure?
+
+    var failureIssue: DictationIssue? {
+        loadFailure?.isSet == true ? .localModelUnavailable : nil
+    }
 
     init(models: LocalSpeechModelStore? = nil) {
         self.models = models ?? .parakeet
@@ -504,9 +563,19 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
         stop()
         let token = generation
         guard models.isInstalled else { throw DictationIssue.recognizerUnavailable }
-        let transcriber = try await loadedTranscriber()
-        guard token == generation else { return }
         guard let converter = ParakeetAudioConverter() else { throw DictationIssue.audioInputUnavailable }
+        let load: Task<any ParakeetTranscribing, Error>?
+        let transcriber: any ParakeetTranscribing
+        let failure = ParakeetLoadFailure()
+        loadFailure = failure
+        if let ready = readyTranscriber {
+            load = nil
+            transcriber = ready
+        } else {
+            let pending = Task<any ParakeetTranscribing, Error> { try await self.loadedTranscriber() }
+            load = pending
+            transcriber = DeferredParakeetTranscriber(load: pending, failure: failure)
+        }
         let forward: SpeechRecognitionHandler = { [weak self] event in
             guard let self, generation == token else { return }
             onEvent(event)
@@ -544,7 +613,19 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
                 forward(event)
             }
         }
-        VoqoraLog.info("ParakeetRecognizer", "Recognition started")
+        if let load {
+            isWarmingUp = true
+            Task { [weak self] in
+                let result = await load.result
+                guard let self, generation == token else { return }
+                isWarmingUp = false
+                if case .failure = result {
+                    failure.set()
+                    pipeline.failToLoad()
+                }
+            }
+        }
+        VoqoraLog.info("ParakeetRecognizer", "Recognition started", ["warmingUp": "\(load != nil)"])
     }
 
     func finish() {
@@ -558,6 +639,8 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
 
     func stop() {
         generation += 1
+        isWarmingUp = false
+        loadFailure = nil
         session?.stop()
         session = nil
         pipeline?.cancel()
@@ -569,9 +652,14 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
         eventsTask = nil
     }
 
+    private var readyTranscriber: ParakeetAsrTranscriber? {
+        guard let transcriber, transcriber.revision == models.revision else { return nil }
+        return transcriber.value
+    }
+
     private func loadedTranscriber() async throws -> ParakeetAsrTranscriber {
-        if let transcriber, transcriber.revision == models.revision {
-            return transcriber.value
+        if let readyTranscriber {
+            return readyTranscriber
         }
         let revision = models.revision
         do {

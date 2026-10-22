@@ -106,6 +106,7 @@ private struct LiveInsertion {
 
 final class DictationController: ObservableObject {
     static let holdToTalkThreshold: TimeInterval = 0.45
+    static let warmUpFinishLimit: TimeInterval = 300
     static let staleKeyDownSeconds: TimeInterval = 1
     static let continuationWindowSeconds: TimeInterval = 60
 
@@ -196,6 +197,10 @@ final class DictationController: ObservableObject {
             skipTidy()
             return
         }
+        if machine.phase == .finishing, dependencies.recognizer.isWarmingUp {
+            VoqoraLog.info("Dictation", "Still waiting for the speech model; keeping the recorded audio")
+            return
+        }
         await send(.toggle)
     }
 
@@ -260,6 +265,7 @@ final class DictationController: ObservableObject {
         guard machine.phase == .idle, let text = transcripts.transcripts.first?.text else { return }
         let preferences = DictationPreferences(defaults: dependencies.defaults)
         let delivered = await dependencies.inserter.insert(text, mode: preferences.insertionMode)
+        guard machine.phase == .idle else { return }
         issue = nil
         tidyFailure = nil
         tidiedWords = nil
@@ -316,7 +322,11 @@ final class DictationController: ObservableObject {
             await send(.recognitionEnded)
         case .failed:
             VoqoraLog.warn("Dictation", "Recognizer reported an error", ["phase": "\(machine.phase)"])
-            await send(.recognitionFailed)
+            if let issue = dependencies.recognizer.failureIssue {
+                await send(.failed(issue))
+            } else {
+                await send(.recognitionFailed)
+            }
         }
     }
 
@@ -531,6 +541,11 @@ final class DictationController: ObservableObject {
         speechPauser?.pauseSpeechForDictation()
         hud?.show()
         let preferences = DictationPreferences(defaults: dependencies.defaults)
+        if let model = preferences.engine.localModel, !dependencies.localModelInstalled(model) {
+            DictationTrace.event("engine.not_installed", ["engine": preferences.engine.rawValue])
+            await send(.failed(.localModelNotInstalled))
+            return
+        }
         let engine = effectiveEngine(for: preferences)
         let missing = await DictationPermissionGate(
             authorizer: dependencies.authorizer,
@@ -551,9 +566,14 @@ final class DictationController: ObservableObject {
             }
         } catch {
             guard session == sessionID else { return }
-            let reported: DictationIssue = engine.localModel != nil
-                ? .localModelUnavailable
-                : error as? DictationIssue ?? .audioInputUnavailable
+            let thrown = error as? DictationIssue
+            let reported: DictationIssue = if thrown == .audioInputUnavailable {
+                .audioInputUnavailable
+            } else if engine.localModel != nil {
+                .localModelUnavailable
+            } else {
+                thrown ?? .audioInputUnavailable
+            }
             await send(.failed(reported))
             return
         }
@@ -597,7 +617,16 @@ final class DictationController: ObservableObject {
         let timeout = dependencies.finishTimeout
         finishTimeoutTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            var waited: TimeInterval = 0
+            while !Task.isCancelled, self?.dependencies.recognizer.isWarmingUp == true, waited < Self.warmUpFinishLimit {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                waited += 0.25
+            }
+            if waited > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            }
             guard !Task.isCancelled else { return }
+            self?.finishTimeoutTask = nil
             await self?.send(.finishTimedOut)
         }
     }
@@ -717,6 +746,11 @@ final class DictationController: ObservableObject {
         if let stopped = current.stopOutcome {
             _ = await dependencies.inserter.insert(text.trimmingCharacters(in: .whitespacesAndNewlines), mode: .copy)
             return stopped == .pasted ? .copied : stopped
+        }
+        if !current.deliveredText.isEmpty, dependencies.frontmostApplication() != current.target {
+            VoqoraLog.info("Dictation", "Frontmost app changed during live insertion; copying the whole transcript")
+            _ = await dependencies.inserter.insert(text.trimmingCharacters(in: .whitespacesAndNewlines), mode: .copy)
+            return .copiedAppChanged
         }
         return await deliver(remaining, mode: .paste, target: current.target, startsDictation: current.deliveredText.isEmpty)
     }

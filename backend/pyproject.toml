@@ -1,6 +1,6 @@
 [project]
 name = "backend"
-version = "2.1.0"
+version = "2.1.1"
 description = "Voqora Inference Engine"
 license = "GPL-3.0-or-later"
 readme = "README.md"
