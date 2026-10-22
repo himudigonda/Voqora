@@ -39,6 +39,13 @@ final class LocalSpeechModelStore: ObservableObject {
         store(for: model).isInstalled
     }
 
+    @discardableResult
+    static func warmUp(_ engine: DictationEngineChoice) -> Task<Void, Never>? {
+        guard let model = engine.localModel, isInstalled(model) else { return nil }
+        let store = store(for: model)
+        return Task { _ = try? await store.loadedModels() }
+    }
+
     @Published private(set) var state: State
     @Published private(set) var isPreparing = false
     private(set) var revision = 0

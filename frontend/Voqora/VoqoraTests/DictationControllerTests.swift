@@ -5,6 +5,8 @@ import XCTest
 @MainActor
 private final class FakeRecognizer: SpeechRecognizing {
     var startError: DictationIssue?
+    var isWarmingUp = false
+    var failureIssue: DictationIssue?
     private(set) var startedLocales: [String?] = []
     private(set) var allowedServer: [Bool] = []
     private(set) var finishCount = 0
@@ -1322,6 +1324,47 @@ final class DictationControllerTests: XCTestCase {
         XCTAssertEqual(inserter.inserted, ["hello world"])
         XCTAssertEqual(controller.transcripts.transcripts.map(\.text), ["hello world"])
         XCTAssertNil(controller.tidiedWords)
+    }
+
+    func test_finishingWaitsForAWarmingUpModelInsteadOfTimingOut() async throws {
+        recognizer.isWarmingUp = true
+        let controller = makeController(named: "warming.json") { $0.finishTimeout = 0.05 }
+        await controller.toggle()
+        await controller.toggle()
+        XCTAssertEqual(controller.phase, .finishing)
+
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(controller.phase, .finishing)
+        XCTAssertNil(controller.issue)
+
+        recognizer.isWarmingUp = false
+        await controller.receive(.finalized("words spoken while loading"))
+        await controller.receive(.ended)
+
+        XCTAssertEqual(inserter.inserted, ["words spoken while loading"])
+    }
+
+    func test_finishingTimesOutOnceTheModelHasLoaded() async throws {
+        let controller = makeController(named: "loaded.json") { $0.finishTimeout = 0.05 }
+        await controller.toggle()
+        await controller.toggle()
+
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertEqual(controller.issue, .nothingHeard)
+    }
+
+    func test_aModelThatFailsToLoadWhileListeningReportsTheLocalModelIssue() async {
+        await controller.toggle()
+        XCTAssertEqual(controller.phase, .listening)
+        recognizer.failureIssue = .localModelUnavailable
+
+        await controller.receive(.failed)
+
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertEqual(controller.issue, .localModelUnavailable)
+        XCTAssertTrue(inserter.inserted.isEmpty)
     }
 
     func test_aLocalModelStartFailureIsReportedAndDoesNotFallBack() async {

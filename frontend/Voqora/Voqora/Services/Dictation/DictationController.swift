@@ -106,6 +106,7 @@ private struct LiveInsertion {
 
 final class DictationController: ObservableObject {
     static let holdToTalkThreshold: TimeInterval = 0.45
+    static let warmUpFinishLimit: TimeInterval = 300
     static let staleKeyDownSeconds: TimeInterval = 1
     static let continuationWindowSeconds: TimeInterval = 60
 
@@ -316,7 +317,11 @@ final class DictationController: ObservableObject {
             await send(.recognitionEnded)
         case .failed:
             VoqoraLog.warn("Dictation", "Recognizer reported an error", ["phase": "\(machine.phase)"])
-            await send(.recognitionFailed)
+            if let issue = dependencies.recognizer.failureIssue {
+                await send(.failed(issue))
+            } else {
+                await send(.recognitionFailed)
+            }
         }
     }
 
@@ -597,6 +602,14 @@ final class DictationController: ObservableObject {
         let timeout = dependencies.finishTimeout
         finishTimeoutTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            var waited: TimeInterval = 0
+            while !Task.isCancelled, self?.dependencies.recognizer.isWarmingUp == true, waited < Self.warmUpFinishLimit {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                waited += 0.25
+            }
+            if waited > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(max(0, timeout) * 1_000_000_000))
+            }
             guard !Task.isCancelled else { return }
             await self?.send(.finishTimedOut)
         }

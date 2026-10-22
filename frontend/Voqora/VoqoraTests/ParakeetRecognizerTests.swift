@@ -150,6 +150,56 @@ final class ParakeetRecognizerTests: XCTestCase {
         return events
     }
 
+    private func collectWhileLoading(_ load: Task<any ParakeetTranscribing, Error>, release: () -> Void) async -> [SpeechRecognitionEvent] {
+        let (stream, continuation) = AsyncStream<SpeechRecognitionEvent>.makeStream()
+        let pipeline = ParakeetSegmentPipeline(transcriber: DeferredParakeetTranscriber(load: load)) { event in
+            continuation.yield(event)
+            if event == .ended || event == .failed {
+                continuation.finish()
+            }
+        }
+        pipeline.append(speechSignal())
+        pipeline.finish()
+        release()
+        Task {
+            if case .failure = await load.result {
+                pipeline.failToLoad()
+            }
+        }
+        var events: [SpeechRecognitionEvent] = []
+        for await event in stream {
+            events.append(event)
+        }
+        return events
+    }
+
+    func test_speechCapturedBeforeTheModelLoadsIsTranscribedOnceItDoes() async {
+        let fake = ParakeetFakeTranscriber()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let load = Task<any ParakeetTranscribing, Error> {
+            for await _ in gate {
+                break
+            }
+            return fake
+        }
+        let events = await collectWhileLoading(load) { open.yield() }
+
+        XCTAssertEqual(finalizedTexts(events).count, 4)
+        XCTAssertEqual(events.last, .ended)
+        XCTAssertFalse(events.contains(.failed))
+    }
+
+    func test_aModelThatFailsToLoadEndsTheSessionWithFailedEvenAfterFinish() async {
+        let load = Task<any ParakeetTranscribing, Error> {
+            throw ASRError.processingFailed("compile failed")
+        }
+        let events = await collectWhileLoading(load) {}
+
+        XCTAssertTrue(finalizedTexts(events).isEmpty)
+        XCTAssertEqual(events.last, .failed)
+        XCTAssertFalse(events.contains(.ended))
+    }
+
     func test_finalsArriveOnceInOrderAndEndedComesLast() async {
         let events = await collect(ParakeetFakeTranscriber())
         let finals = events.compactMap { event -> Int? in

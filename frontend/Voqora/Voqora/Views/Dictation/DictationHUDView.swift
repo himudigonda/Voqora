@@ -48,20 +48,38 @@ struct DictationHUDView: View {
                 Text(DictationStateLabel.title(for: dictation.phase, isTidying: dictation.isTidying))
                     .font(vm.font(.labelSmall))
                     .foregroundStyle(theme.onSurfaceVariant)
-                Text(dictation.liveTranscript.isEmpty ? placeholder : dictation.liveTranscript)
-                    .font(vm.font(.body))
-                    .foregroundStyle(dictation.liveTranscript.isEmpty ? theme.onSurfaceMuted : theme.onSurface)
-                    .lineLimit(3)
-                    .truncationMode(.head)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if dictation.liveTranscript.isEmpty, let model = DictationPreferences(defaults: .standard).engine.localModel {
+                    DictationLocalPlaceholder(phase: dictation.phase, models: .store(for: model))
+                } else {
+                    Text(dictation.liveTranscript.isEmpty ? placeholder(isWarmingUp: false) : dictation.liveTranscript)
+                        .font(vm.font(.body))
+                        .foregroundStyle(dictation.liveTranscript.isEmpty ? theme.onSurfaceMuted : theme.onSurface)
+                        .lineLimit(3)
+                        .truncationMode(.head)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
             DictationLevelMeter(level: dictation.phase == .listening ? dictation.level : 0, color: theme.primary, track: theme.outlineVariant)
         }
         .accessibilityElement(children: .combine)
     }
 
-    private var placeholder: String {
-        "Start speaking. Press \(DictationController.shortcutLabel) when you're done."
+    private func placeholder(isWarmingUp: Bool) -> String {
+        DictationStateLabel.placeholder(for: dictation.phase, shortcut: DictationController.shortcutLabel, isWarmingUp: isWarmingUp)
+    }
+}
+
+private struct DictationLocalPlaceholder: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    let phase: DictationPhase
+    @ObservedObject var models: LocalSpeechModelStore
+
+    var body: some View {
+        Text(DictationStateLabel.placeholder(for: phase, shortcut: DictationController.shortcutLabel, isWarmingUp: models.isPreparing))
+            .font(vm.font(.body))
+            .foregroundStyle(vm.theme.onSurfaceMuted)
+            .lineLimit(3)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -121,4 +121,10 @@ final class VoicesRemakeTests: XCTestCase {
         XCTAssertEqual(DictationStateLabel.keycaps(from: "⌘⇧9"), ["⌘", "⇧", "9"])
         XCTAssertTrue(DictationStateLabel.keycaps(from: nil).isEmpty)
     }
+
+    func test_dictationPlaceholderWaitsForTheMicrophoneWhilePreparing() {
+        XCTAssertEqual(DictationStateLabel.placeholder(for: .preparing, shortcut: "⌥Space"), "Loading speech recognition. Start speaking when this says Listening.")
+        XCTAssertEqual(DictationStateLabel.placeholder(for: .listening, shortcut: "⌥Space"), "Start speaking. Press ⌥Space when you're done.")
+        XCTAssertEqual(DictationStateLabel.placeholder(for: .listening, shortcut: "⌥Space", isWarmingUp: true), "Keep talking. The speech model is still loading, so your words will appear in a moment.")
+    }
 }

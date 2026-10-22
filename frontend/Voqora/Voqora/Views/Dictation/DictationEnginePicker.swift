@@ -145,6 +145,8 @@ private struct DictationLocalEngineRow: View {
         selection = choice
         if models.state == .notInstalled {
             download()
+        } else {
+            LocalSpeechModelStore.warmUp(choice)
         }
     }
 

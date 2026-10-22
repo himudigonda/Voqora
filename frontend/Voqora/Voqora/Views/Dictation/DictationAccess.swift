@@ -53,6 +53,16 @@ nonisolated enum DictationStateLabel {
         }
     }
 
+    static func placeholder(for phase: DictationPhase, shortcut: String, isWarmingUp: Bool = false) -> String {
+        if phase == .preparing {
+            return "Loading speech recognition. Start speaking when this says Listening."
+        }
+        if isWarmingUp {
+            return "Keep talking. The speech model is still loading, so your words will appear in a moment."
+        }
+        return "Start speaking. Press \(shortcut) when you're done."
+    }
+
     static func keycaps(from shortcut: String?) -> [String] {
         guard let shortcut, !shortcut.isEmpty else { return [] }
         let modifierGlyphs: Set<Character> = ["⌃", "^", "⌥", "⇧", "⌘"]

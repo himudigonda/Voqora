@@ -48,6 +48,11 @@ final class LocalSpeechModelTests: XCTestCase {
         XCTAssertEqual(DictationEngineChoice.effective(preferred: .parakeet, installed: onlyParakeet), .parakeet)
     }
 
+    @MainActor
+    func test_warmUpIgnoresTheAppleEngine() {
+        XCTAssertNil(LocalSpeechModelStore.warmUp(.apple))
+    }
+
     func test_localEnginesSkipSpeechRecognitionPermission() {
         XCTAssertEqual(DictationPermissionRows.kinds(for: .bark), [.microphone, .accessibility])
         XCTAssertEqual(DictationPermissionRows.kinds(for: .barkClean), [.microphone, .accessibility])
