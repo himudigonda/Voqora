@@ -160,6 +160,21 @@ final class LocalSpeechModelTests: XCTestCase {
     }
 
     @MainActor
+    func test_downloadsAndLoadsBarkCleanFromHuggingFaceOnlyWhenAskedTo() async throws {
+        guard ProcessInfo.processInfo.environment["VOQORA_BARK_DOWNLOAD"] == "1" else {
+            throw XCTSkip("Set TEST_RUNNER_VOQORA_BARK_DOWNLOAD=1 to download Bark Clean from Hugging Face")
+        }
+        let store = LocalSpeechModelStore(model: .barkClean, directory: root.appendingPathComponent("bark-3.0-clean"))
+
+        await store.download()
+
+        XCTAssertEqual(store.state, .installed)
+        _ = try await store.loadedModels()
+        XCTAssertEqual(store.state, .installed)
+        XCTAssertFalse(store.isPreparing)
+    }
+
+    @MainActor
     func test_storeLoadFailsCleanlyWhenNotInstalled() async {
         let store = LocalSpeechModelStore(model: .barkClean, directory: root.appendingPathComponent("missing"))
         do {
