@@ -10,7 +10,7 @@ final class AIReadingErrorMapperTests: XCTestCase {
     func test_providerRequiredUsesPreferencesWording() {
         let error = map(400, #"{"detail": "Choose an AI provider in Settings to use AI tools.", "code": "ai_provider_required"}"#)
         XCTAssertEqual(error, .providerRequired)
-        XCTAssertTrue(error.message.contains("Preferences > AI"))
+        XCTAssertTrue(error.message.contains("Settings > AI"))
     }
 
     func test_providerProblemKeepsTheBackendReason() {
@@ -21,7 +21,7 @@ final class AIReadingErrorMapperTests: XCTestCase {
 
     func test_settingsWordingPointsToPreferences() {
         let error = map(502, #"{"detail": "OpenAI has no model named x. Choose another model in Settings.", "code": "llm_model_not_found"}"#)
-        XCTAssertEqual(error.message, "OpenAI has no model named x. Choose another model in Preferences > AI.")
+        XCTAssertEqual(error.message, "OpenAI has no model named x. Choose another model in Settings > AI.")
     }
 
     func test_sizeAndBudgetLimitsMapToTooLarge() {

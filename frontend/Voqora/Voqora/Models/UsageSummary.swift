@@ -3,6 +3,7 @@ import Foundation
 enum StatsRange: String, CaseIterable, Identifiable {
     case week
     case month
+    case quarter
     case year
     case all
 
@@ -14,8 +15,29 @@ enum StatsRange: String, CaseIterable, Identifiable {
         switch self {
         case .week: "7 Days"
         case .month: "30 Days"
-        case .year: "12 Months"
-        case .all: "All Time"
+        case .quarter: "90 Days"
+        case .year: "Year"
+        case .all: "All"
+        }
+    }
+
+    var phrase: String {
+        switch self {
+        case .week: "the past 7 days"
+        case .month: "the past 30 days"
+        case .quarter: "the past 90 days"
+        case .year: "the past 12 months"
+        case .all: "all recorded time"
+        }
+    }
+
+    var narrativeLead: String {
+        switch self {
+        case .week: "Over the past 7 days"
+        case .month: "Over the past 30 days"
+        case .quarter: "Over the past 90 days"
+        case .year: "Over the past 12 months"
+        case .all: "Overall"
         }
     }
 
@@ -23,6 +45,7 @@ enum StatsRange: String, CaseIterable, Identifiable {
         switch self {
         case .week: "vs previous 7 days"
         case .month: "vs previous 30 days"
+        case .quarter: "vs previous 90 days"
         case .year: "vs previous 12 months"
         case .all: nil
         }
@@ -30,7 +53,7 @@ enum StatsRange: String, CaseIterable, Identifiable {
 
     var bucket: Calendar.Component {
         switch self {
-        case .week, .month: .day
+        case .week, .month, .quarter: .day
         case .year, .all: .month
         }
     }
@@ -43,6 +66,8 @@ enum StatsRange: String, CaseIterable, Identifiable {
             calendar.shifting(end, .day, -7)
         case .month:
             calendar.shifting(end, .day, -30)
+        case .quarter:
+            calendar.shifting(end, .day, -90)
         case .year:
             calendar.shifting(currentMonthStart, .month, -11)
         case .all:
@@ -60,6 +85,8 @@ enum StatsRange: String, CaseIterable, Identifiable {
             DateInterval(start: calendar.shifting(interval.start, .day, -7), end: interval.start)
         case .month:
             DateInterval(start: calendar.shifting(interval.start, .day, -30), end: interval.start)
+        case .quarter:
+            DateInterval(start: calendar.shifting(interval.start, .day, -90), end: interval.start)
         case .year:
             DateInterval(start: calendar.shifting(interval.start, .month, -12), end: interval.start)
         case .all:
@@ -68,7 +95,7 @@ enum StatsRange: String, CaseIterable, Identifiable {
     }
 }
 
-private extension Calendar {
+extension Calendar {
     func shifting(_ date: Date, _ component: Component, _ value: Int) -> Date {
         self.date(byAdding: component, value: value, to: date)
             ?? date.addingTimeInterval(Double(value) * Self.approximateSeconds(component))
@@ -78,7 +105,7 @@ private extension Calendar {
         dateInterval(of: component, for: date)?.start ?? startOfDay(for: date)
     }
 
-    static func approximateSeconds(_ component: Component) -> TimeInterval {
+    private static func approximateSeconds(_ component: Component) -> TimeInterval {
         switch component {
         case .month: 30 * 86400
         case .weekOfYear: 7 * 86400
@@ -98,9 +125,19 @@ struct UsageTotals: Equatable {
     var pagesAdded = 0
     var launches = 0
     var activeDays = 0
+    var dictationSessions = 0
+    var dictationWords = 0
+    var aiRequests = 0
+    var booksGenerated = 0
+    var podcastRenders = 0
 
     var totalSeconds: Double {
         speechSeconds + listeningSeconds
+    }
+
+    var hasActivity: Bool {
+        speechCount > 0 || listeningSeconds >= 1 || documentsAdded > 0 || dictationSessions > 0
+            || aiRequests > 0 || booksGenerated > 0 || podcastRenders > 0
     }
 
     mutating func add(_ day: DayUsage) {
@@ -113,6 +150,11 @@ struct UsageTotals: Equatable {
         documentsAdded += day.documentsAdded
         pagesAdded += day.pagesAdded
         launches += day.launches
+        dictationSessions += day.dictation.sessions
+        dictationWords += day.dictation.words
+        aiRequests += day.ai.totalRequests
+        booksGenerated += day.creation.booksGenerated
+        podcastRenders += day.creation.podcastRenders
         if day.isActive {
             activeDays += 1
         }
@@ -209,7 +251,7 @@ struct UsageSummary: Equatable {
     }
 
     var isEmpty: Bool {
-        lifetime.speechCount == 0 && lifetime.listeningSeconds < 1 && lifetime.documentsAdded == 0
+        !lifetime.hasActivity
     }
 
     static func change(_ current: Double, _ previous: Double?) -> Double? {

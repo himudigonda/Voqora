@@ -128,6 +128,62 @@ Speech and voices:
 - Anywhere a voice id is accepted (`/speak`, `/prewarm`, audiobook upload), a
   blend id (`blend:<uuid4>`) works too. An unknown or deleted blend is a 422.
 
+Ming (optional engine, id `ming`):
+
+- `POST /engine/ming/install` downloads about 3.7 GB into
+  `models/ming-3.0-tts/`: an isolated Python 3.11 runtime built with the
+  bundled `uv` from `app/engines/ming/requirements.txt` (weight 0.2 of the
+  progress), the pinned Ming code tarball (0.02) and the pinned
+  `Ming-3.0-tts-0.5B` weights (0.78). It stages in `.ming-3.0-tts.partial`,
+  renames it into place, re-links the runtime to its final path and imports
+  `torch` from it before writing the install marker. `uv` is found through
+  `VOQORA_UV_PATH`, next to the server executable or in the bundle, on `PATH`,
+  then `/opt/homebrew/bin` and `~/.local/bin`. `DELETE /engine/ming` removes it.
+  An install that stopped after the rename but before the marker is moved back
+  to staging so its finished steps are reused.
+- The `ming` entry in `GET /engine` adds `notice`, `capabilities` and `tags`.
+  Its `voices` are the 117 built-ins (`ming:US_Stella`, `ming:灵小安`, ...)
+  followed by custom voices (`ming:custom:<uuid hex>`, `custom: true`).
+- The model never loads into the server process. `app/engines/ming/worker.py`
+  runs in the Ming runtime and speaks JSON lines over stdin and stdout
+  (`synthesize`, `design`, `ip_reference`, `shutdown`), writing float32 PCM at
+  44.1 kHz to a temp file. Every request carries an `id` the worker echoes. The
+  server serializes requests, counts the worker as loaded only after its ready
+  line, and drains its stderr into debug logs. A cancelled request leaves the
+  worker running and its late reply is discarded by id; a timeout, a closed
+  pipe or an unexpected reply kills it. It also dies after 300 idle seconds and
+  on shutdown, and restarts for the next segment after a crash.
+- Every voice is a reference clip plus its transcript. Plain speech clones from
+  both (latent and text) so segments stay consistent. Expressive delivery (any
+  task other than plain TTS, including a speed-derived pace) sends only the
+  reference's speaker embedding, because the full reference pins emotion and
+  pace. Built-in references are rendered once into
+  `models/ming-3.0-tts/references/`.
+- A segment longer than `max(4 s, 3 x expected)` (15 characters per second, 5
+  for zh, ja and ko) is rendered once more with seed + 1 and the full
+  reference, then truncated to that limit and logged if it is still too long.
+- `POST /speak`, the audiobook upload (`delivery` form field, JSON) and
+  `/audiobook/url`, `/v1/audio/speech`, `/v1/voqora/speak` and the MCP `speak`
+  tool accept `delivery`: `{"emotion", "style", "pace", "pitch", "dialect"}`,
+  all optional. `style` is at most 300 characters. A `dialect` wins and the
+  rest is ignored. Otherwise one non-neutral `emotion`, `pace` or `pitch` (or
+  `pace` and `pitch` together) uses the model's own task; a `style`, or an
+  `emotion` with a `pace` or `pitch`, becomes one English instruction ("Speak
+  in a happy tone. Speak at a slow pace. Use a low pitch." followed by the
+  style). The OpenAI field `instructions` accepts any string: whitespace and
+  control characters collapse to single spaces and it is cut to 300 characters
+  to become `delivery.style`. Other engines ignore `delivery` and
+  `instructions`.
+- `GET /engine/ming/voices`, `POST /engine/ming/voices/design`
+  (`name`, `description`, `language`, optional `sample_text`),
+  `POST /engine/ming/voices/clone` (multipart `name`, `language`, `transcript`,
+  `file`: 3 to 30 seconds), `DELETE /engine/ming/voices/{id}` and
+  `GET /engine/ming/voices/{id}/sample` (WAV). All answer 409 while Ming is not
+  installed. Custom voices live in `ming_voices.json` and `ming_voices/` in the
+  app data folder.
+- `tests/test_ming_integration.py` starts the real worker and is skipped unless
+  `VOQORA_MING_RUNTIME`, `VOQORA_MING_CODE` and `VOQORA_MING_MODEL` are set.
+
 Voice blends mix 2 to 4 built-in voices, each weighted 0.05 to 1. Weights are
 normalized so they add up to 1, and the style vectors are summed with those
 weights. A blend speaks in the language of its first voice. Up to 50 blends

@@ -2,36 +2,36 @@ import SwiftUI
 
 struct SpeechEnginesSection: View {
     @EnvironmentObject var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.voqoraTheme) private var theme
     @ObservedObject var store: SpeechEngineStore
     @State private var pendingRemoval: SpeechEngine?
 
-    init(store: SpeechEngineStore = .shared) {
-        self.store = store
+    @MainActor
+    init(store: SpeechEngineStore? = nil) {
+        self.store = store ?? .shared
     }
 
+    static let licenseNote = "Supertonic's code is MIT licensed. Its voice model is released under OpenRAIL-M, which includes " +
+        "use restrictions. Both are listed in the app's third-party notices."
+
+    static let mingLicenseNote = "Ming-3.0-tts is released under the MIT license."
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
             if store.engines.isEmpty {
-                placeholder
+                EmptyStateView(
+                    symbol: "cpu",
+                    title: vm.isBackendOnline ? "Loading speech engines" : "Speech engines are not ready",
+                    message: vm.isBackendOnline ? "This only takes a moment." : "Speech engines appear once Voqora has started."
+                )
             } else {
-                ForEach(Array(store.engines.enumerated()), id: \.element.id) { index, engine in
-                    if index > 0 {
-                        Divider()
-                    }
-                    SpeechEngineRow(engine: engine, accent: accent, install: { install(engine) }, remove: { pendingRemoval = engine })
+                ForEach(store.engines) { engine in
+                    EngineCard(engine: engine, isOnline: vm.isBackendOnline, install: { install(engine) }, remove: { pendingRemoval = engine })
                 }
             }
             if let message = store.actionError {
-                Text(message)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.danger)
+                SettingsNoticeRow(text: message, kind: .danger)
             }
-            Text(Self.licenseNote)
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .task(id: vm.isBackendOnline) {
             if vm.isBackendOnline {
@@ -54,19 +54,6 @@ struct SpeechEnginesSection: View {
         }
     }
 
-    static let licenseNote = "Supertonic's code is MIT licensed. Its voice model is released under OpenRAIL-M, which includes " +
-        "use restrictions. Both are listed in the app's third-party notices."
-
-    private var accent: Color {
-        vm.accentColor(scheme: colorScheme, contrast: contrast)
-    }
-
-    private var placeholder: some View {
-        Text(vm.isBackendOnline ? "Loading speech engines..." : "Speech engines appear once Voqora has started.")
-            .font(vm.font(.rowSubtitle))
-            .foregroundStyle(Palette.textSecondary)
-    }
-
     private func install(_ engine: SpeechEngine) {
         Task { await store.install(engine.id) }
     }
@@ -76,61 +63,163 @@ struct SpeechEnginesSection: View {
     }
 }
 
-private struct SpeechEngineRow: View {
-    @EnvironmentObject var vm: DashboardViewModel
+private struct EngineCard: View {
     let engine: SpeechEngine
-    let accent: Color
+    let isOnline: Bool
     let install: () -> Void
     let remove: () -> Void
 
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
+
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(engine.name)
-                    .font(vm.font(.rowTitle))
-                Text(SpeechEngineRowText.subtitle(for: engine))
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
+        VoqoraCard {
+            VStack(alignment: .leading, spacing: Theme.Space.item + 4) {
+                HStack(alignment: .top, spacing: Theme.Space.item) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: Theme.Space.item) {
+                            Text(engine.name)
+                                .voqoraFont(.title)
+                                .foregroundStyle(theme.onSurface)
+                            statusChip
+                        }
+                        Text(Self.purpose(for: engine))
+                            .voqoraFont(.body)
+                            .foregroundStyle(theme.onSurfaceVariant)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: Theme.Space.card)
+                    actions
+                }
+                facts
+                if engine.downloading {
+                    progress
+                }
                 if let error = engine.error, !engine.installed, !engine.downloading {
-                    Text(error)
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.danger)
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .voqoraFont(.bodySmall)
+                        .foregroundStyle(theme.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let notice = engine.trimmedNotice {
+                    Label(notice, systemImage: "hourglass")
+                        .voqoraFont(.bodySmall)
+                        .foregroundStyle(theme.warning)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let note = licenseNote {
+                    Text(note)
+                        .voqoraFont(.bodySmall)
+                        .foregroundStyle(theme.onSurfaceMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 12)
-            trailing
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var licenseNote: String? {
+        switch engine.id {
+        case SpeechEngineID.supertonic: SpeechEnginesSection.licenseNote
+        case SpeechEngineID.ming: SpeechEnginesSection.mingLicenseNote
+        default: nil
+        }
     }
 
     @ViewBuilder
-    private var trailing: some View {
+    private var statusChip: some View {
         if engine.isBuiltIn {
-            Label("Built in", systemImage: "checkmark.circle.fill")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+            StatusChip(text: "Built in", kind: .success, systemImage: "checkmark.circle.fill")
         } else if engine.downloading {
-            HStack(spacing: 10) {
-                ProgressView(value: engine.clampedProgress)
-                    .tint(accent)
-                    .frame(width: 110)
-                Text(SpeechEngineRowText.percent(engine.progress))
-                    .font(vm.appFont(size: 12, weight: .bold).monospaced())
-                    .foregroundStyle(accent)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Downloading \(engine.name)")
-            .accessibilityValue(SpeechEngineRowText.percent(engine.progress))
+            StatusChip(text: "Downloading \(SpeechEngineRowText.percent(engine.progress))", kind: .info)
         } else if engine.installed {
-            Button("Remove", action: remove)
-                .buttonStyle(.voqoraSecondary)
-                .disabled(!vm.isBackendOnline)
+            StatusChip(text: "Installed", kind: .success, systemImage: "checkmark.circle.fill")
+        } else if engine.error != nil {
+            StatusChip(text: "Failed", kind: .danger)
+        } else {
+            StatusChip(text: "Not installed", kind: .neutral)
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        if engine.isBuiltIn {
+            EmptyView()
+        } else if engine.downloading {
+            ProgressView()
+                .controlSize(.small)
+        } else if engine.installed {
+            HStack(spacing: Theme.Space.item) {
+                if engine.id == SpeechEngineID.ming {
+                    Button {
+                        vm.selectedTab = VoicesPage.myVoices.tab
+                    } label: {
+                        Label("Create Ming Voices", systemImage: "waveform.badge.mic")
+                    }
+                    .buttonStyle(.voqoraTonal)
+                }
+                Button("Remove", action: remove)
+                    .buttonStyle(.voqoraOutlined)
+                    .disabled(!isOnline)
+            }
         } else {
             Button(action: install) {
-                Label("Download", systemImage: "arrow.down.circle")
+                Label(engine.error == nil ? "Install" : "Try Again", systemImage: "arrow.down.circle")
             }
-            .buttonStyle(.voqoraPrimary)
-            .disabled(!vm.isBackendOnline)
+            .buttonStyle(.voqoraFilled)
+            .disabled(!isOnline)
+        }
+    }
+
+    private var facts: some View {
+        HStack(alignment: .top, spacing: Theme.Space.section) {
+            if let size = engine.sizeDescription {
+                fact("Size", size)
+            }
+            if !engine.license.isEmpty {
+                fact("License", engine.license)
+            }
+            if !engine.languages.isEmpty {
+                fact("Languages", "\(engine.languages.count)")
+            }
+            if !engine.voices.isEmpty {
+                fact("Voices", "\(engine.voices.count)")
+            }
+        }
+    }
+
+    private func fact(_ title: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .voqoraFont(.labelSmall)
+                .foregroundStyle(theme.onSurfaceMuted)
+            Text(value)
+                .voqoraFont(.label)
+                .foregroundStyle(theme.onSurface)
+                .lineLimit(1)
+        }
+    }
+
+    private var progress: some View {
+        HStack(spacing: Theme.Space.item) {
+            ProgressView(value: engine.clampedProgress)
+                .tint(theme.primary)
+            Text(SpeechEngineRowText.percent(engine.progress))
+                .voqoraFont(.label)
+                .monospacedDigit()
+                .foregroundStyle(theme.onSurfaceVariant)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Downloading \(engine.name)")
+        .accessibilityValue(SpeechEngineRowText.percent(engine.progress))
+    }
+
+    private static func purpose(for engine: SpeechEngine) -> String {
+        switch engine.id {
+        case SpeechEngineID.kokoro: "Fast, natural voices that come with Voqora. Always available, even offline."
+        case SpeechEngineID.supertonic: "A lightweight engine with extra voices in many languages."
+        case SpeechEngineID.ming: "An expressive engine that can design and clone voices. It runs slower than real time."
+        default: SpeechEngineRowText.subtitle(for: engine)
         }
     }
 }

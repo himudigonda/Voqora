@@ -2,507 +2,356 @@ import AppKit
 import SwiftUI
 
 struct OnboardingView: View {
-    static let heroIconSize: CGFloat = 64
+    static let heroSymbolSize: CGFloat = 56
+    static let railWidth: CGFloat = 248
+    static let railBreakpoint: CGFloat = 860
+
+    var snapshotStep: Int?
 
     @EnvironmentObject var coordinator: OnboardingCoordinator
     @EnvironmentObject var permissions: PermissionsService
     @EnvironmentObject var identity: IdentityService
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var providers: LLMProviderStore
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
-    @StateObject private var samplePlayer = VoiceSamplePlayer()
-    @State private var step: Int = 0
-    @State private var nameDraft: String = ""
-    @State private var emailDraft: String = ""
-    @State private var connecting: LLMProvider?
-
-    private let stepCount = 8
+    @State private var step: OnboardingStep = .welcome
+    @State private var furthest: OnboardingStep = .welcome
+    @State private var identityDraft = IdentityDraft()
 
     var body: some View {
-        ZStack {
-            backdrop
-            VStack(spacing: 0) {
-                progressBar
-                Spacer(minLength: 24)
-                content
-                    .frame(maxWidth: step == 6 ? 640 : 560)
-                    .padding(.horizontal, 40)
-                Spacer(minLength: 24)
-                footer
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                if proxy.size.width >= Self.railBreakpoint {
+                    rail
+                }
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Theme.Space.section) {
+                            header
+                            content
+                        }
+                        .frame(maxWidth: 680, alignment: .leading)
+                        .padding(.horizontal, Theme.Space.gutter)
+                        .padding(.top, 56)
+                        .padding(.bottom, Theme.Space.section)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .scrollBounceBehavior(.basedOnSize)
+                    .id(step)
+                    footer
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.top, 28)
-            .padding(.bottom, 28)
         }
+        .background(theme.surface.ignoresSafeArea())
         .frame(minWidth: 720, minHeight: 560)
         .onAppear {
-            nameDraft = identity.name ?? ""
-            emailDraft = identity.email ?? ""
-            step = min(max(0, coordinator.resumeStep), stepCount - 1)
+            let start = startingStep
+            step = start
+            furthest = snapshotStep == nil ? start : .done
             permissions.startPolling()
         }
-        .onDisappear {
-            permissions.stopPolling()
-            samplePlayer.stop()
-        }
-        .onChange(of: step) { _, newValue in
-            coordinator.recordStep(newValue)
-            samplePlayer.stop()
-        }
-        .onChange(of: vm.selectedVoice) { _, _ in samplePlayer.stop() }
-    }
-
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
-
-    private var backdrop: some View {
-        LinearGradient(
-            colors: [Palette.surfaceSunken, Palette.surfaceBase],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-        .ignoresSafeArea()
-    }
-
-    private var progressBar: some View {
-        HStack(spacing: 6) {
-            ForEach(0 ..< stepCount, id: \.self) { idx in
-                Capsule()
-                    .fill(idx <= step ? accentColor : Palette.separator)
-                    .frame(height: 4)
-                    .animation(.spring(response: 0.3), value: step)
+        .onDisappear { permissions.stopPolling() }
+        .onChange(of: snapshotStep) { _, newValue in
+            if let newValue {
+                step = OnboardingStep.clamped(newValue)
             }
         }
-        .frame(maxWidth: 480)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Progress")
-        .accessibilityValue("Step \(step + 1) of \(stepCount)")
+        .onChange(of: step) { oldValue, newValue in
+            if oldValue == .privacy, snapshotStep == nil {
+                savePrivacyChoices()
+            }
+            if newValue.rawValue > furthest.rawValue {
+                furthest = newValue
+            }
+            if snapshotStep == nil {
+                coordinator.recordStep(key: newValue.key)
+            }
+        }
+    }
+
+    private var rail: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.card) {
+            HStack(spacing: Theme.Space.item) {
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Voqora")
+                        .voqoraFont(.titleSmall)
+                        .foregroundStyle(theme.onSurface)
+                    Text("Setup")
+                        .voqoraFont(.labelSmall)
+                        .foregroundStyle(theme.onSurfaceVariant)
+                }
+            }
+            .padding(.horizontal, Theme.Space.item)
+            ForEach(OnboardingStep.groups, id: \.self) { group in
+                VStack(alignment: .leading, spacing: Theme.Space.listGap) {
+                    Text(group)
+                        .voqoraFont(.labelSmall)
+                        .foregroundStyle(theme.onSurfaceMuted)
+                        .padding(.horizontal, Theme.Space.item)
+                        .padding(.bottom, 4)
+                    ForEach(OnboardingStep.allCases.filter { $0.group == group }) { item in
+                        railItem(item)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 56)
+        .padding(.horizontal, Theme.Space.item)
+        .padding(.bottom, Theme.Space.card)
+        .frame(width: Self.railWidth, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(theme.surfaceContainerLow.ignoresSafeArea())
+    }
+
+    private func railItem(_ item: OnboardingStep) -> some View {
+        let isCurrent = item == step
+        let isSeen = coordinator.seenStepKeys.contains(item.key)
+        let isDone = (item.rawValue < furthest.rawValue || isSeen) && !isCurrent && item != .done
+        let isReachable = item.rawValue <= furthest.rawValue || isSeen
+        return Button {
+            go(to: item)
+        } label: {
+            HStack(spacing: Theme.Space.item) {
+                Image(systemName: isDone ? "checkmark" : item.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isCurrent ? theme.onPrimary : (isDone ? theme.onPrimaryContainer : theme.onSurfaceVariant))
+                    .frame(width: 26, height: 26)
+                    .background(isCurrent ? theme.primary : (isDone ? theme.primaryContainer : theme.surfaceContainerHigh), in: Circle())
+                Text(item.railTitle)
+                    .voqoraFont(isCurrent ? .titleSmall : .label)
+                    .foregroundStyle(isReachable ? theme.onSurface : theme.onSurfaceMuted)
+                Spacer(minLength: 0)
+                if item.isOptional {
+                    Text("Optional")
+                        .voqoraFont(.labelSmall)
+                        .foregroundStyle(theme.onSurfaceMuted)
+                }
+            }
+            .padding(.horizontal, Theme.Space.item)
+            .frame(height: 38)
+            .background(isCurrent ? theme.primaryContainer.opacity(0.7) : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!isReachable)
+        .animation(Theme.Motion.selection, value: step)
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .accessibilityValue(isDone ? "Done" : "")
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item + 4) {
+            hero
+            VStack(alignment: .leading, spacing: Theme.Space.item) {
+                Text(title)
+                    .voqoraFont(.display)
+                    .foregroundStyle(theme.onSurface)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                if let body = subtitle {
+                    Text(body)
+                        .voqoraFont(.body)
+                        .foregroundStyle(theme.onSurfaceVariant)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var hero: some View {
+        if step == .welcome {
+            Image(nsImage: NSApplication.shared.applicationIconImage)
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 72, height: 72)
+                .accessibilityHidden(true)
+        } else {
+            Image(systemName: step.systemImage)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(theme.onPrimaryContainer)
+                .frame(width: Self.heroSymbolSize, height: Self.heroSymbolSize)
+                .background(theme.primaryContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var title: String {
+        switch step {
+        case .welcome: OnboardingCopy.welcomeTitle
+        case .privacy: OnboardingCopy.privacyTitle
+        case .permissions: OnboardingCopy.permissionsTitle
+        case .engine: OnboardingCopy.engineTitle
+        case .voice: OnboardingCopy.voiceTitle
+        case .shortcuts: OnboardingCopy.shortcutsTitle
+        case .dictation: OnboardingCopy.dictationTitle
+        case .audiobooks: OnboardingCopy.audiobooksTitle
+        case .ai: OnboardingCopy.aiTitle
+        case .appearance: OnboardingCopy.appearanceTitle
+        case .done: OnboardingCopy.doneTitle
+        }
+    }
+
+    private var subtitle: String? {
+        switch step {
+        case .welcome: OnboardingCopy.welcomeBody
+        case .privacy: OnboardingCopy.privacyBody
+        case .permissions: OnboardingCopy.permissionsBody
+        case .engine: OnboardingCopy.engineBody
+        case .voice: OnboardingCopy.voiceBody
+        case .shortcuts: OnboardingCopy.shortcutsBody
+        case .dictation: OnboardingCopy.dictationBody
+        case .audiobooks: OnboardingCopy.audiobooksBody
+        case .ai: OnboardingCopy.aiBody
+        case .appearance: OnboardingCopy.appearanceBody
+        case .done: OnboardingCopy.doneBody
+        }
     }
 
     @ViewBuilder
     private var content: some View {
         switch step {
-        case 0: stepWelcome
-        case 1: stepHotkey
-        case 2: stepAccessibility
-        case 3: stepNotifications
-        case 4: stepIdentity
-        case 5: stepCustomize
-        case 6: stepCleanup
-        default: stepDone
+        case .welcome: welcome
+        case .privacy: OnboardingPrivacyStep(identityDraft: $identityDraft)
+        case .permissions: OnboardingPermissionsStep()
+        case .engine: OnboardingEngineStep()
+        case .voice: SpeakingVoiceSections()
+        case .shortcuts: OnboardingShortcutsStep()
+        case .dictation: OnboardingDictationStep()
+        case .audiobooks: AudiobookDefaultsSections()
+        case .ai: OnboardingAIStep()
+        case .appearance:
+            VStack(alignment: .leading, spacing: Theme.Space.section) {
+                AppearancePreviewCard()
+                AppearanceLookSection()
+            }
+        case .done: OnboardingSummaryStep(jump: go(to:), openSettings: finish(openingTab:))
         }
     }
 
     private var footer: some View {
-        HStack {
-            if step > 0 {
-                Button(OnboardingCopy.backButton) { withAnimation { step -= 1 } }
-                    .buttonStyle(.bordered)
-            } else {
-                Spacer().frame(width: 80)
+        HStack(spacing: Theme.Space.item) {
+            if step != .welcome {
+                Button(OnboardingCopy.backButton) { go(to: OnboardingStep.clamped(step.rawValue - 1)) }
+                    .buttonStyle(.voqoraText)
             }
             Spacer()
-            if step == 2, !permissions.accessibilityGranted {
-                Button(OnboardingCopy.axContinueWithoutButton) {
-                    withAnimation { step += 1 }
-                }
-                .buttonStyle(.bordered)
+            Text("Step \(step.rawValue + 1) of \(OnboardingStep.allCases.count)")
+                .voqoraFont(.labelSmall)
+                .foregroundStyle(theme.onSurfaceMuted)
+            if step == .permissions, !permissions.accessibilityGranted {
+                Button(OnboardingCopy.axContinueWithoutButton) { advance() }
+                    .buttonStyle(.voqoraText)
             }
-            if step == stepCount - 1 {
-                Button(OnboardingCopy.doneButton) { coordinator.markCompleted() }
-                    .buttonStyle(.borderedProminent)
-                    .tint(accentColor)
+            if step == .done {
+                Button(OnboardingCopy.doneButton) { finish(openingTab: nil) }
+                    .buttonStyle(.voqoraFilled)
                     .keyboardShortcut(.defaultAction)
             } else {
-                Button(step == 6 && providers.connectedProviders.isEmpty ? OnboardingCopy.cleanupSkipButton : OnboardingCopy.nextButton) {
-                    advance()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accentColor)
-                .keyboardShortcut(.defaultAction)
-                .disabled(!canAdvance)
+                Button(primaryTitle) { advance() }
+                    .buttonStyle(.voqoraFilled)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(!canAdvance)
             }
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, Theme.Space.gutter)
+        .padding(.vertical, Theme.Space.card)
+        .background(theme.surface)
+        .overlay(alignment: .top) {
+            Rectangle().fill(theme.outlineVariant.opacity(0.6)).frame(height: 1)
+        }
+    }
+
+    private var primaryTitle: String {
+        if step == .ai, providers.connectedProviders.isEmpty {
+            return OnboardingCopy.aiSkipButton
+        }
+        if step == .privacy, identityDraft.validation != .valid {
+            return OnboardingCopy.privacySkipButton
+        }
+        return OnboardingCopy.nextButton
     }
 
     private var canAdvance: Bool {
         switch step {
-        case 2: permissions.accessibilityGranted
-        case 4: canSaveIdentity
+        case .permissions: permissions.accessibilityGranted
         default: true
         }
     }
 
-    private var stepWelcome: some View {
-        VStack(spacing: 22) {
-            Image(nsImage: NSApplication.shared.applicationIconImage)
-                .resizable()
-                .interpolation(.high)
-                .scaledToFit()
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.welcomeTitle)
-                .font(appFont(size: 32, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-                .multilineTextAlignment(.center)
-            Text(OnboardingCopy.welcomeBody)
-                .font(appFont(size: 15))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach(OnboardingCopy.features, id: \.title) { feature in
-                    HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: feature.systemImage)
-                            .font(.system(size: 20, weight: .medium))
-                            .foregroundStyle(accentColor)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(feature.title)
-                                .font(appFont(size: 14, weight: .semibold))
-                                .foregroundStyle(Palette.textPrimary)
-                            Text(feature.body)
-                                .font(appFont(size: 13))
-                                .foregroundStyle(Palette.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-            }
-            .frame(maxWidth: 420, alignment: .leading)
-            .padding(.top, 6)
+    private var startingStep: OnboardingStep {
+        if let snapshotStep {
+            return OnboardingStep.clamped(snapshotStep)
         }
+        if let key = coordinator.resumeStepKey, let resumed = OnboardingStep(key: key) {
+            return resumed
+        }
+        return OnboardingStep.firstUnseen(in: coordinator.seenStepKeys)
     }
 
-    private var stepHotkey: some View {
-        VStack(spacing: 22) {
-            HStack(spacing: 10) {
-                kbd("⌘"); kbd("⇧"); kbd(".")
-            }
-            Text(OnboardingCopy.hotkeyTitle)
-                .font(appFont(size: 26, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.hotkeyBody)
-                .font(appFont(size: 15))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+    private func go(to target: OnboardingStep) {
+        withAnimation(Theme.Motion.selection) { step = target }
     }
 
-    private var stepAccessibility: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "hand.tap.fill")
-                .font(.system(size: 52))
-                .foregroundStyle(accentColor)
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.axTitle)
-                .font(appFont(size: 24, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.axBody)
-                .font(appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 12) {
-                Button {
-                    permissions.requestAccessibility()
-                } label: {
-                    Label(OnboardingCopy.axGrantButton, systemImage: "gear")
-                        .frame(minWidth: 220)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accentColor)
-                .disabled(permissions.accessibilityGranted)
-
-                statusRow(
-                    isGranted: permissions.accessibilityGranted,
-                    grantedLabel: OnboardingCopy.axGrantedLabel,
-                    pendingLabel: OnboardingCopy.axPendingLabel
-                )
-            }
+    private func finish(openingTab tab: String?) {
+        if let tab {
+            vm.selectedTab = tab
         }
-    }
-
-    private var stepNotifications: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "bell.badge.fill")
-                .font(.system(size: 52))
-                .foregroundStyle(accentColor)
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.notifTitle)
-                .font(appFont(size: 24, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.notifBody)
-                .font(appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-
-            VStack(spacing: 12) {
-                Button {
-                    if permissions.notificationsStatus == .denied {
-                        permissions.openNotificationSettings()
-                    } else {
-                        Task { await permissions.requestNotifications() }
-                    }
-                } label: {
-                    Label(
-                        permissions.notificationsStatus == .denied ? OnboardingCopy.notifOpenSettingsButton : OnboardingCopy.notifGrantButton,
-                        systemImage: permissions.notificationsStatus == .denied ? "gear" : "bell"
-                    )
-                    .frame(minWidth: 220)
-                    .padding(.vertical, 6)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(accentColor)
-                .disabled(permissions.notificationsStatus == .authorized)
-
-                notificationsStatusLabel
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var notificationsStatusLabel: some View {
-        switch permissions.notificationsStatus {
-        case .authorized:
-            HStack(spacing: 6) {
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
-                Text(OnboardingCopy.notifGrantedLabel).foregroundStyle(Palette.success)
-            }.font(appFont(size: 12))
-        case .denied:
-            HStack(spacing: 6) {
-                Image(systemName: "xmark.circle.fill").foregroundStyle(Palette.warning)
-                Text(OnboardingCopy.notifDeniedLabel).foregroundStyle(Palette.textSecondary)
-            }.font(appFont(size: 12))
-        default:
-            Text(" ").font(appFont(size: 12))
-        }
-    }
-
-    private var stepIdentity: some View {
-        VStack(spacing: 18) {
-            Image(systemName: "envelope.fill")
-                .font(.system(size: 52))
-                .foregroundStyle(accentColor)
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.identityTitle)
-                .font(appFont(size: 22, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-                .multilineTextAlignment(.center)
-
-            VStack(spacing: 8) {
-                TextField(OnboardingCopy.identityNamePlaceholder, text: $nameDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 280)
-                TextField(OnboardingCopy.identityPlaceholder, text: $emailDraft)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .frame(maxWidth: 280)
-            }
-            Text(OnboardingCopy.identityOptionalNote)
-                .font(appFont(size: 12, weight: .regular))
-                .foregroundStyle(Palette.textSecondary)
-            Link(OnboardingCopy.privacyPolicyTitle, destination: OnboardingCopy.privacyPolicyURL)
-                .font(appFont(size: 12, weight: .regular))
-                .foregroundStyle(Palette.textSecondary)
-        }
-    }
-
-    private var canSaveIdentity: Bool {
-        let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        let email = emailDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if name.isEmpty, email.isEmpty {
-            return true
-        }
-        return IdentityService.looksLikeName(name) && IdentityService.looksLikeEmail(email)
-    }
-
-    private var stepCustomize: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                customizeHeader
-                customizeVoice
-                customizeAccent
-                customizeIcon
-            }
-            .frame(maxWidth: .infinity)
-        }
-        .scrollBounceBehavior(.basedOnSize)
-        .scrollIndicators(.hidden)
-    }
-
-    private var customizeHeader: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "paintpalette.fill")
-                .font(.system(size: 44))
-                .foregroundStyle(accentColor)
-                .frame(width: 48, height: 48)
-            Text(OnboardingCopy.customizeTitle)
-                .font(appFont(size: 24, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-        }
-    }
-
-    private var customizeVoice: some View {
-        VStack(spacing: 12) {
-            Text(OnboardingCopy.customizeVoiceLabel)
-                .font(appFont(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.textSecondary)
-            HStack(spacing: 12) {
-                GroupedVoicePicker(title: OnboardingCopy.customizeVoiceLabel, selection: $vm.selectedVoice)
-                VoiceSampleButton(player: samplePlayer, voice: vm.selectedVoice, speed: vm.speechSpeed)
-            }
-            HStack {
-                Text(OnboardingCopy.customizeSpeedLabel)
-                    .font(appFont(size: 13, weight: .semibold))
-                    .foregroundStyle(Palette.textSecondary)
-                Spacer()
-                Text(PlayerSpeedMenu.label(vm.speechSpeed))
-                    .font(appFont(size: 13, weight: .bold).monospaced())
-                    .foregroundStyle(accentColor)
-            }
-            .frame(maxWidth: 320)
-            Slider(value: $vm.speechSpeed, in: 0.5 ... 2.0, step: 0.05)
-                .tint(accentColor)
-                .frame(maxWidth: 320)
-            Toggle(isOn: $vm.autoDetectLanguage) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(OnboardingCopy.customizeAutoDetectTitle)
-                        .font(appFont(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.textPrimary)
-                    Text(OnboardingCopy.customizeAutoDetectBody)
-                        .font(appFont(size: 12))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .frame(maxWidth: 420)
-        }
-    }
-
-    private var customizeAccent: some View {
-        VStack(spacing: 10) {
-            Text(OnboardingCopy.customizeAccentLabel)
-                .font(appFont(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.textSecondary)
-            HStack(spacing: 14) {
-                ForEach(AccentColorOption.allCases, id: \.self) { option in
-                    AccentSwatchButton(option: option, isSelected: vm.accentColorID == option) {
-                        vm.accentColorID = option
-                    }
-                }
-            }
-        }
-    }
-
-    private var customizeIcon: some View {
-        VStack(spacing: 10) {
-            Text(OnboardingCopy.customizeIconLabel)
-                .font(appFont(size: 13, weight: .semibold))
-                .foregroundStyle(Palette.textSecondary)
-            HStack(spacing: 16) {
-                ForEach(AppIconOption.allCases) { option in
-                    AppIconChoiceButton(option: option, isSelected: vm.appIconID == option) {
-                        vm.appIconID = option
-                    }
-                }
-            }
-        }
-    }
-
-    private var stepCleanup: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 40))
-                .foregroundStyle(accentColor)
-                .frame(width: 48, height: 48)
-            Text(OnboardingCopy.cleanupTitle)
-                .font(appFont(size: 24, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.cleanupBody)
-                .font(appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            ProviderPickerGrid(compact: true) { provider in
-                connecting = provider
-            }
-            .frame(width: 600)
-        }
-        .sheet(item: $connecting) { provider in
-            AddProviderSheet(provider: provider)
-                .environmentObject(vm)
-                .environmentObject(providers)
-        }
-    }
-
-    private var stepDone: some View {
-        VStack(spacing: 22) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 64))
-                .foregroundStyle(Palette.success)
-                .frame(width: Self.heroIconSize, height: Self.heroIconSize)
-            Text(OnboardingCopy.doneTitle)
-                .font(appFont(size: 28, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-            Text(OnboardingCopy.doneBody)
-                .font(appFont(size: 15))
-                .foregroundStyle(Palette.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            Button {
-                Task { await vm.speak(text: doneSampleText) }
-            } label: {
-                Label(OnboardingCopy.doneSampleButton, systemImage: "play.fill")
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!vm.isBackendOnline)
-        }
-    }
-
-    private var doneSampleText: String {
-        DashboardViewModel.langCode(forVoice: vm.selectedVoice).hasPrefix("en")
-            ? OnboardingCopy.sampleText
-            : DashboardViewModel.sampleSentence(forVoice: vm.selectedVoice)
+        coordinator.markCompleted()
     }
 
     private func advance() {
-        guard step == 4 else {
-            withAnimation { step += 1 }
+        guard snapshotStep == nil else {
+            go(to: step.nextUnseen(in: coordinator.seenStepKeys))
             return
         }
-        Task {
-            try? await identity.submitIdentity(name: nameDraft, email: emailDraft)
-            withAnimation { step += 1 }
+        coordinator.markSeen(key: step.key)
+        go(to: step.nextUnseen(in: coordinator.seenStepKeys))
+    }
+
+    private func savePrivacyChoices() {
+        if !SetupChecklist.analyticsDecided() {
+            UserDefaults.standard.set(false, forKey: MetricsService.analyticsEnabledKey)
+        }
+        let draft = identityDraft
+        guard draft.validation == .valid else { return }
+        Task { _ = try? await draft.commit(to: identity) }
+    }
+
+    private var welcome: some View {
+        Grid(horizontalSpacing: Theme.Space.item, verticalSpacing: Theme.Space.item) {
+            ForEach(Array(stride(from: 0, to: OnboardingCopy.features.count, by: 2)), id: \.self) { index in
+                GridRow {
+                    featureCard(OnboardingCopy.features[index])
+                    if index + 1 < OnboardingCopy.features.count {
+                        featureCard(OnboardingCopy.features[index + 1])
+                    }
+                }
+            }
         }
     }
 
-    private func appFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        vm.appFont(size: size, weight: weight)
-    }
-
-    private func statusRow(isGranted: Bool, grantedLabel: String, pendingLabel: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: isGranted ? "checkmark.circle.fill" : "clock.fill")
-                .foregroundStyle(isGranted ? Palette.success : Palette.warning)
-            Text(isGranted ? grantedLabel : pendingLabel)
-                .foregroundStyle(isGranted ? Palette.success : Palette.textSecondary)
+    private func featureCard(_ feature: OnboardingCopy.Feature) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            ListItemIcon(systemImage: feature.systemImage)
+            Text(feature.title)
+                .voqoraFont(.titleSmall)
+                .foregroundStyle(theme.onSurface)
+            Text(feature.body)
+                .voqoraFont(.body)
+                .foregroundStyle(theme.onSurfaceVariant)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .font(appFont(size: 12))
-    }
-
-    private func kbd(_ label: String) -> some View {
-        Text(label)
-            .font(.system(size: 26, weight: .bold, design: .monospaced))
-            .foregroundStyle(Palette.textPrimary)
-            .frame(width: 56, height: 56)
-            .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .padding(Theme.Space.card)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
     }
 }

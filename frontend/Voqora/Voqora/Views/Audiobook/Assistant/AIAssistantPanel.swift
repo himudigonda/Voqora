@@ -10,13 +10,9 @@ struct AIAssistantPanel: View {
             AIConnectProviderState()
         } else {
             VStack(spacing: DesignTokens.Spacing.md) {
-                Picker("Assistant Tool", selection: $model.tab) {
-                    ForEach(AIAssistantViewModel.Tab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 360)
-                .accessibilityLabel("Assistant Tool")
+                SegmentedTabs(selection: $model.tab, options: Array(AIAssistantViewModel.Tab.allCases), title: { $0.rawValue })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityLabel("Assistant Tool")
 
                 Group {
                     switch model.tab {
@@ -26,10 +22,8 @@ struct AIAssistantPanel: View {
                     case .flashcards: AIFlashcardsTab(model: model.flashcards)
                     }
                 }
-                .frame(maxWidth: 640, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, DesignTokens.Spacing.xs)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
@@ -37,16 +31,14 @@ struct AIAssistantPanel: View {
 
 struct AISummaryTab: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @ObservedObject var model: AISummaryModel
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 AIOptionsCard {
-                    Picker("Length", selection: $model.length) {
-                        ForEach(AISummaryLength.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
+                    SegmentedTabs(selection: $model.length, options: Array(AISummaryLength.allCases), title: { $0.title })
                     Picker("Language", selection: $model.language) {
                         Text("Same as Book").tag(AILanguage?.none)
                         Divider()
@@ -55,7 +47,7 @@ struct AISummaryTab: View {
                     HStack {
                         Spacer()
                         Button(model.state.value == nil ? "Summarize Book" : "Summarize Again") { model.generate() }
-                            .buttonStyle(.voqoraPrimary)
+                            .buttonStyle(.voqoraFilled)
                             .keyboardShortcut(.return, modifiers: .command)
                             .disabled(model.state.isLoading)
                     }
@@ -71,8 +63,8 @@ struct AISummaryTab: View {
         switch model.state {
         case .idle:
             Text("Choose a length and language, then summarize. Long books can take a few minutes.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurfaceVariant)
         case .loading:
             AIProgressState(title: "Summarizing…") { model.cancel() }
                 .frame(minHeight: 160)
@@ -82,7 +74,7 @@ struct AISummaryTab: View {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 Text(result.summary)
                     .font(vm.appFont(size: 15))
-                    .foregroundStyle(Palette.textPrimary)
+                    .foregroundStyle(theme.onSurface)
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)

@@ -45,6 +45,7 @@ struct ReadingModeView: View {
             return .handled
         }
         .onExitCommand(perform: close)
+        .voqoraTheme()
         .onAppear {
             loadTranscriptIfNeeded()
             VoqoraLog.info("ReadingMode", "Reading Mode opened", ["source": "\(source)"])

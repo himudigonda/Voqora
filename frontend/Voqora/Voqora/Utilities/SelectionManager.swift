@@ -63,6 +63,8 @@ enum SelectionManager {
     }
 
     private static func getSelectedTextViaClipboard() async -> String? {
+        await PasteboardGate.shared.acquire()
+        defer { PasteboardGate.shared.release() }
         let pasteboard = NSPasteboard.general
         let savedItems = snapshotPasteboard(pasteboard)
         let oldChangeCount = pasteboard.changeCount

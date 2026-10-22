@@ -20,13 +20,15 @@ final class StudioViewModelTests: XCTestCase {
         super.tearDown()
     }
 
-    private func makeStudio(connected: Bool = true) -> StudioViewModel {
-        StudioViewModel(
+    private func makeStudio(connected: Bool = true, tab: String? = TabKey.createPodcast) -> StudioViewModel {
+        let studio = StudioViewModel(
             providers: StudioFixtures.providers(connected: connected),
             library: library.hooks,
             service: service,
             drafts: StudioDraftStore(storageURL: url)
         )
+        studio.currentTab = { tab }
+        return studio
     }
 
     private func briefModel(in studio: StudioViewModel, text: String = "Notes about the moon.") throws -> PodcastBriefModel {
@@ -39,7 +41,7 @@ final class StudioViewModelTests: XCTestCase {
 
         studio.startNewPodcast(source: .book("book-1"))
 
-        XCTAssertEqual(studio.route, .newPodcast)
+        XCTAssertEqual(studio.takeRedirect(), TabKey.createPodcast)
         let brief = try XCTUnwrap(studio.briefModel?.brief)
         XCTAssertEqual(brief.sourceKind, .library)
         XCTAssertEqual(brief.bookID, "book-1")
@@ -74,7 +76,7 @@ final class StudioViewModelTests: XCTestCase {
 
         model.generate(blends: [])
         XCTAssertTrue(model.isGenerating)
-        await StudioFixtures.waitUntil { studio.route == .editor }
+        await StudioFixtures.waitUntil { studio.editor != nil }
 
         XCTAssertEqual(service.writeRequests.first?.source, .text("Notes about the moon."))
         XCTAssertEqual(service.credentials.first?.provider, .ollama)
@@ -82,7 +84,61 @@ final class StudioViewModelTests: XCTestCase {
         XCTAssertEqual(editor.script.title, "Night Sky")
         XCTAssertNotNil(editor.notice)
         XCTAssertNil(studio.briefModel)
+        XCTAssertEqual(studio.takeRedirect(), TabKey.createScriptEditor)
         XCTAssertEqual(studio.drafts.drafts.map(\.id), [editor.id])
+    }
+
+    func test_generatedScriptStaysParkedWhenTheUserLeftThePodcastPage() async throws {
+        service.scriptResult = .success(StudioFixtures.result())
+        let studio = makeStudio(tab: TabKey.createAudiobook)
+        let model = try briefModel(in: studio)
+        _ = studio.takeRedirect()
+
+        model.generate(blends: [])
+        await StudioFixtures.waitUntil { !studio.drafts.drafts.isEmpty }
+
+        XCTAssertNil(studio.editor)
+        XCTAssertNil(studio.redirect)
+        XCTAssertEqual(studio.drafts.drafts.first?.script.title, "Night Sky")
+        XCTAssertEqual(library.announcements, [StudioViewModel.parkedScriptMessage])
+    }
+
+    func test_parkedScriptDoesNotReplaceTheOpenEditor() throws {
+        let studio = makeStudio(tab: TabKey.createScriptEditor)
+        studio.startBlankScript()
+        let openEditor = try XCTUnwrap(studio.editor)
+        _ = studio.takeRedirect()
+
+        studio.open(PodcastDraft(script: StudioFixtures.script(turns: 4)), ifStillOn: TabKey.createPodcast)
+
+        XCTAssertEqual(studio.editor?.id, openEditor.id)
+        XCTAssertNil(studio.redirect)
+        XCTAssertEqual(studio.drafts.drafts.count, 2)
+    }
+
+    func test_renderedScriptLoadedAfterLeavingScriptsOnlyAnnounces() async {
+        service.storedScript = .success(StudioFixtures.script(turns: 3))
+        let studio = makeStudio(tab: TabKey.createAudiobook)
+
+        studio.openRenderedPodcast(bookID: "book-7")
+        await StudioFixtures.waitUntil { studio.openingBookID == nil }
+
+        XCTAssertNil(studio.editor)
+        XCTAssertNil(studio.redirect)
+        XCTAssertEqual(studio.drafts.drafts.first?.basedOnBookID, "book-7")
+        XCTAssertEqual(library.announcements, [StudioViewModel.parkedScriptMessage])
+    }
+
+    func test_renderedScriptOpensWhenTheUserIsStillOnScripts() async {
+        service.storedScript = .success(StudioFixtures.script(turns: 3))
+        let studio = makeStudio(tab: TabKey.createScripts)
+
+        studio.openRenderedPodcast(bookID: "book-7")
+        await StudioFixtures.waitUntil { studio.openingBookID == nil }
+
+        XCTAssertNotNil(studio.editor)
+        XCTAssertEqual(studio.takeRedirect(), TabKey.createScriptEditor)
+        XCTAssertTrue(library.announcements.isEmpty)
     }
 
     func test_generationFailureKeepsTheBrief() async throws {
@@ -94,7 +150,7 @@ final class StudioViewModelTests: XCTestCase {
         await StudioFixtures.waitUntil { !model.isGenerating }
 
         XCTAssertEqual(model.state, .failed("Voqora is already writing podcast scripts. Try again shortly."))
-        XCTAssertEqual(studio.route, .newPodcast)
+        XCTAssertNotNil(studio.briefModel)
         model.brief.minutes = 5
         XCTAssertEqual(model.state, .editing)
     }
@@ -112,7 +168,7 @@ final class StudioViewModelTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 20_000_000)
 
         XCTAssertEqual(model.state, .editing)
-        XCTAssertEqual(studio.route, .newPodcast)
+        XCTAssertNotNil(studio.briefModel)
         XCTAssertNil(studio.editor)
     }
 
@@ -139,7 +195,7 @@ final class StudioViewModelTests: XCTestCase {
         studio.startBlankScript()
 
         let editor = try XCTUnwrap(studio.editor)
-        XCTAssertEqual(studio.route, .editor)
+        XCTAssertEqual(studio.takeRedirect(), TabKey.createScriptEditor)
         XCTAssertEqual(editor.script.speakers.count, 2)
         XCTAssertEqual(editor.script.turns.count, 1)
         XCTAssertEqual(studio.drafts.drafts.count, 1)
@@ -147,7 +203,7 @@ final class StudioViewModelTests: XCTestCase {
 
     func test_openingARenderedPodcastMakesACopy() async throws {
         service.storedScript = .success(StudioFixtures.script(turns: 3))
-        let studio = makeStudio()
+        let studio = makeStudio(tab: TabKey.createScripts)
 
         studio.openRenderedPodcast(bookID: "book-7")
         await StudioFixtures.waitUntil { studio.openingBookID == nil }
@@ -167,18 +223,16 @@ final class StudioViewModelTests: XCTestCase {
 
         XCTAssertEqual(studio.notice, "Podcast not found.")
         XCTAssertNil(studio.editor)
-        XCTAssertEqual(studio.route, .home)
     }
 
-    func test_goingHomeSavesUnsavedEdits() throws {
+    func test_closingTheEditorSavesUnsavedEdits() throws {
         let studio = makeStudio()
         studio.startBlankScript()
         let editor = try XCTUnwrap(studio.editor)
         editor.script.title = "Kept"
 
-        studio.goHome()
+        studio.closeEditor()
 
-        XCTAssertEqual(studio.route, .home)
         XCTAssertNil(studio.editor)
         XCTAssertEqual(studio.drafts.draft(withID: editor.id)?.script.title, "Kept")
     }
@@ -202,7 +256,6 @@ final class StudioViewModelTests: XCTestCase {
         try studio.eraseAllDrafts()
 
         XCTAssertNil(studio.editor)
-        XCTAssertEqual(studio.route, .home)
         XCTAssertTrue(studio.drafts.drafts.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
@@ -215,8 +268,32 @@ final class StudioViewModelTests: XCTestCase {
         studio.deleteDraft(editor.id)
 
         XCTAssertNil(studio.editor)
-        XCTAssertEqual(studio.route, .home)
         XCTAssertTrue(studio.drafts.drafts.isEmpty)
+    }
+
+    func test_redirectIsTakenOnceAndExpires() {
+        let studio = makeStudio()
+
+        studio.startNewPodcast()
+        XCTAssertEqual(studio.takeRedirect(), TabKey.createPodcast)
+        XCTAssertNil(studio.takeRedirect())
+
+        studio.startNewPodcast()
+        let later = Date().addingTimeInterval(StudioViewModel.redirectLifetime + 1)
+        XCTAssertNil(studio.takeRedirect(now: later))
+        XCTAssertNil(studio.redirect)
+    }
+
+    func test_ensureBriefModelKeepsTheExistingBrief() throws {
+        let studio = makeStudio()
+
+        studio.ensureBriefModel()
+        let first = try XCTUnwrap(studio.briefModel)
+        first.brief.minutes = 11
+        studio.ensureBriefModel()
+
+        XCTAssertTrue(studio.briefModel === first)
+        XCTAssertEqual(studio.briefModel?.brief.minutes, 11)
     }
 
     func test_loadBlendsKeepsCatalog() async {

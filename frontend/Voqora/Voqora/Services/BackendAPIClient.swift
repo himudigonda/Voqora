@@ -112,6 +112,37 @@ final class BackendAPIClient {
         return try await decode(type, from: perform(request))
     }
 
+    func sendMultipart<Response: Decodable>(
+        _ type: Response.Type,
+        path: String,
+        form: MultipartForm,
+        timeout: TimeInterval = 60
+    ) async throws -> Response {
+        var request = try makeRequest(path: path, method: "POST", query: [], timeout: timeout)
+        request.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
+        request.httpBody = form.body
+        return try await decode(type, from: perform(request))
+    }
+
+    func sendForData(
+        path: String,
+        body: some Encodable,
+        accept: String,
+        timeout: TimeInterval = 60
+    ) async throws -> Data {
+        var request = try makeRequest(path: path, method: "POST", query: [], timeout: timeout)
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        request.httpBody = try encoder.encode(body)
+        return try await perform(request)
+    }
+
+    func getData(path: String, accept: String, timeout: TimeInterval = 60) async throws -> Data {
+        var request = try makeRequest(path: path, method: "GET", query: [], timeout: timeout)
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        return try await perform(request)
+    }
+
     func delete(path: String, timeout: TimeInterval = 15) async throws {
         let request = try makeRequest(path: path, method: "DELETE", query: [], timeout: timeout)
         _ = try await perform(request)

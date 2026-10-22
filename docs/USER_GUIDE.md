@@ -25,11 +25,14 @@ This clears the downloaded-file quarantine marker only from the installed
 Voqora app. Do not run it on software from an untrusted source.
 
 On first launch, Voqora opens a short setup flow before the speech engine is
-ready. It explains the shortcut and takes you to the macOS Accessibility
-setting. Accessibility is required for speaking selected text from other apps,
-but you can continue into Voqora without it and enable it later from the
-dashboard reminder. Setup also offers to turn on notifications, asks for your
-name and email, and lets you pick an accent color and app icon.
+ready. The steps are Welcome, Privacy (optional), Permissions, Speech Engine,
+Voice, Shortcuts, Dictation (optional), Audiobooks (optional), AI Provider
+(optional), Appearance, and Finish, which lists anything you still need to do.
+Kokoro is the recommended engine for the fastest real-time speech. Accessibility
+is required for speaking selected text from other apps, but you can skip it and
+enable it later from the dashboard reminder or **Settings -> Permissions**.
+Analytics stay off unless you switch them on, and your name and email are
+optional. Each choice can be changed later in Settings.
 
 ## Speak selected text
 
@@ -50,7 +53,7 @@ name and email, and lets you pick an accent color and app icon.
 | Speak clipboard | Not set |
 | Start or finish dictation | `Command + Shift + 9` |
 
-Change any shortcut in Preferences. If a selection does not arrive on the
+Change any shortcut in **Settings -> Shortcuts**. If a selection does not arrive on the
 first try, click back into the source app, select the text again, and retry.
 
 ### Media keys and headphones
@@ -71,7 +74,7 @@ Playback pauses when the headphones you were listening on disconnect, so a
 book never starts playing out loud by surprise.
 
 To leave media keys to Music or another app, turn off "Respond to media keys"
-in Preferences -> Shortcuts.
+in **Settings -> Shortcuts**.
 
 ## More ways to start speech
 
@@ -82,7 +85,7 @@ in Preferences -> Shortcuts.
   cancel. The first time, macOS asks you to allow Screen Recording for Voqora.
   Turn it on in **System Settings -> Privacy & Security -> Screen Recording**,
   then reopen Voqora. The capture is deleted as soon as the text is read.
-- **Clipboard.** Assign a shortcut to **Speak Clipboard** in Preferences to
+- **Clipboard.** Assign a shortcut to **Speak Clipboard** in **Settings -> Shortcuts** to
   hear whatever text you last copied.
 - **Services menu.** Select text in any app, then choose **Speak with Voqora**
   or **Add to Voqora Library** from the app menu under **Services**, or from
@@ -99,7 +102,7 @@ The Voqora extension for Chrome and Edge sends text from web pages to Voqora,
 which reads it aloud with your current voice. It talks only to Voqora on this
 Mac and never sends page text anywhere else.
 
-1. In Voqora, open **Preferences -> Integrations** and turn on **Local API**.
+1. In Voqora, open **Settings -> Integrations** and turn on **Local API**.
    Note the port and copy the API key.
 2. In the browser, open `chrome://extensions` (or `edge://extensions`), turn on
    **Developer mode**, choose **Load unpacked**, and pick the
@@ -122,7 +125,7 @@ See `extensions/chromium/README.md` for more detail.
 
 ## Save articles to your Inbox
 
-Open **Inbox** in the sidebar to keep web articles for later. Voqora saves the
+Open **Inbox** under **Listen** in the sidebar to keep web articles for later. Voqora saves the
 readable text of each article on this Mac, without menus, ads, or cookie
 banners.
 
@@ -174,10 +177,30 @@ Server Recognition** only if you are comfortable with Apple transcribing that
 audio. The page also keeps your last 200 transcripts on this Mac, with search,
 copy, and delete. **Erase All Local Data** removes them too.
 
+### Pick a recognition engine
+
+The top of **Settings → Dictation** (and the Dictation step of onboarding)
+lists four engines. Apple is built in. The other three download once from
+Hugging Face and then run fully on your Mac:
+
+| Engine | Best for | Download |
+| --- | --- | --- |
+| Apple | Many languages, nothing to download | Built in |
+| Parakeet | 25 European languages | about 470 MB |
+| Bark | English, every word kept, strongest on natural conversation | about 440 MB |
+| Bark Clean | English dictation: leaves out "um", "uh", false starts and repeats | about 450 MB |
+
+Until the engine you pick is downloaded, dictation uses Apple. The first use
+after a download takes a minute or two while macOS prepares the model; after
+that it starts in about a second.
+
 ## Choose a voice and speed
 
-Open Preferences to choose a voice, set the reading speed, adjust volume, and
-change the global shortcuts. Voqora includes 28 Kokoro voices in eight
+Open **Settings** (`Command + ,`, or **Settings…** in the app menu and the menu
+bar icon) to choose a voice, set the reading speed, adjust volume, and change
+the global shortcuts. Settings has twelve tabs: **General**, **Permissions**, **Appearance**,
+**Speech**, **Reading Mode**, **Audiobooks**, **Dictation**, **Engines**,
+**Shortcuts**, **AI**, **Integrations**, and **Privacy & Data**. Voice, speed, pause length, and volume are on **Speech**. Voqora includes 28 Kokoro voices in eight
 languages, grouped by language in the voice picker:
 
 | Language | Voices |
@@ -201,13 +224,13 @@ the voice and speed until you can follow a paragraph without wanting to rewind i
 
 ### Speech engines
 
-Kokoro is built in. **Preferences -> Speech Engines** lists it next to
+Kokoro is built in. **Settings -> Engines** lists it next to
 **Supertonic**, an optional second engine with 10 voices that speak 31
 languages (English, Korean, Japanese, Arabic, German, French, Spanish, Hindi,
 Russian and more). Supertonic is a one-time download of about 400 MB, free like
 everything else in Voqora.
 
-1. Open **Preferences -> Speech Engines** and choose **Download** next to
+1. Open **Settings -> Engines** and choose **Download** next to
    Supertonic. A progress bar shows the download; you can keep using Voqora.
 2. When it finishes, the Supertonic voices (Male 1 to 5, Female 1 to 5) appear
    under **Supertonic** in every voice picker: your speech voice, your audiobook
@@ -216,35 +239,87 @@ everything else in Voqora.
    switches to Bella, and you can download it again later.
 
 Supertonic voices always read in the language of the text. Voice blends and
-Studio podcasts use Kokoro voices only, and Auto-detect Language leaves a
+Podcasts made in Create use Kokoro voices only, and Auto-detect Language leaves a
 Supertonic voice alone. The Supertonic model is released under the OpenRAIL-M
 license, which carries use restrictions; see the third-party notices.
+
+### Ming: expressive voices
+
+**Ming** is a second optional engine with 117 voices (English and Chinese
+speakers) that can also speak Japanese, Korean, German, French and Spanish. It
+is a one-time download of about 3.7 GB. Ming renders slower than real time on
+most Macs, so it suits audiobooks and exports better than reading aloud as you
+go.
+
+Download it from **Settings -> Engines** like Supertonic. Voqora sets
+up its own private runtime for it, so it needs an internet connection and free
+disk space during the download.
+
+Ming voices accept **delivery** controls:
+
+- **Emotion**: neutral, happy, sad, angry, fearful, disgusted or surprised.
+- **Style**: a free sentence of up to 300 characters, such as "a calm bedtime
+  storyteller". It is combined with any emotion, pace or pitch you also set.
+- **Pace** (slow, normal, fast), **pitch** (low, normal, high) and **dialect**
+  (Cantonese or Sichuanese). A dialect takes priority over everything else.
+  Without a pace, a speed of 0.85 or lower reads slowly and 1.2 or higher reads
+  fast.
+
+Delivery keeps the voice's identity but not the exact way its sample was read,
+so emotions and paces come through clearly.
+
+Add sounds to your text with tags such as `[Laughter]`, `[Sigh]`, `[Cough]`,
+`[Breathing]`, `[Uhm]`, `[Surprise-ah]`, `[Surprise-oh]`, `[Dissatisfaction-hnn]`,
+`[Confirmation-en]` and `[Question-ei]`, `[Question-ah]`, `[Question-en]`,
+`[Question-oh]`, `[Question-huh]`. Pronunciation rules never change a tag.
+
+Set delivery defaults in **Settings -> Speech**, or per book on the New
+Audiobook page when a Ming voice narrates it.
+
+You can make your own Ming voices from **My Voices -> New Voice**:
+
+- **Describe a voice** ("a warm older woman with a slow, thoughtful voice").
+  Voqora renders a short sample and keeps it as the voice.
+- **Clone a voice** from a 3 to 30 second recording (WAV, FLAC, AIFF or MP3)
+  and the exact words spoken in it.
+
+The first time a built-in voice is used, Voqora renders a short reference clip
+for it, so that first sentence takes a little longer. Ming stops itself after
+five idle minutes to give the memory back.
 
 ## Voices, pronunciations, and pacing
 
 The **Voices** section of the sidebar is the one place to explore and shape
 how Voqora sounds.
 
-### Voice Catalog
+### Browse Voices
 
-**Voice Catalog** lists all 28 built-in voices, grouped by language. Choose the
+**Browse Voices** lists every built-in voice from every engine, grouped by
+language. Use the engine chips (**All**, **Kokoro**, **Supertonic**, or
+**Ming**), the language menu and the search field to narrow the list. An engine
+you have not downloaded shows an install card instead of its voices. Choose the
 play button to hear a sample, then use **Use** to make a voice your speech
-voice or your audiobook voice.
+voice (**For Speech**) or your audiobook voice (**For Audiobooks**).
 
 ### My Voices
 
-Mix two to four built-in voices into a voice of your own.
+**My Voices** holds only the voices you made, in one list. Each one is labeled
+**Blend**, **Designed** or **Cloned**. Choose **New Voice**
+(`Shift + Command + N`) and pick what you want to make:
 
-1. Open **My Voices** and choose **New Voice** (`Shift + Command + N`).
-2. Name the voice, pick the voices to mix, and drag each weight slider. Weights
-   are relative, so the percentage next to each slider shows how much of that
-   voice you hear.
-3. Choose **Save Voice**, then the play button to preview it.
+- **Blend voices** mixes two to four built-in voices. Name the voice, pick the
+  voices, and drag each weight slider. Weights are relative, so the percentage
+  next to each slider shows how much of that voice you hear. **Preview** plays
+  the mix without saving it; **Save Voice** keeps it.
+- **Describe a voice** (Ming) creates a voice from a written description.
+- **Clone a voice** (Ming) creates a voice from a 3 to 30 second recording you
+  have the right to use, plus the words spoken in it.
 
-Your voices appear at the top of every voice picker under **My Voices**,
-including Preferences and the New Audiobook sheet. Voices in the same language
-blend most naturally. You can save up to 50. If you delete a voice that is in
-use, Voqora switches to the first voice in its mix.
+If Ming is not installed, the Describe and Clone choices offer to install it
+first. Your voices appear at the top of every voice picker under **My Voices**,
+including **Settings -> Speech** and the New Audiobook page. Voices in the same
+language blend most naturally. You can save up to 50 blends. If you delete a
+voice that is in use, Voqora switches to a fallback voice.
 
 ### Pronunciations
 
@@ -267,13 +342,13 @@ only** stops "cat" from matching inside "concatenate", and **Match case** keeps
 
 ### Pause length
 
-**Preferences -> Speech -> Pause Length** makes the pauses between sentences
-and paragraphs shorter or longer, from 0.5x to 2x. The New Audiobook sheet has
+**Settings -> Speech -> Pause Length** makes the pauses between sentences
+and paragraphs shorter or longer, from 0.5x to 2x. The New Audiobook page has
 the same slider for a book, next to its voice, and remembers your last choice.
 
 ## Turn a document into an audiobook
 
-1. Open **Library** in the sidebar.
+1. Open **Library** under **Listen** in the sidebar.
 2. Add the PDF, EPUB, DOCX, HTML, TXT, or Markdown file you want to finish,
    or drop it on the window. You can drop several files at once. EPUB books
    bring their own title, author, cover, and chapters; DRM-protected EPUBs
@@ -326,7 +401,7 @@ another address.
   the transcript for video editors and web players. While an export runs, the
   export button shows its progress and the same menu offers **Cancel Export**.
   Long books can take a minute to encode as MP3 before the progress moves.
-- Set the M4B quality in **Preferences -> Audiobooks -> Export Quality**.
+- Set the M4B quality in **Settings -> Audiobooks -> Export Quality**.
   64 kbps keeps narration clear and files small; 128 kbps is the largest.
   **MP3 Quality** sets the MP3 bitrate from 64 to 192 kbps; 96 kbps suits
   spoken word.
@@ -342,13 +417,13 @@ can choose optional AI cleanup with a provider you connect: OpenAI, Anthropic,
 xAI, Groq, Cerebras, Google Gemini, OpenRouter, Ollama, LM Studio, or a Custom
 OpenAI-compatible server.
 
-1. Open **Preferences -> AI -> Add Provider**, pick a provider, enter
+1. Open **Settings -> AI** and choose **Add Provider…**, pick a provider, enter
    its API key (Ollama and LM Studio need none) and model, and choose
    **Connect**. Voqora checks the connection before saving. You can also
    connect a provider during setup.
 2. If you connect more than one, choose the one under **Used for audiobooks**.
 3. When you add a document, turn on **Clean Up with <provider>** at the bottom
-   of the New Audiobook sheet. The provider menu there switches providers for
+   of the New Audiobook page. The provider menu there switches providers for
    that book. The Cleanup Tokens and Cleanup Cost tiles show the estimate;
    local providers are free.
 
@@ -378,7 +453,7 @@ remaining pages are narrated from local text.
 
 ## AI reading tools
 
-With an AI provider connected in **Preferences -> AI**, the audiobook player
+With an AI provider connected in **Settings -> AI**, the audiobook player
 shows an **Assistant** panel next to **Transcript** and **Sections**. If no
 provider is connected, the panel offers to connect one. The tools send the
 book's text to the provider used for audiobooks; Ollama, LM Studio, and local
@@ -401,13 +476,13 @@ press Play to continue where you left off. Switching away from the Assistant
 panel or closing the player cancels any request that is still running.
 
 Two global shortcuts work in any app. They have no keys at first, so assign
-them in **Preferences -> Shortcuts**:
+them in **Settings -> Shortcuts**:
 
 - **Summarize Selection and Speak** reads the selected text, asks your provider
   for a short summary, and speaks it.
 - **Translate Selection and Speak** translates the selection and speaks it with
   a voice for that language. Choose the language under **Translate Selection
-  Into** in **Preferences -> AI**. It starts as the first non-English language
+  Into** in **Settings -> AI**. It starts as the first non-English language
   in your Mac's language list that Voqora has a voice for, or Spanish.
 
 If Voqora is already busy with other AI requests, the provider is rate limiting
@@ -415,12 +490,12 @@ your key, or a text is over the size or cost limit for one request, Voqora says
 so and nothing is spoken. Selections can be up to 20,000 characters for
 translation.
 
-## Make a podcast in Studio
+## Make a podcast in Create
 
-Studio turns something you want to understand into a conversation, and lets
-you write scripts for several voices yourself.
+Podcasts made in **Create** turn something you want to understand into a
+conversation, and let you write scripts for several voices yourself.
 
-1. Open **Podcasts** under **Studio** in the sidebar and choose **New Podcast**
+1. Open **Create** in the sidebar and choose **New Podcast**
    (`Shift + Command + N`).
 2. Pick the source: an item from your Library, or text. Paste text, choose
    **Paste from Clipboard**, or choose **Use Last Spoken Text** to reuse what
@@ -430,8 +505,8 @@ you write scripts for several voices yourself.
    minutes) and the language, then name the hosts and pick their voices. Your
    voice blends are listed too. Use the play button to hear a voice.
 4. Choose **Generate Script** (`Command + Return`). Writing the script uses the
-   AI provider you connected in **Preferences -> AI Cleanup**, and sends the
-   source text to it. Without a provider, Studio shows where to add one, or
+   AI provider you connected in **Settings -> AI**, and sends the
+   source text to it. Without a provider, Create shows where to add one, or
    you can start a blank script instead.
 
 ### Edit the script
@@ -443,7 +518,7 @@ you write scripts for several voices yourself.
   each. A script can have up to four speakers and 600 turns. Removing a speaker
   moves their turns to the first speaker.
 - Scripts save on your Mac as you edit (`Command + S` saves right away). Find
-  them under **Scripts** on the Studio page.
+  them under **Scripts** on the Create page.
 - **New Blank Script** (`Shift + Command + B`) starts an empty script you
   write yourself. Rendering it needs no AI provider.
 
@@ -479,32 +554,33 @@ window of its own. It is built for focus, dyslexia, and low vision.
 - Pick a Paper, Sepia, Dark, or High Contrast theme, and add a soft tint if a
   colored page is easier on your eyes.
 
-The same settings live in **Preferences -> Reading**, with a live preview, and
+The same settings live in **Settings -> Speech**, with a live preview, and
 are remembered between sessions. Reading Mode follows the macOS Reduce Motion
 and Increase Contrast settings.
 
 ## Stats
 
-Open **Stats** in the sidebar to see your listening time, voices, streaks, and
+Open **Stats** under **Insights** in the sidebar to see your listening time, voices, streaks, and
 library totals over the last 7 days, 30 days, 12 months, or all time. Stats are
 kept in a file on your Mac and are never sent anywhere. Choose **Reset Stats**
 on the page to clear them; **Erase All Local Data** clears them too.
 
 ## Run Voqora from the menu bar
 
-Turn on **Preferences -> General -> Hide from Dock & App Switcher** to keep
+Turn on **Settings -> General -> Hide from Dock & App Switcher** to keep
 Voqora in the menu bar only. The menu bar icon stays on while the Dock icon is
 hidden.
 
-## The Vault and export
+## History and export
 
-**The Vault** keeps a local history of spoken selections. Search it, star the
+**History**, under **Activity** in the sidebar, keeps a local record of spoken
+selections. Search it, star the
 passages you want to keep, and play any of them again. Use
 `Command + Shift + M` to save the latest clip to your Desktop as a WAV file.
 
 ## Integrations
 
-Open **Preferences -> Integrations** to connect Voqora to other apps.
+Open **Settings -> Integrations** to connect Voqora to other apps.
 
 ### Local API for apps and AI tools
 
@@ -549,16 +625,25 @@ menu to stop. **Disconnect** removes the address and deletes the token.
 
 ### Shortcuts and Services
 
-The Integrations pane also lists the Shortcuts actions and the Services menu
+The Integrations tab also lists the Shortcuts actions and the Services menu
 items described in [More ways to start speech](#more-ways-to-start-speech).
 
 ## Updates
 
 Voqora checks for a new release when it launches, at most once every six hours,
-and notifies you when one is available. You can also choose **Check for Updates** in About or Preferences.
+and notifies you when one is available. You can also choose **Check for Updates** in **About Voqora**, **Settings -> General**, or the
+menu bar icon menu.
 Choose **Download Latest Version** to download the verified DMG and open it in
 Finder, then drag the new version to Applications. Voqora never replaces itself
 automatically.
+
+## About and feedback
+
+Choose **About Voqora** from the app menu to see the version, check for
+updates, and find the developer's links. Choose **Send Feedback…** from the
+**Help** menu to send a note from the app. **Settings -> Privacy & Data** holds an
+optional name and email, used only to reply to your feedback, and the data tools.
+**Run Setup Again** is in **Settings -> General**.
 
 ## Troubleshooting
 
@@ -572,7 +657,11 @@ source, `make run` builds the bundled server before the app.
 
 Check that Voqora has the macOS permission it requests to read selected text
 from other apps. Then confirm the shortcut has not been claimed by another
-utility in Preferences.
+utility in **Settings -> Shortcuts**.
+
+To see which macOS permissions Voqora has, open **Settings -> Permissions**. It
+shows Accessibility, Microphone, Speech Recognition, Screen Recording, and
+Notifications, and opens the System Settings page for any that is not granted.
 
 ### A document needs cleaner text
 
@@ -583,6 +672,6 @@ your own key.
 
 ### Where are the logs?
 
-Choose **Preferences -> Data -> Export Debug Logs**. The files are written to
+Choose **Settings -> Privacy & Data -> Data -> Export Debug Logs**. The files are written to
 your Desktop so you can attach them to a
 [GitHub issue](https://github.com/himudigonda/Voqora/issues).

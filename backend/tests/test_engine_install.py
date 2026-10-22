@@ -250,10 +250,14 @@ def engine_entry(body, engine_id="supertonic"):
     return next(entry for entry in body["engines"] if entry["id"] == engine_id)
 
 
-def test_engine_endpoint_lists_both_engines():
+def test_engine_endpoint_lists_every_engine():
     body = client.get("/engine").json()
     assert body["engine"] == "kokoro"
-    assert [entry["id"] for entry in body["engines"]] == ["kokoro", "supertonic"]
+    assert [entry["id"] for entry in body["engines"]] == [
+        "kokoro",
+        "supertonic",
+        "ming",
+    ]
     kokoro = engine_entry(body, "kokoro")
     assert kokoro["installed"] is True
     assert kokoro["downloading"] is False

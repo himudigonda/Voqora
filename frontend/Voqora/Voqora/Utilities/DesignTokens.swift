@@ -8,6 +8,7 @@ enum DesignTokens {
         static let large: CGFloat = 14
         static let xLarge: CGFloat = 16
         static let overlay: CGFloat = 24
+        static let extraLarge: CGFloat = 28
     }
 
     enum Spacing {
@@ -39,6 +40,7 @@ enum DesignTokens {
         static let sm: CGFloat = 10
         static let md: CGFloat = 14
         static let lg: CGFloat = 20
+        static let xl: CGFloat = 28
     }
 
     enum Animation {
@@ -64,11 +66,11 @@ enum DesignTokens {
 extension DesignTokens.FontRole {
     static let pageTitle = Self(size: 28, weight: .bold)
     static let paneTitle = Self(size: 16, weight: .semibold)
-    static let sectionHeader = Self(size: 11, weight: .semibold)
+    static let sectionHeader = Self(size: 12.5, weight: .semibold)
     static let sectionTitle = Self(size: 15, weight: .semibold)
     static let button = Self(size: 13, weight: .medium)
     static let rowTitle = Self(size: 13, weight: .regular)
-    static let rowSubtitle = Self(size: 11, weight: .regular)
-    static let caption = Self(size: 10, weight: .regular)
-    static let chip = Self(size: 9, weight: .medium)
+    static let rowSubtitle = Self(size: 12.5, weight: .regular)
+    static let caption = Self(size: 11, weight: .regular)
+    static let chip = Self(size: 11, weight: .medium)
 }

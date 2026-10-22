@@ -14,6 +14,10 @@ enum RuntimeEnvironment {
             || NSClassFromString("XCTestCase") != nil
     }
 
+    nonisolated static var usesEphemeralSecrets: Bool {
+        isRunningTests || ProcessInfo.processInfo.environment["VOQORA_SNAPSHOT_DIR"] != nil
+    }
+
     nonisolated static func testDefaults() -> UserDefaults {
         let suite = "com.himudigonda.Voqora.tests.\(ProcessInfo.processInfo.processIdentifier)"
         return UserDefaults(suiteName: suite)!

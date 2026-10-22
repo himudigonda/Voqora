@@ -1,51 +1,21 @@
 import SwiftUI
 
 struct LocalAPISettingsView: View {
-    @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var localAPI: LocalAPIController
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @State private var revealsKey = false
     @State private var confirmingRegenerate = false
     @FocusState private var portFocused: Bool
 
     private static let refreshIntervalNanoseconds: UInt64 = 5_000_000_000
 
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Toggle(isOn: Binding(get: { localAPI.isEnabled }, set: { localAPI.setEnabled($0) })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Local API")
-                        .font(vm.font(.rowTitle))
-                    Text("Lets apps and AI tools on this Mac speak with Voqora's voices through an OpenAI-compatible endpoint and an MCP server.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            statusLine
-
-            if let keyError = localAPI.keyError {
-                Text(keyError)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.danger)
-            }
-
-            Divider()
-            portRow
-            Divider()
-            keyRow
-
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
+            apiSection
+            connectionSection
             if localAPI.isEnabled, !localAPI.apiKey.isEmpty {
-                Divider()
-                snippets
+                snippetsSection
             }
         }
         .task(id: localAPI.isEnabled) {
@@ -68,111 +38,124 @@ struct LocalAPISettingsView: View {
         }
     }
 
-    private var statusLine: some View {
-        HStack(spacing: 6) {
-            switch localAPI.phase {
-            case .off:
-                Image(systemName: "circle").foregroundStyle(Palette.textTertiary)
-            case .waitingForEngine:
-                Image(systemName: "hourglass").foregroundStyle(Palette.textSecondary)
-            case .starting:
-                ProgressView().controlSize(.small)
-            case .running:
-                Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.success)
-            case .failed:
-                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+    private var apiSection: some View {
+        SettingsSection(title: "Local API") {
+            SettingsSwitchRow(
+                title: "Local API",
+                detail: "Lets apps and AI tools on this Mac speak with Voqora's voices through an OpenAI-compatible endpoint and an MCP server.",
+                systemImage: "network",
+                isOn: Binding(get: { localAPI.isEnabled }, set: { localAPI.setEnabled($0) })
+            )
+            SettingsValueRow(title: "Status", systemImage: "waveform.path.ecg") {
+                statusChip
             }
-            Text(localAPI.phase.statusLine)
-                .foregroundStyle(localAPI.phase.isFailure ? Palette.danger : Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if let keyError = localAPI.keyError {
+                SettingsNoticeRow(text: keyError, kind: .danger)
+            }
         }
-        .font(vm.appFont(size: 12, weight: .semibold))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Local API status: \(localAPI.phase.statusLine)")
     }
 
-    private var portRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Label("Port", systemImage: "number")
-                    .font(vm.font(.rowTitle))
-                Spacer()
-                TextField("Port", text: $localAPI.portText)
-                    .textFieldStyle(.roundedBorder)
+    private var connectionSection: some View {
+        SettingsSection(title: "Connection", footer: connectionFooter) {
+            SettingsValueRow(title: "Port", detail: "A number from 1024 to 65535. Press Return to apply.", systemImage: "number") {
+                TextField("Port", text: $localAPI.portText, prompt: Text("1024–65535"))
+                    .labelsHidden()
                     .multilineTextAlignment(.trailing)
-                    .font(vm.font(.rowTitle).monospacedDigit())
-                    .frame(width: 90)
+                    .monospacedDigit()
+                    .settingsField(width: 120)
                     .focused($portFocused)
                     .onSubmit { localAPI.commitPort() }
                     .accessibilityLabel("Local API port")
                     .accessibilityHint("A number from 1024 to 65535. Press Return to apply.")
             }
-            if let portError = localAPI.portError {
-                Text(portError)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.danger)
-            } else {
-                Text("Clients connect to \(LocalAPISnippets.baseURL(port: localAPI.port)).")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
+            SettingsValueRow(title: "API Key", systemImage: "key") {
+                keyValue
             }
-        }
-    }
-
-    private var keyRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Label("API Key", systemImage: "key")
-                    .font(vm.font(.rowTitle))
-                Spacer(minLength: 12)
+            SettingsButtonRow(
+                title: localAPI.apiKey.isEmpty ? "Create a key" : "Replace the key",
+                detail: localAPI.apiKey.isEmpty ? "Clients need a key to connect." : "Apps using the current key stop working until you give them the new one.",
+                systemImage: "arrow.triangle.2.circlepath",
+                buttonTitle: localAPI.apiKey.isEmpty ? "Create Key" : "Regenerate…"
+            ) {
                 if localAPI.apiKey.isEmpty {
-                    Text("Created when you turn on the local API.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
+                    localAPI.regenerateKey()
                 } else {
-                    Text(revealsKey ? localAPI.apiKey : LocalAPIKey.masked(localAPI.apiKey))
-                        .font(vm.font(.rowSubtitle).monospaced())
-                        .foregroundStyle(Palette.textPrimary)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityLabel("API key")
-                        .accessibilityValue(revealsKey ? localAPI.apiKey : "Hidden")
-                    Button {
-                        revealsKey.toggle()
-                    } label: {
-                        Image(systemName: revealsKey ? "eye.slash" : "eye")
-                    }
-                    .buttonStyle(.borderless)
-                    .help(revealsKey ? "Hide key" : "Show key")
-                    .accessibilityLabel(revealsKey ? "Hide API key" : "Show API key")
-                    CopyButton(accessibilityTitle: "API key", text: { localAPI.apiKey })
+                    confirmingRegenerate = true
                 }
             }
-            HStack {
-                Text("Clients send this key as a Bearer token. It is stored in your Keychain.")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
-                Spacer()
-                Button(localAPI.apiKey.isEmpty ? "Create Key" : "Regenerate…") {
-                    if localAPI.apiKey.isEmpty {
-                        localAPI.regenerateKey()
-                    } else {
-                        confirmingRegenerate = true
-                    }
-                }
-                .buttonStyle(.borderless)
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(accentColor)
+            if let portError = localAPI.portError {
+                SettingsNoticeRow(text: portError, kind: .danger)
             }
         }
     }
 
-    private var snippets: some View {
+    private var connectionFooter: String {
+        var lines = [
+            "Clients connect to \(LocalAPISnippets.baseURL(port: localAPI.port)). They send the API key as a Bearer token, stored in your Keychain.",
+        ]
+        if localAPI.isEnabled, !localAPI.apiKey.isEmpty {
+            lines.append("Speech requested by these tools plays through Voqora with your current voice, unless the request names a voice. A new request replaces the one playing.")
+        }
+        return lines.joined(separator: " ")
+    }
+
+    @ViewBuilder
+    private var statusChip: some View {
+        let text = localAPI.phase.statusLine
+        switch localAPI.phase {
+        case .off:
+            StatusChip(text: text, kind: .neutral, systemImage: "circle")
+        case .waitingForEngine:
+            StatusChip(text: text, kind: .neutral, systemImage: "hourglass")
+        case .starting:
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(text)
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurfaceVariant)
+            }
+        case .running:
+            StatusChip(text: text, kind: .success, systemImage: "checkmark.circle.fill")
+        case .failed:
+            StatusChip(text: text, kind: .danger, systemImage: "exclamationmark.triangle.fill")
+        }
+    }
+
+    @ViewBuilder
+    private var keyValue: some View {
+        if localAPI.apiKey.isEmpty {
+            SettingsTextValue(text: "Created when you turn on the local API.")
+        } else {
+            HStack(spacing: 8) {
+                Text(revealsKey ? localAPI.apiKey : LocalAPIKey.masked(localAPI.apiKey))
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(theme.onSurface)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: 280, minHeight: 32)
+                    .background(theme.surfaceContainerHighest, in: Capsule())
+                    .accessibilityLabel("API key")
+                    .accessibilityValue(revealsKey ? localAPI.apiKey : "Hidden")
+                Button {
+                    revealsKey.toggle()
+                } label: {
+                    Image(systemName: revealsKey ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.voqoraIcon)
+                .help(revealsKey ? "Hide key" : "Show key")
+                .accessibilityLabel(revealsKey ? "Hide API key" : "Show API key")
+                CopyButton(accessibilityTitle: "API key", text: { localAPI.apiKey })
+            }
+        }
+    }
+
+    private var snippetsSection: some View {
         let port = localAPI.port
         let key = localAPI.apiKey
         let shown = revealsKey ? key : LocalAPIKey.masked(key)
-        return VStack(alignment: .leading, spacing: 18) {
+        return SettingsSection(title: "Connect your tools") {
             CopyableSnippet(
                 title: "OpenAI-compatible speech",
                 caption: "Any OpenAI text-to-speech client works. Point its base URL at \(LocalAPISnippets.baseURL(port: port))/v1.",
@@ -191,10 +174,6 @@ struct LocalAPISettingsView: View {
                 displayText: LocalAPISnippets.mcpServersJSON(port: port, key: shown),
                 copyText: LocalAPISnippets.mcpServersJSON(port: port, key: key)
             )
-            Text("Speech requested by these tools plays through Voqora with your current voice, unless the request names a voice. A new request replaces the one playing.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

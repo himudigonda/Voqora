@@ -4,6 +4,7 @@ import SwiftUI
 struct VaultView: View {
     @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var dashboardVM: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @State private var searchText = ""
     @State private var showOnlyFavorites = false
     @State private var selectedEntry: HistoryEntry?
@@ -24,153 +25,157 @@ struct VaultView: View {
 
     var body: some View {
         let groups = groupedEntries
-        Group {
-            if groups.isEmpty {
-                if history.history.isEmpty {
-                    VaultPlaceholder(
-                        systemImage: "clock.arrow.circlepath",
-                        title: "The Vault Is Empty",
-                        message: "Text you listen to with \(shortcut) is saved here."
-                    )
-                } else {
-                    VaultPlaceholder(
-                        systemImage: showOnlyFavorites && searchText.isEmpty ? "star" : "magnifyingglass",
-                        title: "No Results",
-                        message: searchText.isEmpty ? "No starred items." : "Nothing in The Vault matches “\(searchText)”."
-                    )
+        PageScaffold(title: "History", subtitle: "Text you listened to with \(shortcut), saved on this Mac.") {
+            HStack(spacing: Theme.Space.item) {
+                SearchField(text: $searchText, prompt: "Search history")
+                    .frame(width: 220)
+                FilterChip(title: "Starred", isSelected: showOnlyFavorites, systemImage: "star") {
+                    showOnlyFavorites.toggle()
                 }
-            } else {
-                List {
-                    ForEach(groups, id: \.0) { date, entries in
-                        Section {
-                            ForEach(entries) { entry in
-                                VaultEntryRow(entry: entry, selectedEntry: $selectedEntry)
-                            }
-                        } header: {
-                            Text(date, style: .date)
-                                .font(dashboardVM.font(.sectionHeader))
-                                .foregroundStyle(Palette.textSecondary)
-                        }
-                    }
-                }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
-            }
-        }
-        .overlay(alignment: .top) {
-            if let persistenceError = history.persistenceError {
-                HStack(spacing: 10) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Palette.warning)
-                    Text(persistenceError)
-                        .font(dashboardVM.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textPrimary)
-                    Spacer()
-                    Button("Try Again") { history.retryPersistence() }
-                        .buttonStyle(.voqoraSecondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Palette.warning.opacity(0.12))
-            }
-        }
-        .navigationTitle("The Vault")
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search Spoken Text")
-        .sheet(item: $selectedEntry) { entry in
-            VaultEntryDetailView(entry: entry)
-        }
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Toggle(isOn: $showOnlyFavorites) {
-                    Label("Starred", systemImage: showOnlyFavorites ? "star.fill" : "star")
-                }
-                .toggleStyle(.button)
-                .help(showOnlyFavorites ? "Show All" : "Show Starred Only")
-                .accessibilityLabel("Show Starred Only")
-
-                Menu {
+                .help(showOnlyFavorites ? "Show all" : "Show starred only")
+                PageActionsMenu {
                     Button("Clear History…", role: .destructive) { showClearHistoryConfirmation = true }
                         .disabled(history.history.isEmpty)
-                } label: {
-                    Label("More", systemImage: "ellipsis.circle")
                 }
-                .help("More")
             }
+        } content: {
+            if let persistenceError = history.persistenceError {
+                persistenceBanner(persistenceError)
+            }
+            if groups.isEmpty {
+                emptyState
+            } else {
+                ForEach(groups, id: \.0) { date, entries in
+                    daySection(date: date, entries: entries)
+                }
+            }
+        }
+        .navigationTitle("History")
+        .sheet(item: $selectedEntry) { entry in
+            VaultEntryDetailView(entry: entry)
+                .environmentObject(dashboardVM)
+                .voqoraTheme()
         }
         .confirmationDialog("Clear History?", isPresented: $showClearHistoryConfirmation, titleVisibility: .visible) {
             Button("Clear History", role: .destructive) { history.clearHistory() }
         } message: {
-            Text("This removes everything in The Vault from this Mac.")
+            Text("This removes everything in History from this Mac.")
         }
     }
-}
 
-private struct VaultPlaceholder: View {
-    @EnvironmentObject var dashboardVM: DashboardViewModel
-    let systemImage: String
-    let title: String
-    let message: String
+    @ViewBuilder
+    private var emptyState: some View {
+        if history.history.isEmpty {
+            EmptyStateView(
+                symbol: "clock.arrow.circlepath",
+                title: "No history yet",
+                message: "Text you listen to with \(shortcut) is saved here."
+            )
+        } else {
+            EmptyStateView(
+                symbol: showOnlyFavorites && searchText.isEmpty ? "star" : "magnifyingglass",
+                title: "No results",
+                message: searchText.isEmpty ? "No starred items." : "Nothing in History matches “\(searchText)”."
+            )
+        }
+    }
 
-    var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: systemImage)
-                .font(.system(size: 56, weight: .light))
-                .foregroundStyle(Palette.textTertiary)
-            VStack(spacing: 6) {
-                Text(title)
-                    .font(dashboardVM.font(.sectionTitle))
-                    .foregroundStyle(Palette.textPrimary)
-                Text(message)
-                    .font(dashboardVM.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
+    private func daySection(date: Date, entries: [HistoryEntry]) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            Text(Self.dayTitle(for: date))
+                .font(dashboardVM.font(.titleSmall))
+                .foregroundStyle(theme.primary)
+                .padding(.horizontal, Theme.Space.unit)
+                .accessibilityAddTraits(.isHeader)
+            ListGroup {
+                ForEach(entries) { entry in
+                    VaultEntryRow(entry: entry, selectedEntry: $selectedEntry)
+                }
             }
         }
-        .padding(.horizontal, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func persistenceBanner(_ message: String) -> some View {
+        HStack(spacing: Theme.Space.item) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(theme.warning)
+                .accessibilityHidden(true)
+            Text(message)
+                .font(dashboardVM.font(.body))
+                .foregroundStyle(theme.onSurface)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Try Again") { history.retryPersistence() }
+                .buttonStyle(.voqoraTonal)
+        }
+        .padding(Theme.Space.item + 4)
+        .background(theme.warning.opacity(0.12), in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
+    }
+
+    private static func dayTitle(for date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            return "Today"
+        }
+        if calendar.isDateInYesterday(date) {
+            return "Yesterday"
+        }
+        return date.formatted(.dateTime.weekday(.wide).month(.wide).day().year())
     }
 }
 
 struct VaultEntryRow: View {
     @EnvironmentObject var history: HistoryManager
     @EnvironmentObject var dashboardVM: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let entry: HistoryEntry
     @Binding var selectedEntry: HistoryEntry?
-    @State private var hovering = false
-    @State private var playHovering = false
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            HStack(spacing: 0) {
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(spacing: 6) {
-                        Text(entry.timestamp, style: .time)
-                        Text("·")
-                        Text(DashboardViewModel.voiceName(for: entry.voice))
-                        if entry.isFavorite {
-                            Image(systemName: "star.fill")
-                                .foregroundStyle(Palette.warning)
-                        }
-                    }
-                    .font(dashboardVM.font(.caption))
-                    .foregroundStyle(Palette.textSecondary)
-                    Text(entry.text)
-                        .lineLimit(3)
-                        .font(dashboardVM.appFont(size: 15, weight: .medium))
-                        .foregroundStyle(Palette.textPrimary)
-                }
-                Spacer(minLength: 0)
+        HStack(alignment: .center, spacing: Theme.Space.item + 4) {
+            Button(action: play) {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 14, weight: .semibold))
             }
-            .contentShape(Rectangle())
-            .onTapGesture(count: 2) { play() }
-            .onTapGesture { selectedEntry = entry }
-            PlayerCircleButton(systemName: "play.fill", label: "Play") { play() }
-                .onHover { playHovering = $0 }
-                .opacity(hovering || playHovering ? 1 : 0.35)
+            .buttonStyle(.voqoraIconTonal)
+            .help("Play")
+            .accessibilityLabel("Play")
+            Button { selectedEntry = entry } label: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(entry.text)
+                        .font(dashboardVM.font(.body))
+                        .foregroundStyle(theme.onSurface)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text("\(DashboardViewModel.voiceName(for: entry.voice)) · \(entry.timestamp.formatted(.relative(presentation: .named)))")
+                        .font(dashboardVM.font(.bodySmall))
+                        .foregroundStyle(theme.onSurfaceVariant)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open details")
+            Button { history.toggleFavorite(entry: entry) } label: {
+                Image(systemName: entry.isFavorite ? "star.fill" : "star")
+                    .foregroundStyle(entry.isFavorite ? theme.warning : theme.onSurfaceVariant)
+            }
+            .buttonStyle(.voqoraIcon)
+            .help(entry.isFavorite ? "Remove star" : "Star")
+            .accessibilityLabel(entry.isFavorite ? "Unstar" : "Star")
         }
+        .padding(.horizontal, 16)
         .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        .frame(minHeight: 72)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            isHovering ? theme.surfaceContainerHigh : theme.surfaceContainer,
+            in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous)
+        )
+        .animation(Theme.Motion.hover, value: isHovering)
+        .onHover { isHovering = $0 }
         .contextMenu {
             Button("Play") { play() }
             Button(entry.isFavorite ? "Unstar" : "Star") { history.toggleFavorite(entry: entry) }
@@ -182,74 +187,55 @@ struct VaultEntryRow: View {
     }
 
     private func play() {
-        Task { await dashboardVM.speak(text: entry.text) }
-        dashboardVM.selectedTab = "home"
+        Task { await SpeechSource.$current.withValue(.history) { await dashboardVM.speak(text: entry.text) } }
+        dashboardVM.selectedTab = TabKey.home
     }
 }
 
 struct VaultEntryDetailView: View {
     @Environment(\.dismiss) var dismiss
+    @Environment(\.voqoraTheme) private var theme
     @EnvironmentObject var vm: DashboardViewModel
     let entry: HistoryEntry
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.timestamp, format: .dateTime.month().day().year().hour().minute())
-                        .font(vm.appFont(size: 13, weight: .semibold))
-                        .foregroundStyle(Palette.textPrimary)
-                    Text("Narrated by \(DashboardViewModel.voiceName(for: entry.voice))")
-                        .font(vm.font(.caption))
-                        .foregroundStyle(Palette.textSecondary)
+        VoqoraSheet(
+            title: entry.timestamp.formatted(.dateTime.month().day().year().hour().minute()),
+            supporting: "Narrated by \(DashboardViewModel.voiceName(for: entry.voice))",
+            width: 640
+        ) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                ScrollView {
+                    Text(entry.text)
+                        .font(vm.font(.body))
+                        .foregroundStyle(theme.onSurface)
+                        .lineSpacing(6)
+                        .textSelection(.enabled)
+                        .padding(Theme.Space.card)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer()
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(Palette.textSecondary)
+                .frame(maxHeight: 320)
+                .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
+                HStack(spacing: Theme.Space.item) {
+                    Spacer()
+                    Button {
+                        copy(entry.text)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .buttonStyle(.voqoraTonal)
+                    Button {
+                        dismiss()
+                        vm.selectedTab = TabKey.home
+                        Task { await SpeechSource.$current.withValue(.history) { await vm.speak(text: entry.text) } }
+                    } label: {
+                        Label("Play", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.voqoraFilled)
+                    .keyboardShortcut(.defaultAction)
                 }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Close")
-                .help("Close")
             }
-            .padding(24)
-            .voqoraSurface(.raised, in: Rectangle())
-
-            ScrollView {
-                Text(entry.text)
-                    .font(vm.appFont(size: 18, weight: .regular))
-                    .foregroundStyle(Palette.textPrimary)
-                    .lineSpacing(8)
-                    .textSelection(.enabled)
-                    .padding(32)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            HStack(spacing: 12) {
-                Spacer()
-                Button {
-                    copy(entry.text)
-                } label: {
-                    Label("Copy", systemImage: "doc.on.doc")
-                }
-                .buttonStyle(.voqoraSecondary)
-                Button {
-                    dismiss()
-                    vm.selectedTab = "home"
-                    Task { await vm.speak(text: entry.text) }
-                } label: {
-                    Label("Play", systemImage: "play.fill")
-                }
-                .buttonStyle(.voqoraPrimary)
-                .keyboardShortcut(.defaultAction)
-            }
-            .padding(24)
-            .voqoraSurface(.raised, in: Rectangle())
         }
-        .frame(minWidth: 500, minHeight: 400)
-        .background(Palette.surfaceBase)
     }
 }
 

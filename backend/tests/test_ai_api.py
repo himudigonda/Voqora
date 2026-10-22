@@ -305,6 +305,55 @@ def test_tidy_rejects_a_reply_that_adds_text(client, monkeypatch):
     assert len(fake.calls) == 2
 
 
+def test_tidy_rejects_a_reply_that_drops_half_the_sentences(client, monkeypatch):
+    sentences = [
+        "We reviewed the budget today.",
+        "Marketing asked for more time.",
+        "Engineering confirmed the release date.",
+        "Finance wants a revised forecast.",
+        "Support will answer migration questions.",
+        "We meet again on Thursday.",
+    ]
+    fake = install(
+        monkeypatch,
+        FakeLLM(lambda _c, _n: reply({"text": " ".join(sentences[:3])})),
+    )
+    response = client.post(
+        "/ai/tidy", json={"text": " ".join(sentences)}, headers=OPENAI_HEADERS
+    )
+    assert response.status_code == 502
+    assert response.json()["code"] == "ai_invalid_output"
+    assert len(fake.calls) == 2
+
+
+def test_tidy_accepts_a_reply_that_only_removes_fillers(client, monkeypatch):
+    fake = install(
+        monkeypatch,
+        FakeLLM(lambda _c, _n: reply({"text": "We shipped the release on Friday."})),
+    )
+    response = client.post(
+        "/ai/tidy",
+        json={"text": "um we shipped the release uh you know on Friday"},
+        headers=OPENAI_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["text"] == "We shipped the release on Friday."
+    assert len(fake.calls) == 1
+
+
+def test_tidy_accepts_a_shorter_reply_for_a_four_word_dictation(client, monkeypatch):
+    fake = install(
+        monkeypatch,
+        FakeLLM(lambda _c, _n: reply({"text": "Hello friend."})),
+    )
+    response = client.post(
+        "/ai/tidy", json={"text": "hello there my friend"}, headers=OPENAI_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["text"] == "Hello friend."
+    assert len(fake.calls) == 1
+
+
 def test_tidy_requires_a_provider(client, monkeypatch):
     fake = install(monkeypatch, FakeLLM(lambda _c, _n: reply({"text": "x"})))
     response = client.post("/ai/tidy", json={"text": "hello"})

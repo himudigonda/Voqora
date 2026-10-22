@@ -35,6 +35,7 @@ struct VoqoraApp: App {
 
     private let backend: BackendService
     private let systemMedia: SystemMediaSession?
+    private let dictationStats: DictationStatsObserver
 
     init() {
         let runningTests = RuntimeEnvironment.isRunningTests
@@ -107,6 +108,7 @@ struct VoqoraApp: App {
             dependencies: .system(defaults: testDefaults ?? .standard)
         )
 
+        dictationStats = DictationStatsObserver(controller: dictationInstance)
         _audio = StateObject(wrappedValue: audioInstance)
         _history = StateObject(wrappedValue: historyInstance)
         _launchManager = StateObject(wrappedValue: launchInstance)
@@ -121,6 +123,7 @@ struct VoqoraApp: App {
         _dictationTranscripts = StateObject(wrappedValue: dictationInstance.transcripts)
         _inbox = StateObject(wrappedValue: inboxInstance)
         let studioInstance = StudioViewModel(providers: providersInstance, library: .live(audiobookInstance))
+        studioInstance.currentTab = { [weak vmInstance] in vmInstance?.selectedTab }
         _studio = StateObject(wrappedValue: studioInstance)
         _localAPI = StateObject(wrappedValue: localAPIInstance)
         _shelfSettings = StateObject(wrappedValue: shelfSettingsInstance)
@@ -130,8 +133,8 @@ struct VoqoraApp: App {
         let inputsInstance = SpeechInputCoordinator(
             speaker: vmInstance,
             library: audiobookInstance,
-            presentLibrary: { [weak vmInstance] in
-                vmInstance?.showLibrary()
+            presentNewAudiobook: { [weak vmInstance] source in
+                vmInstance?.showNewAudiobook(with: source)
                 WindowPresenter.shared.show()
             }
         )
@@ -144,6 +147,9 @@ struct VoqoraApp: App {
         appDelegate.flushStudioDrafts = { [studioInstance] in
             studioInstance.flushForTermination()
         }
+        appDelegate.flushDictation = { [dictationInstance] in
+            MainActor.assumeIsolated { dictationInstance.flushForTermination() }
+        }
 
         if !runningTests {
             inputsInstance.activate()
@@ -151,9 +157,8 @@ struct VoqoraApp: App {
             let aiSelection = AISelectionCoordinator(
                 speaker: vmInstance,
                 credential: { [weak providersInstance] in providersInstance?.activeCredential },
-                dependencies: .live(openAIPreferences: { [weak vmInstance] in
-                    vmInstance?.selectedTab = "preferences"
-                    WindowPresenter.shared.show()
+                dependencies: .live(openAIPreferences: {
+                    AppWindows.openSettings(tab: .ai)
                 })
             )
             setupShortcuts(vm: vmInstance, inputs: inputsInstance, aiSelection: aiSelection)
@@ -290,37 +295,53 @@ struct VoqoraApp: App {
 
     @AppStorage("showMenuBarIcon") var showMenuBarIcon = true
 
+    private func environmentObjects(_ root: some View) -> some View {
+        root
+            .environmentObject(dashboardVM)
+            .environmentObject(audio)
+            .environmentObject(history)
+            .environmentObject(launchManager)
+            .environmentObject(audiobookVM)
+            .environmentObject(onboarding)
+            .environmentObject(identity)
+            .environmentObject(permissions)
+            .environmentObject(updater)
+            .environmentObject(installer)
+            .environmentObject(providers)
+            .environmentObject(UsageStatsStore.shared)
+            .environmentObject(dictation)
+            .environmentObject(dictationTranscripts)
+            .environmentObject(inbox)
+            .environmentObject(studio)
+            .environmentObject(localAPI)
+            .environmentObject(shelfSettings)
+            .environmentObject(shelfUploads)
+    }
+
     var body: some Scene {
         WindowGroup(id: "dashboard") {
             Group {
                 if RuntimeEnvironment.isRunningTests {
                     EmptyView()
                 } else {
-                    VoqoraWindow()
-                        .environmentObject(dashboardVM)
-                        .environmentObject(audio)
-                        .environmentObject(history)
-                        .environmentObject(launchManager)
-                        .environmentObject(audiobookVM)
-                        .environmentObject(onboarding)
-                        .environmentObject(identity)
-                        .environmentObject(permissions)
-                        .environmentObject(updater)
-                        .environmentObject(installer)
-                        .environmentObject(providers)
-                        .environmentObject(UsageStatsStore.shared)
-                        .environmentObject(dictation)
-                        .environmentObject(dictationTranscripts)
-                        .environmentObject(inbox)
-                        .environmentObject(studio)
-                        .environmentObject(localAPI)
-                        .environmentObject(shelfSettings)
-                        .environmentObject(shelfUploads)
+                    environmentObjects(VoqoraWindow())
                 }
             }
         }
         .windowStyle(.hiddenTitleBar)
         .handlesExternalEvents(matching: ["dashboard"])
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Voqora") { AppWindows.openAbout() }
+            }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { AppWindows.openSettings(tab: .general) }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
+            CommandGroup(replacing: .help) {
+                Button("Send Feedback…") { AppWindows.openFeedback() }
+            }
+        }
 
         Window(ReadingModeWindow.title, id: ReadingModeWindow.id) {
             Group {
@@ -345,6 +366,9 @@ struct VoqoraApp: App {
             } label: {
                 Label("Speak Selection", systemImage: "text.bubble")
             }
+
+            Button("Paste Last Dictation", systemImage: "text.insert") { Task { await dictation.pasteLastTranscript() } }
+                .disabled(dictationTranscripts.transcripts.isEmpty)
 
             Button {
                 dashboardVM.togglePlayback()
@@ -396,7 +420,7 @@ struct VoqoraApp: App {
                     ForEach(history.history.prefix(5)) { entry in
                         let preview = entry.text.count > 60 ? String(entry.text.prefix(60)) + "…" : entry.text
                         Button(preview) {
-                            Task { await dashboardVM.speak(text: entry.text) }
+                            Task { await SpeechSource.$current.withValue(.history) { await dashboardVM.speak(text: entry.text) } }
                         }
                     }
                     Divider()
@@ -425,22 +449,20 @@ struct VoqoraApp: App {
             Divider()
 
             Button {
-                dashboardVM.selectedTab = "home"
+                dashboardVM.selectedTab = TabKey.home
                 WindowPresenter.shared.show()
             } label: {
                 Label("Open Voqora", systemImage: "macwindow")
             }
 
             Button {
-                dashboardVM.selectedTab = "preferences"
-                WindowPresenter.shared.show()
+                AppWindows.openSettings()
             } label: {
-                Label("Preferences…", systemImage: "gearshape")
+                Label("Settings…", systemImage: "gearshape")
             }
 
             Button {
-                dashboardVM.selectedTab = "about"
-                WindowPresenter.shared.show()
+                AppWindows.openAbout()
                 Task { await updater.checkGitHubReleaseForUpdate() }
             } label: {
                 Label(

@@ -3,39 +3,39 @@ import SwiftUI
 struct AudiobookToastView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
-
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
+    @Environment(\.voqoraTheme) private var theme
 
     var body: some View {
         if let toast = bookVM.toast {
-            HStack(spacing: 12) {
+            HStack(spacing: Theme.Space.item) {
                 Image(systemName: iconName(for: toast.kind))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(color(for: toast.kind))
-                    .font(.system(size: 14, weight: .bold))
+                    .frame(width: 32, height: 32)
+                    .background(color(for: toast.kind).opacity(0.16), in: Circle())
+                    .accessibilityHidden(true)
                 Text(toast.message)
-                    .font(vm.appFont(size: 12, weight: .medium))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(vm.font(.label))
+                    .foregroundStyle(theme.onSurface)
                     .lineLimit(Self.lineLimit(for: toast.kind))
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
                 Button { bookVM.dismissToast() } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Palette.textSecondary)
+                        .font(.system(size: 12, weight: .semibold))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.voqoraIcon)
                 .accessibilityLabel("Dismiss")
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .voqoraSurface(.floating, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.leading, 14)
+            .padding(.trailing, 6)
+            .padding(.vertical, 8)
+            .background(theme.surfaceContainerHighest, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(color(for: toast.kind).opacity(0.4), lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous)
+                    .strokeBorder(theme.outlineVariant, lineWidth: 1)
             )
+            .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
             .padding(.horizontal, 16)
             .padding(.top, 12)
             .frame(maxWidth: 520)
@@ -53,9 +53,9 @@ struct AudiobookToastView: View {
 
     private func color(for kind: AudiobookViewModel.Toast.Kind) -> Color {
         switch kind {
-        case .error: Palette.danger
-        case .info: accentColor
-        case .success: Palette.success
+        case .error: theme.danger
+        case .info: theme.primary
+        case .success: theme.success
         }
     }
 

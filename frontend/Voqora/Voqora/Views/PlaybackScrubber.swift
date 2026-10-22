@@ -3,6 +3,7 @@ import SwiftUI
 struct PlaybackScrubber: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var audio: AudioService
+    @Environment(\.voqoraTheme) private var theme
     var markers: [TimeInterval] = []
     var isEnabled = true
     var chapterTitle: (TimeInterval) -> String? = { _ in nil }
@@ -29,14 +30,14 @@ struct PlaybackScrubber: View {
                 let width = max(1, geometry.size.width)
                 let expanded = hoverFraction != nil || dragFraction != nil
                 ZStack(alignment: .leading) {
-                    Capsule().fill(Palette.textPrimary.opacity(0.14))
+                    Capsule().fill(theme.surfaceContainerHighest)
                     if availableFraction < 1 {
                         Capsule()
-                            .fill(Palette.textPrimary.opacity(0.14))
+                            .fill(theme.onSurface.opacity(0.12))
                             .frame(width: width * availableFraction)
                     }
                     Capsule()
-                        .fill(Palette.textPrimary.opacity(expanded ? 0.9 : 0.7))
+                        .fill(theme.primary)
                         .frame(width: width * fraction)
                         .animation(dragFraction == nil && audio.isPlaying ? .linear(duration: 0.1) : nil, value: fraction)
                     ForEach(markers.filter { $0 > 0 && $0 < duration }, id: \.self) { time in
@@ -47,7 +48,7 @@ struct PlaybackScrubber: View {
                     }
                 }
                 .compositingGroup()
-                .frame(height: expanded ? 8 : 4)
+                .frame(height: expanded ? 8 : 6)
                 .frame(maxHeight: .infinity)
                 .contentShape(Rectangle())
                 .animation(.easeOut(duration: 0.15), value: expanded)
@@ -89,9 +90,9 @@ struct PlaybackScrubber: View {
             }
 
             timeRow
-                .font(vm.appFont(size: 11, weight: .medium))
+                .font(vm.font(.labelSmall))
                 .monospacedDigit()
-                .foregroundStyle(Palette.textSecondary)
+                .foregroundStyle(theme.onSurfaceVariant)
                 .frame(height: 14)
         }
         .opacity(isEnabled ? 1 : 0.5)
@@ -103,7 +104,7 @@ struct PlaybackScrubber: View {
         if let time = previewTime {
             HStack(spacing: 6) {
                 Text(DurationFormatter.clock(time))
-                    .foregroundStyle(Palette.textPrimary)
+                    .foregroundStyle(theme.onSurface)
                 if let title = chapterTitle(time) {
                     Text(title)
                         .lineLimit(1)

@@ -12,15 +12,29 @@ final class SpeechEngineStore: ObservableObject {
 
     private let service: any SpeechEngineServing
     private let pollInterval: Duration
+    private let directory: EngineVoiceDirectory
     private var pollTask: Task<Void, Never>?
 
-    init(service: (any SpeechEngineServing)? = nil, pollInterval: Duration = .seconds(1)) {
+    init(
+        service: (any SpeechEngineServing)? = nil,
+        pollInterval: Duration = .seconds(1),
+        directory: EngineVoiceDirectory = .shared
+    ) {
         self.service = service ?? SpeechEngineService()
         self.pollInterval = pollInterval
+        self.directory = directory
     }
 
     var supertonicVoices: [SpeechEngineVoice] {
         SpeechEngineCatalog.installedVoices(for: SpeechEngineID.supertonic, in: engines)
+    }
+
+    var mingVoices: [SpeechEngineVoice] {
+        SpeechEngineCatalog.installedVoices(for: SpeechEngineID.ming, in: engines)
+    }
+
+    func voice(id: String) -> SpeechEngineVoice? {
+        SpeechEngineCatalog.voice(id, in: engines)
     }
 
     func engine(id: String) -> SpeechEngine? {
@@ -28,7 +42,7 @@ final class SpeechEngineStore: ObservableObject {
     }
 
     func displayName(forVoice voice: String) -> String? {
-        SpeechEngineCatalog.displayName(forVoice: voice, in: engines)
+        SpeechEngineCatalog.displayName(forVoice: voice, in: engines, directory: directory)
     }
 
     func resolvedVoice(_ voice: String) -> String {
@@ -95,6 +109,7 @@ final class SpeechEngineStore: ObservableObject {
 
     private func apply(_ latest: [SpeechEngine]) {
         guard latest != engines else { return }
+        directory.record(latest.filter(\.installed).flatMap(\.voices))
         engines = latest
         revision &+= 1
     }

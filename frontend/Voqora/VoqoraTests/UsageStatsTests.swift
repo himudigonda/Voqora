@@ -211,7 +211,8 @@ final class UsageStatsTests: XCTestCase {
         XCTAssertEqual(StatsFormat.change(0.256), "+26%")
         XCTAssertEqual(StatsFormat.change(-0.5), "-50%")
         XCTAssertNil(StatsFormat.change(nil))
-        XCTAssertEqual(StatsFormat.voiceDetail("bm_george"), "British · Male")
+        XCTAssertEqual(StatsFormat.voiceSubtitle("bm_george"), "Kokoro · English (UK) · Male")
+        XCTAssertTrue(StatsFormat.voiceSubtitle("supertonic:F1").hasPrefix("Supertonic"))
     }
 
     func test_libraryStatsSumsBooks() throws {

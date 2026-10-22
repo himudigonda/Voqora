@@ -3,13 +3,13 @@ import SwiftUI
 
 struct PaneSectionHeader: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let title: String
 
     var body: some View {
-        Text(title.uppercased())
-            .font(vm.font(.sectionHeader))
-            .kerning(0.6)
-            .foregroundStyle(Palette.textTertiary)
+        Text(title)
+            .font(vm.font(.titleSmall))
+            .foregroundStyle(theme.primary)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityAddTraits(.isHeader)
     }
@@ -25,7 +25,7 @@ struct PaneSection<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
             if let title {
                 PaneSectionHeader(title: title)
             }
@@ -40,18 +40,8 @@ struct PaneRow<Leading: View, Label: View>: View {
     @ViewBuilder var leading: Leading
     @ViewBuilder var label: Label
 
-    @EnvironmentObject var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
     @State private var isHovering = false
-
-    private var ramp: AccentRamp {
-        Palette.accentRamp(
-            for: vm.accentColorID,
-            appearance: colorScheme,
-            increaseContrast: colorSchemeContrast == .increased
-        )
-    }
 
     var body: some View {
         Button(action: action) {
@@ -62,24 +52,21 @@ struct PaneRow<Leading: View, Label: View>: View {
             }
             .padding(.horizontal, DesignTokens.Layout.rowInsetHorizontal)
             .padding(.vertical, DesignTokens.Layout.rowInsetVertical)
-            .frame(minHeight: DesignTokens.Layout.rowMinHeight)
-            .contentShape(Rectangle())
+            .frame(minHeight: 40)
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color(ramp.strong) : Palette.textPrimary)
-        .background(background, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-        .animation(DesignTokens.Animation.quick, value: isSelected)
-        .animation(DesignTokens.Animation.quick, value: isHovering)
+        .foregroundStyle(isSelected ? theme.onPrimaryContainer : theme.onSurface)
+        .background(background, in: Capsule())
+        .animation(Theme.Motion.selection, value: isSelected)
+        .animation(Theme.Motion.hover, value: isHovering)
         .onHover { isHovering = $0 }
     }
 
     private var background: Color {
         if isSelected {
-            return Color(ramp.muted)
+            return theme.primaryContainer
         }
-        if isHovering {
-            return Color(ramp.subtle)
-        }
-        return .clear
+        return isHovering ? theme.onSurface.opacity(0.06) : .clear
     }
 }

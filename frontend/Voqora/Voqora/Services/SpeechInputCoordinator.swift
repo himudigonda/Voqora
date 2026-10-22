@@ -22,7 +22,6 @@ protocol SpeechInputSpeaking: AnyObject {
 @MainActor
 protocol LibraryTextImporting: AnyObject {
     var defaultBookVoice: String { get }
-    func importDocument(_ url: URL, defaultVoice: String, defaultSpeed: Double)
 }
 
 extension SpeechInputSpeaking {
@@ -47,7 +46,6 @@ final class SpeechInputCoordinator {
         static let screenAccessSettings = "Voqora needs Screen Recording access to read text on screen. Turn it on in System Settings, then reopen Voqora."
         static let unknownVoice = "That voice is not available in Voqora."
         static let engineStarting = "Voqora is still starting. Try again in a moment."
-        static let librarySaveFailed = "Voqora could not add that text to your library. Try again."
         static let notRunning = "Open Voqora, then try again."
     }
 
@@ -58,7 +56,7 @@ final class SpeechInputCoordinator {
 
     private let speaker: any SpeechInputSpeaking
     private let library: any LibraryTextImporting
-    private let presentLibrary: @MainActor () -> Void
+    private let presentNewAudiobook: @MainActor (AudiobookCreateSource) -> Void
     private let capturer: any ScreenRegionCapturing
     private let recognizer: any ScreenTextRecognizing
     private let permission: any ScreenCapturePermissionHandling
@@ -71,7 +69,7 @@ final class SpeechInputCoordinator {
     init(
         speaker: any SpeechInputSpeaking,
         library: any LibraryTextImporting,
-        presentLibrary: @escaping @MainActor () -> Void,
+        presentNewAudiobook: @escaping @MainActor (AudiobookCreateSource) -> Void,
         capturer: (any ScreenRegionCapturing)? = nil,
         recognizer: (any ScreenTextRecognizing)? = nil,
         permission: (any ScreenCapturePermissionHandling)? = nil,
@@ -82,7 +80,7 @@ final class SpeechInputCoordinator {
     ) {
         self.speaker = speaker
         self.library = library
-        self.presentLibrary = presentLibrary
+        self.presentNewAudiobook = presentNewAudiobook
         self.capturer = capturer ?? SystemScreenRegionCapturer()
         self.recognizer = recognizer ?? VisionScreenTextRecognizer()
         self.permission = permission ?? SystemScreenCapturePermission()
@@ -104,7 +102,7 @@ final class SpeechInputCoordinator {
         if let voice, DashboardViewModel.voicesByID[voice] == nil {
             return fail(Message.unknownVoice)
         }
-        return await deliver(trimmed, voice: voice)
+        return await deliver(trimmed, voice: voice, source: .shortcut)
     }
 
     @discardableResult
@@ -113,7 +111,7 @@ final class SpeechInputCoordinator {
             return fail(Message.noClipboardText)
         }
         VoqoraLog.info("SpeechInputCoordinator", "Speaking clipboard", ["chars": "\(text.count)"])
-        return await deliver(text, voice: nil)
+        return await deliver(text, voice: nil, source: .clipboard)
     }
 
     @discardableResult
@@ -156,7 +154,7 @@ final class SpeechInputCoordinator {
             return fail(Message.noScreenText)
         }
         VoqoraLog.info("SpeechInputCoordinator", "Speaking recognized screen text", ["lines": "\(lines.count)", "chars": "\(text.count)"])
-        return await deliver(text, voice: nil)
+        return await deliver(text, voice: nil, source: .screen)
     }
 
     @discardableResult
@@ -164,18 +162,8 @@ final class SpeechInputCoordinator {
         guard let trimmed = Self.readableText(text) else {
             return fail(Message.noText)
         }
-        let fileURL: URL
-        do {
-            fileURL = try LibraryTextDocument.write(trimmed, in: temporaryDirectory, fileManager: fileManager)
-        } catch {
-            VoqoraLog.error("SpeechInputCoordinator", "Could not write library text", ["failureCode": "library_text_write_failed"])
-            return fail(Message.librarySaveFailed)
-        }
-        defer { try? fileManager.removeItem(at: fileURL.deletingLastPathComponent()) }
-
-        VoqoraLog.info("SpeechInputCoordinator", "Adding text to library", ["chars": "\(trimmed.count)"])
-        presentLibrary()
-        library.importDocument(fileURL, defaultVoice: speaker.selectedVoice, defaultSpeed: speaker.speechSpeed)
+        VoqoraLog.info("SpeechInputCoordinator", "Adding text to a new audiobook", ["chars": "\(trimmed.count)"])
+        presentNewAudiobook(.text(trimmed, title: LibraryTextDocument.title(for: trimmed)))
         return .started
     }
 
@@ -192,9 +180,11 @@ final class SpeechInputCoordinator {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    private func deliver(_ text: String, voice: String?) async -> SpeechInputOutcome {
+    private func deliver(_ text: String, voice: String?, source: SpeechSource) async -> SpeechInputOutcome {
         let engineReady = speaker.isBackendOnline
-        await speaker.speak(text: text, voice: voice)
+        await SpeechSource.$current.withValue(source) {
+            await speaker.speak(text: text, voice: voice)
+        }
         return engineReady ? .started : .failed(Message.engineStarting)
     }
 

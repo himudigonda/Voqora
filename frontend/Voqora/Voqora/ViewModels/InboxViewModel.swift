@@ -83,16 +83,14 @@ extension InboxDependencies {
         return InboxDependencies(
             extract: { try await articles.extract($0) },
             importAudiobook: { url in
-                library.importWebPage(
-                    url,
-                    voice: library.importVoice(fallback: dashboard.selectedVoice),
-                    speed: library.importSpeed(fallback: dashboard.speechSpeed)
-                )
-                dashboard.showLibrary()
+                AudiobookCreateRequest.shared.pending = .link(url)
+                dashboard.selectedTab = TabKey.createAudiobook
             },
             speak: { text in
                 let wasOnline = dashboard.isBackendOnline
-                await dashboard.speak(text: text, voice: nil)
+                await SpeechSource.$current.withValue(.inbox) {
+                    await dashboard.speak(text: text, voice: nil)
+                }
                 return wasOnline
             },
             openURL: { _ = NSWorkspace.shared.open($0) },
@@ -352,6 +350,8 @@ final class InboxViewModel: ObservableObject {
             switch try store.add(article, requestedURL: link.url, at: dependencies.now()) {
             case let .added(item):
                 VoqoraLog.info("InboxViewModel", "Saved an article to the Inbox", ["words": "\(item.wordCount)"])
+                UsageStatsStore.shared.recordImport(kind: "inbox")
+                MetricsService.shared.trackLibraryImport(kind: "inbox")
                 post(InboxNotice(message: "Saved “\(item.title)” to your Inbox.", kind: .success))
                 if link.announce {
                     dependencies.notify(Message.savedNotificationTitle, item.title)

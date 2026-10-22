@@ -1,15 +1,15 @@
+import AppKit
 import SwiftUI
 
 struct ProviderConnectForm: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var providers: LLMProviderStore
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
     let provider: LLMProvider
-    let backTitle: String
     var cleaningCount: (LLMProvider) -> Int = { _ in 0 }
-    let onBack: () -> Void
+    var onBack: (() -> Void)?
+    let onClose: () -> Void
     let onFinished: () -> Void
 
     @State private var apiKey = ""
@@ -19,11 +19,7 @@ struct ProviderConnectForm: View {
     @State private var checking = false
     @State private var errorMessage: String?
     @State private var useForAudiobooks = false
-    @State private var confirmingRemoval: LLMProvider?
-
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
+    @State private var confirmingRemoval = false
 
     private var isEditing: Bool {
         providers.isConnected(provider)
@@ -42,128 +38,157 @@ struct ProviderConnectForm: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            header
-            Divider()
-            VStack(alignment: .leading, spacing: 18) {
-                if provider.acceptsKey {
-                    field(provider.requiresKey ? "API Key" : "API Key (Optional)") {
-                        SecureField(provider.keyPlaceholder, text: $apiKey)
-                            .textFieldStyle(.roundedBorder)
-                            .font(vm.font(.rowTitle).monospaced())
-                    }
-                }
-                if provider.acceptsServerURL {
-                    field("Server URL") {
-                        TextField(provider.defaultServerURL.isEmpty ? "https://example.com/v1" : provider.defaultServerURL, text: $serverURL)
-                            .textFieldStyle(.roundedBorder)
-                            .font(vm.font(.rowTitle).monospaced())
-                    }
-                }
-                field("Model") {
-                    HStack(spacing: 8) {
-                        TextField(modelPlaceholder, text: $model)
-                            .textFieldStyle(.roundedBorder)
-                            .font(vm.font(.rowTitle).monospaced())
-                        if !models.isEmpty {
-                            Menu {
-                                ForEach(models, id: \.self) { name in
-                                    Button(name) { model = name }
-                                }
-                            } label: {
-                                Text("Choose")
-                            }
-                            .fixedSize()
-                        } else if provider.acceptsServerURL {
-                            Button("Find Models") { Task { await check(saving: false) } }
-                                .disabled(checking)
-                        }
-                    }
-                }
-                if let url = provider.keyPageURL {
-                    Link(provider.keyPageTitle, destination: url)
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(accentColor)
-                }
-                Label(provider.dataNotice, systemImage: provider.isLocal ? "lock.fill" : "arrow.up.forward.circle")
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
-                if offersUseForAudiobooks {
-                    Toggle("Use for audiobooks", isOn: $useForAudiobooks)
-                        .toggleStyle(.checkbox)
-                        .font(vm.font(.rowTitle))
-                } else if let firstProviderNotice {
-                    Label(firstProviderNotice, systemImage: "books.vertical")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-                if let errorMessage {
-                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+        Group {
+            if confirmingRemoval {
+                removalConfirmation
+            } else {
+                connectSheet
             }
-            Spacer(minLength: 0)
-            footer
         }
         .onAppear(perform: prefill)
-        .providerRemovalDialog(target: $confirmingRemoval, cleaningCount: cleaningCount, onRemoved: onFinished)
     }
 
-    private var header: some View {
-        HStack(spacing: 16) {
-            ProviderTile(provider: provider, size: 52)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(isEditing ? "Edit \(provider.displayName)" : "Connect \(provider.displayName)")
-                    .font(vm.appFont(size: 22, weight: .bold))
-                    .foregroundStyle(Palette.textPrimary)
-                Text(provider.connectionSummary)
-                    .font(vm.appFont(size: 13))
-                    .foregroundStyle(Palette.textSecondary)
+    private var connectSheet: some View {
+        VoqoraSheet(
+            title: isEditing ? "Edit \(provider.displayName)" : "Connect \(provider.displayName)",
+            supporting: provider.connectionSummary,
+            primaryTitle: checking ? "Checking…" : (isEditing ? "Save" : "Connect"),
+            isPrimaryEnabled: canSubmit,
+            width: 560,
+            onPrimary: { Task { await check(saving: true) } },
+            onClose: onClose
+        ) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                if let onBack {
+                    Button(action: onBack) {
+                        Label("All providers", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.voqoraText)
+                    .padding(.leading, -12)
+                }
+                HStack(spacing: 14) {
+                    ProviderTile(provider: provider, size: 48)
+                    notices
+                }
+                fields
+                if checking {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking connection…")
+                            .voqoraFont(.bodySmall)
+                            .foregroundStyle(theme.onSurfaceVariant)
+                    }
+                }
+                if let errorMessage {
+                    SettingsNoticeRow(text: errorMessage, kind: .danger)
+                }
+                if isEditing {
+                    Button("Remove…") { confirmingRemoval = true }
+                        .buttonStyle(.voqoraDangerOutlined)
+                }
             }
-            Spacer()
         }
     }
 
-    private var footer: some View {
-        HStack(spacing: 12) {
-            Button(backTitle, action: onBack)
-                .buttonStyle(.voqoraSecondary)
-            if isEditing {
-                Button("Remove…", role: .destructive) {
-                    confirmingRemoval = provider
-                }
-                .buttonStyle(.plain)
-                .font(vm.font(.button))
-                .foregroundStyle(Palette.danger)
+    private var notices: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(provider.dataNotice, systemImage: provider.isLocal ? "lock.fill" : "arrow.up.forward.circle")
+            if !offersUseForAudiobooks, let firstProviderNotice {
+                Label(firstProviderNotice, systemImage: "books.vertical")
             }
-            Spacer()
-            Button {
-                Task { await check(saving: true) }
-            } label: {
+        }
+        .voqoraFont(.bodySmall)
+        .foregroundStyle(theme.onSurfaceVariant)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item + 4) {
+            if provider.acceptsKey {
+                field(provider.requiresKey ? "API Key" : "API Key (Optional)") {
+                    SecureField("API Key", text: $apiKey, prompt: Text(provider.keyPlaceholder))
+                        .labelsHidden()
+                        .font(.body.monospaced())
+                        .settingsField()
+                }
+            }
+            if provider.acceptsServerURL {
+                field("Server URL") {
+                    TextField(
+                        "Server URL",
+                        text: $serverURL,
+                        prompt: Text(provider.defaultServerURL.isEmpty ? "https://example.com/v1" : provider.defaultServerURL)
+                    )
+                    .labelsHidden()
+                    .font(.body.monospaced())
+                    .settingsField()
+                }
+            }
+            field("Model") {
                 HStack(spacing: 8) {
-                    if checking {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast))
+                    TextField("Model", text: $model, prompt: Text(modelPlaceholder))
+                        .labelsHidden()
+                        .font(.body.monospaced())
+                        .settingsField()
+                    if !models.isEmpty {
+                        TonalMenu(valueLabel: "Choose") {
+                            ForEach(models, id: \.self) { name in
+                                Button(name) { model = name }
+                            }
+                        }
+                    } else if provider.acceptsServerURL {
+                        Button("Find Models") { Task { await check(saving: false) } }
+                            .buttonStyle(.voqoraTonal)
+                            .disabled(checking)
                     }
-                    Text(checking ? "Checking…" : (isEditing ? "Save" : "Connect"))
                 }
-                .frame(minWidth: 96)
             }
-            .buttonStyle(.voqoraPrimary)
-            .disabled(!canSubmit)
-            .keyboardShortcut(.defaultAction)
+            if let url = provider.keyPageURL {
+                AssistChip(title: provider.keyPageTitle, systemImage: "arrow.up.right.square") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            if offersUseForAudiobooks {
+                Toggle("Use for audiobooks", isOn: $useForAudiobooks)
+                    .toggleStyle(.voqoraSwitch)
+                    .voqoraFont(.body)
+            }
         }
     }
 
     private func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(vm.appFont(size: 12, weight: .semibold))
-                .foregroundStyle(Palette.textSecondary)
+                .voqoraFont(.label)
+                .foregroundStyle(theme.onSurfaceVariant)
             content()
+        }
+    }
+
+    private var removalConfirmation: some View {
+        VoqoraSheet(title: ProviderRemovalNotice.title(for: provider), width: 560, onClose: onClose) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                Text(ProviderRemovalNotice.message(
+                    provider: provider,
+                    isActive: providers.activeProvider == provider,
+                    cleaningCount: cleaningCount(provider),
+                    remaining: providers.connectedProviders.filter { $0 != provider }
+                ))
+                .voqoraFont(.body)
+                .foregroundStyle(theme.onSurfaceVariant)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Theme.Space.item) {
+                    Spacer(minLength: 0)
+                    Button("Cancel") { confirmingRemoval = false }
+                        .buttonStyle(.voqoraText)
+                        .keyboardShortcut(.defaultAction)
+                    Button("Remove") {
+                        providers.remove(provider)
+                        onFinished()
+                    }
+                    .buttonStyle(.voqoraDangerFilled)
+                }
+            }
         }
     }
 

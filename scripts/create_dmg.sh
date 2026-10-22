@@ -12,7 +12,16 @@ set -euo pipefail
 
 APP_NAME="Voqora"
 VERSION="${1:?Usage: ./scripts/create_dmg.sh <version>}"
-DMG_NAME="${APP_NAME}-${VERSION}"
+CONFIGURATION="${CONFIGURATION:-Release}"
+case "$CONFIGURATION" in
+    Release) VARIANT_SUFFIX=""; VOLUME_SUFFIX="" ;;
+    Debug) VARIANT_SUFFIX="-debug"; VOLUME_SUFFIX=" Debug" ;;
+    *)
+        echo "❌ CONFIGURATION must be Release or Debug, got '${CONFIGURATION}'." >&2
+        exit 1
+        ;;
+esac
+DMG_NAME="${APP_NAME}-${VERSION}${VARIANT_SUFFIX}"
 BUILD_DIR="build"
 XCODE_PROJECT_DIR="frontend/Voqora"
 STAGING_DIR="${BUILD_DIR}/dmg-staging"
@@ -76,12 +85,12 @@ for sz, name in [(16,'16x16'),(32,'16x16@2x'),(32,'32x32'),(64,'32x32@2x'),
 echo "   ✓ Volume icon: $ICNS"
 
 # ── 4. Build Xcode archive ───────────────────────────────────
-echo "🏗  Archiving Voqora v${VERSION}..."
+echo "🏗  Archiving Voqora v${VERSION} (${CONFIGURATION})..."
 # `xcodebuild archive` can reuse an old app bundle at the same archivePath,
 # which leaves a stale AppIcon.icns beside the freshly compiled asset catalog.
 # Start this disposable release archive clean on every build.
 rm -rf "${BUILD_DIR}/${APP_NAME}.xcarchive"
-ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}.log"
+ARCHIVE_LOG="${BUILD_DIR}/archive-${VERSION}${VARIANT_SUFFIX}.log"
 # TCC keys Accessibility to the designated requirement and stores one row
 # per bundle id; an ad-hoc signature pins that requirement to a per-build
 # cdhash, so every update silently drops the grant. Hence never ad-hoc by
@@ -109,11 +118,12 @@ fi
 if ! xcodebuild \
     -project "${XCODE_PROJECT_DIR}/Voqora.xcodeproj" \
     -scheme "Voqora" \
-    -configuration Release \
+    -configuration "$CONFIGURATION" \
     -jobs "$XCODE_JOBS" \
     -derivedDataPath "${BUILD_DIR}/DerivedData" \
     -archivePath "${BUILD_DIR}/${APP_NAME}.xcarchive" \
     MARKETING_VERSION="${VERSION}" \
+    ${BUILD_NUMBER:+CURRENT_PROJECT_VERSION="$BUILD_NUMBER"} \
     archive \
     CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
     ${SIGNING_TEAM:+CODE_SIGN_STYLE=Manual} \
@@ -195,7 +205,7 @@ if [ -n "${CI:-}" ]; then
 fi
 
 create-dmg \
-    --volname "${APP_NAME} ${VERSION}" \
+    --volname "${APP_NAME} ${VERSION}${VOLUME_SUFFIX}" \
     --volicon "${ICNS}" \
     --background "${BG}" \
     --window-pos  200 120 \

@@ -2,8 +2,13 @@ import SwiftUI
 
 enum AnalyticsOptOut {
     static let title = "Stop sharing anonymous usage analytics?"
-    static let note = "Analytics never include your text, documents, audio, or API keys. They only count app launches, " +
-        "the voice, speed, and length of generated audio, audiobook pages and file type, listening time, exports, and update events."
+    static let collected = "Voqora shares only counts, durations, the speech engine and built-in voice, and the names of features you use: " +
+        "reading, dictation, AI tools, audiobooks, podcasts, imports, and exports, plus how long each took and whether it worked."
+    static let neverCollected = "It never shares your text, documents, audio, file names, titles, app names, the names of apps that " +
+        "send speech to Voqora, API keys, or the voices you recorded."
+    static let footer = "Counts and durations only. Never your text, documents, audio, file names, app names, client names, " +
+        "API keys, or voices you recorded."
+    static let note = collected + " " + neverCollected
     static let contact: AttributedString = (try? AttributedString(
         markdown: "Questions or concerns? Reach out at [himudigonda.me](https://himudigonda.me) " +
             "or file an issue on [GitHub](https://github.com/himudigonda/Voqora/issues)."
@@ -19,53 +24,36 @@ enum AnalyticsOptOut {
 struct AnalyticsOptOutSheet: View {
     @EnvironmentObject var vm: DashboardViewModel
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text(AnalyticsOptOut.title)
-                .font(vm.appFont(size: 17, weight: .bold))
-                .foregroundStyle(Palette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(AnalyticsOptOut.note)
-                .font(vm.appFont(size: 14))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .voqoraSurface(.control, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
-
-            Text(AnalyticsOptOut.contact)
-                .font(vm.appFont(size: 13))
-                .foregroundStyle(Palette.textSecondary)
-                .tint(vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .buttonStyle(.voqoraSecondary)
-                    .keyboardShortcut(.defaultAction)
-                Button {
-                    AnalyticsOptOut.confirm()
-                    dismiss()
-                } label: {
-                    Text(AnalyticsOptOut.confirmTitle)
-                        .font(vm.font(.button))
-                        .padding(.horizontal, DesignTokens.Spacing.md)
-                        .padding(.vertical, DesignTokens.Spacing.xs + 2)
-                        .background(Palette.danger, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-                        .foregroundStyle(.white)
+        VoqoraSheet(title: AnalyticsOptOut.title, width: 500) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                Text(AnalyticsOptOut.note)
+                    .voqoraFont(.body)
+                    .foregroundStyle(theme.onSurfaceVariant)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(theme.surfaceContainerHighest, in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
+                Text(AnalyticsOptOut.contact)
+                    .voqoraFont(.bodySmall)
+                    .foregroundStyle(theme.onSurfaceVariant)
+                    .tint(theme.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Theme.Space.item) {
+                    Spacer(minLength: 0)
+                    Button("Cancel") { dismiss() }
+                        .buttonStyle(.voqoraText)
+                        .keyboardShortcut(.defaultAction)
+                    Button(AnalyticsOptOut.confirmTitle) {
+                        AnalyticsOptOut.confirm()
+                        dismiss()
+                    }
+                    .buttonStyle(.voqoraDangerFilled)
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(28)
-        .frame(width: 460)
-        .voqoraSurface(.floating, in: Rectangle())
+        .voqoraTheme()
     }
 }

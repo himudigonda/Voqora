@@ -3,6 +3,7 @@ import AppKit
 class AppDelegate: NSObject, NSApplicationDelegate {
     var stopOwnedBackend: (() -> Void)?
     var flushStudioDrafts: (() -> Void)?
+    var flushDictation: (() -> Void)?
     var servicesProvider: NSObject?
 
     static func standDownIfAlreadyRunning() -> Bool {
@@ -26,6 +27,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillFinishLaunching(_: Notification) {
+        NotificationPresenter.shared.install()
         if !RuntimeEnvironment.isRunningTests, Self.standDownIfAlreadyRunning() {
             exit(0)
         }
@@ -46,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.servicesProvider = servicesProvider
             NSUpdateDynamicServices()
         }
-        if AppPresence.hidesFromDock(), UserDefaults.standard.bool(forKey: "hasOnboarded") {
+        if AppPresence.hidesFromDock(), UserDefaults.standard.bool(forKey: OnboardingCoordinator.hasOnboardedKey) {
             NSApp.setActivationPolicy(.accessory)
         }
         DistributedNotificationCenter.default().addObserver(
@@ -82,6 +84,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         flushStudioDrafts?()
+        flushDictation?()
         stopOwnedBackend?()
         UsageStatsStore.shared.commitListening()
         UsageStatsStore.shared.saveNow()

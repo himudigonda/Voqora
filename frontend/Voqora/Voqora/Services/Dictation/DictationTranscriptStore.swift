@@ -6,6 +6,7 @@ nonisolated struct DictationTranscript: Codable, Identifiable, Equatable, Sendab
     let text: String
     let createdAt: Date
     let localeIdentifier: String?
+    var rawText: String?
 }
 
 final class DictationTranscriptStore: ObservableObject {
@@ -45,10 +46,17 @@ final class DictationTranscriptStore: ObservableObject {
     }
 
     @discardableResult
-    func add(_ text: String, localeIdentifier: String?, at date: Date = Date()) -> DictationTranscript? {
+    func add(_ text: String, rawText: String? = nil, localeIdentifier: String?, at date: Date = Date()) -> DictationTranscript? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        let transcript = DictationTranscript(id: UUID(), text: trimmed, createdAt: date, localeIdentifier: localeIdentifier)
+        let trimmedRaw = rawText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcript = DictationTranscript(
+            id: UUID(),
+            text: trimmed,
+            createdAt: date,
+            localeIdentifier: localeIdentifier,
+            rawText: trimmedRaw == trimmed || trimmedRaw?.isEmpty == true ? nil : trimmedRaw
+        )
         transcripts = Array(([transcript] + transcripts).prefix(Self.capacity))
         save()
         return transcript

@@ -1,104 +1,70 @@
 import SwiftUI
 
-struct ReadingSettingsForm: View {
-    @EnvironmentObject private var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
+struct ReadingSettingsSections: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @ObservedObject var preferences: ReadingPreferences
     var showsPreview = true
 
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: contrast)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: Theme.Space.section) {
             if showsPreview {
                 ReadingPreviewCard(preferences: preferences, increaseContrast: contrast == .increased)
-                Divider()
             }
             typographySection
-            Divider()
             themeSection
-            Divider()
             guidanceSection
-            footer
         }
     }
 
     private var typographySection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                Label("Font", systemImage: "textformat")
-                    .font(vm.font(.rowTitle))
-                Spacer()
-                Picker("Font", selection: $preferences.typography.family) {
-                    ForEach(ReadingFontFamily.allCases) { family in
-                        Text(family.displayName).tag(family)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 240)
-            }
-
-            ReadingSliderRow(
+        SettingsSection(title: "Typography") {
+            SettingsSegmentedRow(
+                title: "Font",
+                selection: $preferences.typography.family,
+                options: Array(ReadingFontFamily.allCases),
+                label: { $0.displayName }
+            )
+            SettingsSliderRow(
                 title: "Text Size",
-                systemImage: "textformat.size",
                 value: $preferences.typography.fontSize,
                 range: ReadingTypography.fontSizeRange,
                 step: 1,
-                accentColor: accentColor,
-                format: { "\(Int($0.rounded())) pt" }
+                valueLabel: "\(Int(preferences.typography.fontSize.rounded())) pt"
             )
-            ReadingSliderRow(
+            SettingsSliderRow(
                 title: "Line Height",
-                systemImage: "line.3.horizontal",
                 value: $preferences.typography.lineHeight,
                 range: ReadingTypography.lineHeightRange,
                 step: 0.1,
-                accentColor: accentColor,
-                format: { String(format: "%.1f×", $0) }
+                valueLabel: String(format: "%.1f×", preferences.typography.lineHeight)
             )
-            ReadingSliderRow(
+            SettingsSliderRow(
                 title: "Letter Spacing",
-                systemImage: "textformat.abc",
                 value: $preferences.typography.letterSpacing,
                 range: ReadingTypography.letterSpacingRange,
                 step: 0.01,
-                accentColor: accentColor,
-                format: Self.percent
+                valueLabel: Self.percent(preferences.typography.letterSpacing)
             )
-            ReadingSliderRow(
+            SettingsSliderRow(
                 title: "Word Spacing",
-                systemImage: "arrow.left.and.right",
                 value: $preferences.typography.wordSpacing,
                 range: ReadingTypography.wordSpacingRange,
                 step: 0.05,
-                accentColor: accentColor,
-                format: Self.percent
+                valueLabel: Self.percent(preferences.typography.wordSpacing)
             )
         }
     }
 
     private var themeSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Theme", systemImage: "circle.lefthalf.filled")
-                    .font(vm.font(.rowTitle))
-                Picker("Theme", selection: $preferences.theme) {
-                    ForEach(ReadingTheme.allCases) { theme in
-                        Text(theme.displayName).tag(theme)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Soft Tint", systemImage: "drop")
-                    .font(vm.font(.rowTitle))
-                HStack(spacing: 12) {
+        SettingsSection(title: "Theme", footer: tintCaption) {
+            SettingsSegmentedRow(
+                title: "Theme",
+                selection: $preferences.theme,
+                options: Array(ReadingTheme.allCases),
+                label: { $0.displayName }
+            )
+            SettingsValueRow(title: "Soft Tint") {
+                HStack(spacing: 4) {
                     ForEach(ReadingTint.allCases) { tint in
                         ReadingTintSwatch(
                             tint: tint,
@@ -111,54 +77,29 @@ struct ReadingSettingsForm: View {
                     }
                 }
                 .disabled(preferences.theme == .highContrast)
-                Text(tintCaption)
-                    .font(vm.font(.rowSubtitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private var guidanceSection: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Toggle(isOn: $preferences.showsRuler) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Reading Ruler")
-                        .font(vm.font(.rowTitle))
-                    Text("Dims everything except the sentence being read.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                }
-            }
-            .toggleStyle(.switch)
-
-            Toggle(isOn: $preferences.emphasizesWords) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Word-by-Word Emphasis")
-                        .font(vm.font(.rowTitle))
-                    Text("Highlights each word as it is spoken when word timing is available. Otherwise the whole sentence is highlighted.")
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .toggleStyle(.switch)
-        }
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("Open Reading Mode from the player or the menu bar. Press Escape to close it.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("Reset to Defaults") {
+        SettingsSection(title: "Guidance", footer: "Open Reading Mode from the player or the menu bar. Press Escape to close it.") {
+            SettingsSwitchRow(
+                title: "Reading Ruler",
+                detail: "Dims everything except the sentence being read.",
+                isOn: $preferences.showsRuler
+            )
+            SettingsSwitchRow(
+                title: "Word-by-Word Emphasis",
+                detail: "Highlights each word as it is spoken when word timing is available. Otherwise the whole sentence is highlighted.",
+                isOn: $preferences.emphasizesWords
+            )
+            SettingsButtonRow(
+                title: "Reset Reading Mode",
+                detail: "Restore the default typography, theme and guidance.",
+                buttonTitle: "Reset to Defaults"
+            ) {
                 preferences.resetToDefaults()
             }
-            .buttonStyle(.borderless)
-            .font(vm.font(.rowSubtitle))
-            .foregroundStyle(accentColor)
         }
     }
 
@@ -173,35 +114,8 @@ struct ReadingSettingsForm: View {
     }
 }
 
-private struct ReadingSliderRow: View {
-    @EnvironmentObject private var vm: DashboardViewModel
-    let title: String
-    let systemImage: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let step: Double
-    let accentColor: Color
-    let format: (Double) -> String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label(title, systemImage: systemImage)
-                    .font(vm.font(.rowTitle))
-                Spacer()
-                Text(format(value))
-                    .font(vm.appFont(size: 14, weight: .bold).monospaced())
-                    .foregroundStyle(accentColor)
-            }
-            Slider(value: $value, in: range, step: step)
-                .tint(accentColor)
-                .accessibilityLabel(title)
-                .accessibilityValue(format(value))
-        }
-    }
-}
-
 private struct ReadingTintSwatch: View {
+    @Environment(\.voqoraTheme) private var appTheme
     let tint: ReadingTint
     let theme: ReadingTheme
     let increaseContrast: Bool
@@ -213,13 +127,14 @@ private struct ReadingTintSwatch: View {
         Button(action: action) {
             Circle()
                 .fill(Color(palette.background))
-                .frame(width: 26, height: 26)
-                .overlay(Circle().strokeBorder(Palette.separator, lineWidth: 1))
+                .frame(width: 30, height: 30)
+                .overlay(Circle().strokeBorder(appTheme.outlineVariant, lineWidth: 1))
                 .overlay(
                     Circle()
-                        .strokeBorder(Palette.textPrimary, lineWidth: isSelected ? 2 : 0)
-                        .padding(-3)
+                        .strokeBorder(appTheme.onSurface, lineWidth: isSelected ? 2 : 0)
+                        .padding(-4)
                 )
+                .padding(4)
                 .overlay {
                     if tint == .clear {
                         Image(systemName: "slash.circle")
@@ -238,6 +153,7 @@ private struct ReadingTintSwatch: View {
 private struct ReadingPreviewCard: View {
     @ObservedObject var preferences: ReadingPreferences
     let increaseContrast: Bool
+    @Environment(\.voqoraTheme) private var theme
 
     private static let sample = "Reading feels easier when the page fits you. Adjust the text until each line sits comfortably."
 
@@ -249,11 +165,11 @@ private struct ReadingPreviewCard: View {
             .foregroundStyle(Color(palette.text))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(DesignTokens.Spacing.xl)
-            .background(Color(palette.background), in: RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
+            .padding(Theme.Space.card + 8)
+            .background(Color(palette.background), in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                    .strokeBorder(Palette.separator, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous)
+                    .strokeBorder(theme.outlineVariant, lineWidth: 1)
             )
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Reading preview")

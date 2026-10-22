@@ -48,6 +48,10 @@ struct DayUsage: Codable, Equatable {
     var voices: [String: VoiceUsage] = [:]
     var speeds: [String: Int] = [:]
     var books: [String: Double] = [:]
+    var speech = SpeechDetail()
+    var dictation = DictationUsage()
+    var creation = CreationUsage()
+    var ai = AIActivity()
 
     init() {}
 
@@ -67,25 +71,32 @@ struct DayUsage: Codable, Equatable {
         voices = try c.decodeIfPresent([String: VoiceUsage].self, forKey: .voices) ?? [:]
         speeds = try c.decodeIfPresent([String: Int].self, forKey: .speeds) ?? [:]
         books = try c.decodeIfPresent([String: Double].self, forKey: .books) ?? [:]
+        speech = (try? c.decodeIfPresent(SpeechDetail.self, forKey: .speech)) ?? SpeechDetail()
+        dictation = (try? c.decodeIfPresent(DictationUsage.self, forKey: .dictation)) ?? DictationUsage()
+        creation = (try? c.decodeIfPresent(CreationUsage.self, forKey: .creation)) ?? CreationUsage()
+        ai = (try? c.decodeIfPresent(AIActivity.self, forKey: .ai)) ?? AIActivity()
     }
 
     var activeSeconds: Double {
-        speechSeconds + listeningSeconds
+        speechSeconds + listeningSeconds + dictation.seconds
     }
 
     var isActive: Bool {
-        speechCount > 0 || listeningSeconds >= 1 || documentsAdded > 0
+        speechCount > 0 || listeningSeconds >= 1 || documentsAdded > 0 || dictation.sessions > 0
+            || creation.booksGenerated > 0 || creation.podcastRenders > 0 || ai.totalRequests > 0
     }
 }
 
 struct UsageLedger: Codable, Equatable {
     var firstRecorded: Date?
     var importedHistory = false
+    var importedDictation = false
     var days: [String: DayUsage] = [:]
 
-    init(firstRecorded: Date? = nil, importedHistory: Bool = false, days: [String: DayUsage] = [:]) {
+    init(firstRecorded: Date? = nil, importedHistory: Bool = false, importedDictation: Bool = false, days: [String: DayUsage] = [:]) {
         self.firstRecorded = firstRecorded
         self.importedHistory = importedHistory
+        self.importedDictation = importedDictation
         self.days = days
     }
 
@@ -93,6 +104,7 @@ struct UsageLedger: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         firstRecorded = try c.decodeIfPresent(Date.self, forKey: .firstRecorded)
         importedHistory = try c.decodeIfPresent(Bool.self, forKey: .importedHistory) ?? false
+        importedDictation = try c.decodeIfPresent(Bool.self, forKey: .importedDictation) ?? false
         days = try c.decodeIfPresent([String: DayUsage].self, forKey: .days) ?? [:]
     }
 
@@ -125,11 +137,25 @@ struct UsageLedger: Codable, Equatable {
         days[key] = day
     }
 
-    mutating func recordSpeech(_ sample: SpeechSample, at date: Date, calendar: Calendar) {
+    mutating func recordSpeech(_ sample: SpeechSample, run: SpeechRun? = nil, at date: Date, calendar: Calendar) {
         let words = Self.wordCount(sample.text)
         let seconds = max(0, sample.audioSeconds)
         let hour = calendar.component(.hour, from: date)
         update(at: date, calendar: calendar) { day in
+            if let run {
+                day.speech.sources[run.source.rawValue, default: 0] += 1
+                var engine = day.speech.engines[run.engine] ?? EngineUsage()
+                engine.uses += 1
+                engine.words += words
+                engine.audioSeconds += seconds
+                engine.renderSeconds += max(0, run.renderSeconds)
+                if let ms = run.firstAudioMs, ms >= 0 {
+                    engine.firstAudioCount += 1
+                    engine.firstAudioMsTotal += ms
+                    engine.firstAudioBuckets[LatencyBuckets.index(forMs: ms)] += 1
+                }
+                day.speech.engines[run.engine] = engine
+            }
             day.speechCount += 1
             day.speechWords += words
             day.speechChars += sample.text.count
@@ -147,6 +173,123 @@ struct UsageLedger: Codable, Equatable {
             day.listeningSeconds += seconds
             day.hours[hour] += seconds
             day.books[bookID, default: 0] += seconds
+        }
+    }
+
+    mutating func recordSpeechFailure(engine: String, at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { day in
+            day.speech.failures += 1
+            day.speech.engines[engine, default: EngineUsage()].failures += 1
+        }
+    }
+
+    mutating func recordRelay(client: String, at date: Date, calendar: Calendar) {
+        let name = client.trimmingCharacters(in: .whitespacesAndNewlines)
+        update(at: date, calendar: calendar) { day in
+            day.speech.relayClients[name.isEmpty ? "Unnamed" : String(name.prefix(48)), default: 0] += 1
+        }
+    }
+
+    mutating func recordDictation(_ session: DictationSession, at date: Date, calendar: Calendar) {
+        let words = Self.wordCount(session.text)
+        let hour = calendar.component(.hour, from: date)
+        update(at: date, calendar: calendar) { day in
+            var d = day.dictation
+            d.outcomes[session.outcome, default: 0] += 1
+            guard words > 0 else {
+                d.cancelled += 1
+                day.dictation = d
+                return
+            }
+            d.sessions += 1
+            d.words += words
+            d.chars += session.text.count
+            if let seconds = session.seconds, seconds > 0 {
+                d.seconds += seconds
+                d.timedWords += words
+                d.hours[hour] += seconds
+            } else {
+                d.hours[hour] += 1
+            }
+            if session.tidied {
+                d.tidied += 1
+            }
+            if let language = session.language, !language.isEmpty {
+                d.languages[language, default: 0] += 1
+            }
+            if let app = session.app, !app.isEmpty {
+                d.apps[app, default: 0] += 1
+            }
+            d.lengths[DictationLengthBuckets.index(forWords: words)] += 1
+            day.dictation = d
+        }
+    }
+
+    mutating func recordDictationCancelled(at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { day in
+            day.dictation.cancelled += 1
+            day.dictation.outcomes["cancelled", default: 0] += 1
+        }
+    }
+
+    mutating func recordAI(_ run: AIRun, at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { day in
+            day.ai.requests[run.tool, default: 0] += 1
+            day.ai.providers[run.provider, default: 0] += 1
+            if run.ok {
+                day.ai.latencyMsTotal += max(0, run.latencyMs)
+                day.ai.latencyCount += 1
+                day.ai.wordsIn += max(0, run.wordsIn)
+                day.ai.wordsOut += max(0, run.wordsOut)
+            } else {
+                day.ai.failures[run.tool, default: 0] += 1
+            }
+        }
+    }
+
+    mutating func recordBookGenerated(chapters: Int, audioSeconds: Double, renderSeconds: Double, at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { day in
+            day.creation.booksGenerated += 1
+            day.creation.chaptersGenerated += max(0, chapters)
+            day.creation.bookAudioSeconds += max(0, audioSeconds)
+            day.creation.bookRenderSeconds += max(0, renderSeconds)
+        }
+    }
+
+    mutating func recordBookFinished(at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { $0.creation.booksFinished += 1 }
+    }
+
+    mutating func recordPodcastScript(at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { $0.creation.podcastScripts += 1 }
+    }
+
+    mutating func recordPodcastRender(speakers: Int, audioSeconds: Double, at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { day in
+            day.creation.podcastRenders += 1
+            day.creation.podcastSpeakers += max(0, speakers)
+            day.creation.podcastAudioSeconds += max(0, audioSeconds)
+        }
+    }
+
+    mutating func recordM4BExport(at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { $0.creation.m4bExports += 1 }
+    }
+
+    mutating func recordImport(kind: String, at date: Date, calendar: Calendar) {
+        update(at: date, calendar: calendar) { $0.creation.imports[kind, default: 0] += 1 }
+    }
+
+    mutating func importDictationHistory(_ transcripts: [DictationTranscript], calendar: Calendar) {
+        guard !importedDictation else { return }
+        importedDictation = true
+        for transcript in transcripts {
+            let language = transcript.localeIdentifier.flatMap { Locale(identifier: $0).language.languageCode?.identifier }
+            recordDictation(
+                DictationSession(text: transcript.text, seconds: nil, outcome: "imported", language: language, app: nil, tidied: false),
+                at: transcript.createdAt,
+                calendar: calendar
+            )
         }
     }
 

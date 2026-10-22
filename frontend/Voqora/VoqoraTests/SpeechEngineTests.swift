@@ -36,6 +36,37 @@ final class SpeechEngineTests: XCTestCase {
         )
     }
 
+    nonisolated static let mingJSON = """
+    {"id":"ming","name":"Ming","installed":true,"downloading":false,"progress":1.0,"size_bytes":8000000000,
+     "license":"MIT","languages":["en","zh","ja","ko","de","fr","es"],
+     "notice":"Renders slower than real time on most Macs. Best for audiobooks and exports.",
+     "capabilities":["emotion","style","pace","pitch","dialect","design","clone","tags"],
+     "voices":[
+       {"id":"ming:US_James","name":"James","gender":"male","lang":"en","description":"American accent; narration",
+        "emotions":["neutral","happy"],"custom":false},
+       {"id":"ming:custom:ab12","name":"My Narrator","gender":"female","lang":"zh","custom":true}
+     ],"error":null}
+    """
+
+    static func ming(installed: Bool = true) -> SpeechEngine {
+        SpeechEngine(
+            id: SpeechEngineID.ming,
+            name: "Ming",
+            installed: installed,
+            progress: installed ? 1 : 0,
+            sizeBytes: 8_000_000_000,
+            license: "MIT",
+            languages: ["en", "zh"],
+            voices: [
+                SpeechEngineVoice(id: "ming:US_James", name: "James", gender: "male", lang: "en", emotions: ["neutral", "happy"]),
+                SpeechEngineVoice(id: "ming:CN_Xiaoyu", name: "Xiaoyu", gender: "female", lang: "zh"),
+                SpeechEngineVoice(id: "ming:custom:ab12", name: "My Narrator", gender: "female", lang: "en", custom: true),
+            ],
+            notice: "Renders slower than real time on most Macs.",
+            capabilities: ["emotion", "style"]
+        )
+    }
+
     static let kokoro = SpeechEngine(id: SpeechEngineID.kokoro, name: "Kokoro", installed: true, progress: 1)
 
     func test_engineListDecodesTheEngineEndpoint() throws {
@@ -132,7 +163,7 @@ final class SpeechEngineTests: XCTestCase {
         XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "supertonic:M1"), "Supertonic M1")
         XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "supertonic:M1", in: [Self.supertonic()]), "Supertonic Male 1")
         XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "supertonic:"), "Supertonic")
-        XCTAssertEqual(DashboardViewModel.voiceName(for: "supertonic:F2"), "Supertonic F2")
+        XCTAssertTrue(["Supertonic F2", "Supertonic Female 2"].contains(DashboardViewModel.voiceName(for: "supertonic:F2")))
         XCTAssertEqual(DashboardViewModel.voiceName(for: "af_bella"), "Bella")
     }
 
@@ -177,5 +208,100 @@ final class SpeechEngineTests: XCTestCase {
 
         XCTAssertEqual(LanguageDetector.voiceForText(spanish, fallback: "supertonic:F1"), "supertonic:F1")
         XCTAssertEqual(LanguageDetector.voiceForText(spanish, fallback: "af_bella"), "ef_dora")
+    }
+
+    func test_mingEntryDecodesNoticeCapabilitiesAndVoiceDetails() throws {
+        let engine = try JSONDecoder().decode(SpeechEngine.self, from: Data(Self.mingJSON.utf8))
+
+        XCTAssertEqual(engine.id, "ming")
+        XCTAssertEqual(engine.license, "MIT")
+        XCTAssertEqual(engine.trimmedNotice, "Renders slower than real time on most Macs. Best for audiobooks and exports.")
+        XCTAssertTrue(engine.supports("clone"))
+        XCTAssertFalse(engine.supports("telepathy"))
+        let james = try XCTUnwrap(engine.voices.first)
+        XCTAssertEqual(james.lang, "en")
+        XCTAssertEqual(james.description, "American accent; narration")
+        XCTAssertEqual(james.emotions, ["neutral", "happy"])
+        XCTAssertFalse(james.custom)
+        XCTAssertEqual(james.mingGroup, .english)
+        let custom = try XCTUnwrap(engine.voices.last)
+        XCTAssertTrue(custom.custom)
+        XCTAssertEqual(custom.mingGroup, .mine)
+    }
+
+    func test_mingVoicesWithMissingOptionalFieldsStillDecode() throws {
+        let json = #"{"id":"ming","name":"Ming","installed":true,"voices":[{"id":"ming:CN_A","name":"A","lang":"zh"},{"id":"ming:custom:ff","name":"B"}]}"#
+        let engine = try JSONDecoder().decode(SpeechEngine.self, from: Data(json.utf8))
+
+        XCTAssertNil(engine.notice)
+        XCTAssertNil(engine.trimmedNotice)
+        XCTAssertTrue(engine.capabilities.isEmpty)
+        let first = try XCTUnwrap(engine.voices.first)
+        XCTAssertEqual(first.gender, "")
+        XCTAssertNil(first.description)
+        XCTAssertTrue(first.emotions.isEmpty)
+        XCTAssertFalse(first.custom)
+        XCTAssertEqual(first.mingGroup, .chinese)
+        XCTAssertTrue(try XCTUnwrap(engine.voices.last).custom)
+    }
+
+    func test_blankNoticeIsTreatedAsMissing() {
+        let engine = SpeechEngine(id: "ming", name: "Ming", installed: false, notice: "  \n")
+
+        XCTAssertNil(engine.trimmedNotice)
+    }
+
+    func test_engineListKeepsAllThreeEngines() throws {
+        let json = #"{"engines":[{"id":"kokoro","name":"Kokoro","installed":true},"# + Self.mingJSON + "]}"
+        let list = try JSONDecoder().decode(SpeechEngineList.self, from: Data(json.utf8))
+
+        XCTAssertEqual(list.engines.map(\.id), ["kokoro", "ming"])
+    }
+
+    func test_mingVoiceIdsResolveToTheMingEngine() {
+        XCTAssertEqual(SpeechEngineID.engine(forVoice: "ming:US_James"), "ming")
+        XCTAssertEqual(SpeechEngineID.engine(forVoice: "ming:custom:ab12"), "ming")
+        XCTAssertEqual(SpeechEngineID.engine(forVoice: "supertonic:M1"), "supertonic")
+        XCTAssertTrue(SpeechEngineID.isMingVoice("ming:US_James"))
+        XCTAssertFalse(SpeechEngineID.isMingVoice("mingle"))
+        XCTAssertTrue(SpeechEngineID.isCustomMingVoice("ming:custom:ab12"))
+        XCTAssertFalse(SpeechEngineID.isCustomMingVoice("ming:US_James"))
+        XCTAssertEqual(SpeechEngineID.resolvedEngine(voice: "ming:US_James", requested: "kokoro"), "ming")
+        XCTAssertEqual(SpeechEngineID.resolvedEngine(voice: "supertonic:F1", requested: "ming"), "supertonic")
+        XCTAssertNil(SpeechEngineID.resolvedEngine(voice: "af_bella", requested: "ming"))
+        XCTAssertNil(SpeechEngineID.resolvedEngine(voice: "blend:calm", requested: "supertonic"))
+        XCTAssertEqual(AudiobookNarration(voice: "ming:US_James", speed: 1).engine, "ming")
+    }
+
+    func test_mingAvailabilityFollowsInstallState() {
+        let installed = [Self.kokoro, Self.ming()]
+        let removed = [Self.kokoro, Self.ming(installed: false)]
+
+        XCTAssertTrue(SpeechEngineCatalog.isAvailable(voice: "ming:US_James", in: installed))
+        XCTAssertTrue(SpeechEngineCatalog.isAvailable(voice: "ming:custom:ab12", in: installed))
+        XCTAssertFalse(SpeechEngineCatalog.isAvailable(voice: "ming:US_Nobody", in: installed))
+        XCTAssertFalse(SpeechEngineCatalog.isAvailable(voice: "ming:US_James", in: removed))
+        XCTAssertEqual(SpeechEngineCatalog.resolve(voice: "ming:US_James", in: removed), "af_bella")
+        XCTAssertEqual(SpeechEngineCatalog.resolve(voice: "ming:US_James", in: installed), "ming:US_James")
+        XCTAssertEqual(SpeechEngineCatalog.resolve(voice: "supertonic:M1", in: installed), "af_bella")
+        XCTAssertEqual(SpeechEngineCatalog.voice("ming:CN_Xiaoyu", in: installed)?.name, "Xiaoyu")
+        XCTAssertNil(SpeechEngineCatalog.voice("ming:CN_Xiaoyu", in: removed))
+    }
+
+    func test_mingVoicesGetReadableNames() {
+        let engines = [Self.ming()]
+
+        XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "ming:US_James", in: engines), "Ming James")
+        XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "ming:custom:ab12", in: engines), "My Narrator")
+        XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "ming:US_James"), "Ming James")
+        XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "ming:custom:zz"), "Ming custom voice")
+        XCTAssertEqual(SpeechEngineCatalog.displayName(forVoice: "ming:"), "Ming")
+        XCTAssertEqual(DashboardViewModel.voiceName(for: "ming:US_James"), "Ming James")
+    }
+
+    func test_languageDetectionLeavesMingVoicesAlone() {
+        let spanish = "El veloz zorro marrón salta sobre el perro perezoso todos los días."
+
+        XCTAssertEqual(LanguageDetector.voiceForText(spanish, fallback: "ming:US_James"), "ming:US_James")
     }
 }

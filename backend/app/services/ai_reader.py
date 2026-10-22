@@ -51,6 +51,30 @@ _TRANSLATE_MAX_OUTPUT_TOKENS = 8_192
 _TIDY_MAX_OUTPUT_TOKENS = 8_192
 _TIDY_GROWTH_FACTOR = 1.5
 _TIDY_GROWTH_SLACK_CHARS = 80
+_TIDY_MIN_KEPT_WORD_RATIO = 0.8
+_TIDY_FILLER_WORDS = frozenset(
+    {
+        "um",
+        "uh",
+        "umm",
+        "uhh",
+        "er",
+        "erm",
+        "ah",
+        "hmm",
+        "mm",
+        "like",
+        "you",
+        "know",
+        "so",
+        "well",
+        "basically",
+        "actually",
+        "literally",
+        "i",
+        "mean",
+    }
+)
 _ASK_MAX_OUTPUT_TOKENS = 2_048
 _STUDY_MAX_OUTPUT_TOKENS = 6_144
 _PROMPT_OVERHEAD_CHARS = 2_400
@@ -601,6 +625,22 @@ async def translate(
     )
 
 
+_TIDY_NUMBER_WORDS = frozenset(
+    "zero one two three four five six seven eight nine ten eleven twelve "
+    "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty "
+    "thirty forty fifty sixty seventy eighty ninety hundred thousand million "
+    "billion point percent dollars dollar cents cent first second third".split()
+)
+
+
+def _word_tokens(text: str) -> list[str]:
+    return [
+        token
+        for token in re.findall(r"[^\W\d_]+", text.lower())
+        if token not in _TIDY_NUMBER_WORDS
+    ]
+
+
 async def tidy(session: AISession, text: str) -> TidyResult:
     source = text.strip()
     if not source:
@@ -608,16 +648,24 @@ async def tidy(session: AISession, text: str) -> TidyResult:
     task = (
         "The DICTATION block holds raw speech-to-text output. Rewrite it as "
         "clean written text: add punctuation and sentence capitalization, fix "
-        "obvious transcription casing, and remove filler words and false starts "
-        "such as um, uh, you know, and repeated words. Keep the speaker's "
-        "meaning, wording, language, and paragraph breaks. Do not add, explain, "
-        "answer, translate, or summarize anything. Put the result in text."
+        "obvious transcription casing, and remove filler words such as um, uh, "
+        "and you know, and words repeated back to back by mistake. Keep every "
+        "sentence, even when two sentences say similar things. Keep the "
+        "speaker's meaning, wording, language, and paragraph breaks. Do not "
+        "add, explain, answer, translate, or summarize anything. Put the result "
+        "in text."
     )
     limit = len(source) * _TIDY_GROWTH_FACTOR + _TIDY_GROWTH_SLACK_CHARS
+    source_words = sum(
+        1 for token in _word_tokens(source) if token not in _TIDY_FILLER_WORDS
+    )
+    kept_floor = _TIDY_MIN_KEPT_WORD_RATIO * source_words
 
-    def not_padded(reply: _TidyOutput) -> str | None:
+    def keeps_dictation(reply: _TidyOutput) -> str | None:
         if len(reply.text) > limit:
             return "it added text that was not in the dictation"
+        if source_words >= 6 and len(_word_tokens(reply.text)) < kept_floor:
+            return "it removed words that were in the dictation"
         return None
 
     reply = await session.json_reply(
@@ -626,7 +674,7 @@ async def tidy(session: AISession, text: str) -> TidyResult:
         user=session.fence("DICTATION", source),
         model=_TidyOutput,
         max_output_tokens=_TIDY_MAX_OUTPUT_TOKENS,
-        accept=not_padded,
+        accept=keeps_dictation,
     )
     return TidyResult(text=reply.text, **session.usage())
 

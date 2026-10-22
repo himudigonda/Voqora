@@ -3,6 +3,20 @@ import SwiftUI
 struct PronunciationBookOption: Identifiable, Hashable {
     let id: String
     let title: String
+
+    static func disambiguated(_ books: [(id: String, title: String)]) -> [PronunciationBookOption] {
+        let ordered = books.sorted {
+            let order = $0.title.localizedCaseInsensitiveCompare($1.title)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+        var seen: [String: Int] = [:]
+        return ordered.map { book in
+            let key = book.title.lowercased()
+            let occurrence = (seen[key] ?? 0) + 1
+            seen[key] = occurrence
+            return PronunciationBookOption(id: book.id, title: occurrence == 1 ? book.title : "\(book.title) (\(occurrence))")
+        }
+    }
 }
 
 struct PronunciationsView: View {
@@ -26,33 +40,40 @@ struct PronunciationsView: View {
     }
 
     private var bookOptions: [PronunciationBookOption] {
-        bookVM.books
-            .filter { PronunciationRules.isHexID($0.bookID) }
-            .map { PronunciationBookOption(id: $0.bookID, title: $0.displayTitle) }
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        PronunciationBookOption.disambiguated(
+            bookVM.books
+                .filter { PronunciationRules.isHexID($0.bookID) }
+                .map { (id: $0.bookID, title: $0.displayTitle) }
+        )
+    }
+
+    private var pageTitle: String {
+        isBookScoped ? "Pronunciations for \(bookTitle ?? "This Book")" : VoicesPage.pronunciations.title
+    }
+
+    private var pageSubtitle: String {
+        isBookScoped
+            ? "Used only when Voqora narrates this book, on top of your everyday pronunciations. Changes apply to pages narrated from now on."
+            : VoicesPage.pronunciations.subtitle
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: DesignTokens.Layout.sectionGap) {
-                if isBookScoped {
-                    bookHeader
-                } else {
-                    VoicesPageHeader(page: .pronunciations)
-                }
-                controls
-                if let notice {
-                    PronunciationNoticeRow(notice: notice) { self.notice = nil }
-                }
-                entriesSection
-                PronunciationTestCard(store: store, text: $testText)
+        PageScaffold(title: pageTitle, subtitle: pageSubtitle) {
+            accessory
+        } content: {
+            PronunciationTestCard(store: store, text: $testText)
+            if let notice {
+                VoicesBanner(
+                    message: notice.message,
+                    systemImage: notice.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill",
+                    isError: notice.isError,
+                    actionTitle: "Dismiss"
+                ) { self.notice = nil }
             }
-            .padding(.horizontal, 32)
-            .padding(.vertical, 28)
-            .frame(maxWidth: 800, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            controls
+            entriesSection
         }
-        .navigationTitle("Pronunciations")
+        .navigationTitle(VoicesPage.pronunciations.title)
         .sheet(item: $editor) { target in
             PronunciationEditorSheet(
                 store: store,
@@ -60,7 +81,7 @@ struct PronunciationsView: View {
                 initialScope: store.defaultScope,
                 books: bookOptions
             )
-            .environmentObject(vm)
+            .voqoraSheetContent(vm)
         }
         .confirmationDialog(
             "Delete this pronunciation?",
@@ -90,71 +111,43 @@ struct PronunciationsView: View {
         )
     }
 
-    private var bookHeader: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Pronunciations for \(bookTitle ?? "This Book")")
-                .font(vm.font(.paneTitle))
-                .foregroundStyle(Palette.textPrimary)
-                .accessibilityAddTraits(.isHeader)
-            Text("Used only when Voqora narrates this book, on top of your everyday pronunciations. Changes apply to pages narrated from now on.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var controls: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(Palette.textTertiary)
-                    .accessibilityHidden(true)
-                TextField("Search Pronunciations", text: $store.searchText)
-                    .textFieldStyle(.plain)
-                    .font(vm.font(.rowTitle))
-                    .accessibilityLabel("Search pronunciations")
+    private var accessory: some View {
+        HStack(spacing: Theme.Space.item) {
+            Button { editor = .new } label: {
+                Label("Add Rule", systemImage: "plus")
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .voqoraSurface(.control, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
-            .frame(maxWidth: 260)
-
-            if !isBookScoped {
-                Picker("Show", selection: $store.filter) {
-                    Text("All").tag(PronunciationFilter.all)
-                    Text("Everywhere").tag(PronunciationFilter.scope(.global))
-                    if !bookOptions.isEmpty {
-                        Divider()
-                        ForEach(bookOptions) { book in
-                            Text(book.title).tag(PronunciationFilter.scope(.book(book.id)))
-                        }
-                    }
-                }
-                .labelsHidden()
-                .fixedSize()
-                .accessibilityLabel("Show pronunciations for")
-            }
-
-            Spacer(minLength: 0)
-
-            Menu {
+            .buttonStyle(.voqoraFilled)
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+            .disabled(store.state != .loaded || store.isFull)
+            .help(store.isFull ? "You can save up to \(store.maxEntries) pronunciations." : "Add a pronunciation rule")
+            PageActionsMenu(label: "Import or export a pronunciation list") {
                 Button("Import…") { importList() }
                     .disabled(store.state != .loaded || transferring)
                 Button("Export…") { exportList() }
                     .disabled(store.visibleEntries.isEmpty || transferring)
-            } label: {
-                Label("Import or Export", systemImage: "square.and.arrow.up.on.square")
             }
-            .fixedSize()
-            .help("Import or export a pronunciation list")
+        }
+    }
 
-            Button { editor = .new } label: {
-                Label("Add", systemImage: "plus")
+    private var controls: some View {
+        HStack(spacing: Theme.Space.item) {
+            if !isBookScoped {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        FilterChip(title: "All", isSelected: store.filter == .all) { store.filter = .all }
+                        FilterChip(title: "Everywhere", isSelected: store.filter == .scope(.global)) { store.filter = .scope(.global) }
+                        ForEach(bookOptions) { book in
+                            FilterChip(title: book.title, isSelected: store.filter == .scope(.book(book.id)), systemImage: "book") {
+                                store.filter = .scope(.book(book.id))
+                            }
+                        }
+                    }
+                }
+            } else {
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.voqoraPrimary)
-            .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(store.state != .loaded || store.isFull)
-            .help(store.isFull ? "You can save up to \(store.maxEntries) pronunciations." : "Add Pronunciation")
+            SearchField(text: $store.searchText, prompt: "Search rules")
+                .frame(width: 240)
         }
     }
 
@@ -162,25 +155,19 @@ struct PronunciationsView: View {
     private var entriesSection: some View {
         switch store.state {
         case .idle, .loading:
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                ProgressView().controlSize(.small)
-                Text("Loading pronunciations…")
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-            }
-            .padding(DesignTokens.Layout.cardInset)
+            VoicesLoadingRow(text: "Loading pronunciations…")
         case let .failed(message):
-            VoicesStatusCard(systemImage: "exclamationmark.triangle.fill", message: message, actionTitle: "Try Again") {
+            VoicesBanner(message: message, actionTitle: "Try Again") {
                 Task { await store.refresh() }
             }
         case .loaded:
             let entries = store.visibleEntries
             if entries.isEmpty {
-                VoicesStatusCard(systemImage: "text.bubble", message: emptyMessage)
+                emptyState
             } else {
-                VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                    PaneSectionHeader(title: entries.count == 1 ? "1 Pronunciation" : "\(entries.count) Pronunciations")
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: Theme.Space.item) {
+                    VoicesSectionHeader(title: entries.count == 1 ? "1 rule" : "\(entries.count) rules")
+                    ListGroup {
                         ForEach(entries) { entry in
                             PronunciationRow(
                                 entry: entry,
@@ -189,14 +176,24 @@ struct PronunciationsView: View {
                                 onEdit: { editor = .edit(entry) },
                                 onDelete: { pendingDeletion = entry }
                             )
-                            if entry.id != entries.last?.id {
-                                Divider()
-                            }
                         }
                     }
-                    .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.xLarge, style: .continuous))
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if store.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            EmptyStateView(
+                symbol: "text.bubble",
+                title: "No pronunciations yet",
+                message: emptyMessage,
+                action: store.isFull ? nil : EmptyStateAction(title: "Add Rule") { editor = .new }
+            )
+        } else {
+            EmptyStateView(symbol: "magnifyingglass", title: "No matches", message: emptyMessage)
         }
     }
 
@@ -205,9 +202,9 @@ struct PronunciationsView: View {
             return "No pronunciations match “\(store.searchText)”."
         }
         if isBookScoped {
-            return "No pronunciations for this book yet. Add one for a character name or a term only this book uses."
+            return "Add one for a character name or a term only this book uses."
         }
-        return "No pronunciations yet. Add one to say “SQL” as “sequel” or to get a name right every time."
+        return "Add one to say “SQL” as “sequel” or to get a name right every time."
     }
 
     private func scopeName(for scope: PronunciationScope) -> String {
@@ -267,35 +264,6 @@ struct PronunciationNotice: Equatable {
     let isError: Bool
 }
 
-private struct PronunciationNoticeRow: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    let notice: PronunciationNotice
-    let onDismiss: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: notice.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .foregroundStyle(notice.isError ? Palette.warning : Palette.success)
-                .accessibilityHidden(true)
-            Text(notice.message)
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button { onDismiss() } label: {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss")
-        }
-        .padding(DesignTokens.Layout.cardInset)
-        .background(
-            (notice.isError ? Palette.warning : Palette.success).opacity(0.12),
-            in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
-        )
-    }
-}
-
 enum PronunciationEditorTarget: Identifiable {
     case new
     case edit(PronunciationEntry)
@@ -316,58 +284,46 @@ enum PronunciationEditorTarget: Identifiable {
 }
 
 private struct PronunciationRow: View {
-    @EnvironmentObject var vm: DashboardViewModel
     let entry: PronunciationEntry
     let scopeName: String
     let showsScope: Bool
     let onEdit: () -> Void
     let onDelete: () -> Void
-    @State private var hovering = false
 
     private var spokenAs: String {
-        entry.replacement.isEmpty ? "Skipped" : entry.replacement
+        entry.replacement.isEmpty ? "skipped" : entry.replacement
     }
 
     var body: some View {
-        HStack(spacing: DesignTokens.Spacing.md) {
-            VStack(alignment: .leading, spacing: 5) {
+        ListItem(
+            title: "\(entry.match) → \(spokenAs)",
+            systemImage: "text.bubble",
+            trailing: {
                 HStack(spacing: 8) {
-                    Text(entry.match)
-                        .font(vm.appFont(size: 14, weight: .semibold))
-                        .foregroundStyle(Palette.textPrimary)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Palette.textTertiary)
-                        .accessibilityHidden(true)
-                    Text(spokenAs)
-                        .font(vm.appFont(size: 14))
-                        .foregroundStyle(entry.replacement.isEmpty ? Palette.textTertiary : Palette.textPrimary)
-                        .italic(entry.replacement.isEmpty)
-                }
-                .textSelection(.enabled)
-                HStack(spacing: 6) {
                     if showsScope {
-                        VoicesChip(text: scopeName)
+                        StatusChip(text: scopeName, kind: .info)
                     }
                     if entry.wholeWord {
-                        VoicesChip(text: "Whole word")
+                        StatusChip(text: "Whole word")
                     }
                     if entry.caseSensitive {
-                        VoicesChip(text: "Match case")
+                        StatusChip(text: "Match case")
                     }
+                    Button(action: onEdit) {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.voqoraIcon)
+                    .help("Edit \(entry.match)")
+                    .accessibilityLabel("Edit \(entry.match)")
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.voqoraIcon)
+                    .help("Delete \(entry.match)")
+                    .accessibilityLabel("Delete \(entry.match)")
                 }
             }
-            Spacer(minLength: 0)
-            HStack(spacing: DesignTokens.Spacing.sm) {
-                PlayerCircleButton(systemName: "pencil", label: "Edit \(entry.match)", action: onEdit)
-                PlayerCircleButton(systemName: "trash", label: "Delete \(entry.match)", action: onDelete)
-            }
-            .opacity(hovering ? 1 : 0.5)
-        }
-        .padding(.horizontal, DesignTokens.Layout.cardInset)
-        .padding(.vertical, 10)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
+        )
         .onTapGesture(count: 2, perform: onEdit)
         .contextMenu {
             Button("Edit…", action: onEdit)
@@ -380,22 +336,23 @@ private struct PronunciationRow: View {
 }
 
 struct BookPronunciationsSheet: View {
+    @EnvironmentObject var vm: DashboardViewModel
     @Environment(\.dismiss) private var dismiss
     let book: Audiobook
 
     var body: some View {
         VStack(spacing: 0) {
             PronunciationsView(bookID: book.bookID, bookTitle: book.displayTitle)
-            Divider()
             HStack {
                 Spacer()
                 Button("Done") { dismiss() }
-                    .buttonStyle(.voqoraPrimary)
+                    .buttonStyle(.voqoraFilled)
                     .keyboardShortcut(.cancelAction)
             }
-            .padding(DesignTokens.Spacing.lg)
+            .padding(Theme.Space.card)
         }
-        .frame(width: 680, height: 620)
-        .voqoraSurface(.floating, in: Rectangle())
+        .frame(width: 860, height: 700)
+        .background(vm.theme.surface)
+        .voqoraTheme()
     }
 }

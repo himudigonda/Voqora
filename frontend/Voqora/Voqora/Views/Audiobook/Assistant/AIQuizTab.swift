@@ -2,25 +2,23 @@ import SwiftUI
 
 struct AIQuizTab: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @ObservedObject var model: AIQuizModel
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.lg) {
                 AIOptionsCard {
-                    Picker("Difficulty", selection: $model.difficulty) {
-                        ForEach(AIQuizDifficulty.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
+                    SegmentedTabs(selection: $model.difficulty, options: Array(AIQuizDifficulty.allCases), title: { $0.title })
                     Stepper(value: $model.count, in: AIReadingLimits.quizCounts) {
                         Text("\(model.count) questions")
-                            .font(vm.font(.rowTitle))
+                            .font(vm.font(.body))
                     }
                     .accessibilityValue("\(model.count) questions")
                     HStack {
                         Spacer()
                         Button(model.state.value == nil ? "Create Quiz" : "New Quiz") { model.generate() }
-                            .buttonStyle(.voqoraPrimary)
+                            .buttonStyle(.voqoraFilled)
                             .keyboardShortcut(.return, modifiers: .command)
                             .disabled(model.state.isLoading)
                     }
@@ -36,8 +34,8 @@ struct AIQuizTab: View {
         switch model.state {
         case .idle:
             Text("Test what you remember with multiple choice questions about this book.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurfaceVariant)
         case .loading:
             AIProgressState(title: "Writing questions…") { model.cancel() }
                 .frame(minHeight: 160)
@@ -66,13 +64,13 @@ struct AIQuizTab: View {
             Text(session.isComplete
                 ? "You scored \(session.score) of \(session.questions.count)"
                 : "\(session.answeredCount) of \(session.questions.count) answered")
-                .font(vm.font(.sectionTitle))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.title))
+                .foregroundStyle(theme.onSurface)
                 .contentTransition(.numericText())
             Spacer()
             if session.answeredCount > 0 {
                 Button("Retake") { model.restart() }
-                    .buttonStyle(.voqoraSecondary)
+                    .buttonStyle(.voqoraTonal)
             }
         }
         .accessibilityElement(children: .contain)
@@ -81,6 +79,7 @@ struct AIQuizTab: View {
 
 private struct AIQuizQuestionCard: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let number: Int
     let question: AIQuizQuestion
     let selected: Int?
@@ -89,8 +88,8 @@ private struct AIQuizQuestionCard: View {
     var body: some View {
         AIOptionsCard {
             Text("\(number). \(question.question)")
-                .font(vm.font(.rowTitle).weight(.semibold))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.titleSmall))
+                .foregroundStyle(theme.onSurface)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: DesignTokens.Spacing.xs) {
                 ForEach(Array(question.choices.enumerated()), id: \.offset) { index, choice in
@@ -103,12 +102,12 @@ private struct AIQuizQuestionCard: View {
                         selected == question.answerIndex ? "Correct" : "Not quite",
                         systemImage: selected == question.answerIndex ? "checkmark.circle.fill" : "xmark.circle.fill"
                     )
-                    .font(vm.font(.rowSubtitle).weight(.semibold))
-                    .foregroundStyle(selected == question.answerIndex ? Palette.success : Palette.danger)
+                    .font(vm.font(.label))
+                    .foregroundStyle(selected == question.answerIndex ? theme.success : theme.danger)
                     if !question.explanation.isEmpty {
                         Text(question.explanation)
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
+                            .font(vm.font(.bodySmall))
+                            .foregroundStyle(theme.onSurfaceVariant)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -130,7 +129,7 @@ private struct AIQuizQuestionCard: View {
         let answered = selected != nil
         let isAnswer = index == question.answerIndex
         let isPicked = index == selected
-        let tint: Color = answered && isAnswer ? Palette.success : (isPicked ? Palette.danger : Palette.textTertiary)
+        let tint: Color = answered && isAnswer ? theme.success : (isPicked ? theme.danger : theme.onSurfaceMuted)
         let symbol = answered && isAnswer ? "checkmark.circle.fill" : (isPicked ? "xmark.circle.fill" : "circle")
         return Button {
             onSelect(index)
@@ -140,8 +139,8 @@ private struct AIQuizQuestionCard: View {
                     .foregroundStyle(tint)
                     .accessibilityHidden(true)
                 Text(text)
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(vm.font(.body))
+                    .foregroundStyle(theme.onSurface)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -149,8 +148,8 @@ private struct AIQuizQuestionCard: View {
             .padding(.horizontal, DesignTokens.Spacing.sm)
             .padding(.vertical, DesignTokens.Spacing.xs + 2)
             .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.xs, style: .continuous)
-                    .fill(isPicked || (answered && isAnswer) ? Palette.controlFill : Color.clear)
+                RoundedRectangle(cornerRadius: Theme.Shape.xs, style: .continuous)
+                    .fill(isPicked || (answered && isAnswer) ? theme.surfaceContainerHigh : Color.clear)
             )
             .contentShape(Rectangle())
         }

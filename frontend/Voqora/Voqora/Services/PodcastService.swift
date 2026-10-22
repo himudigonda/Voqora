@@ -51,7 +51,7 @@ nonisolated enum PodcastServiceError: LocalizedError, Equatable {
     static func from(statusCode: Int, data: Data) -> PodcastServiceError {
         let detail = PodcastErrorDetail.message(from: data)
         switch statusCode {
-        case 400: return .providerSetup(detail ?? "Check your AI provider in Preferences and try again.")
+        case 400: return .providerSetup(detail ?? "Check your AI provider in Settings and try again.")
         case 404: return .notFound(detail ?? "That item no longer exists. Refresh and try again.")
         case 409: return .rejected(detail ?? "Voqora couldn't start this podcast. Try again.")
         case 413: return .tooLarge(detail ?? "This podcast is too large for Voqora to make.")

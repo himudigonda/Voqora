@@ -40,6 +40,18 @@ _SILENCE_CACHE_CAP = 64
 _FLAC_READ_CHUNK_BYTES = 64 * 1024
 
 
+def resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
+    if source_rate == target_rate or audio.size == 0:
+        return audio
+    target_length = max(1, round(audio.size * target_rate / source_rate))
+    spectrum = np.fft.rfft(audio)
+    resized = np.zeros(target_length // 2 + 1, dtype=spectrum.dtype)
+    kept = min(len(resized), len(spectrum))
+    resized[:kept] = spectrum[:kept]
+    scaled = np.fft.irfft(resized, target_length) * (target_length / audio.size)
+    return scaled.astype(np.float32)
+
+
 class AudioService:
     @staticmethod
     def apply_fade(

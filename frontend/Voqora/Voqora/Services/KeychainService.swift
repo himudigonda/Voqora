@@ -45,6 +45,7 @@ nonisolated enum KeychainService {
     }
 
     static func get(_ key: KeychainKey, service: String? = nil) -> String? {
+        guard readsEnabled else { return nil }
         var query = baseQuery(key, service: service)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -52,6 +53,14 @@ nonisolated enum KeychainService {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
+    }
+
+    private static var readsEnabled: Bool {
+        #if DEBUG
+            ProcessInfo.processInfo.environment["VOQORA_SNAPSHOT_DIR"]?.isEmpty ?? true
+        #else
+            true
+        #endif
     }
 
     @discardableResult

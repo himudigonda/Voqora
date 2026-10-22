@@ -6,15 +6,11 @@ enum AudiobookRoute: Hashable {
 }
 
 enum LibrarySheet: Identifiable {
-    case upload(AudiobookImportSource)
-    case addFromURL
     case completion(Audiobook)
     case fixProvider(AudiobookViewModel.ProviderFix)
 
     var id: String {
         switch self {
-        case let .upload(source): "upload-\(source.identifier)"
-        case .addFromURL: "add-from-url"
         case let .fixProvider(fix): "fix-\(fix.id)"
         case let .completion(book): "completion-\(book.bookID)"
         }
@@ -44,29 +40,16 @@ final class LibrarySheetPresentation {
 struct AudiobookLibraryView: View {
     @EnvironmentObject var vm: DashboardViewModel
     @EnvironmentObject var bookVM: AudiobookViewModel
+    @Environment(\.voqoraTheme) private var theme
 
     @State private var hoveringDrop = false
     @State private var searchText = ""
-    @AppStorage("librarySortMode") private var sort: SortMode = .recent
+    @State private var filter: LibraryFilter = .all
+    @AppStorage("librarySortMode") private var sort: LibrarySortMode = .recent
     @State private var showDeleteAllConfirmation = false
     @State private var sheetPresentation = LibrarySheetPresentation()
 
-    enum SortMode: String, CaseIterable, Identifiable {
-        case recent, alpha, duration
-        var id: String {
-            rawValue
-        }
-
-        var label: String {
-            switch self {
-            case .recent: "Date Added"
-            case .alpha: "Title"
-            case .duration: "Length"
-            }
-        }
-    }
-
-    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 240), spacing: 28)]
+    private let columns = [GridItem(.adaptive(minimum: 170), spacing: Theme.Space.section - 8, alignment: .top)]
 
     var body: some View {
         ZStack {
@@ -116,9 +99,7 @@ struct AudiobookLibraryView: View {
                 dropOverlay.transition(.opacity)
             }
         }
-        .navigationTitle("Audiobooks")
-        .searchable(text: $searchText, placement: .toolbar, prompt: "Search Audiobooks")
-        .toolbar { toolbarContent }
+        .navigationTitle("Library")
         .onDrop(of: [.fileURL], isTargeted: $hoveringDrop) { providers in
             bookVM.importDroppedDocuments(providers, defaultVoice: vm.selectedVoice, defaultSpeed: vm.speechSpeed)
         }
@@ -133,44 +114,30 @@ struct AudiobookLibraryView: View {
     private func playerDestination(_ bookID: String) -> some View {
         Group {
             if let book = bookVM.books.first(where: { $0.bookID == bookID }) {
-                AudiobookPlayerView(book: book)
+                AudiobookPlayerView(book: book, onBack: closePlayer)
             } else if bookVM.hasLoadedOnce {
-                Color.clear.onAppear { bookVM.libraryPath = [] }
+                Color.clear.onAppear { closePlayer() }
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("")
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    bookVM.libraryPath = []
-                } label: {
-                    Label("Library", systemImage: "chevron.backward")
-                }
+        .background {
+            Button("Back to Library", action: closePlayer)
                 .keyboardShortcut("[", modifiers: .command)
-                .help("Back to Library")
-            }
+                .opacity(0)
+                .accessibilityHidden(true)
         }
-        .onExitCommand { bookVM.libraryPath = [] }
+        .onExitCommand(perform: closePlayer)
+    }
+
+    private func closePlayer() {
+        bookVM.libraryPath = []
     }
 
     @ViewBuilder
     private func sheetContent(_ sheet: LibrarySheet) -> some View {
         switch sheet {
-        case let .upload(source):
-            UploadEstimateModal(source: source)
-                .environmentObject(vm)
-                .environmentObject(bookVM)
-                .environmentObject(bookVM.providers)
-        case .addFromURL:
-            AddFromURLSheet(
-                initialAddress: bookVM.webPageDraft,
-                voice: bookVM.importVoice(fallback: vm.selectedVoice),
-                speed: bookVM.importSpeed(fallback: vm.speechSpeed)
-            )
-            .environmentObject(vm)
-            .environmentObject(bookVM)
         case let .completion(book):
             CompletionSummaryModal(book: book, onListenNow: { bookVM.openPlayer(for: $0.bookID) })
                 .environmentObject(vm)
@@ -189,12 +156,6 @@ struct AudiobookLibraryView: View {
         if let fix = bookVM.providerFix {
             return .fixProvider(fix)
         }
-        if let source = bookVM.pendingSource {
-            return .upload(source)
-        }
-        if bookVM.isWebPageImportPresented {
-            return .addFromURL
-        }
         return nil
     }
 
@@ -212,10 +173,6 @@ struct AudiobookLibraryView: View {
                     bookVM.completionSummary = nil
                 } else if bookVM.providerFix != nil {
                     bookVM.endProviderFix()
-                } else if bookVM.pendingSource != nil {
-                    bookVM.cancelUpload()
-                } else if bookVM.isWebPageImportPresented {
-                    bookVM.dismissWebPageImport()
                 }
             }
         )
@@ -287,8 +244,93 @@ struct AudiobookLibraryView: View {
         return name.map { "Voqora will continue where it stopped, using \($0)." } ?? "Voqora will continue where it stopped."
     }
 
-    @ViewBuilder
+    private var librarySubtitle: String {
+        guard bookVM.hasLoadedOnce, !bookVM.books.isEmpty else {
+            return "Documents, articles, and podcasts you turned into audio."
+        }
+        let count = bookVM.books.count
+        return "\(count) \(count == 1 ? "item" : "items") on this Mac."
+    }
+
     private var content: some View {
+        PageScaffold(title: "Library", subtitle: librarySubtitle) {
+            accessory
+        } content: {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                if bookVM.hasLoadedOnce, !bookVM.books.isEmpty {
+                    filterRow
+                }
+                libraryBody
+            }
+        }
+    }
+
+    private var accessory: some View {
+        HStack(spacing: Theme.Space.item) {
+            SearchField(text: $searchText, prompt: "Search library")
+                .frame(minWidth: 120, maxWidth: 220)
+            Menu {
+                Picker("Sort By", selection: $sort) {
+                    ForEach(LibrarySortMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(theme.onPrimaryContainer)
+                    .frame(width: 40, height: 40)
+                    .background(theme.primaryContainer.opacity(0.65), in: Circle())
+                    .contentShape(Circle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort By")
+            .accessibilityLabel("Sort By")
+            Menu {
+                Button("Delete All Audiobooks…", role: .destructive) { showDeleteAllConfirmation = true }
+                    .disabled(bookVM.books.isEmpty || bookVM.deletingAllBooks)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(theme.onPrimaryContainer)
+                    .frame(width: 40, height: 40)
+                    .background(theme.primaryContainer.opacity(0.65), in: Circle())
+                    .contentShape(Circle())
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More")
+            .accessibilityLabel("More")
+            Button {
+                vm.selectedTab = TabKey.createAudiobook
+            } label: {
+                Label("New Audiobook", systemImage: "plus")
+            }
+            .buttonStyle(.voqoraFilled)
+        }
+    }
+
+    private var filterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(LibraryFilter.allCases) { option in
+                    FilterChip(title: option.title, isSelected: filter == option) {
+                        filter = option
+                    }
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    @ViewBuilder
+    private var libraryBody: some View {
         if !bookVM.hasLoadedOnce {
             skeletonGrid
         } else if bookVM.loadFailed, bookVM.books.isEmpty {
@@ -297,32 +339,20 @@ struct AudiobookLibraryView: View {
             emptyState
         } else if Self.showsNoResultsState(searchText: searchText, matchCount: filteredSorted.count) {
             noResultsState
+        } else if filteredSorted.isEmpty {
+            EmptyStateView(symbol: "line.3.horizontal.decrease.circle", title: "Nothing in \(filter.title)", message: filter.emptyMessage)
         } else {
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 32) {
-                    ForEach(filteredSorted, id: \.id) { book in
-                        let isProcessing = (bookVM.processingState[book.bookID] ?? book.displayStatus).isProcessing
-                        Button {
-                            guard !isProcessing else { return }
-                            openBook(book)
-                        } label: {
-                            AudiobookCardView(book: book)
-                        }
-                        .buttonStyle(.plain)
-                        .contentShape(Rectangle())
-                    }
+            LazyVGrid(columns: columns, spacing: Theme.Space.section - 4) {
+                ForEach(filteredSorted, id: \.id) { book in
+                    AudiobookCardView(book: book) { openBook(book) }
                 }
-                .padding(36)
             }
         }
     }
 
     private var skeletonGrid: some View {
-        ScrollView {
-            LazyVGrid(columns: columns, spacing: 32) {
-                ForEach(0 ..< 6, id: \.self) { _ in SkeletonCard() }
-            }
-            .padding(36)
+        LazyVGrid(columns: columns, spacing: Theme.Space.section - 4) {
+            ForEach(0 ..< 6, id: \.self) { _ in SkeletonCard() }
         }
     }
 
@@ -340,56 +370,21 @@ struct AudiobookLibraryView: View {
         if !searchText.isEmpty {
             result = result.filter { Self.matches($0, searchText: searchText) }
         }
-        switch sort {
-        case .recent:
-            result.sort { $0.createdAt > $1.createdAt }
-        case .alpha:
-            result.sort { $0.displayTitle.localizedCaseInsensitiveCompare($1.displayTitle) == .orderedAscending }
-        case .duration:
-            result.sort { $0.totalAudioSeconds > $1.totalAudioSeconds }
+        if filter != .all {
+            result = result.filter { book in
+                filter.includes(
+                    book,
+                    status: bookVM.processingState[book.bookID] ?? book.displayStatus,
+                    listenedFraction: bookVM.listenedFraction(for: book)
+                )
+            }
         }
-        return result
-    }
-
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .primaryAction) {
-            Button { bookVM.isImporterPresented = true } label: {
-                Label("Add Book", systemImage: "plus")
-            }
-            .keyboardShortcut("o", modifiers: .command)
-            .help("Add Book")
-
-            Button { bookVM.presentWebPageImport() } label: {
-                Label("Add from URL", systemImage: "link")
-            }
-            .keyboardShortcut("u", modifiers: [.command, .shift])
-            .help("Add from URL")
-
-            Menu {
-                Picker("Sort By", selection: $sort) {
-                    ForEach(SortMode.allCases) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .pickerStyle(.inline)
-                Divider()
-                Button("Delete All Audiobooks…", role: .destructive) { showDeleteAllConfirmation = true }
-                    .disabled(bookVM.books.isEmpty || bookVM.deletingAllBooks)
-            } label: {
-                Label("View Options", systemImage: "ellipsis.circle")
-            }
-            .help("View Options")
-        }
+        return sort.sorted(result)
     }
 
     private func openBook(_ book: Audiobook) {
-        switch book.displayStatus {
-        case .ready: bookVM.openPlayer(for: book.bookID)
-        case .failed where book.providerToFix != nil: bookVM.fixProvider(for: book)
-        case .failed, .cancelled: bookVM.retry(book)
-        case .needsKey: bookVM.resumeNeedsKey(book)
-        default: break
+        if (bookVM.processingState[book.bookID] ?? book.displayStatus).isReady {
+            bookVM.openPlayer(for: book.bookID)
         }
     }
 
@@ -399,94 +394,53 @@ struct AudiobookLibraryView: View {
     }
 
     private var emptyState: some View {
-        LibraryPlaceholder(
-            systemImage: "books.vertical",
-            title: "No Audiobooks",
-            message: "Turn a PDF, EPUB, Word, HTML, text, or Markdown file, or a web article, into an audiobook you can follow line by line. Drop a file here to begin."
-        ) {
-            HStack(spacing: 12) {
-                Button { bookVM.isImporterPresented = true } label: {
-                    Label("Add a Document…", systemImage: "plus")
-                }
-                .buttonStyle(.voqoraPrimary)
-                Button { bookVM.presentWebPageImport() } label: {
-                    Label("Add from URL…", systemImage: "link")
-                }
-                .buttonStyle(.voqoraSecondary)
-            }
-        }
+        EmptyStateView(
+            symbol: "books.vertical",
+            title: "Your library is empty",
+            message: "Turn a document, web page, or pasted text into an audiobook. You can also drop a PDF, EPUB, Word, HTML, text, or Markdown file anywhere in this window.",
+            action: EmptyStateAction(title: "New Audiobook") { vm.selectedTab = TabKey.createAudiobook }
+        )
     }
 
     private var loadFailedState: some View {
-        LibraryPlaceholder(
-            systemImage: "exclamationmark.triangle",
+        EmptyStateView(
+            symbol: "exclamationmark.triangle",
             title: "Couldn't Load Library",
-            message: "The speech engine isn't responding."
-        ) {
-            Button { Task { await bookVM.refresh() } } label: {
-                Label("Try Again", systemImage: "arrow.clockwise")
-            }
-            .buttonStyle(.voqoraSecondary)
-        }
+            message: "The speech engine isn't responding.",
+            action: EmptyStateAction(title: "Try Again") { Task { await bookVM.refresh() } }
+        )
     }
 
     private var noResultsState: some View {
-        LibraryPlaceholder(
-            systemImage: "magnifyingglass",
+        EmptyStateView(
+            symbol: "magnifyingglass",
             title: "No Results",
-            message: "No audiobooks match “\(searchText)”."
-        ) {
-            EmptyView()
-        }
-    }
-}
-
-private struct LibraryPlaceholder<Actions: View>: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    let systemImage: String
-    let title: String
-    let message: String
-    @ViewBuilder var actions: Actions
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Image(systemName: systemImage)
-                .font(.system(size: 56, weight: .light))
-                .foregroundStyle(Palette.textTertiary)
-            VStack(spacing: 6) {
-                Text(title)
-                    .font(vm.font(.sectionTitle))
-                    .foregroundStyle(Palette.textPrimary)
-                Text(message)
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textSecondary)
-                    .multilineTextAlignment(.center)
-            }
-            actions
-        }
-        .padding(.horizontal, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+            message: "No items match “\(searchText)”."
+        )
     }
 }
 
 private struct SkeletonCard: View {
+    @Environment(\.voqoraTheme) private var theme
     @State private var phase: CGFloat = -1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(Palette.controlFill)
-                .aspectRatio(AudiobookCardView.coverAspectRatio, contentMode: .fit)
+            RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous)
+                .fill(theme.surfaceContainerHigh)
+                .aspectRatio(BookCover.aspectRatio, contentMode: .fit)
                 .overlay(shimmer)
-                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Palette.controlFill)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
+            Capsule()
+                .fill(theme.surfaceContainerHigh)
                 .frame(width: 130, height: 12)
                 .overlay(shimmer)
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .fill(Palette.controlFill)
-                .frame(width: 90, height: 9)
+                .clipShape(Capsule())
+            Capsule()
+                .fill(theme.surfaceContainerHigh)
+                .frame(width: 90, height: 10)
                 .overlay(shimmer)
+                .clipShape(Capsule())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onAppear {
@@ -494,17 +448,17 @@ private struct SkeletonCard: View {
                 phase = 1.5
             }
         }
+        .accessibilityHidden(true)
     }
 
     private var shimmer: some View {
         GeometryReader { geo in
             LinearGradient(
-                colors: [.clear, .white.opacity(0.18), .clear],
+                colors: [.clear, theme.surfaceContainerHighest.opacity(0.9), .clear],
                 startPoint: .leading, endPoint: .trailing
             )
             .offset(x: geo.size.width * phase)
         }
-        .blendMode(.plusLighter)
         .allowsHitTesting(false)
     }
 }

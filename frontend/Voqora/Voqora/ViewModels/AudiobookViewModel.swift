@@ -23,9 +23,6 @@ final class AudiobookViewModel: ObservableObject {
     @Published var loadFailed: Bool = false
 
     @Published var pendingSource: AudiobookImportSource? = nil
-    @Published var isImporterPresented = false
-    @Published var isWebPageImportPresented = false
-    @Published private(set) var webPageDraft = ""
     @Published var pendingEstimate: AudiobookEstimateResponse? = nil
     @Published var uploadInProgress = false
     @Published private(set) var deletingAllBooks = false
@@ -37,11 +34,22 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     private struct QueuedUpload {
-        let source: AudiobookImportSource
+        var source: AudiobookImportSource
         var voice: String
-        let speed: Double
+        var speed: Double
         let engine: String
         var pauseScale: Double
+        var delivery: SpeechDelivery?
+    }
+
+    private var observedProcessing: Set<String> = []
+
+    private struct StartJob {
+        let estimate: AudiobookEstimateResponse
+        let cleanup: LLMCredential?
+        let stagedDocument: URL?
+        let isWebPage: Bool
+        let importKind: String
     }
 
     struct ProviderFix: Identifiable, Equatable {
@@ -192,6 +200,8 @@ final class AudiobookViewModel: ObservableObject {
                     bookIDHash: sha256Hex(bookID),
                     secondsPlayed: self.audio.duration
                 )
+                UsageStatsStore.shared.recordBookFinished()
+                MetricsService.shared.trackAudiobookFinished()
             }
         resumePointSaver = audio.$currentTime
             .throttle(for: .seconds(5), scheduler: RunLoop.main, latest: true)
@@ -233,6 +243,9 @@ final class AudiobookViewModel: ObservableObject {
             hasLoadedOnce = true
             loadFailed = false
             for book in fresh {
+                if book.status == "done" {
+                    reportGenerated(book)
+                }
                 if sseTasks[book.bookID] == nil {
                     processingState[book.bookID] = book.displayStatus
                 }
@@ -278,13 +291,21 @@ final class AudiobookViewModel: ObservableObject {
         presentEstimate(for: .document(document), voice: voice, speed: speed, engine: engine)
     }
 
-    func presentEstimate(for source: AudiobookImportSource, voice: String, speed: Double, engine: String) {
+    func presentEstimate(
+        for source: AudiobookImportSource,
+        voice: String,
+        speed: Double,
+        engine: String,
+        pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil
+    ) {
         let upload = QueuedUpload(
             source: source,
             voice: voice,
             speed: speed,
             engine: engine,
-            pauseScale: PauseScale.clamped(defaultBookPauseScale)
+            pauseScale: PauseScale.clamped(pauseScale ?? defaultBookPauseScale),
+            delivery: delivery ?? SpeechDelivery.stored(forVoice: voice)
         )
         if pendingSource != nil || uploadInProgress {
             uploadQueue.append(upload)
@@ -303,29 +324,6 @@ final class AudiobookViewModel: ObservableObject {
         defaultBookSpeed > 0 ? defaultBookSpeed : fallback
     }
 
-    func presentWebPageImport() {
-        guard pendingSource == nil else { return }
-        isWebPageImportPresented = true
-    }
-
-    func dismissWebPageImport() {
-        isWebPageImportPresented = false
-    }
-
-    func importWebPage(_ url: URL, voice: String, speed: Double) {
-        webPageDraft = url.absoluteString
-        isWebPageImportPresented = false
-        presentEstimate(for: .webPage(url), voice: voice, speed: speed, engine: "kokoro")
-    }
-
-    func editWebPageLink() {
-        guard pendingSource?.webPageURL != nil else { return }
-        cancelUpload()
-        if pendingSource == nil {
-            isWebPageImportPresented = true
-        }
-    }
-
     var pendingNarrationVoice: String? {
         pendingUpload?.voice
     }
@@ -334,17 +332,79 @@ final class AudiobookViewModel: ObservableObject {
         pendingUpload?.pauseScale
     }
 
-    func updatePendingNarration(voice: String? = nil, pauseScale: Double? = nil) {
+    var pendingSpeed: Double? {
+        pendingUpload?.speed
+    }
+
+    var pendingDelivery: SpeechDelivery? {
+        pendingUpload?.delivery
+    }
+
+    func updatePendingNarration(
+        voice: String? = nil,
+        speed: Double? = nil,
+        pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil
+    ) {
         guard var upload = pendingUpload, pendingSource != nil, !startingProcessing else { return }
         let newVoice = voice ?? upload.voice
+        let newSpeed = speed ?? upload.speed
         let newPauseScale = pauseScale.map(PauseScale.clamped) ?? upload.pauseScale
-        guard newVoice != upload.voice || abs(newPauseScale - upload.pauseScale) > 0.001 else { return }
+        let newDelivery = SpeechDelivery.deliverable(delivery ?? upload.delivery, forVoice: newVoice)
+        let unchanged = newVoice == upload.voice
+            && abs(newSpeed - upload.speed) < 0.001
+            && abs(newPauseScale - upload.pauseScale) < 0.001
+            && newDelivery == SpeechDelivery.deliverable(upload.delivery, forVoice: upload.voice)
+        guard !unchanged else { return }
         upload.voice = newVoice
+        upload.speed = newSpeed
         upload.pauseScale = newPauseScale
+        upload.delivery = newDelivery
         if pauseScale != nil {
             defaultBookPauseScale = newPauseScale
         }
         requestEstimate(upload, replacing: pendingEstimate)
+    }
+
+    func retitlePending(_ title: String) {
+        guard var upload = pendingUpload, case let .document(staged) = upload.source,
+              !startingProcessing, !uploadInProgress
+        else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != AudiobookImportStaging.displayName(from: staged.lastPathComponent) else { return }
+        do {
+            let renamed = try AudiobookCreateStaging.stageCopy(of: staged, titled: trimmed)
+            AudiobookImportStaging.discard(staged)
+            upload.source = .document(renamed)
+            pendingSource = upload.source
+            requestEstimate(upload, replacing: pendingEstimate)
+        } catch {
+            showToast("Could not rename this audiobook: \(error.localizedDescription)", kind: .error)
+        }
+    }
+
+    func presentEstimate(
+        forText text: String,
+        title: String?,
+        voice: String,
+        speed: Double,
+        engine: String,
+        pauseScale: Double? = nil,
+        delivery: SpeechDelivery? = nil
+    ) {
+        do {
+            let staged = try AudiobookCreateStaging.stageText(text, title: title)
+            presentEstimate(
+                for: .document(staged),
+                voice: voice,
+                speed: speed,
+                engine: engine,
+                pauseScale: pauseScale,
+                delivery: delivery
+            )
+        } catch {
+            showToast("Could not prepare that text: \(error.localizedDescription)", kind: .error)
+        }
     }
 
     func refreshEstimate() {
@@ -412,6 +472,7 @@ final class AudiobookViewModel: ObservableObject {
                 speed: upload.speed,
                 engine: upload.engine,
                 pauseScale: upload.pauseScale,
+                delivery: upload.delivery,
                 cleanup: cleanup
             )
         case let .webPage(url):
@@ -421,6 +482,7 @@ final class AudiobookViewModel: ObservableObject {
                 speed: upload.speed,
                 engine: upload.engine,
                 pauseScale: upload.pauseScale,
+                delivery: upload.delivery,
                 cleanup: cleanup
             )
         }
@@ -497,48 +559,80 @@ final class AudiobookViewModel: ObservableObject {
         flushUploadQueue()
     }
 
+    func discardPendingDraft() {
+        let queuedDocuments = uploadQueue.compactMap(\.source.documentURL)
+        uploadQueue.removeAll()
+        queuedDocuments.forEach { AudiobookImportStaging.discard($0) }
+        cancelUpload()
+    }
+
     private func flushUploadQueue() {
         guard !uploadQueue.isEmpty else { return }
         let next = uploadQueue.removeFirst()
-        presentEstimate(for: next.source, voice: next.voice, speed: next.speed, engine: next.engine)
+        presentEstimate(
+            for: next.source,
+            voice: next.voice,
+            speed: next.speed,
+            engine: next.engine,
+            pauseScale: next.pauseScale,
+            delivery: next.delivery
+        )
     }
 
     func startProcessing(useCleanup: Bool) {
-        guard let est = pendingEstimate else { return }
-        guard !startingProcessing else { return }
+        guard let job = prepareStart(useCleanup: useCleanup) else { return }
+        Task { await perform(job) }
+    }
+
+    @discardableResult
+    func beginProcessing(useCleanup: Bool) async -> Bool {
+        guard let job = prepareStart(useCleanup: useCleanup) else { return false }
+        return await perform(job)
+    }
+
+    private func prepareStart(useCleanup: Bool) -> StartJob? {
+        guard let estimate = pendingEstimate, !startingProcessing else { return nil }
         let cleanup = useCleanup ? cleanupCredential : nil
         guard !useCleanup || cleanup != nil else {
             showToast(Self.missingProviderMessage, kind: .error)
-            return
+            return nil
         }
-        let bookID = est.bookID
-        let stagedDocument = pendingDocument
-        let isWebPage = pendingSource?.webPageURL != nil
         startingProcessing = true
-        Task {
-            defer { startingProcessing = false }
-            do {
-                try await service.start(bookID, cleanup: cleanup)
-                UsageStatsStore.shared.recordDocumentAdded(pages: est.pageCount)
-                if isWebPage {
-                    webPageDraft = ""
-                }
-                pendingSource = nil
-                pendingUpload = nil
-                pendingEstimate = nil
-                AudiobookImportStaging.discard(stagedDocument)
-                await refresh()
-                subscribe(to: bookID)
-                flushUploadQueue()
-            } catch {
-                showToast(error.localizedDescription, kind: .error)
-                Task { try? await service.delete(bookID) }
-                pendingSource = nil
-                pendingUpload = nil
-                pendingEstimate = nil
-                AudiobookImportStaging.discard(stagedDocument)
-                flushUploadQueue()
-            }
+        return StartJob(
+            estimate: estimate,
+            cleanup: cleanup,
+            stagedDocument: pendingDocument,
+            isWebPage: pendingSource?.webPageURL != nil,
+            importKind: pendingSource?.webPageURL != nil ? "web" : pendingSource.map(Self.fileKind(of:)) ?? "other"
+        )
+    }
+
+    private func perform(_ job: StartJob) async -> Bool {
+        defer { startingProcessing = false }
+        let bookID = job.estimate.bookID
+        do {
+            try await service.start(bookID, cleanup: job.cleanup)
+            UsageStatsStore.shared.recordDocumentAdded(pages: job.estimate.pageCount)
+            let importKind = MetricsService.Bucket.importKind(job.importKind)
+            UsageStatsStore.shared.recordImport(kind: importKind)
+            MetricsService.shared.trackLibraryImport(kind: importKind)
+            pendingSource = nil
+            pendingUpload = nil
+            pendingEstimate = nil
+            AudiobookImportStaging.discard(job.stagedDocument)
+            await refresh()
+            subscribe(to: bookID)
+            flushUploadQueue()
+            return true
+        } catch {
+            showToast(error.localizedDescription, kind: .error)
+            Task { try? await service.delete(bookID) }
+            pendingSource = nil
+            pendingUpload = nil
+            pendingEstimate = nil
+            AudiobookImportStaging.discard(job.stagedDocument)
+            flushUploadQueue()
+            return false
         }
     }
 
@@ -567,7 +661,7 @@ final class AudiobookViewModel: ObservableObject {
         toast = nil
     }
 
-    static let missingProviderMessage = "Add an AI provider in Preferences first."
+    static let missingProviderMessage = "Add an AI provider in Settings first."
 
     static func retryDecision(
         requiresCleanup: Bool,
@@ -716,7 +810,17 @@ final class AudiobookViewModel: ObservableObject {
         retry(fix.book, using: fix.provider)
     }
 
+    private func reportGenerated(_ book: Audiobook) {
+        guard observedProcessing.remove(book.bookID) != nil, book.kind != Audiobook.podcastKind else { return }
+        let chapters = book.actual?.sections ?? book.sections.count
+        let audioSeconds = book.actual?.audioSeconds ?? book.totalAudioSeconds
+        let renderSeconds = book.actual?.processingSeconds ?? 0
+        UsageStatsStore.shared.recordBookGenerated(chapters: chapters, audioSeconds: audioSeconds, renderSeconds: renderSeconds)
+        MetricsService.shared.trackAudiobookGenerated(chapters: chapters, audioSeconds: audioSeconds, renderSeconds: renderSeconds, engine: book.engine)
+    }
+
     func subscribe(to bookID: String) {
+        observedProcessing.insert(bookID)
         sseTasks[bookID]?.cancel()
         let token = UUID()
         sseGeneration[bookID] = token
@@ -792,8 +896,10 @@ final class AudiobookViewModel: ObservableObject {
     }
 
     func applyCompletion(_ book: Audiobook, generation: Int) {
+        reportGenerated(book)
         guard generation == completionGeneration else { return }
         completionSummary = book
+        SoundPlayer.shared.play(.audiobookReady)
         PermissionsService.shared.scheduleNotification(
             title: "Audiobook Ready",
             body: book.displayTitle
@@ -1175,7 +1281,7 @@ final class AudiobookViewModel: ObservableObject {
         let requiredCap = book.budget?.costApproval?.requiredCapUsd
         let cleanup = approveStandard ? providers.credential(for: .google) : nil
         guard !approveStandard || cleanup != nil else {
-            showToast("Connect Google in Preferences before approving Standard-tier work.", kind: .error)
+            showToast("Connect Google in Settings before approving Standard-tier work.", kind: .error)
             return
         }
         Task {

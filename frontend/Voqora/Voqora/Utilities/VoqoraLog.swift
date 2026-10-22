@@ -1,6 +1,6 @@
 import Foundation
 
-enum VoqoraLog {
+nonisolated enum VoqoraLog {
     enum Level: String {
         case debug = "DEBUG"
         case info = "INFO"

@@ -199,6 +199,29 @@ final class SpeechEngineStoreTests: XCTestCase {
         XCTAssertEqual(store.resolvedVoice("supertonic:F1"), "af_bella")
     }
 
+    func test_installedMingExposesVoicesAndLooksUpOneById() async {
+        let fake = FakeSpeechEngineService(engines: [SpeechEngineTests.kokoro, SpeechEngineTests.ming()])
+        let store = SpeechEngineStore(service: fake, pollInterval: .milliseconds(1))
+        await store.refresh()
+
+        XCTAssertEqual(store.mingVoices.map(\.id), ["ming:US_James", "ming:CN_Xiaoyu", "ming:custom:ab12"])
+        XCTAssertEqual(store.voice(id: "ming:CN_Xiaoyu")?.lang, "zh")
+        XCTAssertNil(store.voice(id: "af_bella"))
+        XCTAssertEqual(store.displayName(forVoice: "ming:US_James"), "Ming James")
+        XCTAssertEqual(store.resolvedVoice("ming:US_James"), "ming:US_James")
+        XCTAssertTrue(store.supertonicVoices.isEmpty)
+    }
+
+    func test_anUninstalledMingHidesItsVoicesAndResolvesToTheFallback() async {
+        let fake = FakeSpeechEngineService(engines: [SpeechEngineTests.kokoro, SpeechEngineTests.ming(installed: false)])
+        let store = SpeechEngineStore(service: fake, pollInterval: .milliseconds(1))
+        await store.refresh()
+
+        XCTAssertTrue(store.mingVoices.isEmpty)
+        XCTAssertNil(store.voice(id: "ming:US_James"))
+        XCTAssertEqual(store.resolvedVoice("ming:US_James"), "af_bella")
+    }
+
     func test_stopPollingEndsTheDownloadWatcher() async {
         let (store, fake) = makeStore()
         fake.downloadSteps = Array(repeating: 0.5, count: 50)

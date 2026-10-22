@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AIAskTab: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @ObservedObject var model: AIAskModel
     let onCitation: (AICitation) -> Void
     @FocusState private var composerFocused: Bool
@@ -22,11 +23,11 @@ struct AIAskTab: View {
                             HStack(spacing: DesignTokens.Spacing.sm) {
                                 ProgressView().controlSize(.small)
                                 Text("Reading the book…")
-                                    .font(vm.font(.rowSubtitle))
-                                    .foregroundStyle(Palette.textSecondary)
+                                    .font(vm.font(.bodySmall))
+                                    .foregroundStyle(theme.onSurfaceVariant)
                                 Button("Cancel") { model.cancel() }
                                     .buttonStyle(.borderless)
-                                    .font(vm.font(.rowSubtitle))
+                                    .font(vm.font(.bodySmall))
                             }
                             .id("ai-ask-progress")
                             .accessibilityElement(children: .combine)
@@ -50,11 +51,11 @@ struct AIAskTab: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: DesignTokens.Spacing.xs) {
             Text("Ask about this book")
-                .font(vm.font(.sectionTitle))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.title))
+                .foregroundStyle(theme.onSurface)
             Text("Answers come from the book's text. Tap a citation to jump to that passage.")
-                .font(vm.font(.rowSubtitle))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurfaceVariant)
         }
         .padding(.top, DesignTokens.Spacing.sm)
     }
@@ -63,13 +64,13 @@ struct AIAskTab: View {
         HStack(alignment: .bottom, spacing: DesignTokens.Spacing.sm) {
             TextField("Ask a question", text: $model.draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(vm.font(.rowTitle))
+                .font(vm.font(.body))
                 .lineLimit(1 ... 4)
                 .focused($composerFocused)
                 .onSubmit { model.send() }
                 .padding(.horizontal, DesignTokens.Spacing.md)
                 .padding(.vertical, DesignTokens.Spacing.sm)
-                .voqoraSurface(.control, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+                .background(theme.surfaceContainerHigh, in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
                 .accessibilityLabel("Question")
             Button {
                 model.send()
@@ -77,7 +78,7 @@ struct AIAskTab: View {
                 Image(systemName: "arrow.up")
                     .font(.system(size: 13, weight: .bold))
             }
-            .buttonStyle(.voqoraPrimary)
+            .buttonStyle(.voqoraFilled)
             .disabled(!model.canSend)
             .accessibilityLabel("Send Question")
             .help("Send")
@@ -88,7 +89,7 @@ struct AIAskTab: View {
                     Image(systemName: "trash")
                         .font(.system(size: 13))
                 }
-                .buttonStyle(.voqoraSecondary)
+                .buttonStyle(.voqoraTonal)
                 .accessibilityLabel("Clear Conversation")
                 .help("Clear Conversation")
             }
@@ -99,8 +100,7 @@ struct AIAskTab: View {
 
 private struct AIChatBubble: View {
     @EnvironmentObject var vm: DashboardViewModel
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.voqoraTheme) private var theme
     let message: AIAskModel.Message
     let onCitation: (AICitation) -> Void
 
@@ -111,15 +111,15 @@ private struct AIChatBubble: View {
     var body: some View {
         VStack(alignment: isUser ? .trailing : .leading, spacing: DesignTokens.Spacing.sm) {
             Text(message.text)
-                .font(vm.font(.rowTitle))
-                .foregroundStyle(isUser ? vm.onAccentColor(scheme: colorScheme, contrast: contrast) : Palette.textPrimary)
+                .font(vm.font(.body))
+                .foregroundStyle(isUser ? theme.onPrimary : theme.onSurface)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, DesignTokens.Spacing.md)
                 .padding(.vertical, DesignTokens.Spacing.sm)
                 .background(
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .fill(isUser ? vm.accentColor(scheme: colorScheme, contrast: contrast) : Palette.surfaceRaised)
+                    RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous)
+                        .fill(isUser ? theme.primary : theme.surfaceContainerHigh)
                 )
                 .accessibilityLabel(isUser ? "You asked: \(message.text)" : "Answer: \(message.text)")
             if !message.citations.isEmpty {
@@ -139,6 +139,7 @@ private struct AIChatBubble: View {
 
 private struct AICitationButton: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let number: Int
     let citation: AICitation
     let action: () -> Void
@@ -154,33 +155,33 @@ private struct AICitationButton: View {
         Button(action: action) {
             HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
                 Text("\(number)")
-                    .font(vm.font(.caption).weight(.bold))
+                    .font(vm.font(.labelSmall))
                     .monospacedDigit()
-                    .foregroundStyle(Palette.textSecondary)
+                    .foregroundStyle(theme.onSurfaceVariant)
                     .frame(width: 18, height: 18)
-                    .background(Circle().fill(Palette.controlFill))
+                    .background(Circle().fill(theme.surfaceContainerHigh))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(location)
-                        .font(vm.font(.rowSubtitle).weight(.semibold))
-                        .foregroundStyle(Palette.textPrimary)
+                        .font(vm.font(.label))
+                        .foregroundStyle(theme.onSurface)
                     if !citation.quote.isEmpty {
                         Text("\u{201C}\(citation.quote)\u{201D}")
-                            .font(vm.font(.rowSubtitle))
-                            .foregroundStyle(Palette.textSecondary)
+                            .font(vm.font(.bodySmall))
+                            .foregroundStyle(theme.onSurfaceVariant)
                             .lineLimit(3)
                             .multilineTextAlignment(.leading)
                     }
                 }
                 Spacer(minLength: 0)
                 Image(systemName: "arrow.forward.circle")
-                    .foregroundStyle(Palette.textTertiary)
+                    .foregroundStyle(theme.onSurfaceMuted)
             }
             .padding(DesignTokens.Spacing.sm)
             .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
-                    .fill(hovering ? Palette.controlFill : Color.clear)
+                RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous)
+                    .fill(hovering ? theme.surfaceContainerHigh : Color.clear)
             )
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }

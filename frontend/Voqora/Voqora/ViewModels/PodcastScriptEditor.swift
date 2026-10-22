@@ -162,6 +162,8 @@ final class PodcastScriptEditor: ObservableObject, Identifiable {
                 "turns": "\(receipt.turnCount)",
                 "speakers": "\(receipt.speakers.count)",
             ])
+            UsageStatsStore.shared.recordPodcastRender(speakers: receipt.speakers.count, audioSeconds: receipt.estimatedAudioSeconds)
+            MetricsService.shared.trackPodcastRender(speakers: receipt.speakers.count, audioSeconds: receipt.estimatedAudioSeconds, ok: true)
             renderState = .rendered(receipt)
             await library.refresh()
             library.track(receipt.bookID)
@@ -169,6 +171,7 @@ final class PodcastScriptEditor: ObservableObject, Identifiable {
         } catch is CancellationError {
             renderState = .idle
         } catch {
+            MetricsService.shared.trackPodcastRender(speakers: script.speakers.count, audioSeconds: nil, ok: false)
             VoqoraLog.warn("Studio", "Podcast render failed", ["failureCode": PodcastServiceError.logLabel(for: error)])
             renderState = .failed(error.localizedDescription)
         }

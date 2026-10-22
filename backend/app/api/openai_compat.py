@@ -12,6 +12,9 @@ from pydantic import BaseModel, Field, field_validator
 from app.api.public_errors import error_response
 from app.core.logging import get_logger
 from app.services.audio import AudioService
+from app.services.delivery import Delivery, style_from_instructions
+from app.services.engine_errors import EngineNotInstalledError
+from app.services.engine_manager import MING, EngineManager
 from app.services.public_voices import (
     MAX_VOICE_ID_CHARS,
     OPENAI_VOICE_ALIASES,
@@ -66,6 +69,18 @@ class SpeechRequest(BaseModel):
     speed: float = Field(default=1.0, ge=0.25, le=4.0)
     # Voqora extension: the pause length setting, as on /speak.
     pause_scale: float = Field(default=1.0, ge=MIN_PAUSE_SCALE, le=MAX_PAUSE_SCALE)
+    instructions: str | None = None
+    delivery: Delivery | None = None
+
+    @property
+    def effective_delivery(self) -> Delivery | None:
+        if not self.instructions or EngineManager.engine_for_voice(self.voice) != MING:
+            return self.delivery
+        style = style_from_instructions(self.instructions)
+        if style is None:
+            return self.delivery
+        fields = self.delivery.to_record() if self.delivery else {}
+        return Delivery(**{**fields, "style": style})
 
     @field_validator("model")
     @classmethod
@@ -100,6 +115,7 @@ class RelaySpeakRequest(BaseModel):
     voice: str | None = Field(default=None, min_length=1, max_length=MAX_VOICE_ID_CHARS)
     client: str | None = Field(default=None, max_length=MAX_CLIENT_NAME_CHARS)
     mode: Literal["replace", "queue"] = "replace"
+    delivery: Delivery | None = None
 
     @field_validator("text")
     @classmethod
@@ -152,11 +168,14 @@ async def create_speech(req: SpeechRequest) -> Response:
             req.voice,
             clamp_engine_speed(req.speed),
             pause_scale=req.pause_scale,
+            delivery=req.effective_delivery,
         )
         try:
             body = b"".join([part async for part in audio_format.encode(samples)])
         finally:
             await samples.aclose()
+    except EngineNotInstalledError as error:
+        return error_response(409, str(error))
     except Exception:
         log.error(
             "local_api.speech_failed",
@@ -176,7 +195,15 @@ async def create_speech(req: SpeechRequest) -> Response:
 @router.post("/v1/voqora/speak", status_code=202)
 async def relay_speak(req: RelaySpeakRequest) -> JSONResponse:
     """Ask the Voqora app to speak text aloud on this Mac."""
-    return _relay(lambda: speech_relay.speak(req.text, req.voice, req.client, req.mode))
+    return _relay(
+        lambda: speech_relay.speak(
+            req.text,
+            req.voice,
+            req.client,
+            req.mode,
+            req.delivery.to_record() if req.delivery else None,
+        )
+    )
 
 
 @router.post("/v1/voqora/stop", status_code=202)

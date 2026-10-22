@@ -34,6 +34,8 @@ TestClient.__init__ = _authenticated_init
 def isolated_voice_preferences(tmp_path, monkeypatch):
     """Keep voice blends and pronunciations out of the real user data dir."""
     from app.core.config import Settings
+    from app.services.ming_installer import MingInstaller
+    from app.services.ming_voices import ming_voices
     from app.services.pronunciation import pronunciations
     from app.services.supertonic_installer import SupertonicInstaller
     from app.services.voice_blends import voice_blends
@@ -46,12 +48,24 @@ def isolated_voice_preferences(tmp_path, monkeypatch):
     monkeypatch.setattr(
         Settings, "PRONUNCIATIONS_PATH", property(lambda self: pronunciations_path)
     )
+    ming_voices_path = str(tmp_path / "ming_voices.json")
+    ming_voices_dir = str(tmp_path / "ming_voices")
+    monkeypatch.setattr(
+        Settings, "MING_VOICES_PATH", property(lambda self: ming_voices_path)
+    )
+    monkeypatch.setattr(
+        Settings, "MING_VOICES_DIR", property(lambda self: ming_voices_dir)
+    )
     models_dir = str(tmp_path / "models")
     monkeypatch.setattr(Settings, "MODELS_DIR", property(lambda self: models_dir))
     SupertonicInstaller.reset()
+    MingInstaller.reset()
     voice_blends.reset()
+    ming_voices.reset()
     pronunciations.reset()
     yield
     SupertonicInstaller.reset()
+    MingInstaller.reset()
     voice_blends.reset()
+    ming_voices.reset()
     pronunciations.reset()

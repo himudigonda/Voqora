@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     # Kept in lockstep with the public app version. The release preflight
     # verifies this runtime declaration and `pyproject.toml` against Xcode so
     # support logs and packaged components never report a stale product build.
-    VERSION: str = "2.0.0"
+    VERSION: str = "2.1.0"
     # The bundled app owns an ephemeral loopback listener and hands its
     # descriptor to this process. HOST/PORT remain development fallbacks only;
     # release launches must set both Voqora IPC settings below. See R123-IPC.
@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     @property
     def VOICE_BLENDS_PATH(self) -> str:
         return os.path.join(self.USER_DATA_DIR, "voice_blends.json")
+
+    @property
+    def MING_VOICES_PATH(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "ming_voices.json")
+
+    @property
+    def MING_VOICES_DIR(self) -> str:
+        return os.path.join(self.USER_DATA_DIR, "ming_voices")
 
     @property
     def PRONUNCIATIONS_PATH(self) -> str:

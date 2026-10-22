@@ -181,11 +181,11 @@ struct ReadingSentenceRow: View {
             .padding(.vertical, CGFloat(style.typography.fontSize) * 0.2)
             .padding(.horizontal, DesignTokens.Spacing.md)
             .background(
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous)
+                RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous)
                     .fill(style.isActive ? Color(style.palette.focusBand) : Color.clear)
             )
             .opacity(style.isDimmed ? style.palette.dimmedOpacity : 1)
-            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.medium, style: .continuous))
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)
                     .onEnded { value in

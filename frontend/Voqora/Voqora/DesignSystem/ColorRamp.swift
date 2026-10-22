@@ -200,6 +200,10 @@ enum ColorRamp {
         return derived
     }
 
+    static func tone(seed: AccentSeed, lightness: Double, chroma: Double) -> ColorRGBA {
+        OKLCH(lightness: lightness, chroma: chroma, hue: seed.hue).rgba
+    }
+
     static func uncachedRamp(for seed: AccentSeed, appearance: ColorAppearance) -> AccentRamp {
         let l = lightnesses(for: appearance)
         let c = chromaScales(for: appearance)

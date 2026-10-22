@@ -10,6 +10,7 @@
 		80FA17010000000000000002 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 80FA17010000000000000001 /* Fonts */; };
 		80E015062F24146E003FB2E4 /* KeyboardShortcuts in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015052F24146E003FB2E4 /* KeyboardShortcuts */; };
 		80E015082F24146E003FB2E4 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 80E015072F24146E003FB2E4 /* Sparkle */; };
+		80E0150B2F24146E003FB2E4 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = 80E0150A2F24146E003FB2E4 /* FluidAudio */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 			files = (
 				80E015062F24146E003FB2E4 /* KeyboardShortcuts in Frameworks */,
 				80E015082F24146E003FB2E4 /* Sparkle in Frameworks */,
+				80E0150B2F24146E003FB2E4 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -148,6 +150,7 @@
 			packageProductDependencies = (
 				80E015052F24146E003FB2E4 /* KeyboardShortcuts */,
 				80E015072F24146E003FB2E4 /* Sparkle */,
+				80E0150A2F24146E003FB2E4 /* FluidAudio */,
 			);
 			productName = Voqora;
 			productReference = 80E014F62F241426003FB2E4 /* Voqora.app */;
@@ -184,6 +187,7 @@
 			packageReferences = (
 				80E015042F24146E003FB2E4 /* XCRemoteSwiftPackageReference "KeyboardShortcuts" */,
 				80E015092F24146E003FB2E4 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				80E0150C2F24146E003FB2E4 /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 80E014F72F241426003FB2E4 /* Products */;
@@ -245,11 +249,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 202;
+				CURRENT_PROJECT_VERSION = 207;
 				DEVELOPMENT_TEAM = WL37Y6X6V9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 2.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.VoqoraTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -266,11 +270,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 202;
+				CURRENT_PROJECT_VERSION = 207;
 				DEVELOPMENT_TEAM = WL37Y6X6V9;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 2.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.VoqoraTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
@@ -410,7 +414,7 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 202;
+				CURRENT_PROJECT_VERSION = 207;
 				DEVELOPMENT_TEAM = "";
 				SPARKLE_PUBLIC_ED_KEY = "OIPL/uwP6FPXEMPkNI8aYICpQwhcliTElFT+HD5IOlU=";
 				ENABLE_APP_SANDBOX = NO;
@@ -431,7 +435,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 2.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.Voqora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -459,7 +463,7 @@
 				AUTOMATION_APPLE_EVENTS = YES;
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 202;
+				CURRENT_PROJECT_VERSION = 207;
 				DEVELOPMENT_TEAM = "";
 				SPARKLE_PUBLIC_ED_KEY = "OIPL/uwP6FPXEMPkNI8aYICpQwhcliTElFT+HD5IOlU=";
 				ENABLE_APP_SANDBOX = NO;
@@ -480,7 +484,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.0.0;
+				MARKETING_VERSION = 2.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.himudigonda.Voqora;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -549,6 +553,14 @@
 				minimumVersion = 2.9.0;
 			};
 		};
+		80E0150C2F24146E003FB2E4 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.17.7;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -561,6 +573,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 80E015092F24146E003FB2E4 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		80E0150A2F24146E003FB2E4 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 80E0150C2F24146E003FB2E4 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

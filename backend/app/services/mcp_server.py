@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from app.core.config import settings
 from app.core.logging import get_logger
+from app.services.delivery import Delivery
 from app.services.public_voices import (
     MAX_VOICE_ID_CHARS,
     OPENAI_VOICE_ALIASES,
@@ -73,6 +74,11 @@ class SpeakArguments(BaseModel):
     mode: Literal["replace", "queue"] = Field(
         default="replace",
         description="replace interrupts current speech; queue speaks after it.",
+    )
+    delivery: Delivery | None = Field(
+        default=None,
+        description="How to deliver the speech (emotion, style, pace, pitch, "
+        "dialect). Only Ming voices use it.",
     )
 
     @field_validator("text")
@@ -147,7 +153,13 @@ def _input_schema(model: type[BaseModel]) -> dict[str, Any]:
 
 def build_tools(relay: SpeechRelay) -> list[McpTool]:
     def speak(args: SpeakArguments, client: str | None) -> str:
-        relay.speak(args.text, args.voice, client, args.mode)
+        relay.speak(
+            args.text,
+            args.voice,
+            client,
+            args.mode,
+            args.delivery.to_record() if args.delivery else None,
+        )
         return "Queued for speech on this Mac."
 
     def stop(_args: NoArguments, _client: str | None) -> str:

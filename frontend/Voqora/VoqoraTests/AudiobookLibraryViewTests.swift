@@ -1,7 +1,16 @@
 @testable import Voqora
 import XCTest
 
+@MainActor
 final class AudiobookLibraryViewTests: XCTestCase {
+    private static var book: Audiobook {
+        makeTestAudiobook()
+    }
+
+    private static var fix: AudiobookViewModel.ProviderFix {
+        AudiobookViewModel.ProviderFix(book: book, provider: nil)
+    }
+
     func test_showsNoResultsState_falseWhenSearchIsEmpty() {
         XCTAssertFalse(AudiobookLibraryView.showsNoResultsState(searchText: "", matchCount: 0))
         XCTAssertFalse(AudiobookLibraryView.showsNoResultsState(searchText: "", matchCount: 5))
@@ -16,31 +25,32 @@ final class AudiobookLibraryViewTests: XCTestCase {
     }
 
     func test_dismissalIsHonoredWhenThePresentedSheetIsStillCurrent() {
-        XCTAssertTrue(LibrarySheet.honorsDismissal(presentedID: LibrarySheet.addFromURL.id, currentID: LibrarySheet.addFromURL.id))
+        let id = LibrarySheet.fixProvider(Self.fix).id
+        XCTAssertTrue(LibrarySheet.honorsDismissal(presentedID: id, currentID: id))
     }
 
-    func test_dismissalIsIgnoredWhenTheCurrentSheetChangedDuringTheHandoff() throws {
-        let link = try XCTUnwrap(URL(string: "https://example.com/story"))
-        let upload = LibrarySheet.upload(.webPage(link))
+    func test_dismissalIsIgnoredWhenTheCurrentSheetChangedDuringTheHandoff() {
+        let fix = LibrarySheet.fixProvider(Self.fix)
+        let completion = LibrarySheet.completion(Self.book)
 
-        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: LibrarySheet.addFromURL.id, currentID: upload.id))
+        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: fix.id, currentID: completion.id))
     }
 
     func test_dismissalIsIgnoredWhenNothingWasPresentedOrNothingIsCurrent() {
-        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: nil, currentID: LibrarySheet.addFromURL.id))
-        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: LibrarySheet.addFromURL.id, currentID: nil))
+        let id = LibrarySheet.fixProvider(Self.fix).id
+        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: nil, currentID: id))
+        XCTAssertFalse(LibrarySheet.honorsDismissal(presentedID: id, currentID: nil))
     }
 
-    @MainActor
     func test_presentationForgetsASheetOnlyWhileItIsStillTheTrackedOne() {
         let presentation = LibrarySheetPresentation()
 
-        presentation.didAppear("add-from-url")
-        presentation.didAppear("upload-x")
-        presentation.didDisappear("add-from-url")
-        XCTAssertEqual(presentation.presentedID, "upload-x")
+        presentation.didAppear("fix-a")
+        presentation.didAppear("completion-x")
+        presentation.didDisappear("fix-a")
+        XCTAssertEqual(presentation.presentedID, "completion-x")
 
-        presentation.didDisappear("upload-x")
+        presentation.didDisappear("completion-x")
         XCTAssertNil(presentation.presentedID)
     }
 }

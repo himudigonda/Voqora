@@ -8,6 +8,8 @@ private final class FakePasteboard: PasteboardAccessing {
     private(set) var lastWriteWasTransient = false
     private(set) var restoreCount = 0
     private(set) var changeCount = 0
+    var readsPaste = true
+    private var pendingRead: AsyncStream<Void>.Continuation?
 
     init(text: String?) {
         self.text = text
@@ -30,6 +32,19 @@ private final class FakePasteboard: PasteboardAccessing {
         lastWriteWasTransient = transient
     }
 
+    func writeObserved(_ text: String) -> AsyncStream<Void> {
+        write(text, transient: true)
+        let (reads, continuation) = AsyncStream<Void>.makeStream()
+        pendingRead = continuation
+        return reads
+    }
+
+    func targetReadsThePaste() {
+        guard readsPaste else { return }
+        pendingRead?.yield()
+        pendingRead?.finish()
+    }
+
     func simulateCopyFromAnotherApp(_ text: String) {
         changeCount += 1
         self.text = text
@@ -37,15 +52,23 @@ private final class FakePasteboard: PasteboardAccessing {
 }
 
 @MainActor
+private final class FakeClock {
+    var now: TimeInterval = 0
+}
+
+@MainActor
 private final class FakePasteCommand: PasteCommandSending {
     var succeeds = true
     private(set) var sentCount = 0
     private(set) var clipboardAtPaste: String?
+    var onSend: (() -> Void)?
     weak var pasteboard: FakePasteboard?
 
     func sendPaste() -> Bool {
         sentCount += 1
         clipboardAtPaste = pasteboard?.text
+        onSend?()
+        pasteboard?.targetReadsThePaste()
         return succeeds
     }
 }
@@ -64,14 +87,25 @@ final class TranscriptInserterTests: XCTestCase {
         waits = []
     }
 
-    private func makeInserter(trusted: Bool = true, duringWait: (() -> Void)? = nil) -> TranscriptInserter {
-        TranscriptInserter(
+    private func makeInserter(
+        trusted: Bool = true,
+        minimumRestoreDelay: TimeInterval = 0.25,
+        clock: FakeClock? = nil,
+        duringWait: (() -> Void)? = nil
+    ) -> TranscriptInserter {
+        let fakeClock = clock ?? FakeClock()
+        return TranscriptInserter(
             pasteboard: pasteboard,
             pasteCommand: command,
             isAccessibilityTrusted: { trusted },
             restoreDelay: 0.25,
+            minimumRestoreDelay: minimumRestoreDelay,
+            readTimeout: 0.05,
+            gate: PasteboardGate(),
+            now: { fakeClock.now },
             wait: { [weak self] seconds in
                 self?.waits.append(seconds)
+                fakeClock.now += seconds
                 duringWait?()
             }
         )
@@ -106,6 +140,54 @@ final class TranscriptInserterTests: XCTestCase {
         XCTAssertEqual(pasteboard.text, "Copied meanwhile")
     }
 
+    func test_clipboardIsNotRestoredUntilTheTargetReadsThePaste() async {
+        pasteboard.readsPaste = false
+
+        let outcome = await makeInserter().insert("Dictated words", mode: .paste)
+
+        XCTAssertEqual(outcome, .copied)
+        XCTAssertTrue(waits.isEmpty)
+        XCTAssertEqual(pasteboard.restoreCount, 0)
+        XCTAssertEqual(pasteboard.text, "Dictated words")
+        XCTAssertFalse(pasteboard.lastWriteWasTransient)
+    }
+
+    func test_anUnreadPasteNeverOverwritesANewerCopy() async {
+        pasteboard.readsPaste = false
+        command.onSend = { [weak self] in self?.pasteboard.simulateCopyFromAnotherApp("Copied meanwhile") }
+
+        let outcome = await makeInserter().insert("Dictated words", mode: .paste)
+
+        XCTAssertEqual(outcome, .copied)
+        XCTAssertEqual(pasteboard.text, "Copied meanwhile")
+    }
+
+    func test_restoreWaitsTheShortDelayAfterTheRead() async {
+        let outcome = await makeInserter().insert("Dictated words", mode: .paste)
+
+        XCTAssertEqual(outcome, .pasted)
+        XCTAssertEqual(waits, [0.25])
+        XCTAssertEqual(TranscriptInserter.defaultRestoreDelay, 0.15)
+        XCTAssertEqual(TranscriptInserter.defaultReadTimeout, 2.5)
+    }
+
+    func test_anImmediateReadStillWaitsTheMinimumRestoreDelayAfterTheSend() async {
+        let clock = FakeClock()
+        command.onSend = { clock.now = 10 }
+
+        let outcome = await makeInserter(
+            minimumRestoreDelay: TranscriptInserter.defaultMinimumRestoreDelay,
+            clock: clock
+        ).insert("Dictated words", mode: .paste)
+
+        XCTAssertEqual(outcome, .pasted)
+        XCTAssertEqual(TranscriptInserter.defaultMinimumRestoreDelay, 0.5)
+        XCTAssertEqual(waits, [0.5])
+        XCTAssertEqual(clock.now - 10, 0.5, accuracy: 0.0001)
+        XCTAssertEqual(pasteboard.restoreCount, 1)
+        XCTAssertEqual(pasteboard.text, "What was on the clipboard")
+    }
+
     func test_copyModeLeavesTheTranscriptOnTheClipboard() async {
         let outcome = await makeInserter().insert("Dictated words", mode: .copy)
 
@@ -134,6 +216,19 @@ final class TranscriptInserterTests: XCTestCase {
         XCTAssertTrue(waits.isEmpty)
         XCTAssertEqual(pasteboard.text, "Dictated words")
         XCTAssertFalse(pasteboard.lastWriteWasTransient)
+    }
+
+    func test_systemPasteboardReportsWhenTheTargetReadsTheText() async {
+        let named = NSPasteboard(name: .init("com.himudigonda.Voqora.TranscriptInserterTests.observed"))
+        named.clearContents()
+        let system = SystemPasteboard(pasteboard: named)
+
+        let reads = system.writeObserved("Transcript")
+        XCTAssertEqual(named.string(forType: .string), "Transcript")
+
+        var iterator = reads.makeAsyncIterator()
+        let first: Void? = await iterator.next()
+        XCTAssertNotNil(first)
     }
 
     func test_systemPasteboardRoundTripsAndFlagsTransientWrites() {

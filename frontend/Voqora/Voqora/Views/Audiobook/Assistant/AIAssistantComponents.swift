@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AIConnectProviderState: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     @EnvironmentObject var providers: LLMProviderStore
     @State private var addingProvider = false
 
@@ -13,29 +14,31 @@ struct AIConnectProviderState: View {
     var body: some View {
         VStack(spacing: DesignTokens.Spacing.md) {
             Image(systemName: "sparkles")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(Palette.textSecondary)
+                .font(.system(size: 26, weight: .regular))
+                .foregroundStyle(theme.onPrimaryContainer)
+                .frame(width: 64, height: 64)
+                .background(theme.primaryContainer.opacity(0.65), in: Circle())
                 .accessibilityHidden(true)
             Text(needsChoice ? "Choose an AI Provider" : "Connect an AI Provider")
-                .font(vm.font(.sectionTitle))
-                .foregroundStyle(Palette.textPrimary)
+                .font(vm.font(.title))
+                .foregroundStyle(theme.onSurface)
             Text(
                 needsChoice
-                    ? "Pick which connected provider Voqora uses in Preferences > AI."
+                    ? "Pick which connected provider Voqora uses in Settings > AI."
                     : "Summaries, questions, quizzes and flashcards use an AI provider you connect. Local providers keep the book on your Mac."
             )
-            .font(vm.font(.rowTitle))
-            .foregroundStyle(Palette.textSecondary)
+            .font(vm.font(.body))
+            .foregroundStyle(theme.onSurfaceVariant)
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: 360)
             HStack(spacing: DesignTokens.Spacing.sm) {
                 if !needsChoice {
                     Button("Connect a Provider…") { addingProvider = true }
-                        .buttonStyle(.voqoraPrimary)
+                        .buttonStyle(.voqoraFilled)
                 }
-                Button("Open Preferences > AI") { vm.selectedTab = "preferences" }
-                    .buttonStyle(.voqoraSecondary)
+                Button("Open Settings > AI") { AppWindows.openSettings(tab: .ai) }
+                    .buttonStyle(.voqoraTonal)
             }
         }
         .padding(DesignTokens.Spacing.xl)
@@ -51,6 +54,7 @@ struct AIConnectProviderState: View {
 
 struct AIProgressState: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let title: String
     let onCancel: () -> Void
 
@@ -58,10 +62,10 @@ struct AIProgressState: View {
         VStack(spacing: DesignTokens.Spacing.md) {
             ProgressView().controlSize(.small)
             Text(title)
-                .font(vm.font(.rowTitle))
-                .foregroundStyle(Palette.textSecondary)
+                .font(vm.font(.body))
+                .foregroundStyle(theme.onSurfaceVariant)
             Button("Cancel", action: onCancel)
-                .buttonStyle(.voqoraSecondary)
+                .buttonStyle(.voqoraTonal)
                 .keyboardShortcut(.cancelAction)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -72,40 +76,42 @@ struct AIProgressState: View {
 
 struct AIErrorBanner: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let error: AIReadingError
     let onRetry: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: DesignTokens.Spacing.sm) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Palette.warning)
+                .foregroundStyle(theme.warning)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
                 Text(error.message)
-                    .font(vm.font(.rowTitle))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(vm.font(.body))
+                    .foregroundStyle(theme.onSurface)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: DesignTokens.Spacing.sm) {
                     if let onRetry, error.isRetryable {
                         Button("Try Again", action: onRetry)
-                            .buttonStyle(.voqoraSecondary)
+                            .buttonStyle(.voqoraTonal)
                     }
                     if error.kind == .providerRequired || error.kind == .providerSettings || error.kind == .provider {
-                        Button("Open Preferences > AI") { vm.selectedTab = "preferences" }
-                            .buttonStyle(.voqoraSecondary)
+                        Button("Open Settings > AI") { AppWindows.openSettings(tab: .ai) }
+                            .buttonStyle(.voqoraTonal)
                     }
                 }
             }
             Spacer(minLength: 0)
         }
         .padding(DesignTokens.Spacing.md)
-        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.Radius.sm, style: .continuous))
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 }
 
 struct AIResultActions: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let text: String
     let language: AILanguage?
     @State private var copied = false
@@ -118,14 +124,14 @@ struct AIResultActions: View {
             } label: {
                 Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
             }
-            .buttonStyle(.voqoraSecondary)
+            .buttonStyle(.voqoraTonal)
             .accessibilityLabel(copied ? "Copied" : "Copy to clipboard")
             Button {
                 speak()
             } label: {
                 Label("Speak", systemImage: "speaker.wave.2")
             }
-            .buttonStyle(.voqoraSecondary)
+            .buttonStyle(.voqoraTonal)
             .accessibilityLabel("Speak aloud")
             .help("Speak aloud with your current voice. The audiobook pauses; Continue Listening picks it up where you left off.")
         }
@@ -147,12 +153,13 @@ struct AIResultActions: View {
 
 struct AIUsageFootnote: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
     let usage: AIUsage
 
     var body: some View {
         Text(AIUsageFormatter.summary(usage))
-            .font(vm.font(.caption))
-            .foregroundStyle(Palette.textTertiary)
+            .font(vm.font(.labelSmall))
+            .foregroundStyle(theme.onSurfaceVariant)
     }
 }
 
@@ -172,6 +179,7 @@ nonisolated enum AIUsageFormatter {
 }
 
 struct AIOptionsCard<Content: View>: View {
+    @Environment(\.voqoraTheme) private var theme
     @ViewBuilder let content: () -> Content
 
     var body: some View {
@@ -180,6 +188,6 @@ struct AIOptionsCard<Content: View>: View {
         }
         .padding(DesignTokens.Spacing.lg)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .voqoraSurface(.raised, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.large, style: .continuous))
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
     }
 }

@@ -417,7 +417,7 @@ def test_speak_request_rejects_unsupported_language():
     assert SpeakRequest(text="Hola", voice="ef_dora").lang is None
     assert SpeakRequest(text="Hola", lang="es").lang == "es"
     with pytest.raises(ValidationError):
-        SpeakRequest(text="Hello", lang="ja")
+        SpeakRequest(text="Hello", lang="xx")
 
 
 def test_split_segments_breaks_on_cjk_and_devanagari_sentence_marks():

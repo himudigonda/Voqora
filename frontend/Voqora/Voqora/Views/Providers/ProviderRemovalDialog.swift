@@ -2,28 +2,26 @@ import SwiftUI
 
 private struct ProviderRemovalDialog: ViewModifier {
     @EnvironmentObject var providers: LLMProviderStore
+    @EnvironmentObject var vm: DashboardViewModel
     @Binding var target: LLMProvider?
     let cleaningCount: (LLMProvider) -> Int
     let onRemoved: () -> Void
 
     func body(content: Content) -> some View {
-        content.confirmationDialog(
-            target.map(ProviderRemovalNotice.title(for:)) ?? "Remove Provider?",
-            isPresented: Binding(get: { target != nil }, set: {
-                if !$0 {
+        content.sheet(item: $target) { provider in
+            RemovalSheet(
+                title: ProviderRemovalNotice.title(for: provider),
+                message: message(for: provider),
+                remove: {
+                    providers.remove(provider)
                     target = nil
-                }
-            }),
-            titleVisibility: .visible,
-            presenting: target
-        ) { provider in
-            Button("Remove", role: .destructive) {
-                providers.remove(provider)
-                onRemoved()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: { provider in
-            Text(message(for: provider))
+                    onRemoved()
+                },
+                cancel: { target = nil }
+            )
+            .environmentObject(vm)
+            .environmentObject(providers)
+            .voqoraTheme()
         }
     }
 
@@ -34,6 +32,35 @@ private struct ProviderRemovalDialog: ViewModifier {
             cleaningCount: cleaningCount(provider),
             remaining: providers.connectedProviders.filter { $0 != provider }
         )
+    }
+}
+
+private struct RemovalSheet: View {
+    let title: String
+    let message: String
+    let remove: () -> Void
+    let cancel: () -> Void
+
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
+
+    var body: some View {
+        VoqoraSheet(title: title, width: 460, onClose: cancel) {
+            VStack(alignment: .leading, spacing: Theme.Space.card) {
+                Text(message)
+                    .voqoraFont(.body)
+                    .foregroundStyle(theme.onSurfaceVariant)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Theme.Space.item) {
+                    Spacer(minLength: 0)
+                    Button("Cancel", action: cancel)
+                        .buttonStyle(.voqoraText)
+                        .keyboardShortcut(.defaultAction)
+                    Button("Remove", action: remove)
+                        .buttonStyle(.voqoraDangerFilled)
+                }
+            }
+        }
     }
 }
 

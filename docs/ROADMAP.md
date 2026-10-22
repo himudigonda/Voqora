@@ -15,7 +15,7 @@
 - Scrub previews with the section name, a speed menu in the player, and a sleep
   timer that can stop at the end of a section.
 - Selected-text speech shares the same player and transcript.
-- The Vault for searching, starring, and replaying spoken selections.
+- History for searching, starring, and replaying spoken selections.
 - DOCX, TXT, and Markdown audiobooks alongside PDF, with local cleanup by
   default and AI cleanup as an explicit choice.
 - Guided DMG downloads for updates, with SHA-256 verification.
@@ -33,11 +33,11 @@ Everything in 2.0.0 is free, with no paid tier.
 - Audiobooks from EPUB, HTML, and web links, with the book's author, MP3 and
   M4B (with chapters and cover) export, and SRT and WebVTT subtitles.
 - Reading Mode with word-by-word highlighting.
-- Voices: a Voice Catalog, My Voices blends, a pronunciation dictionary
+- Voices: Browse Voices, My Voices (blends, designed and cloned voices), a pronunciation dictionary
   (global and per book), and Pause Length.
 - AI reading tools: summaries, questions with citations, quizzes, flashcards,
   and Summarize or Translate Selection and Speak.
-- Studio: two-voice podcasts from any text, with an editable script.
+- Create: two-voice podcasts from any text, with an editable script.
 - An Inbox for saving articles to listen to later.
 - Speak Text on Screen (OCR), Speak Clipboard, macOS Services, Shortcuts app
   actions, media keys, and Now Playing.
@@ -45,7 +45,7 @@ Everything in 2.0.0 is free, with no paid tier.
 - An optional local API (OpenAI speech API compatible, plus MCP) for other
   apps and AI agents, Audiobookshelf upload, and a Chrome and Edge extension.
 - Supertonic as a second, optional speech engine: a one-time download of about
-  400 MB under Preferences, Speech Engines, with 10 voices in 31 languages for
+  400 MB under Settings -> Engines, with 10 voices in 31 languages for
   speech and audiobooks.
 
 ## Next

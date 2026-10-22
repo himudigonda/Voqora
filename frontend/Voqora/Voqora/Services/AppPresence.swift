@@ -29,11 +29,17 @@ enum AppPresence {
     }
 
     @MainActor
-    static func applyActivationPolicy(onboarding: Bool, defaults: UserDefaults = .standard) {
+    static func applyActivationPolicy(
+        onboarding: Bool,
+        presentsDashboard: Bool = true,
+        defaults: UserDefaults = .standard
+    ) {
         let policy = activationPolicy(hideFromDock: hidesFromDock(defaults), onboarding: onboarding)
         guard NSApp.activationPolicy() != policy else { return }
         NSApp.setActivationPolicy(policy)
-        WindowPresenter.shared.show()
+        if presentsDashboard {
+            WindowPresenter.shared.show()
+        }
     }
 }
 

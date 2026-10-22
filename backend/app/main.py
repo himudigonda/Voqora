@@ -17,6 +17,7 @@ from app.api.middleware import (
     IPCAuthenticationMiddleware,
     RejectBrowserOriginMiddleware,
 )
+from app.api.ming import router as ming_router
 from app.api.podcast import router as podcast_router
 from app.api.pronunciations import router as pronunciations_router
 from app.api.tts import router as tts_router
@@ -25,6 +26,7 @@ from app.core.config import settings
 from app.core.logging import configure as configure_logging
 from app.core.logging import get_logger
 from app.services.engine_manager import EngineManager
+from app.services.ming_engine import MingEngine
 from app.services.speech_relay import speech_relay
 from app.services.supertonic_engine import SupertonicEngine
 from app.services.tts import TTSEngine
@@ -102,6 +104,7 @@ async def lifespan(app: FastAPI):
     # immediately and /health returns "cold" until loading finishes (~2-3 s).
     _spawn_bg(_load_engine_background())
     _spawn_bg(SupertonicEngine.idle_watcher())
+    _spawn_bg(MingEngine.idle_watcher())
 
     # Audiobook orchestrator + crash-recovery (fast, no I/O blocking)
     from app.services.audiobook_service import AudiobookService
@@ -117,6 +120,7 @@ async def lifespan(app: FastAPI):
 
     yield
     speech_relay.close_all()
+    await MingEngine.shutdown()
     await local_api_server.shutdown()
     # Clean shutdown: cancel any in-flight audiobook pipeline at the next
     # page-boundary checkpoint, then release the thread pool. See HARD-073.
@@ -135,6 +139,7 @@ app.add_middleware(IPCAuthenticationMiddleware)
 
 
 app.include_router(tts_router)
+app.include_router(ming_router)
 app.include_router(audiobook_router)
 app.include_router(voices_router)
 app.include_router(pronunciations_router)

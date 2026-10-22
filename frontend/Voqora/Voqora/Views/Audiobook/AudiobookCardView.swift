@@ -1,4 +1,3 @@
-import PDFKit
 import SwiftUI
 
 struct AudiobookCardView: View {
@@ -6,25 +5,14 @@ struct AudiobookCardView: View {
     @EnvironmentObject var bookVM: AudiobookViewModel
     @EnvironmentObject var studio: StudioViewModel
     let book: Audiobook
+    var onOpen: () -> Void = {}
     @State private var hovering = false
+    @State private var showFailureDetail = false
     @State private var showDeleteConfirmation = false
     @State private var showCostApproval = false
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.voqoraTheme) private var theme
 
-    private var accentColor: Color {
-        vm.accentColor(scheme: colorScheme, contrast: colorSchemeContrast)
-    }
-
-    private var accentRamp: AccentRamp {
-        Palette.accentRamp(
-            for: vm.accentColorID,
-            appearance: colorScheme,
-            increaseContrast: colorSchemeContrast == .increased
-        )
-    }
-
-    static let coverAspectRatio: CGFloat = 180.0 / 252.0
+    static let coverAspectRatio = BookCover.aspectRatio
 
     var status: ProcessingStatus {
         bookVM.processingState[book.bookID] ?? book.displayStatus
@@ -44,33 +32,37 @@ struct AudiobookCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            cover
-            if status.isProcessing {
-                processingWaveform
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(prettyTitle)
-                    .font(vm.appFont(size: 13, weight: .bold))
-                    .foregroundStyle(Palette.textPrimary)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                if let author = book.displayAuthor {
-                    Text(author)
-                        .font(vm.appFont(size: 11, weight: .medium))
-                        .foregroundStyle(Palette.textSecondary)
-                        .lineLimit(1)
-                        .help(author)
-                        .accessibilityLabel("By \(author)")
+        Button(action: handleTap) {
+            VStack(alignment: .leading, spacing: 10) {
+                cover
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(prettyTitle)
+                        .font(vm.font(.titleSmall))
+                        .foregroundStyle(theme.onSurface)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .help(prettyTitle)
+                    meta
+                    if let progress = listeningProgress {
+                        PlayerProgressBar(fraction: progress, height: 4)
+                    }
+                    if let chip = statusChip {
+                        chip
+                    }
                 }
-                caption
+                .padding(.horizontal, 2)
             }
-            .padding(.horizontal, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .scaleEffect(hovering && status.isReady ? 1.03 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hovering)
+        .buttonStyle(.plain)
+        .scaleEffect(hovering && status.isReady ? 1.02 : 1.0)
+        .animation(Theme.Motion.selection, value: hovering)
         .onHover { hovering = $0 }
+        .popover(isPresented: $showFailureDetail, arrowEdge: .bottom) { failureDetail }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilitySummary)
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
             if let reason = status.failureReason {
                 Button {} label: {
@@ -139,15 +131,15 @@ struct AudiobookCardView: View {
             if book.isPodcast {
                 Button {
                     studio.openRenderedPodcast(bookID: book.bookID)
-                    vm.selectedTab = StudioView.tab
+                    vm.selectedTab = TabKey.createScripts
                 } label: {
-                    Label("Edit Script in Studio", systemImage: "pencil")
+                    Label("Edit Script", systemImage: "pencil")
                 }
                 Divider()
             } else if status.isReady {
                 Button {
                     studio.startNewPodcast(source: .book(book.bookID))
-                    vm.selectedTab = StudioView.tab
+                    vm.selectedTab = TabKey.createPodcast
                 } label: {
                     Label("Make a Podcast…", systemImage: "waveform.and.mic")
                 }
@@ -191,210 +183,163 @@ struct AudiobookCardView: View {
         book.displayTitle
     }
 
-    private var cover: some View {
-        ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                .fill(Palette.surfaceRaised)
-                .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
-                .overlay {
-                    AuthenticatedBackendImage(path: "audiobook/\(book.bookID)/cover") { image in
-                        image.resizable().scaledToFill()
-                    } placeholder: {
-                        placeholderCover
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous))
-                }
-                .overlay(
-                    RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous)
-                        .stroke(Palette.separator, lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.25), radius: hovering ? 18 : 12, y: hovering ? 10 : 6)
-                .overlay(stateOverlay)
-                .overlay(alignment: .topLeading) {
-                    if book.isPodcast {
-                        podcastBadge
-                    }
-                }
-                .overlay(alignment: .bottom) { listeningProgress }
+    private func handleTap() {
+        switch status {
+        case .ready: onOpen()
+        case .failed: showFailureDetail = true
+        case .cancelled: bookVM.retry(book)
+        case .needsKey: bookVM.resumeNeedsKey(book)
+        case .needsCostApproval: showCostApproval = true
+        default: break
+        }
+    }
 
-            if hovering, status.isReady {
-                Circle()
-                    .fill(accentColor)
-                    .frame(width: 44, height: 44)
-                    .overlay(
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 16, weight: .black))
-                            .foregroundStyle(vm.onAccentColor(scheme: colorScheme, contrast: colorSchemeContrast))
-                    )
-                    .shadow(color: accentColor.opacity(0.5), radius: 12)
-                    .padding(14)
-                    .transition(.scale.combined(with: .opacity))
+    private var failureDetail: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            Label("Processing failed", systemImage: "exclamationmark.triangle.fill")
+                .font(vm.font(.titleSmall))
+                .foregroundStyle(theme.danger)
+            Text(status.failureReason ?? "Something went wrong while processing this audiobook.")
+                .font(vm.font(.body))
+                .foregroundStyle(theme.onSurfaceVariant)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: Theme.Space.item) {
+                Spacer(minLength: 0)
+                if let provider = book.providerToFix {
+                    Button("Fix \(provider.displayName)…") {
+                        showFailureDetail = false
+                        bookVM.fixProvider(for: book)
+                    }
+                    .buttonStyle(.voqoraTonal)
+                }
+                Button {
+                    showFailureDetail = false
+                    bookVM.retry(book)
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.voqoraFilled)
             }
         }
+        .padding(Theme.Space.card)
+        .frame(width: 320)
+    }
+
+    private var cover: some View {
+        BookCover(bookID: book.bookID)
+            .aspectRatio(Self.coverAspectRatio, contentMode: .fit)
+            .overlay(stateOverlay)
+            .overlay(alignment: .topLeading) {
+                if book.isPodcast {
+                    podcastBadge
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if hovering, status.isReady {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(theme.onPrimary)
+                        .frame(width: 44, height: 44)
+                        .background(theme.primary, in: Circle())
+                        .shadow(color: .black.opacity(0.2), radius: 8, y: 3)
+                        .padding(12)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .shadow(color: .black.opacity(hovering ? 0.18 : 0.08), radius: hovering ? 14 : 6, y: hovering ? 8 : 3)
     }
 
     private var podcastBadge: some View {
         Label("Podcast", systemImage: "waveform.and.mic")
-            .font(vm.appFont(size: 10, weight: .semibold))
-            .foregroundStyle(Palette.textPrimary)
-            .padding(.horizontal, DesignTokens.Spacing.sm)
-            .padding(.vertical, DesignTokens.Spacing.xs)
-            .voqoraSurface(.floating, in: Capsule())
+            .font(vm.font(.labelSmall))
+            .foregroundStyle(theme.onSurface)
+            .padding(.horizontal, 10)
+            .frame(minHeight: 24)
+            .background(theme.surfaceContainerHigh, in: Capsule())
             .padding(10)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Podcast")
     }
 
     @ViewBuilder
-    private var listeningProgress: some View {
-        let fraction = status.isReady ? bookVM.listenedFraction(for: book) : 0
-        if fraction > 0.005 {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(.black.opacity(0.35))
-                    Capsule().fill(accentColor).frame(width: geometry.size.width * fraction)
-                }
-            }
-            .frame(height: 4)
-            .padding(10)
-            .accessibilityLabel("\(Int(fraction * 100)) percent listened")
-        }
-    }
-
-    private var placeholderCover: some View {
-        ZStack {
-            LinearGradient(
-                colors: [Color(accentRamp.muted), Color(accentRamp.subtle)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-            VStack(spacing: 6) {
-                Image(systemName: "book.fill")
-                    .font(.system(size: 36, weight: .ultraLight))
-                    .foregroundStyle(Palette.textPrimary.opacity(0.7))
-                Text(prettyTitle)
-                    .font(vm.appFont(size: 11, weight: .bold))
-                    .foregroundStyle(Palette.textPrimary.opacity(0.85))
-                    .lineLimit(3)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-            }
-        }
-    }
-
-    @ViewBuilder
     private var stateOverlay: some View {
+        let shape = RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous)
         switch status {
         case .queued, .reconnecting:
             ZStack {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.4))
-                ProgressView().tint(accentColor).scaleEffect(0.8)
+                shape.fill(.black.opacity(0.4))
+                ProgressView().controlSize(.regular).tint(.white)
             }
         case .extracting, .cleaning, .generating, .sectioning, .finishing:
             ZStack {
-                RoundedRectangle(cornerRadius: DesignTokens.Radius.md, style: .continuous).fill(.black.opacity(0.35))
-                progressRing
-                    .frame(width: 56, height: 56)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                shape.fill(.black.opacity(0.4))
+                progressRing.frame(width: 64, height: 64)
             }
-        case .needsKey:
-            cornerBadge(systemName: "key.fill", color: Palette.warning)
-        case .needsCostApproval:
-            cornerBadge(systemName: "dollarsign.circle.fill", color: Palette.warning)
-        case .failed:
-            cornerBadge(systemName: "exclamationmark.triangle.fill", color: Palette.danger)
-        case .cancelled, .notStarted:
-            cornerBadge(systemName: "stop.circle.fill", color: Palette.textSecondary)
-        case .ready:
+        default:
             EmptyView()
         }
     }
 
-    @ViewBuilder
     private var progressRing: some View {
         let pct = progressFraction
-        ZStack {
-            Circle()
-                .fill(Palette.surfaceRaised)
-            Circle()
-                .stroke(Palette.separator, lineWidth: 3)
+        return ZStack {
+            Circle().fill(theme.surfaceContainerHigh)
+            Circle().stroke(theme.outlineVariant, lineWidth: 4)
             Circle()
                 .trim(from: 0, to: pct)
-                .stroke(accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .stroke(theme.primary, style: StrokeStyle(lineWidth: 4, lineCap: .round))
                 .rotationEffect(.degrees(-90))
-                .animation(.easeOut(duration: 0.4), value: pct)
+                .animation(Theme.Motion.selection, value: pct)
             Text("\(Int(pct * 100))%")
-                .font(vm.appFont(size: 11, weight: .black).monospaced())
-                .foregroundStyle(accentColor)
+                .font(vm.font(.label).monospacedDigit())
+                .foregroundStyle(theme.onSurface)
         }
     }
 
-    private func cornerBadge(systemName: String, color: Color) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 18, weight: .black))
-            .foregroundStyle(color)
-            .padding(8)
-            .voqoraSurface(.floating, in: Circle())
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+    private var listeningProgress: Double? {
+        guard status.isReady else { return nil }
+        let fraction = bookVM.listenedFraction(for: book)
+        return fraction > LibraryFilter.startedThreshold ? fraction : nil
     }
 
-    private var processingWaveform: some View {
-        TimelineView(.animation) { ctx in
-            let phase = ctx.date.timeIntervalSinceReferenceDate * 2.9
-            HStack(spacing: 3) {
-                ForEach(0 ..< 16, id: \.self) { i in
-                    let height = 4 + 14 * abs(sin(phase + Double(i) * 0.4))
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(accentColor.opacity(0.85))
-                        .frame(width: 3, height: height)
-                }
-            }
-            .frame(height: 18)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 2)
+    private var statusChip: StatusChip? {
+        switch status {
+        case let .extracting(p, t), let .cleaning(p, t), let .generating(p, t), let .sectioning(p, t):
+            StatusChip(text: t > 0 ? "Processing \(Int(Double(p) / Double(t) * 100))%" : "Processing", kind: .info, systemImage: "hourglass")
+        case .finishing, .queued, .reconnecting:
+            StatusChip(text: status.caption, kind: .info, systemImage: "hourglass")
+        case .failed:
+            StatusChip(text: "Failed", kind: .danger, systemImage: "exclamationmark.triangle.fill")
+        case .needsKey:
+            StatusChip(text: "Needs AI provider", kind: .warning, systemImage: "key.fill")
+        case .needsCostApproval:
+            StatusChip(text: "Needs approval", kind: .warning, systemImage: "dollarsign.circle.fill")
+        case .cancelled, .notStarted:
+            StatusChip(text: "Stopped", kind: .neutral, systemImage: "stop.circle.fill")
+        case .ready:
+            book.failedPages.isEmpty ? nil : StatusChip(text: incompleteLabel, kind: .warning, systemImage: "exclamationmark.triangle.fill")
         }
     }
 
-    @ViewBuilder
-    private var caption: some View {
+    private var meta: some View {
+        Text(metaText)
+            .font(vm.font(.bodySmall))
+            .foregroundStyle(theme.onSurfaceVariant)
+            .monospacedDigit()
+            .lineLimit(1)
+            .help(failureHelp)
+    }
+
+    private var metaText: String {
         switch status {
         case .ready:
-            VStack(alignment: .leading, spacing: 3) {
-                Text(readyCaption)
-                    .foregroundStyle(Palette.textSecondary)
-                if !book.failedPages.isEmpty {
-                    Label(incompleteLabel, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Palette.warning)
-                        .help("Right-click the book and choose Retry to process these pages again.")
-                }
-            }
-            .font(vm.appFont(size: 11))
-            .lineLimit(1)
-        case let .needsCostApproval(requiredCap):
-            Button {
-                showCostApproval = true
-            } label: {
-                Text(requiredCap.map { "Approve $\(String(format: "%.2f", $0)) or finish locally" } ?? status.caption)
-                    .font(vm.appFont(size: 11))
-                    .foregroundStyle(Palette.warning)
-                    .lineLimit(1)
-            }
-            .buttonStyle(.plain)
+            readyCaption
         case .failed:
-            Text(status.detailedCaption)
-                .font(vm.appFont(size: 11))
-                .foregroundStyle(captionColor)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .help(failureHelp)
+            status.detailedCaption
+        case let .needsCostApproval(requiredCap):
+            requiredCap.map { "Approve $\(String(format: "%.2f", $0)) or finish locally" } ?? status.caption
         default:
-            Text(statusCaption)
-                .font(vm.appFont(size: 11))
-                .monospacedDigit()
-                .foregroundStyle(captionColor)
-                .contentTransition(.numericText())
-                .lineLimit(1)
+            statusCaption
         }
     }
 
@@ -406,17 +351,9 @@ struct AudiobookCardView: View {
     }
 
     private var failureHelp: String {
+        guard case .failed = status else { return metaText }
         let action = book.providerToFix.map { "Click to fix \($0.displayName)." } ?? "Click to retry."
         return [status.failureReason, action].compactMap(\.self).joined(separator: " ")
-    }
-
-    private var captionColor: Color {
-        switch status {
-        case .failed: Palette.danger
-        case .needsKey: Palette.warning
-        case .cancelled, .notStarted: Palette.textSecondary
-        default: accentColor
-        }
     }
 
     private var readyCaption: String {
@@ -424,7 +361,7 @@ struct AudiobookCardView: View {
             ? "\(book.pageCount) \(book.pageCount == 1 ? "turn" : "turns")"
             : "\(book.pageCount) \(book.pageCount == 1 ? "page" : "pages")"
         let listened = bookVM.listenedFraction(for: book)
-        guard listened > 0.005 else {
+        guard listened > LibraryFilter.startedThreshold else {
             return "\(DurationFormatter.listing(book.totalAudioSeconds)) · \(pages)"
         }
         let remaining = book.totalAudioSeconds * (1 - listened)
@@ -435,5 +372,17 @@ struct AudiobookCardView: View {
     private var incompleteLabel: String {
         let count = book.failedPages.count
         return "\(count) \(count == 1 ? "page needs" : "pages need") a retry"
+    }
+
+    private var accessibilitySummary: String {
+        var parts = [prettyTitle]
+        if let author = book.displayAuthor {
+            parts.append("by \(author)")
+        }
+        parts.append(metaText)
+        if let progress = listeningProgress {
+            parts.append("\(Int(progress * 100)) percent listened")
+        }
+        return parts.joined(separator: ", ")
     }
 }

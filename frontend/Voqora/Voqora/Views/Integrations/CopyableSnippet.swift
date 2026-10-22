@@ -22,13 +22,10 @@ struct CopyButton: View {
     @State private var copied = false
 
     var body: some View {
-        Button {
+        AssistChip(title: copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") {
             ClipboardWriter.copy(text(), concealed: concealed)
             copied = true
-        } label: {
-            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
         }
-        .buttonStyle(.voqoraSecondary)
         .accessibilityLabel(copied ? "\(accessibilityTitle) copied" : "Copy \(accessibilityTitle)")
         .task(id: copied) {
             guard copied else { return }
@@ -39,37 +36,42 @@ struct CopyButton: View {
 }
 
 struct CopyableSnippet: View {
-    @EnvironmentObject var vm: DashboardViewModel
     let title: String
     let caption: String
     let displayText: String
     let copyText: String
 
+    @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.voqoraTheme) private var theme
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(vm.font(.rowTitle).weight(.semibold))
-                    Text(caption)
-                        .font(vm.font(.rowSubtitle))
-                        .foregroundStyle(Palette.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: Theme.Space.item) {
+                Text(title)
+                    .font(vm.font(.titleSmall))
+                    .foregroundStyle(theme.onSurface)
+                Spacer(minLength: 0)
                 CopyButton(accessibilityTitle: title, text: { copyText })
             }
+            Text(caption)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.onSurfaceVariant)
+                .fixedSize(horizontal: false, vertical: true)
             ScrollView(.horizontal) {
                 Text(displayText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(Palette.textPrimary)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(theme.onSurface)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
-                    .padding(DesignTokens.Spacing.md)
+                    .padding(Theme.Space.item)
             }
+            .scrollIndicators(.never)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .voqoraSurface(.control, in: RoundedRectangle(cornerRadius: DesignTokens.CornerRadius.small, style: .continuous))
+            .background(theme.surfaceContainerHighest, in: RoundedRectangle(cornerRadius: Theme.Shape.sm, style: .continuous))
             .accessibilityLabel("\(title) snippet")
         }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.md, style: .continuous))
     }
 }

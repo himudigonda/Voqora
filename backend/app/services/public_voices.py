@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.engine_errors import EngineNotInstalledError
-from app.services.engine_manager import SUPERTONIC, EngineManager
+from app.services.engine_manager import MING, SUPERTONIC, EngineManager
 from app.services.languages import voice_catalog
 from app.services.supertonic_catalog import VOICES as SUPERTONIC_VOICES
 from app.services.voices import is_known_voice
@@ -37,7 +37,7 @@ def voice_list() -> list[dict[str, Any]]:
         }
         for voice in voice_catalog()
     ]
-    return builtin + supertonic_voices() + custom_voices()
+    return builtin + supertonic_voices() + ming_voices() + custom_voices()
 
 
 def supertonic_voices() -> list[dict[str, Any]]:
@@ -52,6 +52,21 @@ def supertonic_voices() -> list[dict[str, Any]]:
             "type": "builtin",
         }
         for voice in SUPERTONIC_VOICES
+    ]
+
+
+def ming_voices() -> list[dict[str, Any]]:
+    if not EngineManager.is_installed(MING):
+        return []
+    return [
+        {
+            "id": voice["id"],
+            "name": voice["name"],
+            "gender": voice["gender"],
+            "language": voice["lang"],
+            "type": "custom" if voice["custom"] else "builtin",
+        }
+        for voice in EngineManager.ming_voice_entries()
     ]
 
 
