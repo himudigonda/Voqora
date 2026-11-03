@@ -87,7 +87,7 @@ struct StatsAISection: View {
             context.metric(
                 "Words processed",
                 value: ai.wordsIn > 0 ? StatsFormat.count(ai.wordsIn) : "—",
-                footnote: ai.wordsIn > 0 ? "\(StatsFormat.count(ai.wordsOut)) words written back" : "Not measured for live requests",
+                footnote: ai.wordsIn > 0 ? "\(StatsFormat.count(ai.wordsOut)) words written back" : "None counted in this period",
                 change: { Double($0.ai.wordsIn) }
             ),
         ]

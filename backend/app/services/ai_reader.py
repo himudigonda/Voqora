@@ -182,6 +182,7 @@ class AIResult(BaseModel):
     cost_usd: float | None
     provider: str
     model: str
+    source_words: int | None = None
 
 
 class SummaryResult(AIResult):
@@ -568,7 +569,12 @@ async def summarize(
         summary = await _final_summary(
             session, "\n\n".join(notes), length, language, from_notes=True
         )
-    return SummaryResult(summary=summary, chunks=len(chunks), **session.usage())
+    return SummaryResult(
+        summary=summary,
+        chunks=len(chunks),
+        source_words=len(text.split()),
+        **session.usage(),
+    )
 
 
 async def _translate_batch(
@@ -830,7 +836,11 @@ async def quiz(
         max_output_tokens=_STUDY_MAX_OUTPUT_TOKENS,
         accept=_at_least(count, "questions"),
     )
-    return QuizResult(questions=reply.questions[:count], **session.usage())
+    return QuizResult(
+        questions=reply.questions[:count],
+        source_words=len(text.split()),
+        **session.usage(),
+    )
 
 
 async def flashcards(session: AISession, text: str, count: int) -> FlashcardsResult:
@@ -849,4 +859,8 @@ async def flashcards(session: AISession, text: str, count: int) -> FlashcardsRes
         max_output_tokens=_STUDY_MAX_OUTPUT_TOKENS,
         accept=_at_least(count, "cards"),
     )
-    return FlashcardsResult(cards=reply.cards[:count], **session.usage())
+    return FlashcardsResult(
+        cards=reply.cards[:count],
+        source_words=len(text.split()),
+        **session.usage(),
+    )

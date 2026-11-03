@@ -57,12 +57,18 @@ nonisolated enum AIReadingLimits {
 final class AIReadingClient: AIReadingServing, AITidying {
     private let connection: BackendConnection
     private let transport: AIReadingTransport
+    private let recordRun: (AIRun) -> Void
 
-    init(connection: BackendConnection? = nil, transport: AIReadingTransport? = nil) {
+    init(
+        connection: BackendConnection? = nil,
+        transport: AIReadingTransport? = nil,
+        recordRun: ((AIRun) -> Void)? = nil
+    ) {
         self.connection = connection ?? .shared
         self.transport = transport ?? { request in
             try await URLSession.shared.data(for: request)
         }
+        self.recordRun = recordRun ?? { UsageStatsStore.shared.recordAI($0) }
     }
 
     func summarize(_ source: AISource, length: AISummaryLength, language: AILanguage?, credential: LLMCredential) async throws -> AISummary {
@@ -125,29 +131,41 @@ final class AIReadingClient: AIReadingServing, AITidying {
         return deck
     }
 
-    private func send<Response: Decodable>(
+    private func send<Response: AIWordCountedResponse>(
         _ tool: String,
-        body: some Encodable,
+        body: some AIWordCountedRequest,
         credential: LLMCredential,
         timeout: TimeInterval
     ) async throws -> Response {
         let started = ContinuousClock.now
         do {
             let response: Response = try await perform(tool, body: body, credential: credential, timeout: timeout)
-            recordRequest(tool: tool, credential: credential, ok: true, since: started)
+            recordRequest(
+                tool: tool,
+                credential: credential,
+                ok: true,
+                since: started,
+                words: (response.usage.sourceWords ?? body.wordCount, response.wordCount)
+            )
             return response
         } catch is CancellationError {
             throw CancellationError()
         } catch {
-            recordRequest(tool: tool, credential: credential, ok: false, since: started)
+            recordRequest(tool: tool, credential: credential, ok: false, since: started, words: (body.wordCount, 0))
             throw error
         }
     }
 
-    private func recordRequest(tool: String, credential: LLMCredential, ok: Bool, since started: ContinuousClock.Instant) {
+    private func recordRequest(
+        tool: String,
+        credential: LLMCredential,
+        ok: Bool,
+        since started: ContinuousClock.Instant,
+        words: (sent: Int, returned: Int)
+    ) {
         let latencyMs = started.duration(to: .now) / .milliseconds(1)
         let provider = MetricsService.Bucket.provider(credential.provider.rawValue)
-        UsageStatsStore.shared.recordAI(AIRun(tool: tool, provider: provider, ok: ok, latencyMs: latencyMs, wordsIn: 0, wordsOut: 0))
+        recordRun(AIRun(tool: tool, provider: provider, ok: ok, latencyMs: latencyMs, wordsIn: words.sent, wordsOut: words.returned))
         MetricsService.shared.trackAIRequest(tool: tool, provider: provider, ok: ok, latencyMs: Int(latencyMs.rounded()))
     }
 
@@ -201,10 +219,62 @@ final class AIReadingClient: AIReadingServing, AITidying {
     }
 }
 
-private nonisolated struct SummarizeBody: Encodable {
+private nonisolated protocol AIWordCountedRequest: Encodable {
+    var wordCount: Int { get }
+}
+
+nonisolated protocol AIWordCountedResponse: Decodable {
+    var usage: AIUsage { get }
+    var wordCount: Int { get }
+}
+
+nonisolated extension AISummary: AIWordCountedResponse {
+    var wordCount: Int {
+        UsageLedger.wordCount(summary)
+    }
+}
+
+nonisolated extension AITranslation: AIWordCountedResponse {
+    var wordCount: Int {
+        UsageLedger.wordCount(text)
+    }
+}
+
+nonisolated extension AITidyResult: AIWordCountedResponse {
+    var wordCount: Int {
+        UsageLedger.wordCount(text)
+    }
+}
+
+nonisolated extension AIAnswer: AIWordCountedResponse {
+    var wordCount: Int {
+        UsageLedger.wordCount(answer)
+    }
+}
+
+nonisolated extension AIQuiz: AIWordCountedResponse {
+    var wordCount: Int {
+        questions.reduce(0) { total, item in
+            total + UsageLedger.wordCount(item.question) + UsageLedger.wordCount(item.explanation)
+                + item.choices.reduce(0) { $0 + UsageLedger.wordCount($1) }
+        }
+    }
+}
+
+nonisolated extension AIFlashcardDeck: AIWordCountedResponse {
+    var wordCount: Int {
+        cards.reduce(0) { $0 + UsageLedger.wordCount($1.front) + UsageLedger.wordCount($1.back) }
+    }
+}
+
+private nonisolated struct SummarizeBody: AIWordCountedRequest {
     let source: AISource
     let length: String
     let language: String?
+
+    var wordCount: Int {
+        source.wordCount
+    }
 
     enum CodingKeys: String, CodingKey {
         case text
@@ -221,10 +291,14 @@ private nonisolated struct SummarizeBody: Encodable {
     }
 }
 
-private nonisolated struct StudyBody: Encodable {
+private nonisolated struct StudyBody: AIWordCountedRequest {
     let source: AISource
     let count: Int
     let difficulty: String?
+
+    var wordCount: Int {
+        source.wordCount
+    }
 
     enum CodingKeys: String, CodingKey {
         case text
@@ -241,9 +315,13 @@ private nonisolated struct StudyBody: Encodable {
     }
 }
 
-private nonisolated struct TranslateBody: Encodable {
+private nonisolated struct TranslateBody: AIWordCountedRequest {
     let text: String
     let targetLanguage: String
+
+    var wordCount: Int {
+        UsageLedger.wordCount(text)
+    }
 
     enum CodingKeys: String, CodingKey {
         case text
@@ -251,14 +329,22 @@ private nonisolated struct TranslateBody: Encodable {
     }
 }
 
-private nonisolated struct TidyBody: Encodable {
+private nonisolated struct TidyBody: AIWordCountedRequest {
     let text: String
+
+    var wordCount: Int {
+        UsageLedger.wordCount(text)
+    }
 }
 
-private nonisolated struct AskBody: Encodable {
+private nonisolated struct AskBody: AIWordCountedRequest {
     let bookID: String
     let question: String
     let history: [AIChatTurn]
+
+    var wordCount: Int {
+        history.reduce(UsageLedger.wordCount(question)) { $0 + UsageLedger.wordCount($1.content) }
+    }
 
     enum CodingKeys: String, CodingKey {
         case bookID = "book_id"
@@ -268,6 +354,13 @@ private nonisolated struct AskBody: Encodable {
 }
 
 private nonisolated extension AISource {
+    var wordCount: Int {
+        switch self {
+        case let .text(text): UsageLedger.wordCount(text)
+        case .book: 0
+        }
+    }
+
     func encode<Key: CodingKey>(into container: inout KeyedEncodingContainer<Key>, text textKey: Key, book bookKey: Key) throws {
         switch self {
         case let .text(text): try container.encode(text, forKey: textKey)

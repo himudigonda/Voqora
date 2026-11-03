@@ -775,3 +775,23 @@ def test_end_to_end_provider_401_does_not_leak_the_body(client, monkeypatch):
 def test_existing_routes_are_unchanged(client):
     assert client.get("/health").status_code == 200
     assert client.get("/audiobook").status_code == 200
+
+
+def test_summary_reports_how_many_source_words_it_read(client, monkeypatch):
+    install(monkeypatch, FakeLLM(lambda _c, _n: reply({"summary": "Short."})))
+    response = client.post(
+        "/ai/summarize",
+        json={"text": "one two three four"},
+        headers=OPENAI_HEADERS,
+    )
+    assert response.status_code == 200
+    assert response.json()["source_words"] == 4
+
+
+def test_tools_without_a_stored_source_leave_source_words_empty(client, monkeypatch):
+    install(monkeypatch, FakeLLM(lambda _c, _n: reply({"text": "Hello world."})))
+    response = client.post(
+        "/ai/tidy", json={"text": "hello world"}, headers=OPENAI_HEADERS
+    )
+    assert response.status_code == 200
+    assert response.json()["source_words"] is None

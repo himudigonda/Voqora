@@ -104,6 +104,7 @@ nonisolated struct AIUsage: Decodable, Equatable, Sendable {
     let costUSD: Double?
     let provider: String
     let model: String
+    var sourceWords: Int?
 
     enum CodingKeys: String, CodingKey {
         case tokens
@@ -111,6 +112,7 @@ nonisolated struct AIUsage: Decodable, Equatable, Sendable {
         case costUSD = "cost_usd"
         case provider
         case model
+        case sourceWords = "source_words"
     }
 }
 
