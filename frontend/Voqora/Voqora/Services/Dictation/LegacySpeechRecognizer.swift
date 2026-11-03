@@ -265,13 +265,16 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
                 sink.reportFailure()
             }
         )
+        session = microphone
+        let startToken = generation
         do {
-            try microphone.start()
+            try await microphone.startOffMain()
         } catch {
+            guard startToken == generation else { return }
             stop()
             throw error
         }
-        session = microphone
+        guard startToken == generation else { return }
         DictationTrace.event("legacy.start", [
             "locale": localeIdentifier ?? "system",
             "route": route == .onDevice ? "on_device" : "server",

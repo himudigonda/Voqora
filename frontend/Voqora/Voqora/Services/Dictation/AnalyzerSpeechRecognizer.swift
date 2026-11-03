@@ -94,13 +94,15 @@ final class AnalyzerSpeechRecognizer: SpeechRecognizing {
         }
         self.feed = feed
         input = continuation
+        session = microphone
         do {
-            try microphone.start()
+            try await microphone.startOffMain()
         } catch {
+            guard token == generation else { return }
             stop()
             throw error
         }
-        session = microphone
+        guard token == generation else { return }
         DictationTrace.event("analyzer.mic_started", ["afterMs": "\(Int((ContinuousClock.now - startedAt) / .milliseconds(1)))"])
         let speechAnalyzer = SpeechAnalyzer(modules: [transcriber], options: .init(priority: .userInitiated, modelRetention: .lingering))
         analyzer = speechAnalyzer

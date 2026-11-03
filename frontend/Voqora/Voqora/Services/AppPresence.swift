@@ -5,6 +5,17 @@ enum AppPresence {
     static let hideFromDockKey = "hideFromDock"
     static let showMenuBarIconKey = "showMenuBarIcon"
     static let showDashboardNotification = Notification.Name("com.himudigonda.Voqora.showDashboard")
+    static let dashboardAnswerNotification = Notification.Name("com.himudigonda.Voqora.showDashboardAnswer")
+    static let answerTimeout: TimeInterval = 5
+
+    enum StandDownAction: Equatable {
+        case activateExisting
+        case offerForceQuit
+    }
+
+    static func standDownAction(answered: Bool, finishedLaunching: Bool) -> StandDownAction {
+        answered || !finishedLaunching ? .activateExisting : .offerForceQuit
+    }
 
     static func hidesFromDock(_ defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: hideFromDockKey)

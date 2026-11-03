@@ -368,6 +368,13 @@ final nonisolated class MicrophoneSession: @unchecked Sendable {
     private var timer: (any DispatchSourceTimer)?
     private var isSuspended = false
     private var restartLimiter = CaptureRestartLimiter()
+    private static let stopWaitLimit: TimeInterval = 0.1
+    private let stopRequestLock = NSLock()
+    private var stopRequested = false
+
+    private var isStopRequested: Bool {
+        stopRequestLock.withLock { stopRequested }
+    }
 
     init(
         sink: MicrophoneTapSink,
@@ -382,9 +389,26 @@ final nonisolated class MicrophoneSession: @unchecked Sendable {
         watchdog = CaptureWatchdog(timeout: Self.watchdogTimeout, startedAt: clock())
     }
 
+    var isCapturing: Bool {
+        stateLock.withLock { engine != nil }
+    }
+
+    func startOffMain() async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            control.async { [self] in
+                do {
+                    try start()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     func start() throws {
         try stateLock.withLock {
-            guard engine == nil else { return }
+            guard engine == nil, !isStopRequested else { return }
             let engine = AVAudioEngine()
             try MicrophoneCapture.installAndStart(engine) { [weak self] buffer in
                 self?.noteBuffer()
@@ -395,11 +419,22 @@ final nonisolated class MicrophoneSession: @unchecked Sendable {
             resetWatchdog()
             addObservers(for: engine)
             startTimer()
+            if isStopRequested {
+                teardownLocked()
+            }
         }
     }
 
     func stop() {
-        stateLock.withLock { teardownLocked() }
+        stopRequestLock.withLock { stopRequested = true }
+        if stateLock.lock(before: Date().addingTimeInterval(Self.stopWaitLimit)) {
+            teardownLocked()
+            stateLock.unlock()
+        } else {
+            control.async { [self] in
+                stateLock.withLock { teardownLocked() }
+            }
+        }
     }
 
     func evaluateWatchdog() {

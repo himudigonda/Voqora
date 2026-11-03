@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,11 @@ MODEL_PROGRESS_WEIGHT = 0.78
 
 LICENSE_SUMMARY = "MIT"
 NOTICE = "Renders slower than real time on most Macs. Best for audiobooks and exports."
+LOW_MEMORY_NOTICE = (
+    "This Mac has less than 16 GB of memory, so Ming may render very slowly or stop "
+    "partway. Kokoro is a better fit."
+)
+RECOMMENDED_MEMORY_BYTES = 16 * 1024**3
 CAPABILITIES: tuple[str, ...] = (
     "emotion",
     "style",
@@ -150,3 +156,13 @@ def ming_language(lang: str | None) -> str | None:
     base = lang.lower().split("-")[0]
     base = LANGUAGE_ALIASES.get(base, base)
     return base if base in LANGUAGES else None
+
+
+def total_memory_bytes() -> int:
+    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+
+
+def notice() -> str:
+    if total_memory_bytes() < RECOMMENDED_MEMORY_BYTES:
+        return LOW_MEMORY_NOTICE
+    return NOTICE

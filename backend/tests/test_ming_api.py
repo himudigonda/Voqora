@@ -13,6 +13,7 @@ from ming_fakes import mark_installed, tone_samples, wav_bytes
 
 from app.api.public_app import create_public_app
 from app.main import app
+from app.services import ming_catalog
 from app.services import ming_voices as voice_module
 from app.services.delivery import Delivery
 from app.services.engine_errors import EngineNotInstalledError, EngineWorkerError
@@ -62,7 +63,8 @@ def clone_form(**overrides):
     return form
 
 
-def test_engine_entry_has_the_documented_shape():
+def test_engine_entry_has_the_documented_shape(monkeypatch):
+    monkeypatch.setattr(ming_catalog, "total_memory_bytes", lambda: 32 * 1024**3)
     entry = engine_entry(client.get("/engine").json())
     assert set(entry) == {
         "id",
@@ -772,3 +774,17 @@ async def test_open_speech_samples_hands_delivery_to_the_manager(installed):
         )
         [chunk async for chunk in samples]
     assert seen["delivery"] == Delivery(emotion="angry")
+
+
+@pytest.mark.parametrize(
+    ("memory", "expected"),
+    [
+        (8 * 1024**3, ming_catalog.LOW_MEMORY_NOTICE),
+        (16 * 1024**3 - 1, ming_catalog.LOW_MEMORY_NOTICE),
+        (16 * 1024**3, NOTICE),
+        (64 * 1024**3, NOTICE),
+    ],
+)
+def test_engine_entry_warns_on_macs_with_little_memory(monkeypatch, memory, expected):
+    monkeypatch.setattr(ming_catalog, "total_memory_bytes", lambda: memory)
+    assert engine_entry(client.get("/engine").json())["notice"] == expected

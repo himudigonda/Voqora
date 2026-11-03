@@ -598,17 +598,18 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
         let microphone = MicrophoneSession(sink: sink, onRouteChange: { converter.reset() }) { _ in
             pipeline.reportFailure()
         }
-        do {
-            try microphone.start()
-        } catch {
-            pipeline.cancel()
-            continuation.finish()
-            throw error
-        }
         session = microphone
         self.pipeline = pipeline
         self.converter = converter
         events = continuation
+        do {
+            try await microphone.startOffMain()
+        } catch {
+            guard token == generation else { return }
+            stop()
+            throw error
+        }
+        guard token == generation else { return }
         eventsTask = Task { @MainActor in
             for await event in stream {
                 forward(event)

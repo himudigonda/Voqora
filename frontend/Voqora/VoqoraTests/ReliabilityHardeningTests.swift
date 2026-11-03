@@ -207,3 +207,54 @@ final class MultichannelMixTests: XCTestCase {
         XCTAssertGreaterThan(mono.floatChannelData?[0][0] ?? 0, 0.1)
     }
 }
+
+final class MicrophoneStopRaceTests: XCTestCase {
+    private func makeSession() -> MicrophoneSession {
+        MicrophoneSession(sink: MicrophoneTapSink(forward: { _ in }, consume: { _ in })) { _ in }
+    }
+
+    func test_stopBeforeAPendingStartLeavesTheMicOff() async throws {
+        let session = makeSession()
+
+        session.stop()
+        try await session.startOffMain()
+
+        XCTAssertFalse(session.isCapturing)
+    }
+
+    func test_stopBeforeASynchronousStartLeavesTheMicOff() throws {
+        let session = makeSession()
+
+        session.stop()
+        try session.start()
+
+        XCTAssertFalse(session.isCapturing)
+    }
+
+    func test_stopIsIdempotentAfterAPendingStart() async throws {
+        let session = makeSession()
+
+        session.stop()
+        try await session.startOffMain()
+        session.stop()
+
+        XCTAssertFalse(session.isCapturing)
+    }
+}
+
+final class SingleInstanceDecisionTests: XCTestCase {
+    @MainActor
+    func test_aCopyThatAnswersIsActivated() {
+        XCTAssertEqual(AppPresence.standDownAction(answered: true, finishedLaunching: true), .activateExisting)
+    }
+
+    @MainActor
+    func test_aCopyStillLaunchingIsNotTreatedAsFrozen() {
+        XCTAssertEqual(AppPresence.standDownAction(answered: false, finishedLaunching: false), .activateExisting)
+    }
+
+    @MainActor
+    func test_aLaunchedCopyThatStaysSilentOffersForceQuit() {
+        XCTAssertEqual(AppPresence.standDownAction(answered: false, finishedLaunching: true), .offerForceQuit)
+    }
+}

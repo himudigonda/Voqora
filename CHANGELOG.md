@@ -36,6 +36,11 @@
   cleans up an unpack that was interrupted.
 - The speech engine now unpacks correctly on accounts with a restrictive umask.
 - **Start at Login** shows why it couldn't turn on instead of looking enabled.
+- Starting dictation no longer freezes the app while a slow Bluetooth microphone
+  wakes up.
+- Opening Voqora while an earlier copy is frozen now offers to force quit it,
+  instead of appearing to do nothing.
+- Ming warns before its download on Macs with less than 16 GB of memory.
 - Stats product colors stay the same whichever accent you pick, and were checked
   for color-blind readers in light and dark mode.
 

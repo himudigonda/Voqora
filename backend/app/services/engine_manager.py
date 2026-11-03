@@ -134,7 +134,7 @@ class EngineManager:
                 "languages": list(ming_catalog.LANGUAGES),
                 "voices": cls.ming_voice_entries(),
                 "error": ming["error"],
-                "notice": ming_catalog.NOTICE,
+                "notice": ming_catalog.notice(),
                 "capabilities": list(ming_catalog.CAPABILITIES),
                 "tags": list(ming_catalog.PARALINGUISTIC_TAGS),
             },

@@ -12,18 +12,49 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
             .filter { !$0.isTerminated }
         guard let original = others.first else { return false }
-        DistributedNotificationCenter.default().postNotificationName(
-            AppPresence.showDashboardNotification,
-            object: bundleID,
-            userInfo: nil,
-            deliverImmediately: true
-        )
-
-        VoqoraLog.warn("AppDelegate", "Another Voqora is already running; activating it and exiting", [
+        let answered = askRunningCopyToShow(bundleID: bundleID)
+        VoqoraLog.warn("AppDelegate", "Another Voqora is already running", [
             "existingPid": "\(original.processIdentifier)",
+            "answered": "\(answered)",
         ])
-        original.activate(options: [])
-        return true
+        switch AppPresence.standDownAction(answered: answered, finishedLaunching: original.isFinishedLaunching) {
+        case .activateExisting:
+            original.activate(options: [])
+            return true
+        case .offerForceQuit:
+            return !replaceFrozenCopy(original)
+        }
+    }
+
+    private static func askRunningCopyToShow(bundleID: String) -> Bool {
+        let center = DistributedNotificationCenter.default()
+        var answered = false
+        let observer = center.addObserver(forName: AppPresence.dashboardAnswerNotification, object: bundleID, queue: nil) { _ in
+            answered = true
+        }
+        defer { center.removeObserver(observer) }
+        center.postNotificationName(AppPresence.showDashboardNotification, object: bundleID, userInfo: nil, deliverImmediately: true)
+        let deadline = Date().addingTimeInterval(AppPresence.answerTimeout)
+        while !answered, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        return answered
+    }
+
+    private static func replaceFrozenCopy(_ original: NSRunningApplication) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Voqora is already open but isn't responding"
+        alert.informativeText = "Force quit it and open Voqora again? Anything unsaved in the frozen copy will be lost."
+        alert.addButton(withTitle: "Force Quit and Reopen")
+        alert.addButton(withTitle: "Cancel")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return false }
+        original.forceTerminate()
+        let deadline = Date().addingTimeInterval(AppPresence.answerTimeout)
+        while !original.isTerminated, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
+        }
+        return original.isTerminated
     }
 
     func applicationWillFinishLaunching(_: Notification) {
@@ -56,6 +87,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: Bundle.main.bundleIdentifier,
             queue: .main
         ) { _ in
+            DistributedNotificationCenter.default().postNotificationName(
+                AppPresence.dashboardAnswerNotification,
+                object: Bundle.main.bundleIdentifier,
+                userInfo: nil,
+                deliverImmediately: true
+            )
             MainActor.assumeIsolated { WindowPresenter.shared.show() }
         }
     }
