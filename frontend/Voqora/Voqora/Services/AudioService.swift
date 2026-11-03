@@ -2,7 +2,7 @@ import AppKit
 import AVFoundation
 import Combine
 
-// A completion handler must not take a strong reference: dropping the last one on AVFoundation's queue deallocates the engine there, which traps.
+/// A completion handler must not take a strong reference: dropping the last one on AVFoundation's queue deallocates the engine there, which traps.
 private final nonisolated class AudioServiceReference: @unchecked Sendable {
     weak var service: AudioService?
 
