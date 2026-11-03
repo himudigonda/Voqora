@@ -22,9 +22,8 @@ final class CoverColorExtractor {
                 let request = try BackendConnection.shared.request(path: path, timeout: 10)
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse,
-                      (200 ..< 300).contains(http.statusCode)
-                else { return Palette.textTertiary }
-                guard let image = NSImage(data: data) else { return Palette.textTertiary }
+                      (200 ..< 300).contains(http.statusCode),
+                      let image = NSImage(data: data) else { return Palette.textTertiary }
                 let color = Self.computeDominantColor(image)
                 cache[path] = color
                 return color

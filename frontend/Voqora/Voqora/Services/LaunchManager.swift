@@ -181,13 +181,7 @@ class LaunchManager: ObservableObject {
             if relative == ".bundle_version" {
                 continue
             }
-            guard isSafeRelativeRuntimePath(relative) else {
-                throw RuntimeIntegrityError.extractedRuntimeMismatch
-            }
-            guard let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
-                throw RuntimeIntegrityError.extractedRuntimeMismatch
-            }
-            guard values.isSymbolicLink != true else {
+            guard isSafeRelativeRuntimePath(relative), let values = try? fileURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]), values.isSymbolicLink != true else {
                 throw RuntimeIntegrityError.extractedRuntimeMismatch
             }
             if values.isDirectory == true {
@@ -336,8 +330,7 @@ class LaunchManager: ObservableObject {
             } catch {
                 return nil
             }
-            guard let chunk else { break }
-            guard !chunk.isEmpty else { break }
+            guard let chunk, !chunk.isEmpty else { break }
             digest.update(data: chunk)
         }
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
@@ -353,8 +346,7 @@ class LaunchManager: ObservableObject {
         try process.run()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw RuntimeIntegrityError.unsafeArchive }
-        guard let text = String(data: data, encoding: .utf8) else {
+        guard process.terminationStatus == 0, let text = String(data: data, encoding: .utf8) else {
             throw RuntimeIntegrityError.unsafeArchive
         }
         return text
@@ -407,10 +399,8 @@ class LaunchManager: ObservableObject {
             if SMAppService.mainApp.status != .enabled {
                 try SMAppService.mainApp.register()
             }
-        } else {
-            if SMAppService.mainApp.status == .enabled {
-                try SMAppService.mainApp.unregister()
-            }
+        } else if SMAppService.mainApp.status == .enabled {
+            try SMAppService.mainApp.unregister()
         }
     }
 

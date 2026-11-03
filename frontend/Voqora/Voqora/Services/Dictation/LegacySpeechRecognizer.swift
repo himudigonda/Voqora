@@ -20,10 +20,8 @@ nonisolated struct LegacyTranscriptSegmenter: Equatable, Sendable {
     mutating func finalize(_ text: String) -> [SpeechRecognitionEvent] {
         let last = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var events: [SpeechRecognitionEvent] = []
-        if last.isEmpty || Self.isRestart(previous: current, next: last) {
-            if !current.isEmpty {
-                events.append(.finalized(current))
-            }
+        if last.isEmpty || Self.isRestart(previous: current, next: last), !current.isEmpty {
+            events.append(.finalized(current))
         }
         if !last.isEmpty {
             events.append(.finalized(last))

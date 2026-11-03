@@ -690,8 +690,8 @@ extension MetricsService {
     }
 }
 
+@MainActor
 extension MetricsService {
-    @MainActor
     static func sendDailyUsageIfDue(
         now: Date = Date(),
         defaults: UserDefaults = .standard,

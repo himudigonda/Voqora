@@ -51,8 +51,8 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func checkGitHubReleaseForUpdate() async {
-        guard NSClassFromString("XCTestCase") == nil else { return }
-        guard let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+        guard NSClassFromString("XCTestCase") == nil,
+              let current = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
               !isCheckingForUpdates
         else { return }
         isCheckingForUpdates = true

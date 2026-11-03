@@ -433,10 +433,7 @@ final class AudiobookService: NSObject, @unchecked Sendable {
         let (downloadedURL, response) = try await session.download(for: request)
         defer { try? FileManager.default.removeItem(at: downloadedURL) }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw AudiobookServiceError.audioNotReady
-        }
-        guard http.statusCode == 200 else {
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw AudiobookServiceError.audioNotReady
         }
         if let ct = http.value(forHTTPHeaderField: "Content-Type"),

@@ -486,8 +486,7 @@ final nonisolated class ParakeetSegmentPipeline: @unchecked Sendable {
         let text = try? await transcriber.transcribe(samples)
         lock.withLock {
             isBusy = false
-            guard let text, !isCancelled, !isFailed, !isFinishing, openStart == segmenter.openStart else { return }
-            guard !text.isEmpty || previewShown else { return }
+            guard let text, !isCancelled, !isFailed, !isFinishing, openStart == segmenter.openStart, !text.isEmpty || previewShown else { return }
             previewShown = !text.isEmpty
             lastPreview = text.isEmpty ? nil : (openStart: openStart, text: text)
             emit(.volatile(text))
