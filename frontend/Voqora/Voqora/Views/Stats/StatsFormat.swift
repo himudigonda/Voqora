@@ -15,12 +15,8 @@ struct StatsTheme {
         base.primary
     }
 
-    var muted: Color {
-        base.primary.opacity(0.4)
-    }
-
     var track: Color {
-        base.primaryContainer
+        base.surfaceContainerHighest
     }
 
     var emptyCell: Color {
@@ -51,13 +47,20 @@ struct StatsTheme {
         Self.rotated(base.primary, degrees: Self.hueOffsets[index % Self.hueOffsets.count])
     }
 
-    func heat(level: Int) -> Color {
+    private static let rampOpacities: [Double] = [1, 0.72, 0.5, 0.34, 0.22, 0.14]
+
+    func ramp(_ tint: Color, _ index: Int) -> Color {
+        tint.opacity(Self.rampOpacities[min(max(index, 0), Self.rampOpacities.count - 1)])
+    }
+
+    func heat(level: Int, tint: Color? = nil) -> Color {
+        let color = tint ?? accent
         switch level {
-        case ...0: emptyCell
-        case 1: accent.opacity(0.32)
-        case 2: accent.opacity(0.55)
-        case 3: accent.opacity(0.78)
-        default: accent
+        case ...0: return emptyCell
+        case 1: return color.opacity(0.32)
+        case 2: return color.opacity(0.55)
+        case 3: return color.opacity(0.78)
+        default: return color
         }
     }
 

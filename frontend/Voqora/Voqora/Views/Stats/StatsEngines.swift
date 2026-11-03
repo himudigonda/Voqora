@@ -1,24 +1,34 @@
 import Charts
 import SwiftUI
 
-struct StatsEnginesSection: View {
+struct StatsEnginesLens: View {
     let context: StatsContext
+    @State private var view = EngineView.firstAudio
+
+    private enum EngineView: String, CaseIterable {
+        case firstAudio = "First audio"
+        case share = "Share over time"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.card) {
-            AdaptiveGrid(minColumnWidth: 400) {
-                StatsEngineTableCard(context: context).statsSpan(2)
-                StatsLatencyCard(context: context)
-                StatsEngineShareCard(context: context)
+            StatsEngineTableCard(context: context)
+            HStack {
+                Spacer(minLength: 0)
+                StatsMetricToggle(selection: $view, options: EngineView.allCases, title: { $0.rawValue }, theme: context.theme)
+            }
+            switch view {
+            case .firstAudio: StatsLatencyCard(context: context)
+            case .share: StatsEngineShareCard(context: context)
             }
         }
     }
 }
 
 enum StatsEngineColors {
-    static func color(for id: String, in rows: [EngineRow], theme: StatsTheme) -> Color {
+    static func color(for id: String, in rows: [EngineRow], context: StatsContext) -> Color {
         let index = rows.firstIndex { $0.id == id } ?? 0
-        return theme.series(index)
+        return context.theme.ramp(context.tint, index)
     }
 }
 
@@ -29,7 +39,7 @@ struct StatsEngineTableCard: View {
     var body: some View {
         let theme = context.theme
         let rows = context.data.engines
-        StatsCard("Engines", subtitle: "How each speech engine performed, \(context.rangeCaption())", theme: theme) {
+        StatsCard("Engine comparison", subtitle: "Speed and reliability, \(context.rangeCaption())", theme: theme) {
             if rows.isEmpty {
                 StatsEmptyNote(icon: "cpu", title: "No engine data yet", text: "Read some text aloud and each engine's speed and reliability is compared here.", theme: theme, minHeight: 180)
             } else {
@@ -47,7 +57,7 @@ struct StatsEngineTableCard: View {
                         GridRow {
                             HStack(spacing: 8) {
                                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                                    .fill(StatsEngineColors.color(for: row.id, in: rows, theme: theme))
+                                    .fill(StatsEngineColors.color(for: row.id, in: rows, context: context))
                                     .frame(width: 10, height: 10)
                                 Text(row.name)
                                     .font(vm.font(.label))
@@ -126,7 +136,7 @@ struct StatsLatencyCard: View {
             if rows.isEmpty {
                 StatsEmptyNote(icon: "timer", title: "No latency data yet", text: "Time to first audio is measured on every read.", theme: theme, minHeight: 180)
             } else {
-                StatsLegend(items: rows.map { StatsLegendItem(id: $0.id, label: $0.name, color: StatsEngineColors.color(for: $0.id, in: context.data.engines, theme: theme)) }, theme: theme)
+                StatsLegend(items: rows.map { StatsLegendItem(id: $0.id, label: $0.name, color: StatsEngineColors.color(for: $0.id, in: context.data.engines, context: context)) }, theme: theme)
                 Chart(bars.filter { bar in rows.contains { $0.name == bar.engine } }) { bar in
                     BarMark(x: .value("Latency", bar.bucket), y: .value("Reads", bar.count))
                         .position(by: .value("Engine", bar.engine))
@@ -135,7 +145,7 @@ struct StatsLatencyCard: View {
                 }
                 .chartForegroundStyleScale(
                     domain: rows.map(\.name),
-                    range: rows.map { StatsEngineColors.color(for: $0.id, in: context.data.engines, theme: theme) }
+                    range: rows.map { StatsEngineColors.color(for: $0.id, in: context.data.engines, context: context) }
                 )
                 .chartXScale(domain: LatencyBuckets.labels)
                 .chartLegend(.hidden)
@@ -159,7 +169,7 @@ struct StatsLatencyCard: View {
                             .foregroundStyle(theme.tertiaryText)
                     }
                 }
-                .frame(height: 220)
+                .frame(height: 200)
                 .accessibilityLabel("Grouped bar chart of first-audio latency by engine")
             }
         }
@@ -203,7 +213,7 @@ struct StatsEngineShareCard: View {
             if rows.isEmpty || !bars.contains(where: { $0.uses > 0 }) {
                 StatsEmptyNote(icon: "chart.bar.xaxis", title: "No engine history yet", text: "See how your engine mix shifts as you try new voices.", theme: theme, minHeight: 180)
             } else {
-                StatsLegend(items: rows.map { StatsLegendItem(id: $0.id, label: $0.name, color: StatsEngineColors.color(for: $0.id, in: rows, theme: theme)) }, theme: theme)
+                StatsLegend(items: rows.map { StatsLegendItem(id: $0.id, label: $0.name, color: StatsEngineColors.color(for: $0.id, in: rows, context: context)) }, theme: theme)
                 Chart {
                     ForEach(bars) { bar in
                         BarMark(x: .value("Date", bar.date, unit: unit), y: .value("Reads", bar.uses))
@@ -217,13 +227,15 @@ struct StatsEngineShareCard: View {
                             .annotation(position: .overlay, alignment: .top, spacing: 0, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                                 StatsCallout(
                                     title: StatsFormat.pointCaption(point.date, range: context.data.range, unit: context.data.trendUnit),
-                                    rows: rows.map { StatsCalloutRow(color: StatsEngineColors.color(for: $0.id, in: rows, theme: theme), label: $0.name, value: "\(point.engineUses[$0.id] ?? 0)") },
+                                    rows: rows.map {
+                                        StatsCalloutRow(color: StatsEngineColors.color(for: $0.id, in: rows, context: context), label: $0.name, value: "\(point.engineUses[$0.id] ?? 0)")
+                                    },
                                     theme: theme
                                 )
                             }
                     }
                 }
-                .chartForegroundStyleScale(domain: rows.map(\.name), range: rows.map { StatsEngineColors.color(for: $0.id, in: rows, theme: theme) })
+                .chartForegroundStyleScale(domain: rows.map(\.name), range: rows.map { StatsEngineColors.color(for: $0.id, in: rows, context: context) })
                 .chartLegend(.hidden)
                 .chartXSelection(value: $selection)
                 .chartYAxis {
@@ -241,7 +253,7 @@ struct StatsEngineShareCard: View {
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: context.data.range == .week ? 7 : 5)) { value in
-                        AxisValueLabel {
+                        AxisValueLabel(centered: true) {
                             if let date = value.as(Date.self) {
                                 Text(StatsFormat.axisLabel(date, range: context.data.range))
                                     .font(vm.font(.bodySmall))
@@ -250,7 +262,7 @@ struct StatsEngineShareCard: View {
                         }
                     }
                 }
-                .frame(height: 220)
+                .frame(height: 200)
                 .onAppear { selection = StatsDebug.selection(in: context.data.trend) }
                 .accessibilityLabel("Stacked bar chart of reads per engine over time")
             }

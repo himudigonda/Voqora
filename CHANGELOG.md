@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Stats is redesigned around Voqora's products. Tiles across the top switch
+  between Overview, Read Aloud (text to speech), Dictation (speech to text),
+  Audiobooks, Podcasts and AI, each with its own color and its own numbers.
+- Each product page has a short summary and one explorer card you switch
+  between views, so the charts no longer stack into a long page.
+- Read-aloud time and audiobook listening are now counted separately, including
+  their time-of-day charts. Days recorded before this update split that chart
+  by each product's share of the day, so older patterns are estimates.
+
+### Fixed
+
+- A faster AI response or fewer cancelled dictations no longer shows as a
+  warning in Stats.
+- Voqora no longer crashes at launch when built with Xcode 27.2 on macOS 27.2.
+
 ## [2.1.1]
 
 ### Fixed

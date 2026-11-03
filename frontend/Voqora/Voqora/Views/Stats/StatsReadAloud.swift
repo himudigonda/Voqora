@@ -1,18 +1,76 @@
-import Charts
 import SwiftUI
 
-struct StatsListenSection: View {
+struct StatsReadAloudSection: View {
     let context: StatsContext
 
+    private enum Lens: String, StatsLens {
+        case trend
+        case voices
+        case sources
+        case engines
+        case rhythm
+
+        var title: String {
+            switch self {
+            case .trend: "Trend"
+            case .voices: "Voices"
+            case .sources: "Sources"
+            case .engines: "Engines"
+            case .rhythm: "Rhythm"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .trend: "chart.bar.fill"
+            case .voices: "person.wave.2.fill"
+            case .sources: "text.cursor"
+            case .engines: "cpu"
+            case .rhythm: "clock.fill"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .trend: "How much you had read aloud over time"
+            case .voices: "Who reads to you, and how fast"
+            case .sources: "Where the text came from, and which apps and agents sent it"
+            case .engines: ""
+            case .rhythm: "When you have text read aloud"
+            }
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.card) {
-            tiles
-            AdaptiveGrid(minColumnWidth: 400) {
-                StatsSourcesCard(context: context)
-                StatsVoicesCard(context: context)
-                StatsSpeedCard(context: context)
-                StatsRelayCard(context: context)
-                StatsBooksCard(context: context).statsSpan(2)
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            StatsProductHero(context: context, metrics: metrics)
+            StatsLensCard(context: context) { (lens: Lens) in
+                switch lens {
+                case .trend:
+                    StatsTrendLens(
+                        context: context,
+                        metrics: [
+                            .minutes("time", "Time") { $0.speechMinutes },
+                            .count("words", "Words") { $0.speechWords },
+                            .count("reads", "Reads") { $0.speechCount },
+                        ],
+                        emptyText: "Select text and press your shortcut, and your reads chart here."
+                    )
+                case .voices:
+                    AdaptiveGrid(minColumnWidth: 280, maxColumns: 2) {
+                        StatsVoicesCard(context: context)
+                        StatsSpeedCard(context: context)
+                    }
+                case .sources:
+                    AdaptiveGrid(minColumnWidth: 280, maxColumns: 2) {
+                        StatsSourcesCard(context: context)
+                        StatsRelayCard(context: context)
+                    }
+                case .engines:
+                    StatsEnginesLens(context: context)
+                case .rhythm:
+                    StatsRhythmLens(matrix: context.data.readAloudHourWeekday, tint: context.tint, noun: "have text read aloud")
+                }
             }
         }
     }
@@ -21,44 +79,34 @@ struct StatsListenSection: View {
         Int((Double(words) / StatsFormat.wordsPerPaperbackPage).rounded())
     }
 
-    private var tiles: some View {
-        let data = context.data
-        let current = data.current
-        let theme = context.theme
-        let favorite = current.speeds.max { ($0.value, $1.key) < ($1.value, $0.key) }
-        return AdaptiveGrid(minColumnWidth: 200, spacing: Theme.Space.item, maxColumns: 4, balanced: true) {
-            context.tile(
-                "Listening time",
-                value: StatsFormat.duration(current.heardSeconds),
-                icon: "headphones",
-                change: data.change { $0.heardSeconds },
-                footnote: "\(StatsFormat.duration(current.speechSeconds)) read aloud · \(StatsFormat.duration(current.listeningSeconds)) audiobooks",
-                tint: theme.series(0)
-            )
-            context.tile(
+    private var metrics: [StatsHeroMetricModel] {
+        let current = context.current
+        return [
+            context.metric(
+                "Time read aloud",
+                value: StatsFormat.duration(current.speechSeconds),
+                footnote: "Audiobooks are counted separately",
+                change: { $0.speechSeconds }
+            ),
+            context.metric(
                 "Words spoken",
                 value: StatsFormat.count(current.speechWords),
-                icon: "text.quote",
-                change: data.change { Double($0.speechWords) },
                 footnote: current.speechWords > 0 ? "About \(paperbackPages(current.speechWords).formatted()) paperback pages" : "Select text, then press your shortcut",
-                tint: theme.series(1)
-            )
-            context.tile(
+                change: { Double($0.speechWords) }
+            ),
+            context.metric(
                 "Selections read",
                 value: current.speechCount.formatted(),
-                icon: "text.cursor",
-                change: data.change { Double($0.speechCount) },
                 footnote: current.speechCount > 0 ? "\(current.averageSelectionWords) words on average" : "Nothing read aloud yet",
-                tint: theme.series(2)
-            )
-            context.tile(
-                "Favorite speed",
-                value: favorite.flatMap { Double($0.key) }.map { StatsFormat.speed($0) } ?? "—",
-                icon: "gauge.with.needle",
-                footnote: favorite.map { "Used \($0.value.formatted()) \($0.value == 1 ? "time" : "times")" } ?? "Appears after your first read",
-                tint: theme.series(3)
-            )
-        }
+                change: { Double($0.speechCount) }
+            ),
+            context.metric(
+                "Time saved",
+                value: StatsFormat.duration(current.listeningSavedSeconds),
+                footnote: "vs reading at \(Int(StatsAssumptions.readingWordsPerMinute)) wpm",
+                change: { $0.listeningSavedSeconds }
+            ),
+        ]
     }
 }
 
@@ -70,7 +118,7 @@ struct StatsSourcesCard: View {
         let sorted = context.current.speech.sources.sorted { ($0.value, $1.key) > ($1.value, $0.key) }
         let top = sorted.prefix(6)
         var result = top.enumerated().map { index, entry in
-            StatsDonutSlice(id: entry.key, label: StatsLabels.source(entry.key), value: Double(entry.value), color: theme.series(index))
+            StatsDonutSlice(id: entry.key, label: StatsLabels.source(entry.key), value: Double(entry.value), color: theme.ramp(context.tint, index))
         }
         let rest = sorted.dropFirst(6).reduce(0) { $0 + $1.value }
         if rest > 0 {
@@ -150,7 +198,7 @@ struct StatsVoicesCard: View {
                             .foregroundStyle(theme.tertiaryText)
                     }
                 }
-                StatsShareBar(fraction: share, tint: rank == 0 ? theme.accent : theme.muted, track: theme.track)
+                StatsShareBar(fraction: share, tint: rank == 0 ? context.tint : theme.ramp(context.tint, 2), track: theme.track)
             }
         }
         .accessibilityElement(children: .combine)
@@ -177,7 +225,7 @@ struct StatsSpeedCard: View {
                 StatsHistogram(
                     bins: bins,
                     highlight: favorite.map { StatsFormat.speed($0) },
-                    tint: context.theme.series(1),
+                    tint: context.tint,
                     theme: context.theme,
                     summary: "Reads by speed: " + bins.map { "\($0.label) \(Int($0.value))" }.joined(separator: ", ")
                 )
@@ -197,7 +245,7 @@ struct StatsRelayCard: View {
             .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
             .prefix(6)
             .enumerated()
-            .map { index, entry in StatsBarItem(label: entry.key, value: Double(entry.value), color: index == 0 ? context.theme.series(0) : context.theme.series(0).opacity(0.55)) }
+            .map { index, entry in StatsBarItem(label: entry.key, value: Double(entry.value), color: context.theme.ramp(context.tint, index == 0 ? 0 : 2)) }
     }
 
     var body: some View {
@@ -217,69 +265,5 @@ struct StatsRelayCard: View {
                 )
             }
         }
-    }
-}
-
-struct StatsBooksCard: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    let context: StatsContext
-
-    private var rows: [(id: String, seconds: Double)] {
-        context.current.books
-            .sorted { ($0.value, $1.key) > ($1.value, $0.key) }
-            .prefix(8)
-            .map { (id: $0.key, seconds: $0.value) }
-    }
-
-    var body: some View {
-        let theme = context.theme
-        StatsCard("Audiobooks listened", subtitle: "Time listened in this period and overall progress", theme: theme) {
-            if rows.isEmpty {
-                StatsEmptyNote(icon: "book.closed", title: "No audiobook listening yet", text: "Play an audiobook and it lands here with your progress.", theme: theme)
-            } else {
-                let peak = max(rows.first?.seconds ?? 1, 1)
-                Grid(alignment: .leading, horizontalSpacing: Theme.Space.card, verticalSpacing: 12) {
-                    GridRow {
-                        header("Audiobook")
-                        header("Listened")
-                            .gridColumnAlignment(.trailing)
-                        header("Progress")
-                        header("")
-                    }
-                    Divider().gridCellColumns(4)
-                    ForEach(rows, id: \.id) { row in
-                        let info = context.books[row.id]
-                        GridRow {
-                            Text(info?.title ?? "Removed audiobook")
-                                .font(vm.font(.label))
-                                .foregroundStyle(info == nil ? theme.tertiaryText : theme.text)
-                                .fixedSize(horizontal: false, vertical: true)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            HStack(spacing: 10) {
-                                StatsShareBar(fraction: row.seconds / peak, tint: theme.series(0), track: theme.track)
-                                    .frame(width: 70)
-                                Text(StatsFormat.duration(row.seconds))
-                                    .font(vm.font(.bodySmall).monospacedDigit())
-                                    .foregroundStyle(theme.secondaryText)
-                                    .fixedSize()
-                                    .frame(minWidth: 62, alignment: .trailing)
-                            }
-                            StatsShareBar(fraction: info?.progress ?? 0, tint: theme.series(1), track: theme.track)
-                                .frame(width: 110)
-                            Text(info.map { StatsFormat.percent($0.progress) } ?? "—")
-                                .font(vm.font(.bodySmall).monospacedDigit())
-                                .foregroundStyle(theme.secondaryText)
-                                .frame(width: 40, alignment: .trailing)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func header(_ text: String) -> some View {
-        Text(text)
-            .font(vm.font(.labelSmall))
-            .foregroundStyle(context.theme.tertiaryText)
     }
 }

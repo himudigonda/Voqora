@@ -4,13 +4,14 @@ import SwiftUI
 struct StatsHeatLegend: View {
     @EnvironmentObject var vm: DashboardViewModel
     let theme: StatsTheme
+    var tint: Color?
 
     var body: some View {
         HStack(spacing: 4) {
             Text("Less")
             ForEach(0 ..< 5, id: \.self) { level in
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
-                    .fill(theme.heat(level: level))
+                    .fill(theme.heat(level: level, tint: tint))
                     .frame(width: 12, height: 12)
             }
             Text("More")
@@ -124,12 +125,13 @@ struct StatsHourWeekdayHeatmap: View {
     let matrix: [[Double]]
     let peak: Double
     let theme: StatsTheme
+    var tint: Color?
     @State private var hovered: (weekday: Int, hour: Int)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.item) {
             WidthDrivenHeight(height: { width in
-                let cell = max(4, (width - 38) / 24)
+                let cell = min(26, max(4, (width - 38) / 24))
                 return cell * 7 + 26
             }) {
                 chart
@@ -140,7 +142,7 @@ struct StatsHourWeekdayHeatmap: View {
                     .foregroundStyle(hovered == nil ? theme.tertiaryText : theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                StatsHeatLegend(theme: theme)
+                StatsHeatLegend(theme: theme, tint: tint)
             }
         }
     }
@@ -180,7 +182,7 @@ struct StatsHourWeekdayHeatmap: View {
                 yEnd: .value("Day end", Double(6 - cell.weekday) + 0.43)
             )
             .cornerRadius(3)
-            .foregroundStyle(theme.heat(level: cell.level))
+            .foregroundStyle(theme.heat(level: cell.level, tint: tint))
         }
         .chartXScale(domain: -0.5 ... 23.5)
         .chartYScale(domain: -0.5 ... 6.5)

@@ -21,6 +21,16 @@ enum StatsRange: String, CaseIterable, Identifiable {
         }
     }
 
+    var shortTitle: String {
+        switch self {
+        case .week: "7D"
+        case .month: "30D"
+        case .quarter: "90D"
+        case .year: "1Y"
+        case .all: "All"
+        }
+    }
+
     var phrase: String {
         switch self {
         case .week: "the past 7 days"
@@ -41,14 +51,18 @@ enum StatsRange: String, CaseIterable, Identifiable {
         }
     }
 
-    var comparisonLabel: String? {
+    var previousPeriodName: String? {
         switch self {
-        case .week: "vs previous 7 days"
-        case .month: "vs previous 30 days"
-        case .quarter: "vs previous 90 days"
-        case .year: "vs previous 12 months"
+        case .week: "previous 7 days"
+        case .month: "previous 30 days"
+        case .quarter: "previous 90 days"
+        case .year: "previous 12 months"
         case .all: nil
         }
+    }
+
+    var comparisonLabel: String? {
+        previousPeriodName.map { "vs \($0)" }
     }
 
     var bucket: Calendar.Component {

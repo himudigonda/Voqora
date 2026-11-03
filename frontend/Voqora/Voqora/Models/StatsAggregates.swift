@@ -186,6 +186,9 @@ struct TimelinePoint: Identifiable, Equatable {
     var dictationWords = 0
     var dictationTimedWords = 0
     var dictationSeconds: Double = 0
+    var speechWords = 0
+    var speechCount = 0
+    var podcastScripts = 0
     var engineUses: [String: Int] = [:]
 
     var id: Date {
@@ -212,6 +215,9 @@ struct TimelinePoint: Identifiable, Equatable {
         dictationWords += other.dictationWords
         dictationTimedWords += other.dictationTimedWords
         dictationSeconds += other.dictationSeconds
+        speechWords += other.speechWords
+        speechCount += other.speechCount
+        podcastScripts += other.podcastScripts
         engineUses.merge(other.engineUses, uniquingKeysWith: +)
     }
 }
@@ -296,6 +302,9 @@ struct StatsAggregates: Equatable {
     let timeline: [TimelinePoint]
     let trend: [TimelinePoint]
     let hourWeekday: [[Double]]
+    let readAloudHourWeekday: [[Double]]
+    let audiobookHourWeekday: [[Double]]
+    let dictationHourWeekday: [[Double]]
     let contributions: Contributions
     let currentStreak: Int
     let longestStreak: Int
@@ -320,6 +329,10 @@ struct StatsAggregates: Equatable {
 
     var comparison: String? {
         previous == nil ? nil : range.comparisonLabel
+    }
+
+    var previousPeriodName: String? {
+        previous == nil ? nil : range.previousPeriodName
     }
 
     func change(_ value: (PeriodAggregate) -> Double) -> Double? {
@@ -375,7 +388,11 @@ struct StatsAggregates: Equatable {
         var current = PeriodAggregate()
         var previous = previousInterval.map { _ in PeriodAggregate() }
         var lifetime = PeriodAggregate()
-        var hourWeekday = Array(repeating: Array(repeating: 0.0, count: 24), count: 7)
+        let blankMatrix = Array(repeating: Array(repeating: 0.0, count: 24), count: 7)
+        var hourWeekday = blankMatrix
+        var readAloudHourWeekday = blankMatrix
+        var audiobookHourWeekday = blankMatrix
+        var dictationHourWeekday = blankMatrix
         var points: [Date: TimelinePoint] = [:]
 
         for (date, day) in dated {
@@ -386,8 +403,13 @@ struct StatsAggregates: Equatable {
             guard date >= interval.start, date < interval.end else { continue }
             current.add(day)
             let weekday = (calendar.component(.weekday, from: date) + 5) % 7
+            let readAloudHours = day.readAloudHours
+            let audiobookHours = day.audiobookHours
             for hour in 0 ..< 24 {
                 hourWeekday[weekday][hour] += (day.hours[hour] + day.dictation.hours[hour]) / 60
+                readAloudHourWeekday[weekday][hour] += readAloudHours[hour] / 60
+                audiobookHourWeekday[weekday][hour] += audiobookHours[hour] / 60
+                dictationHourWeekday[weekday][hour] += day.dictation.hours[hour] / 60
             }
             let bucket = calendar.start(of: range.bucket, for: date)
             var point = points[bucket] ?? TimelinePoint(date: bucket)
@@ -402,6 +424,9 @@ struct StatsAggregates: Equatable {
             point.dictationWords += day.dictation.words
             point.dictationTimedWords += day.dictation.timedWords
             point.dictationSeconds += day.dictation.seconds
+            point.speechWords += day.speechWords
+            point.speechCount += day.speechCount
+            point.podcastScripts += day.creation.podcastScripts
             for (engine, usage) in day.speech.engines where usage.uses > 0 {
                 point.engineUses[engine, default: 0] += usage.uses
             }
@@ -452,6 +477,9 @@ struct StatsAggregates: Equatable {
             timeline: timeline,
             trend: trend,
             hourWeekday: hourWeekday,
+            readAloudHourWeekday: readAloudHourWeekday,
+            audiobookHourWeekday: audiobookHourWeekday,
+            dictationHourWeekday: dictationHourWeekday,
             contributions: Contributions.make(ledger: ledger, weeks: contributionWeeks, now: now, calendar: calendar),
             currentStreak: streaks.current,
             longestStreak: streaks.longest,
@@ -463,62 +491,144 @@ struct StatsAggregates: Equatable {
     }
 }
 
+struct StatsNarrativeLine: Identifiable, Equatable {
+    let product: StatsProduct?
+    let text: String
+
+    var id: String {
+        product?.rawValue ?? text
+    }
+}
+
+extension [[Double]] {
+    var matrixPeak: Double {
+        joined().max() ?? 0
+    }
+
+    var weekdayRowTotals: [Double] {
+        map { $0.reduce(0, +) }
+    }
+
+    var hourColumnTotals: [Double] {
+        (0 ..< 24).map { hour in reduce(0) { $0 + $1[hour] } }
+    }
+}
+
 extension StatsAggregates {
     func narrative(voiceName: (String) -> String, weekdayName: (Int) -> String) -> String {
+        narrativeLines(voiceName: voiceName, weekdayName: weekdayName).map(\.text).joined(separator: " ")
+    }
+
+    func narrativeLines(voiceName: (String) -> String, weekdayName: (Int) -> String) -> [StatsNarrativeLine] {
         let phrase = range.narrativeLead
         guard current.hasActivity else {
             let when = range == .all ? "Nothing has been recorded yet." : "Nothing was recorded in \(range.phrase)."
-            return "\(when) Read some text aloud, dictate a note, or start an audiobook and this summary fills itself in."
+            return [StatsNarrativeLine(product: nil, text: "\(when) Read some text aloud, dictate a note, or start an audiobook and this summary fills itself in.")]
         }
-        var sentences: [String] = []
+        var lines: [StatsNarrativeLine] = []
         let activeNoun = current.activeDays == 1 ? "day" : "days"
-        if current.heardSeconds >= 1 {
-            let total = range.bucket == .day ? " of \(dayCount)" : ""
-            sentences.append("\(phrase) you were active on \(current.activeDays)\(total) \(activeNoun) and listened for \(Self.spokenDuration(current.heardSeconds)).")
+        let total = range.bucket == .day ? " of \(dayCount)" : ""
+        lines.append(StatsNarrativeLine(product: nil, text: "\(phrase) you were active on \(current.activeDays)\(total) \(activeNoun)."))
+        if let line = readAloudLine(voiceName: voiceName) {
+            lines.append(line)
+        }
+        if let line = dictationLine() {
+            lines.append(line)
+        }
+        if let line = audiobooksLine() {
+            lines.append(line)
+        }
+        if let line = podcastsLine() {
+            lines.append(line)
+        }
+        if let line = aiLine() {
+            lines.append(line)
+        }
+        if let line = closingLine(weekdayName: weekdayName) {
+            lines.append(line)
+        }
+        return lines
+    }
+
+    private func readAloudLine(voiceName: (String) -> String) -> StatsNarrativeLine? {
+        guard current.speechCount > 0 else { return nil }
+        let reads = current.speechCount
+        var sentences: [String] = []
+        if current.speechSeconds >= 1 {
+            sentences.append("You read aloud for \(Self.spokenDuration(current.speechSeconds)) across \(reads) \(reads == 1 ? "selection" : "selections").")
         } else {
-            sentences.append("\(phrase) you were active on \(current.activeDays) \(activeNoun).")
+            sentences.append("You read \(reads) \(reads == 1 ? "selection" : "selections") aloud.")
         }
         if let voice = current.voices.max(by: { ($0.value.uses, $1.key) < ($1.value.uses, $0.key) }) {
             let uses = voice.value.uses
             sentences.append("\(voiceName(voice.key)) was your most-used voice across \(uses) \(uses == 1 ? "read" : "reads").")
         }
-        if current.dictation.sessions > 0 {
-            var text = "You dictated \(current.dictation.words.formatted()) words in \(current.dictation.sessions) \(current.dictation.sessions == 1 ? "session" : "sessions")"
-            if let wpm = current.dictation.wordsPerMinute {
-                text += " at about \(Int(wpm.rounded())) words per minute"
-            }
-            if current.dictationSavedSeconds >= 60 {
-                text += ", which saved roughly \(Self.spokenDuration(current.dictationSavedSeconds)) of typing"
-            }
-            sentences.append(text + ".")
+        sentences.append(contentsOf: comparisonSentence("Read aloud time", \.speechSeconds))
+        return StatsNarrativeLine(product: .readAloud, text: sentences.joined(separator: " "))
+    }
+
+    private func dictationLine() -> StatsNarrativeLine? {
+        guard current.dictation.sessions > 0 else { return nil }
+        var text = "You dictated \(current.dictation.words.formatted()) words in \(current.dictation.sessions) \(current.dictation.sessions == 1 ? "session" : "sessions")"
+        if let wpm = current.dictation.wordsPerMinute {
+            text += " at about \(Int(wpm.rounded())) words per minute"
         }
-        if current.creation.booksGenerated > 0 || current.creation.podcastRenders > 0 {
-            var parts: [String] = []
-            if current.creation.booksGenerated > 0 {
-                let books = current.creation.booksGenerated
-                parts.append("\(books) \(books == 1 ? "audiobook" : "audiobooks") (\(Self.spokenDuration(current.creation.bookAudioSeconds)) of audio)")
-            }
-            if current.creation.podcastRenders > 0 {
-                let podcasts = current.creation.podcastRenders
-                parts.append("\(podcasts) \(podcasts == 1 ? "podcast" : "podcasts")")
-            }
-            sentences.append("You created \(parts.joined(separator: " and ")).")
+        if current.dictationSavedSeconds >= 60 {
+            text += ", which saved roughly \(Self.spokenDuration(current.dictationSavedSeconds)) of typing"
         }
-        if current.ai.totalRequests > 0 {
-            var text = "AI helped \(current.ai.totalRequests) \(current.ai.totalRequests == 1 ? "time" : "times")"
-            if let rate = current.aiSuccessRate {
-                text += " with a \(Int((rate * 100).rounded())) percent success rate"
-            }
-            sentences.append(text + ".")
+        return StatsNarrativeLine(product: .dictation, text: text + ".")
+    }
+
+    private func audiobooksLine() -> StatsNarrativeLine? {
+        let books = current.creation.booksGenerated
+        let listened = current.listeningSeconds >= 1
+        guard listened || books > 0 else { return nil }
+        var parts: [String] = []
+        if listened {
+            parts.append("listened to audiobooks for \(Self.spokenDuration(current.listeningSeconds))")
         }
+        if books > 0 {
+            parts.append("generated \(books) \(books == 1 ? "audiobook" : "audiobooks") (\(Self.spokenDuration(current.creation.bookAudioSeconds)) of audio)")
+        }
+        let comparison = listened ? comparisonSentence("Audiobook listening", \.listeningSeconds) : []
+        return StatsNarrativeLine(product: .audiobooks, text: (["You \(parts.joined(separator: " and "))."] + comparison).joined(separator: " "))
+    }
+
+    private func podcastsLine() -> StatsNarrativeLine? {
+        let renders = current.creation.podcastRenders
+        let scripts = current.creation.podcastScripts
+        guard renders > 0 || scripts > 0 else { return nil }
+        var parts: [String] = []
+        if renders > 0 {
+            parts.append("rendered \(renders) podcast \(renders == 1 ? "episode" : "episodes")")
+        }
+        if scripts > 0 {
+            parts.append("wrote \(scripts) \(scripts == 1 ? "script" : "scripts")")
+        }
+        return StatsNarrativeLine(product: .podcasts, text: "You \(parts.joined(separator: " and ")).")
+    }
+
+    private func aiLine() -> StatsNarrativeLine? {
+        guard current.ai.totalRequests > 0 else { return nil }
+        var text = "AI helped \(current.ai.totalRequests) \(current.ai.totalRequests == 1 ? "time" : "times")"
+        if let rate = current.aiSuccessRate {
+            text += " with a \(Int((rate * 100).rounded())) percent success rate"
+        }
+        return StatsNarrativeLine(product: .ai, text: text + ".")
+    }
+
+    private func closingLine(weekdayName: (Int) -> String) -> StatsNarrativeLine? {
+        var sentences: [String] = []
         if let hour = peakHour, let day = peakWeekday {
             sentences.append("You are busiest around \(Self.hourName(hour)) and on \(weekdayName(day))s.")
         }
-        if let comparison = previous.flatMap({ UsageSummary.change(current.heardSeconds, $0.heardSeconds) }), let label = range.comparisonLabel {
-            let percent = Int((abs(comparison) * 100).rounded())
-            sentences.append(percent == 0 ? "Listening time is steady \(label)." : "Listening time is \(comparison > 0 ? "up" : "down") \(percent) percent \(label).")
-        }
-        return sentences.joined(separator: " ")
+        return sentences.isEmpty ? nil : StatsNarrativeLine(product: nil, text: sentences.joined(separator: " "))
+    }
+
+    private func comparisonSentence(_ subject: String, _ value: KeyPath<PeriodAggregate, Double>) -> [String] {
+        guard let comparison = change({ $0[keyPath: value] }), let label = range.comparisonLabel else { return [] }
+        let percent = Int((abs(comparison) * 100).rounded())
+        return [percent == 0 ? "\(subject) is steady \(label)." : "\(subject) is \(comparison > 0 ? "up" : "down") \(percent) percent \(label)."]
     }
 
     static func spokenDuration(_ seconds: Double) -> String {

@@ -1,38 +1,5 @@
 import SwiftUI
 
-enum StatsSection: String, CaseIterable, Identifiable {
-    case overview
-    case listen
-    case dictate
-    case create
-    case ai
-    case engines
-
-    var id: String {
-        rawValue
-    }
-
-    var title: String {
-        switch self {
-        case .overview: "Overview"
-        case .listen: "Listen"
-        case .dictate: "Dictate"
-        case .create: "Create"
-        case .ai: "AI"
-        case .engines: "Engines"
-        }
-    }
-
-    static var initial: StatsSection {
-        #if DEBUG
-            if let raw = ProcessInfo.processInfo.environment["VOQORA_STATS_SECTION"], let section = StatsSection(rawValue: raw) {
-                return section
-            }
-        #endif
-        return .overview
-    }
-}
-
 struct StatsBookInfo: Equatable {
     let title: String
     let totalSeconds: Double
@@ -45,28 +12,35 @@ struct StatsContext {
     let calendar: Calendar
     let books: [String: StatsBookInfo]
     let library: LibraryStats
+    var product = StatsProduct.overview
 
     var current: PeriodAggregate {
         data.current
     }
 
-    func tile(
+    var tint: Color {
+        product.tint(in: theme)
+    }
+
+    func scoped(to product: StatsProduct) -> StatsContext {
+        var copy = self
+        copy.product = product
+        return copy
+    }
+
+    func metric(
         _ title: String,
         value: String,
-        icon: String,
-        change: Double? = nil,
         footnote: String,
-        tint: Color? = nil
-    ) -> StatsHeroTile {
-        StatsHeroTile(
+        lowerIsBetter: Bool = false,
+        change: ((PeriodAggregate) -> Double)? = nil
+    ) -> StatsHeroMetricModel {
+        StatsHeroMetricModel(
             title: title,
             value: value,
-            icon: icon,
-            change: change,
-            comparison: data.comparison,
             footnote: footnote,
-            theme: theme,
-            tint: tint
+            change: change.flatMap { data.change($0) },
+            lowerIsBetter: lowerIsBetter
         )
     }
 
@@ -81,7 +55,7 @@ struct StatsView: View {
     @EnvironmentObject var stats: UsageStatsStore
     @Environment(\.voqoraTheme) private var baseTheme
     @AppStorage("statsRange") private var range: StatsRange = .week
-    @State private var section = StatsSection.initial
+    @State private var product = StatsProduct.initial
     @State private var confirmingReset = false
 
     var body: some View {
@@ -92,12 +66,15 @@ struct StatsView: View {
             title: "Stats",
             subtitle: subtitle(data),
             accessory: {
-                PageActionsMenu {
-                    Button("Reset Stats…", role: .destructive) { confirmingReset = true }
-                        .disabled(stats.ledger.days.isEmpty)
+                HStack(spacing: Theme.Space.item) {
+                    SegmentedTabs(selection: $range, options: StatsRange.allCases, title: { $0.shortTitle })
+                    PageActionsMenu {
+                        Button("Reset Stats…", role: .destructive) { confirmingReset = true }
+                            .disabled(stats.ledger.days.isEmpty)
+                    }
                 }
             },
-            tabs: { controls },
+            tabs: { StatsProductRail(selection: $product, current: data.current, theme: theme) },
             content: {
                 if let error = stats.persistenceError {
                     StatsInsight(icon: "exclamationmark.triangle", text: error, theme: theme)
@@ -111,6 +88,7 @@ struct StatsView: View {
             }
         )
         .animation(Theme.Motion.selection, value: range)
+        .animation(Theme.Motion.selection, value: product)
         .navigationTitle("Stats")
         .confirmationDialog("Reset Stats?", isPresented: $confirmingReset, titleVisibility: .visible) {
             Button("Reset Stats", role: .destructive) { stats.reset() }
@@ -119,35 +97,16 @@ struct StatsView: View {
         }
     }
 
-    private var controls: some View {
-        let sections = SegmentedTabs(selection: $section, options: StatsSection.allCases, title: { $0.title })
-        let ranges = SegmentedTabs(selection: $range, options: StatsRange.allCases, title: { $0.title })
-        return ViewThatFits(in: .horizontal) {
-            HStack(spacing: Theme.Space.card) {
-                sections
-                Spacer(minLength: Theme.Space.item)
-                ranges
-            }
-            VStack(alignment: .leading, spacing: Theme.Space.item) {
-                sections
-                ranges
-            }
-            VStack(alignment: .leading, spacing: Theme.Space.item) {
-                ScrollView(.horizontal, showsIndicators: false) { sections }
-                ScrollView(.horizontal, showsIndicators: false) { ranges }
-            }
-        }
-    }
-
     @ViewBuilder
     private func sectionContent(_ context: StatsContext) -> some View {
-        switch section {
-        case .overview: StatsOverviewSection(context: context)
-        case .listen: StatsListenSection(context: context)
-        case .dictate: StatsDictateSection(context: context)
-        case .create: StatsCreateSection(context: context)
-        case .ai: StatsAISection(context: context)
-        case .engines: StatsEnginesSection(context: context)
+        let scoped = context.scoped(to: product)
+        switch product {
+        case .overview: StatsOverviewSection(context: scoped, onSelect: { product = $0 })
+        case .readAloud: StatsReadAloudSection(context: scoped)
+        case .dictation: StatsDictationSection(context: scoped)
+        case .audiobooks: StatsAudiobooksSection(context: scoped)
+        case .podcasts: StatsPodcastsSection(context: scoped)
+        case .ai: StatsAISection(context: scoped)
         }
     }
 
@@ -166,9 +125,9 @@ struct StatsView: View {
 
     private func subtitle(_ data: StatsAggregates) -> String {
         guard let first = data.firstRecorded else {
-            return "How you listen, dictate, and create with Voqora, counted on this Mac."
+            return "Counted on this Mac."
         }
-        return "How you listen, dictate, and create with Voqora, counted on this Mac since \(first.formatted(.dateTime.month(.wide).day().year()))."
+        return "Counted on this Mac since \(first.formatted(.dateTime.month(.abbreviated).day().year()))."
     }
 
     private var emptyState: some View {

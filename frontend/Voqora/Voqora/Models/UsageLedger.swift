@@ -45,6 +45,7 @@ struct DayUsage: Codable, Equatable {
     var pagesAdded = 0
     var launches = 0
     var hours: [Double] = Array(repeating: 0, count: 24)
+    var listeningHours: [Double] = Array(repeating: 0, count: 24)
     var voices: [String: VoiceUsage] = [:]
     var speeds: [String: Int] = [:]
     var books: [String: Double] = [:]
@@ -68,6 +69,8 @@ struct DayUsage: Codable, Equatable {
         launches = try c.decodeIfPresent(Int.self, forKey: .launches) ?? 0
         let storedHours = try c.decodeIfPresent([Double].self, forKey: .hours) ?? []
         hours = storedHours.count == 24 ? storedHours : Array(repeating: 0, count: 24)
+        let storedListeningHours = try c.decodeIfPresent([Double].self, forKey: .listeningHours) ?? []
+        listeningHours = storedListeningHours.count == 24 ? storedListeningHours : Array(repeating: 0, count: 24)
         voices = try c.decodeIfPresent([String: VoiceUsage].self, forKey: .voices) ?? [:]
         speeds = try c.decodeIfPresent([String: Int].self, forKey: .speeds) ?? [:]
         books = try c.decodeIfPresent([String: Double].self, forKey: .books) ?? [:]
@@ -84,6 +87,24 @@ struct DayUsage: Codable, Equatable {
     var isActive: Bool {
         speechCount > 0 || listeningSeconds >= 1 || documentsAdded > 0 || dictation.sessions > 0
             || creation.booksGenerated > 0 || creation.podcastRenders > 0 || ai.totalRequests > 0
+    }
+
+    private var legacyAudiobookShare: Double {
+        let legacySeconds = max(0, listeningSeconds - listeningHours.reduce(0, +))
+        let legacy = legacySeconds > 0.001 ? legacySeconds : 0
+        let denominator = legacy + speechSeconds
+        return denominator > 0 ? legacy / denominator : 0
+    }
+
+    var audiobookHours: [Double] {
+        // Days recorded before listeningHours existed only hold merged hours, so the unattributed remainder is split by time share.
+        let share = legacyAudiobookShare
+        return (0 ..< 24).map { listeningHours[$0] + max(0, hours[$0] - listeningHours[$0]) * share }
+    }
+
+    var readAloudHours: [Double] {
+        let share = legacyAudiobookShare
+        return (0 ..< 24).map { max(0, hours[$0] - listeningHours[$0]) * (1 - share) }
     }
 }
 
@@ -172,6 +193,7 @@ struct UsageLedger: Codable, Equatable {
         update(at: date, calendar: calendar) { day in
             day.listeningSeconds += seconds
             day.hours[hour] += seconds
+            day.listeningHours[hour] += seconds
             day.books[bookID, default: 0] += seconds
         }
     }

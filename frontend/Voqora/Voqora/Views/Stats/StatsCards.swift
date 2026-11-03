@@ -126,8 +126,14 @@ struct StatsFlowLayout: Layout {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var statsCardChrome = true
+    @Entry var statsTint: Color?
+}
+
 struct StatsCard<Content: View, Accessory: View>: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.statsCardChrome) private var showsChrome
     let title: String
     let subtitle: String?
     let theme: StatsTheme
@@ -149,6 +155,17 @@ struct StatsCard<Content: View, Accessory: View>: View {
     }
 
     var body: some View {
+        if showsChrome {
+            stack
+                .padding(Theme.Space.card)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .voqoraCardBackground()
+        } else {
+            stack.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var stack: some View {
         VStack(alignment: .leading, spacing: Theme.Space.card) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.item) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -168,63 +185,6 @@ struct StatsCard<Content: View, Accessory: View>: View {
             }
             content
         }
-        .padding(Theme.Space.card)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .voqoraCardBackground()
-    }
-}
-
-struct StatsHeroTile: View {
-    @EnvironmentObject var vm: DashboardViewModel
-    let title: String
-    let value: String
-    let icon: String
-    let change: Double?
-    let comparison: String?
-    let footnote: String
-    let theme: StatsTheme
-    var tint: Color?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.item) {
-            HStack(alignment: .top) {
-                ListItemIcon(systemImage: icon, tint: tint)
-                Spacer(minLength: 4)
-                if let label = StatsFormat.change(change) {
-                    StatsChangeChip(label: label, change: change ?? 0, theme: theme)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value)
-                    .font(vm.font(.headline).monospacedDigit())
-                    .foregroundStyle(theme.text)
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text(title)
-                    .font(vm.font(.label))
-                    .foregroundStyle(theme.secondaryText)
-                    .lineLimit(1)
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                if change != nil, let comparison {
-                    Text(comparison)
-                        .font(vm.font(.labelSmall))
-                        .foregroundStyle(theme.secondaryText)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.85)
-                }
-                Text(footnote)
-                    .font(vm.font(.bodySmall))
-                    .foregroundStyle(theme.tertiaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(Theme.Space.item + 4)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.base.surfaceContainer, in: RoundedRectangle(cornerRadius: Theme.Shape.lg, style: .continuous))
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -233,12 +193,13 @@ struct StatsChangeChip: View {
     let label: String
     let change: Double
     let theme: StatsTheme
+    var lowerIsBetter = false
 
     private var tint: Color {
         if abs(change) < 0.005 {
             return theme.tertiaryText
         }
-        return change > 0 ? theme.base.success : theme.base.warning
+        return (change > 0) != lowerIsBetter ? theme.base.success : theme.base.warning
     }
 
     var body: some View {
@@ -263,14 +224,21 @@ struct StatsMiniStat: View {
     let value: String
     let detail: String?
     let theme: StatsTheme
+    var change: Double?
+    var lowerIsBetter = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(vm.font(.title).monospacedDigit())
-                .foregroundStyle(theme.text)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.unit * 2) {
+                Text(value)
+                    .font(vm.font(.title).monospacedDigit())
+                    .foregroundStyle(theme.text)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                if let label = StatsFormat.change(change) {
+                    StatsChangeChip(label: label, change: change ?? 0, theme: theme, lowerIsBetter: lowerIsBetter)
+                }
+            }
             Text(label)
                 .font(vm.font(.label))
                 .foregroundStyle(theme.secondaryText)
@@ -307,6 +275,7 @@ struct StatsShareBar: View {
 
 struct StatsInsight: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.statsTint) private var tint
     let icon: String
     let text: String
     let theme: StatsTheme
@@ -315,7 +284,7 @@ struct StatsInsight: View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(theme.accent)
+                .foregroundStyle(tint ?? theme.accent)
             Text(text)
                 .font(vm.font(.bodySmall))
                 .foregroundStyle(theme.secondaryText)
@@ -326,6 +295,7 @@ struct StatsInsight: View {
 
 struct StatsEmptyNote: View {
     @EnvironmentObject var vm: DashboardViewModel
+    @Environment(\.statsTint) private var tint
     let icon: String
     let title: String
     let text: String
@@ -336,9 +306,9 @@ struct StatsEmptyNote: View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 18, weight: .regular))
-                .foregroundStyle(theme.base.onPrimaryContainer)
+                .foregroundStyle(tint ?? theme.base.onPrimaryContainer)
                 .frame(width: 40, height: 40)
-                .background(theme.base.primaryContainer.opacity(0.65), in: Circle())
+                .background((tint?.opacity(0.18) ?? theme.base.primaryContainer.opacity(0.65)), in: Circle())
                 .accessibilityHidden(true)
             Text(title)
                 .font(vm.font(.label))
@@ -364,22 +334,79 @@ struct StatsLegend: View {
     @EnvironmentObject var vm: DashboardViewModel
     let items: [StatsLegendItem]
     let theme: StatsTheme
+    var isolated: Binding<String?>?
 
     var body: some View {
         StatsFlowLayout(spacing: 14, lineSpacing: 4) {
             ForEach(items) { item in
-                HStack(spacing: 5) {
-                    RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(item.color).frame(width: 10, height: 10)
-                    Text(item.label)
-                        .font(vm.font(.bodySmall))
-                        .foregroundStyle(theme.secondaryText)
-                        .lineLimit(1)
-                }
-                .fixedSize()
+                entry(item)
             }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Legend: " + items.map(\.label).joined(separator: ", "))
+        .accessibilityElement(children: isolated == nil ? .ignore : .contain)
+        .accessibilityLabel(isolated == nil ? "Legend: " + items.map(\.label).joined(separator: ", ") : "Legend")
+    }
+
+    @ViewBuilder
+    private func entry(_ item: StatsLegendItem) -> some View {
+        if let isolated {
+            let isDimmed = isolated.wrappedValue != nil && isolated.wrappedValue != item.id
+            Button {
+                withAnimation(Theme.Motion.selection) {
+                    isolated.wrappedValue = isolated.wrappedValue == item.id ? nil : item.id
+                }
+            } label: {
+                swatch(item)
+                    .opacity(isDimmed ? 0.4 : 1)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isolated.wrappedValue == item.id ? "Show all series" : "Show only \(item.label)")
+            .accessibilityAddTraits(isolated.wrappedValue == item.id ? .isSelected : [])
+        } else {
+            swatch(item)
+        }
+    }
+
+    private func swatch(_ item: StatsLegendItem) -> some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2.5, style: .continuous).fill(item.color).frame(width: 10, height: 10)
+            Text(item.label)
+                .font(vm.font(.bodySmall))
+                .foregroundStyle(theme.secondaryText)
+                .lineLimit(1)
+        }
+        .fixedSize()
+    }
+}
+
+struct StatsMetricToggle<Value: Hashable>: View {
+    @EnvironmentObject var vm: DashboardViewModel
+    @Binding var selection: Value
+    let options: [Value]
+    let title: (Value) -> String
+    let theme: StatsTheme
+
+    var body: some View {
+        HStack(spacing: Theme.Space.listGap) {
+            ForEach(options, id: \.self) { option in
+                let isSelected = option == selection
+                Button {
+                    withAnimation(Theme.Motion.selection) { selection = option }
+                } label: {
+                    Text(title(option))
+                        .font(vm.font(.labelSmall))
+                        .foregroundStyle(isSelected ? theme.text : theme.tertiaryText)
+                        .padding(.horizontal, Theme.Space.unit * 2)
+                        .frame(minHeight: 22)
+                        .background(isSelected ? theme.base.surfaceContainerHighest : .clear, in: RoundedRectangle(cornerRadius: Theme.Shape.xs, style: .continuous))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .fixedSize()
+        .accessibilityElement(children: .contain)
     }
 }
 

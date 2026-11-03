@@ -269,4 +269,145 @@ final class StatsAggregatesTests: XCTestCase {
         XCTAssertEqual(summary.totals.dictationWords, 5)
         XCTAssertEqual(summary.series.count, 90)
     }
+
+    func test_legacyDaySplitsMergedHoursByTimeShare() {
+        var ledger = UsageLedger()
+        ledger.update(at: date(14), calendar: calendar) { day in
+            day.hours[9] = 2400
+            day.speechSeconds = 600
+            day.listeningSeconds = 1800
+        }
+        let day = ledger.days[UsageLedger.dayKey(for: date(14), calendar: calendar)] ?? DayUsage()
+        XCTAssertEqual(day.audiobookHours[9], 1800, accuracy: 0.001)
+        XCTAssertEqual(day.readAloudHours[9], 600, accuracy: 0.001)
+    }
+
+    func test_newFormatDaySeparatesReadAloudFromAudiobooksExactly() {
+        var ledger = UsageLedger()
+        let pair = speech(words: 20, seconds: 600)
+        ledger.recordSpeech(pair.0, run: pair.1, at: date(14, hour: 9), calendar: calendar)
+        ledger.recordListening(bookID: "b", seconds: 1800, at: date(14, hour: 9), calendar: calendar)
+        let day = ledger.days[UsageLedger.dayKey(for: date(14), calendar: calendar)] ?? DayUsage()
+        XCTAssertEqual(day.listeningHours[9], 1800, accuracy: 0.0001)
+        XCTAssertEqual(day.audiobookHours[9], 1800, accuracy: 0.0001)
+        XCTAssertEqual(day.readAloudHours[9], 600, accuracy: 0.0001)
+    }
+
+    func test_upgradeDayMixesLegacyHoursWithNewListeningHours() {
+        var ledger = UsageLedger()
+        ledger.update(at: date(14), calendar: calendar) { day in
+            day.hours[8] = 1200
+            day.speechSeconds = 300
+            day.listeningSeconds = 900
+        }
+        ledger.recordListening(bookID: "b", seconds: 600, at: date(14, hour: 10), calendar: calendar)
+        let day = ledger.days[UsageLedger.dayKey(for: date(14), calendar: calendar)] ?? DayUsage()
+        XCTAssertEqual(day.audiobookHours[8], 900, accuracy: 0.001)
+        XCTAssertEqual(day.readAloudHours[8], 300, accuracy: 0.001)
+        XCTAssertEqual(day.audiobookHours[10], 600, accuracy: 0.001)
+        XCTAssertEqual(day.readAloudHours[10], 0, accuracy: 0.001)
+        XCTAssertEqual(day.audiobookHours.reduce(0, +) + day.readAloudHours.reduce(0, +), day.hours.reduce(0, +), accuracy: 0.001)
+    }
+
+    func test_separatedHoursNeverGoNegativeAndAlwaysSumToTheMergedTotal() {
+        var damaged = DayUsage()
+        damaged.listeningSeconds = 100
+        damaged.listeningHours[3] = 100
+        XCTAssertTrue(damaged.audiobookHours.allSatisfy { $0 >= 0 })
+        XCTAssertTrue(damaged.readAloudHours.allSatisfy { $0 >= 0 })
+
+        var ledger = UsageLedger()
+        let pair = speech(words: 20, seconds: 120)
+        ledger.recordSpeech(pair.0, run: pair.1, at: date(14, hour: 7), calendar: calendar)
+        ledger.recordListening(bookID: "b", seconds: 500, at: date(14, hour: 7), calendar: calendar)
+        ledger.recordListening(bookID: "b", seconds: 250, at: date(14, hour: 20), calendar: calendar)
+        let day = ledger.days[UsageLedger.dayKey(for: date(14), calendar: calendar)] ?? DayUsage()
+        XCTAssertEqual(day.readAloudHours.reduce(0, +) + day.audiobookHours.reduce(0, +), day.hours.reduce(0, +), accuracy: 0.001)
+    }
+
+    func test_productMatricesStayIsolatedAndAddUpToTheMergedMatrix() {
+        var ledger = UsageLedger()
+        let monday = date(12, hour: 9)
+        ledger.recordDictation(dictation(words: 30, seconds: 600), at: monday, calendar: calendar)
+        var aggregates = StatsAggregates.make(ledger: ledger, range: .week, now: date(15), calendar: calendar)
+        XCTAssertEqual(aggregates.dictationHourWeekday[0][9], 10, accuracy: 0.001)
+        XCTAssertEqual(aggregates.readAloudHourWeekday.matrixPeak, 0)
+        XCTAssertEqual(aggregates.audiobookHourWeekday.matrixPeak, 0)
+
+        let pair = speech(words: 20, seconds: 300)
+        ledger.recordSpeech(pair.0, run: pair.1, at: date(13, hour: 14), calendar: calendar)
+        ledger.recordListening(bookID: "b", seconds: 1200, at: date(14, hour: 21), calendar: calendar)
+        aggregates = StatsAggregates.make(ledger: ledger, range: .week, now: date(15), calendar: calendar)
+        XCTAssertEqual(aggregates.readAloudHourWeekday[1][14], 5, accuracy: 0.001)
+        XCTAssertEqual(aggregates.audiobookHourWeekday[2][21], 20, accuracy: 0.001)
+        XCTAssertEqual(aggregates.dictationHourWeekday[1][14], 0)
+        XCTAssertEqual(aggregates.dictationHourWeekday[2][21], 0)
+        XCTAssertEqual(aggregates.readAloudHourWeekday[2][21], 0)
+        XCTAssertEqual(aggregates.audiobookHourWeekday[1][14], 0)
+        for weekday in 0 ..< 7 {
+            for hour in 0 ..< 24 {
+                let parts = aggregates.readAloudHourWeekday[weekday][hour] + aggregates.audiobookHourWeekday[weekday][hour] + aggregates.dictationHourWeekday[weekday][hour]
+                XCTAssertEqual(parts, aggregates.hourWeekday[weekday][hour], accuracy: 0.001)
+            }
+        }
+    }
+
+    func test_listeningHoursDecodeToZerosWhenTheKeyIsMissing() throws {
+        let old = Data(#"{"speechCount":2,"listeningSeconds":60,"hours":[]}"#.utf8)
+        let decoded = try JSONDecoder().decode(DayUsage.self, from: old)
+        XCTAssertEqual(decoded.listeningHours, Array(repeating: 0, count: 24))
+        XCTAssertEqual(decoded.listeningSeconds, 60)
+
+        var ledger = UsageLedger()
+        ledger.recordListening(bookID: "b", seconds: 90, at: date(14, hour: 5), calendar: calendar)
+        let day = try XCTUnwrap(ledger.days.values.first)
+        let roundTripped = try JSONDecoder().decode(DayUsage.self, from: JSONEncoder().encode(day))
+        XCTAssertEqual(roundTripped.listeningHours[5], 90, accuracy: 0.0001)
+    }
+
+    func test_timelineCarriesSpeechAndPodcastFieldsThroughTheQuarterWeeklyMerge() {
+        var ledger = UsageLedger()
+        let pair = speech(words: 10, seconds: 30)
+        for day in [12, 13] {
+            ledger.recordSpeech(pair.0, run: pair.1, at: date(day), calendar: calendar)
+            ledger.recordPodcastScript(at: date(day), calendar: calendar)
+        }
+        let week = StatsAggregates.make(ledger: ledger, range: .week, now: date(15), calendar: calendar)
+        XCTAssertEqual(week.timeline.map(\.speechWords).reduce(0, +), 20)
+        XCTAssertEqual(week.timeline.map(\.speechCount).reduce(0, +), 2)
+        XCTAssertEqual(week.timeline.map(\.podcastScripts).reduce(0, +), 2)
+
+        let quarter = StatsAggregates.make(ledger: ledger, range: .quarter, now: date(15), calendar: calendar)
+        XCTAssertLessThan(quarter.trend.count, quarter.timeline.count)
+        XCTAssertEqual(quarter.trend.map(\.speechWords).reduce(0, +), 20)
+        XCTAssertEqual(quarter.trend.map(\.speechCount).reduce(0, +), 2)
+        XCTAssertEqual(quarter.trend.map(\.podcastScripts).reduce(0, +), 2)
+    }
+
+    func test_narrativeLinesKeepReadAloudAndAudiobooksSeparate() {
+        var ledger = UsageLedger()
+        let pair = speech(words: 100, seconds: 120)
+        ledger.recordSpeech(pair.0, run: pair.1, at: date(14, hour: 9), calendar: calendar)
+        ledger.recordListening(bookID: "b", seconds: 3600, at: date(14, hour: 20), calendar: calendar)
+        ledger.recordDictation(dictation(words: 120, seconds: 60), at: date(14, hour: 9), calendar: calendar)
+        let aggregates = StatsAggregates.make(ledger: ledger, range: .week, now: date(15), calendar: calendar)
+        let lines = aggregates.narrativeLines(voiceName: { _ in "Bella" }, weekdayName: { _ in "Wednesday" })
+        let readAloud = lines.first { $0.product == .readAloud }
+        let audiobooks = lines.first { $0.product == .audiobooks }
+        XCTAssertNotNil(readAloud)
+        XCTAssertNotNil(audiobooks)
+        XCTAssertTrue(readAloud?.text.contains("Bella was your most-used voice") ?? false)
+        XCTAssertTrue(readAloud?.text.contains("2 minutes") ?? false)
+        XCTAssertFalse(readAloud?.text.contains("audiobook") ?? true)
+        XCTAssertTrue(audiobooks?.text.contains("listened to audiobooks for 1 hour") ?? false)
+        XCTAssertNotNil(lines.first { $0.product == .dictation })
+        XCTAssertEqual(aggregates.narrative(voiceName: { _ in "Bella" }, weekdayName: { _ in "Wednesday" }), lines.map(\.text).joined(separator: " "))
+    }
+
+    func test_rangesExposeShortLabelsAndThePreviousPeriodName() {
+        XCTAssertEqual(StatsRange.allCases.map(\.shortTitle), ["7D", "30D", "90D", "1Y", "All"])
+        XCTAssertEqual(StatsRange.week.previousPeriodName, "previous 7 days")
+        XCTAssertEqual(StatsRange.week.comparisonLabel, "vs previous 7 days")
+        XCTAssertNil(StatsRange.all.previousPeriodName)
+    }
 }

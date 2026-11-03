@@ -3,74 +3,60 @@ import SwiftUI
 
 struct StatsOverviewSection: View {
     let context: StatsContext
+    let onSelect: (StatsProduct) -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.card) {
-            StatsTimeSavedCard(context: context)
-            kpiTiles
-            AdaptiveGrid(minColumnWidth: 400) {
-                StatsActivityAreaCard(context: context).statsSpan(2)
-                StatsNarrativeCard(context: context)
-                StatsStreakCard(context: context)
-                StatsContributionCard(context: context)
-                StatsRhythmCard(context: context)
+    private enum Lens: String, StatsLens {
+        case activity
+        case calendar
+        case rhythm
+        case summary
+
+        var title: String {
+            switch self {
+            case .activity: "Activity"
+            case .calendar: "Calendar"
+            case .rhythm: "Rhythm"
+            case .summary: "Summary"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .activity: "chart.xyaxis.line"
+            case .calendar: "calendar"
+            case .rhythm: "clock.fill"
+            case .summary: "text.alignleft"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .activity: ""
+            case .calendar: "Your streak and the days you showed up"
+            case .rhythm: "When you use Voqora"
+            case .summary: "This period in a few sentences"
             }
         }
     }
 
-    private var kpiTiles: some View {
-        let data = context.data
-        let current = data.current
-        let theme = context.theme
-        let dayCount = data.dayCount
-        return AdaptiveGrid(minColumnWidth: 148, spacing: Theme.Space.item, maxColumns: 6, balanced: true) {
-            context.tile(
-                "Listening time",
-                value: StatsFormat.duration(current.heardSeconds),
-                icon: "headphones",
-                change: data.change { $0.heardSeconds },
-                footnote: "\(StatsFormat.duration(current.speechSeconds)) read aloud · \(StatsFormat.duration(current.listeningSeconds)) audiobooks",
-                tint: theme.series(0)
-            )
-            context.tile(
-                "Words spoken",
-                value: StatsFormat.count(current.speechWords),
-                icon: "text.quote",
-                change: data.change { Double($0.speechWords) },
-                footnote: "\(current.speechCount.formatted()) \(current.speechCount == 1 ? "selection" : "selections") read",
-                tint: theme.series(1)
-            )
-            context.tile(
-                "Words dictated",
-                value: StatsFormat.count(current.dictation.words),
-                icon: "mic.fill",
-                change: data.change { Double($0.dictation.words) },
-                footnote: "\(current.dictation.sessions.formatted()) \(current.dictation.sessions == 1 ? "session" : "sessions")",
-                tint: theme.series(2)
-            )
-            context.tile(
-                "Audiobooks generated",
-                value: current.creation.booksGenerated.formatted(),
-                icon: "books.vertical.fill",
-                change: data.change { Double($0.creation.booksGenerated) },
-                footnote: "\(current.creation.chaptersGenerated.formatted()) chapters, \(StatsFormat.hours(current.creation.bookAudioSeconds)) of audio",
-                tint: theme.series(3)
-            )
-            context.tile(
-                "AI requests",
-                value: current.ai.totalRequests.formatted(),
-                icon: "sparkles",
-                change: data.change { Double($0.ai.totalRequests) },
-                footnote: current.aiSuccessRate.map { "\(StatsFormat.percent($0)) succeeded" } ?? "Ask AI about selected text",
-                tint: theme.series(4)
-            )
-            context.tile(
-                "Active days",
-                value: data.range.bucket == .day ? "\(current.activeDays) / \(dayCount)" : "\(current.activeDays)",
-                icon: "calendar",
-                change: data.change { Double($0.activeDays) },
-                footnote: data.currentStreak > 0 ? "\(data.currentStreak)-day streak going" : "Longest streak \(data.longestStreak) \(data.longestStreak == 1 ? "day" : "days")"
-            )
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            StatsTimeSavedCard(context: context, onSelect: onSelect)
+            StatsLensCard(context: context) { (lens: Lens) in
+                switch lens {
+                case .activity:
+                    StatsActivityAreaCard(context: context)
+                case .calendar:
+                    AdaptiveGrid(minColumnWidth: 280, maxColumns: 2) {
+                        StatsContributionCard(context: context)
+                        StatsStreakCard(context: context)
+                    }
+                case .rhythm:
+                    StatsOverviewRhythm(context: context)
+                case .summary:
+                    StatsNarrativeLines(context: context, onSelect: onSelect)
+                }
+            }
         }
     }
 }
@@ -78,65 +64,86 @@ struct StatsOverviewSection: View {
 struct StatsTimeSavedCard: View {
     @EnvironmentObject var vm: DashboardViewModel
     let context: StatsContext
+    let onSelect: (StatsProduct) -> Void
 
     var body: some View {
         let theme = context.theme
         let current = context.current
         let ink = theme.base.onPrimaryContainer
-        VStack(alignment: .leading, spacing: Theme.Space.card) {
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
             ViewThatFits(in: .horizontal) {
-                HStack(alignment: .center, spacing: 36) {
+                HStack(alignment: .center, spacing: Theme.Space.card) {
                     headline(current: current, ink: ink)
-                        .frame(width: 210, alignment: .leading)
-                    listeningSaving(current: current, ink: ink)
+                        .frame(width: 190, alignment: .leading)
+                    readAloudSaving(current: current, ink: ink)
                     dictationSaving(current: current, ink: ink)
                 }
-                VStack(alignment: .leading, spacing: Theme.Space.card) {
+                VStack(alignment: .leading, spacing: Theme.Space.item) {
                     headline(current: current, ink: ink)
-                    listeningSaving(current: current, ink: ink)
+                    HStack(alignment: .top, spacing: Theme.Space.card) {
+                        readAloudSaving(current: current, ink: ink)
+                            .frame(minWidth: 200)
+                        dictationSaving(current: current, ink: ink)
+                            .frame(minWidth: 200)
+                    }
+                }
+                VStack(alignment: .leading, spacing: Theme.Space.item) {
+                    headline(current: current, ink: ink)
+                    readAloudSaving(current: current, ink: ink)
                     dictationSaving(current: current, ink: ink)
                 }
             }
+            definition(ink: ink)
         }
-        .padding(Theme.Space.card)
+        .padding(.horizontal, Theme.Space.card)
+        .padding(.vertical, Theme.Space.item + 4)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(theme.base.primaryContainer.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.Shape.xl, style: .continuous))
         .accessibilityElement(children: .contain)
     }
 
+    private func definition(ink: Color) -> some View {
+        (
+            Text(StatsProduct.overview.definition)
+                + Text(context.data.previousPeriodName.map { " Changes compare to the \($0)." } ?? "")
+        )
+        .font(vm.font(.bodySmall))
+        .foregroundStyle(ink.opacity(0.75))
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func headline(current: PeriodAggregate, ink: Color) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let change = context.data.change { $0.totalSavedSeconds }
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text("Time saved")
                     .font(vm.font(.label))
                     .foregroundStyle(ink.opacity(0.8))
                 StatsHelpButton("How time saved is estimated", theme: context.theme) { formula }
             }
-            Text(current.totalSavedSeconds >= 1 ? StatsFormat.duration(current.totalSavedSeconds) : "0m")
-                .font(vm.font(.display).monospacedDigit())
-                .foregroundStyle(ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.unit * 2) {
+                Text(current.totalSavedSeconds >= 1 ? StatsFormat.duration(current.totalSavedSeconds) : "0m")
+                    .font(vm.font(.display).monospacedDigit())
+                    .foregroundStyle(ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                if let label = StatsFormat.change(change) {
+                    StatsChangeChip(label: label, change: change ?? 0, theme: context.theme)
+                        .fixedSize()
+                }
+            }
             Text(StatsFormat.rangeCaption(context.data.interval, range: context.data.range))
                 .font(vm.font(.bodySmall))
                 .foregroundStyle(ink.opacity(0.7))
-            if let label = StatsFormat.change(context.data.change { $0.totalSavedSeconds }), let comparison = context.data.comparison {
-                HStack(spacing: 6) {
-                    StatsChangeChip(label: label, change: context.data.change { $0.totalSavedSeconds } ?? 0, theme: context.theme)
-                    Text(comparison)
-                        .font(vm.font(.labelSmall))
-                        .foregroundStyle(ink.opacity(0.8))
-                }
-                .padding(.top, 2)
-            }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Time saved, \(StatsFormat.duration(current.totalSavedSeconds))\(StatsFormat.change(change).map { ", \($0) \(context.data.comparison ?? "")" } ?? "")")
     }
 
-    private func listeningSaving(current: PeriodAggregate, ink: Color) -> some View {
+    private func readAloudSaving(current: PeriodAggregate, ink: Color) -> some View {
         saving(
             SavingModel(
-                title: "Listening",
-                icon: "headphones",
+                product: .readAloud,
                 wouldTake: current.readingEquivalentSeconds,
                 took: current.speechSeconds,
                 saved: current.listeningSavedSeconds,
@@ -152,8 +159,7 @@ struct StatsTimeSavedCard: View {
     private func dictationSaving(current: PeriodAggregate, ink: Color) -> some View {
         saving(
             SavingModel(
-                title: "Dictation",
-                icon: "mic.fill",
+                product: .dictation,
                 wouldTake: current.typingEquivalentSeconds,
                 took: current.dictation.seconds,
                 saved: current.dictationSavedSeconds,
@@ -167,8 +173,7 @@ struct StatsTimeSavedCard: View {
     }
 
     private struct SavingModel {
-        let title: String
-        let icon: String
+        let product: StatsProduct
         let wouldTake: Double
         let took: Double
         let saved: Double
@@ -180,31 +185,48 @@ struct StatsTimeSavedCard: View {
 
     private func saving(_ model: SavingModel, ink: Color) -> some View {
         let peak = max(model.wouldTake, model.took, 1)
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: model.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(model.title)
-                    .font(vm.font(.label))
-                Spacer(minLength: 8)
-                if !model.isEmpty {
-                    Text(model.saved >= 60 ? "saved \(StatsFormat.duration(model.saved))" : "about even")
-                        .font(vm.font(.label).monospacedDigit())
+        let tint = model.product.tint(in: context.theme)
+        return Button {
+            onSelect(model.product)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: model.product.icon)
+                        .font(vm.font(.labelSmall))
+                        .foregroundStyle(tint)
+                        .frame(width: 22, height: 22)
+                        .background(tint.opacity(0.22), in: Circle())
+                        .accessibilityHidden(true)
+                    Text(model.product.title)
+                        .font(vm.font(.label))
+                    Spacer(minLength: 8)
+                    if !model.isEmpty {
+                        Text(model.saved >= 60 ? "saved \(StatsFormat.duration(model.saved))" : "about even")
+                            .font(vm.font(.label).monospacedDigit())
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(vm.font(.labelSmall))
+                        .foregroundStyle(ink.opacity(0.5))
+                        .accessibilityHidden(true)
+                }
+                .foregroundStyle(ink)
+                if model.isEmpty {
+                    Text(model.emptyText)
+                        .font(vm.font(.bodySmall))
+                        .foregroundStyle(ink.opacity(0.7))
+                        .padding(.vertical, Theme.Space.unit * 2)
+                } else {
+                    comparisonBar(label: model.wouldTakeLabel, value: model.wouldTake, fraction: model.wouldTake / peak, fill: ink.opacity(0.32), ink: ink)
+                    comparisonBar(label: model.tookLabel, value: model.took, fraction: model.took / peak, fill: tint, ink: ink)
                 }
             }
-            .foregroundStyle(ink)
-            if model.isEmpty {
-                Text(model.emptyText)
-                    .font(vm.font(.bodySmall))
-                    .foregroundStyle(ink.opacity(0.7))
-                    .padding(.vertical, 12)
-            } else {
-                comparisonBar(label: model.wouldTakeLabel, value: model.wouldTake, fraction: model.wouldTake / peak, fill: ink.opacity(0.32), ink: ink)
-                comparisonBar(label: model.tookLabel, value: model.took, fraction: model.took / peak, fill: context.theme.accent, ink: ink)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.plain)
+        .help("Open \(model.product.title)")
         .accessibilityElement(children: .combine)
+        .accessibilityHint("Opens \(model.product.title)")
     }
 
     private func comparisonBar(label: String, value: Double, fraction: Double, fill: Color, ink: Color) -> some View {
@@ -229,7 +251,7 @@ struct StatsTimeSavedCard: View {
                 .font(vm.font(.titleSmall))
                 .foregroundStyle(context.theme.text)
             formulaLine(
-                "Listening",
+                "Read Aloud",
                 "Words read aloud ÷ \(Int(StatsAssumptions.readingWordsPerMinute)) words per minute (average silent reading speed), minus the audio time you listened."
             )
             formulaLine(
@@ -260,6 +282,7 @@ struct StatsActivityAreaCard: View {
     @EnvironmentObject var vm: DashboardViewModel
     let context: StatsContext
     @State private var selection: Date?
+    @State private var isolated: String?
 
     private struct Series: Identifiable {
         let id: String
@@ -269,12 +292,18 @@ struct StatsActivityAreaCard: View {
 
     private var series: [Series] {
         let theme = context.theme
+        let audiobooks = StatsProduct.audiobooks.tint(in: theme)
         return [
-            Series(id: "Audiobooks", color: theme.series(0), value: { $0.listeningMinutes }),
-            Series(id: "Read aloud", color: theme.series(1), value: { $0.speechMinutes }),
-            Series(id: "Dictation", color: theme.series(2), value: { $0.dictationMinutes }),
-            Series(id: "Creating", color: theme.series(3), value: { $0.creatingMinutes }),
+            Series(id: "Read aloud", color: StatsProduct.readAloud.tint(in: theme), value: { $0.speechMinutes }),
+            Series(id: "Audiobook listening", color: audiobooks, value: { $0.listeningMinutes }),
+            Series(id: "Dictation", color: StatsProduct.dictation.tint(in: theme), value: { $0.dictationMinutes }),
+            Series(id: "Audiobook rendering", color: audiobooks.opacity(0.45), value: { $0.creatingMinutes }),
         ]
+    }
+
+    private var visibleSeries: [Series] {
+        guard let isolated else { return series }
+        return series.filter { $0.id == isolated }
     }
 
     private var unit: Calendar.Component {
@@ -292,9 +321,13 @@ struct StatsActivityAreaCard: View {
 
     var body: some View {
         let theme = context.theme
-        StatsCard("Activity", subtitle: "Minutes per \(unit == .day ? "day" : "month"), \(context.rangeCaption()). Creating is audiobook render time.", theme: theme) {
+        StatsCard(
+            "Minutes by product",
+            subtitle: "Minutes per \(unit == .day ? "day" : "month"), \(context.rangeCaption()). Podcasts and AI are counted in items rather than minutes, so they are not plotted.",
+            theme: theme
+        ) {
             if hasActivity {
-                StatsLegend(items: series.map { StatsLegendItem(id: $0.id, label: $0.id, color: $0.color) }, theme: theme)
+                StatsLegend(items: series.map { StatsLegendItem(id: $0.id, label: $0.id, color: $0.color) }, theme: theme, isolated: $isolated)
                 chart
                 if let busiest = context.data.busiest {
                     StatsInsight(
@@ -323,7 +356,7 @@ struct StatsActivityAreaCard: View {
     private var chart: some View {
         let theme = context.theme
         return Chart {
-            ForEach(series) { item in
+            ForEach(visibleSeries) { item in
                 ForEach(context.data.timeline) { point in
                     AreaMark(
                         x: .value("Date", point.date, unit: unit),
@@ -342,7 +375,7 @@ struct StatsActivityAreaCard: View {
                     .annotation(position: .overlay, alignment: .top, spacing: 0, overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
                         StatsCallout(
                             title: StatsFormat.pointCaption(point.date, range: context.data.range),
-                            rows: series.map { StatsCalloutRow(color: $0.color, label: $0.id, value: StatsFormat.minutes($0.value(point))) }
+                            rows: visibleSeries.map { StatsCalloutRow(color: $0.color, label: $0.id, value: StatsFormat.minutes($0.value(point))) }
                                 + [StatsCalloutRow(color: theme.secondaryText, label: "Total", value: StatsFormat.minutes(point.totalMinutes))],
                             theme: theme
                         )
@@ -376,32 +409,67 @@ struct StatsActivityAreaCard: View {
                 }
             }
         }
-        .frame(height: 250)
+        .frame(height: 200)
         .onAppear { selection = StatsDebug.selection(in: context.data.timeline) }
-        .accessibilityLabel("Stacked area chart of minutes per \(unit == .day ? "day" : "month") by activity")
+        .accessibilityLabel("Stacked area chart of minutes per \(unit == .day ? "day" : "month") by product")
         .accessibilityValue("Total \(StatsFormat.minutes(context.data.timeline.reduce(0) { $0 + $1.totalMinutes })) active")
     }
 }
 
-struct StatsNarrativeCard: View {
+struct StatsNarrativeLines: View {
     @EnvironmentObject var vm: DashboardViewModel
     let context: StatsContext
+    let onSelect: (StatsProduct) -> Void
 
     var body: some View {
         let theme = context.theme
-        StatsCard("This period", subtitle: context.rangeCaption(), theme: theme) {
-            Text(context.data.narrative(voiceName: { DashboardViewModel.voiceName(for: $0) }, weekdayName: { StatsFormat.weekdayName($0) }))
-                .font(vm.font(.body))
-                .foregroundStyle(theme.text)
-                .lineSpacing(4)
-                .fixedSize(horizontal: false, vertical: true)
+        let lines = context.data.narrativeLines(voiceName: { DashboardViewModel.voiceName(for: $0) }, weekdayName: { StatsFormat.weekdayName($0) })
+        VStack(alignment: .leading, spacing: Theme.Space.item) {
+            ForEach(lines) { line in
+                row(line)
+            }
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(vm.font(.labelSmall))
+                    .accessibilityHidden(true)
                 Text("Written from your on-device stats")
                     .font(vm.font(.bodySmall))
             }
             .foregroundStyle(theme.tertiaryText)
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ line: StatsNarrativeLine) -> some View {
+        if let product = line.product {
+            Button {
+                onSelect(product)
+            } label: {
+                content(line, icon: product.icon, tint: product.tint(in: context.theme))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(product.title)")
+            .accessibilityHint("Opens \(product.title)")
+        } else {
+            content(line, icon: "calendar", tint: context.theme.accent)
+        }
+    }
+
+    private func content(_ line: StatsNarrativeLine, icon: String, tint: Color) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.item) {
+            Image(systemName: icon)
+                .font(vm.font(.labelSmall))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.18), in: Circle())
+                .accessibilityHidden(true)
+            Text(line.text)
+                .font(vm.font(.body))
+                .foregroundStyle(context.theme.text)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -497,25 +565,47 @@ struct StatsContributionCard: View {
     }
 }
 
-struct StatsRhythmCard: View {
+struct StatsOverviewRhythm: View {
     let context: StatsContext
+    @State private var filter = Filter.all
+
+    private enum Filter: String, CaseIterable {
+        case all = "All"
+        case readAloud = "Read Aloud"
+        case dictation = "Dictation"
+        case audiobooks = "Audiobooks"
+    }
+
+    private var matrix: [[Double]] {
+        switch filter {
+        case .all: context.data.hourWeekday
+        case .readAloud: context.data.readAloudHourWeekday
+        case .dictation: context.data.dictationHourWeekday
+        case .audiobooks: context.data.audiobookHourWeekday
+        }
+    }
+
+    private var tint: Color {
+        switch filter {
+        case .all: context.theme.accent
+        case .readAloud: StatsProduct.readAloud.tint(in: context.theme)
+        case .dictation: StatsProduct.dictation.tint(in: context.theme)
+        case .audiobooks: StatsProduct.audiobooks.tint(in: context.theme)
+        }
+    }
+
+    private var noun: String {
+        switch filter {
+        case .all: "are active"
+        case .readAloud: "have text read aloud"
+        case .dictation: "dictate"
+        case .audiobooks: "listen"
+        }
+    }
 
     var body: some View {
-        let data = context.data
-        StatsCard("When you're active", subtitle: "Hour of day by weekday, \(context.rangeCaption())", theme: context.theme) {
-            if data.hourWeekdayPeak <= 0 {
-                StatsEmptyNote(icon: "clock", title: "No rhythm yet", text: "Your daily rhythm appears after a few sessions.", theme: context.theme)
-            } else {
-                StatsHourWeekdayHeatmap(matrix: data.hourWeekday, peak: data.hourWeekdayPeak, theme: context.theme)
-                VStack(alignment: .leading, spacing: 6) {
-                    if let hour = data.peakHour {
-                        StatsInsight(icon: "sun.max", text: "Most active around \(StatsFormat.hour(hour)).", theme: context.theme)
-                    }
-                    if let day = data.peakWeekday {
-                        StatsInsight(icon: "calendar", text: "\(StatsFormat.weekdayName(day))s are your busiest day.", theme: context.theme)
-                    }
-                }
-            }
+        StatsRhythmLens(matrix: matrix, tint: tint, noun: noun) {
+            StatsMetricToggle(selection: $filter, options: Filter.allCases, title: { $0.rawValue }, theme: context.theme)
         }
     }
 }
