@@ -763,6 +763,13 @@ class DashboardViewModel: ObservableObject {
         return HeartbeatOutcome(isOnline: isNowOnline, consecutiveFailures: consecutiveFailures, shouldForceRestart: shouldForceRestart)
     }
 
+    static let hungProcessStartupGrace: TimeInterval = 180
+
+    static func shouldRestartHungProcess(_ outcome: HeartbeatOutcome, processUptime: TimeInterval?) -> Bool {
+        guard outcome.shouldForceRestart, let processUptime else { return false }
+        return processUptime >= hungProcessStartupGrace
+    }
+
     func startHeartbeat() {
         guard heartbeatTask == nil else { return }
         heartbeatTask = Task { [weak self] in
@@ -805,7 +812,7 @@ class DashboardViewModel: ObservableObject {
                     backend.clearLaunchFailure()
                     backendRecoveryMessage = nil
                 } else {
-                    if outcome.shouldForceRestart, backend.hasOwnedProcess {
+                    if Self.shouldRestartHungProcess(outcome, processUptime: backend.ownedProcessUptime) {
                         VoqoraLog.error("DashboardViewModel", "Backend unresponsive with a live process handle, forcing restart", ["consecutiveFailures": "\(consecutiveFailures)"])
                         backend.forceRestart()
                     }

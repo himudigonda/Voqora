@@ -122,14 +122,12 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         guard let updater = controller?.updater else { return }
         observations = [
             updater.observe(\.automaticallyChecksForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
-                MainActor.assumeIsolated {
-                    self?.automaticallyChecksForUpdates = updater.automaticallyChecksForUpdates
-                }
+                let value = updater.automaticallyChecksForUpdates
+                Task { @MainActor [weak self] in self?.automaticallyChecksForUpdates = value }
             },
             updater.observe(\.canCheckForUpdates, options: [.initial, .new]) { [weak self] updater, _ in
-                MainActor.assumeIsolated {
-                    self?.canCheckForUpdates = updater.canCheckForUpdates
-                }
+                let value = updater.canCheckForUpdates
+                Task { @MainActor [weak self] in self?.canCheckForUpdates = value }
             },
         ]
     }

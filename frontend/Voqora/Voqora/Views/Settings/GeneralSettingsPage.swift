@@ -30,7 +30,7 @@ struct GeneralSettingsPage: View {
         SettingsSection(title: "Startup and presence") {
             SettingsSwitchRow(
                 title: "Start at Login",
-                detail: "Open Voqora automatically when you sign in.",
+                detail: launchManager.launchAtLoginIssue ?? "Open Voqora automatically when you sign in.",
                 systemImage: "power",
                 isOn: $launchManager.isLaunchAtLoginEnabled
             )

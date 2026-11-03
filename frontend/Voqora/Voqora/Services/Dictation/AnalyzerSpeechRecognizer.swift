@@ -303,7 +303,8 @@ final nonisolated class AnalyzerInputFeed: @unchecked Sendable {
         return output
     }
 
-    private func convertLocked(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+    private func convertLocked(_ source: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let buffer = MultichannelMix.flattened(source)
         conversionFailed = false
         guard buffer.frameLength > 0 else { return nil }
         if converterSource != buffer.format {

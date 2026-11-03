@@ -189,11 +189,13 @@ final nonisolated class ParakeetAudioConverter: @unchecked Sendable {
         self.target = target
     }
 
-    func convert(_ buffer: AVAudioPCMBuffer) -> [Float]? {
-        lock.withLock {
+    func convert(_ source: AVAudioPCMBuffer) -> [Float]? {
+        let buffer = MultichannelMix.flattened(source)
+        return lock.withLock {
             guard buffer.frameLength > 0 else { return [] }
             if converterSource != buffer.format {
                 converter = AVAudioConverter(from: buffer.format, to: target)
+                converter?.downmix = true
                 converterSource = buffer.format
             }
             guard let converter else { return nil }
@@ -561,7 +563,7 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
     func start(localeIdentifier _: String?, allowsServer _: Bool, onEvent: @escaping SpeechRecognitionHandler) async throws {
         stop()
         let token = generation
-        guard models.isInstalled else { throw DictationIssue.recognizerUnavailable }
+        guard models.isInstalled else { throw DictationIssue.localModelNotInstalled }
         guard let converter = ParakeetAudioConverter() else { throw DictationIssue.audioInputUnavailable }
         let load: Task<any ParakeetTranscribing, Error>?
         let transcriber: any ParakeetTranscribing
@@ -668,7 +670,7 @@ final class ParakeetSpeechRecognizer: SpeechRecognizing {
             return value
         } catch {
             VoqoraLog.warn("ParakeetRecognizer", "Local speech model could not be loaded", ["error": "\(error)"])
-            throw DictationIssue.recognizerUnavailable
+            throw DictationIssue.localModelUnavailable
         }
     }
 }

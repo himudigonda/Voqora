@@ -397,14 +397,14 @@ final class ParakeetRecognizerTests: XCTestCase {
         XCTAssertEqual(store.state, .installed)
     }
 
-    func test_startWithoutModelThrowsRecognizerUnavailable() async throws {
+    func test_startWithoutModelSaysItIsNotInstalled() async throws {
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent("parakeet-missing-\(UUID().uuidString)")
         let recognizer = ParakeetSpeechRecognizer(models: LocalSpeechModelStore(directory: missing))
         do {
             try await recognizer.start(localeIdentifier: nil, allowsServer: false) { _ in }
             XCTFail("start should throw")
         } catch {
-            XCTAssertEqual(error as? DictationIssue, .recognizerUnavailable)
+            XCTAssertEqual(error as? DictationIssue, .localModelNotInstalled)
         }
     }
 

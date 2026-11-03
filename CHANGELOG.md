@@ -12,12 +12,32 @@
 - Read-aloud time and audiobook listening are now counted separately, including
   their time-of-day charts. Days recorded before this update split that chart
   by each product's share of the day, so older patterns are estimates.
+- Stats now counts the words sent to and returned by your AI provider. Only the
+  counts are stored, never the text.
 
 ### Fixed
 
 - A faster AI response or fewer cancelled dictations no longer shows as a
   warning in Stats.
 - Voqora no longer crashes at launch when built with Xcode 27.2 on macOS 27.2.
+- The speech engine gets three minutes to start before Voqora treats it as
+  stuck, so slower Macs no longer restart it over and over on first launch.
+- A speech engine that keeps failing now retries less often, and the log from
+  the previous attempt is kept and included when you export logs.
+- A microphone that changes format while dictation starts, such as a Bluetooth
+  headset, now shows an error instead of crashing Voqora.
+- Dictation stops with an error instead of restarting forever when an audio
+  device keeps changing.
+- Dictation now hears a microphone on any input of a multichannel audio
+  interface, instead of only the first input.
+- A local speech model that fails to load now tells you to reinstall it or
+  switch to Apple, instead of asking you to try again later.
+- Voqora checks for free disk space before unpacking its speech engine, and
+  cleans up an unpack that was interrupted.
+- The speech engine now unpacks correctly on accounts with a restrictive umask.
+- **Start at Login** shows why it couldn't turn on instead of looking enabled.
+- Stats product colors stay the same whichever accent you pick, and were checked
+  for color-blind readers in light and dark mode.
 
 ## [2.1.1]
 

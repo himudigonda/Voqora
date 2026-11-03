@@ -25,7 +25,8 @@ final class BackendService: NSObject, @unchecked Sendable {
     private var _isLaunching = false
     private var nextLaunchAllowedAt = Date.distantPast
     private var _lastLaunchFailure: String?
-    private static let failedLaunchBackoff: TimeInterval = 2
+    private var consecutiveLaunchFailures = 0
+    private var processStartedAtUptime: TimeInterval?
     private let executableOverride: URL?
     private let applicationSupportOverride: URL?
     private let connection: BackendConnection
@@ -38,11 +39,40 @@ final class BackendService: NSObject, @unchecked Sendable {
     }
 
     func clearLaunchFailure() {
-        stateQueue.sync { _lastLaunchFailure = nil }
+        stateQueue.sync {
+            _lastLaunchFailure = nil
+            consecutiveLaunchFailures = 0
+        }
     }
 
     var hasOwnedProcess: Bool {
         stateQueue.sync { process != nil }
+    }
+
+    var ownedProcessUptime: TimeInterval? {
+        stateQueue.sync {
+            guard process != nil, let processStartedAtUptime else { return nil }
+            return ProcessInfo.processInfo.systemUptime - processStartedAtUptime
+        }
+    }
+
+    nonisolated static func launchBackoff(afterFailures failures: Int) -> TimeInterval {
+        min(60, 2 * pow(2, Double(max(failures, 1) - 1)))
+    }
+
+    private func recordLaunchFailureLocked(_ message: String) {
+        consecutiveLaunchFailures += 1
+        nextLaunchAllowedAt = Date().addingTimeInterval(Self.launchBackoff(afterFailures: consecutiveLaunchFailures))
+        _lastLaunchFailure = message
+    }
+
+    nonisolated static func rotateLog(at logURL: URL, fileManager: FileManager = .default) {
+        let previous = logURL.deletingLastPathComponent().appendingPathComponent("backend.prev.log")
+        if fileManager.fileExists(atPath: logURL.path) {
+            try? fileManager.removeItem(at: previous)
+            try? fileManager.moveItem(at: logURL, to: previous)
+        }
+        fileManager.createFile(atPath: logURL.path, contents: nil)
     }
 
     private var continuations: [Int: AsyncThrowingStream<Data, Error>.Continuation] = [:]
@@ -95,8 +125,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         guard FileManager.default.isExecutableFile(atPath: executableURL.path) else {
             stateQueue.sync {
                 _isLaunching = false
-                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
-                _lastLaunchFailure = "The local speech engine is unavailable."
+                recordLaunchFailureLocked("The local speech engine is unavailable.")
             }
             VoqoraLog.error("BackendService", "Backend binary not ready yet", ["path": executableURL.path])
             return
@@ -108,8 +137,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         } catch {
             stateQueue.sync {
                 _isLaunching = false
-                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
-                _lastLaunchFailure = "The local speech engine could not secure its connection."
+                recordLaunchFailureLocked("The local speech engine could not secure its connection.")
             }
             VoqoraLog.error("BackendService", "Backend connection setup failed")
             return
@@ -130,10 +158,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         p.standardError = pipe
 
         let logURL = appSupport.appendingPathComponent("backend.log")
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        }
-        _ = try? "".write(to: logURL, atomically: true, encoding: .utf8)
+        Self.rotateLog(at: logURL)
 
         let handle = try? FileHandle(forWritingTo: logURL)
         _ = try? handle?.seekToEnd()
@@ -170,9 +195,9 @@ final class BackendService: NSObject, @unchecked Sendable {
                 if self.process === terminated {
                     self.process = nil
                     self._isLaunching = false
+                    self.processStartedAtUptime = nil
                     if terminated.terminationStatus != 0 {
-                        self.nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
-                        self._lastLaunchFailure = "The local speech engine stopped unexpectedly."
+                        self.recordLaunchFailureLocked("The local speech engine stopped unexpectedly.")
                     }
                     self.processPipe?.fileHandleForReading.readabilityHandler = nil
                     self.processPipe = nil
@@ -200,6 +225,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             stateQueue.sync {
                 if self.process === p {
                     self._isLaunching = false
+                    self.processStartedAtUptime = ProcessInfo.processInfo.systemUptime
                 }
             }
             VoqoraLog.info("BackendService", "Backend launched", ["pid": "\(p.processIdentifier)"])
@@ -215,8 +241,7 @@ final class BackendService: NSObject, @unchecked Sendable {
                     self.logFileHandle = nil
                 }
                 _isLaunching = false
-                nextLaunchAllowedAt = Date().addingTimeInterval(Self.failedLaunchBackoff)
-                _lastLaunchFailure = "The local speech engine could not start."
+                recordLaunchFailureLocked("The local speech engine could not start.")
             }
         }
     }
@@ -241,6 +266,7 @@ final class BackendService: NSObject, @unchecked Sendable {
             }
             process = nil
             processPipe = nil
+            processStartedAtUptime = nil
         }
         connection.invalidate()
     }
@@ -251,7 +277,7 @@ final class BackendService: NSObject, @unchecked Sendable {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent(bundleID)
         let desktop = fileManager.urls(for: .desktopDirectory, in: .userDomainMask)[0]
 
-        let logsToExport = ["backend.log", "frontend.log"]
+        let logsToExport = ["backend.log", "backend.prev.log", "frontend.log"]
         let timestamp = Int(Date().timeIntervalSince1970)
 
         var exportedURLs: [URL] = []

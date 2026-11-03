@@ -194,6 +194,36 @@ nonisolated enum MicrophoneMetering {
     }
 }
 
+nonisolated enum MultichannelMix {
+    private static let silenceFloor: Float = 1e-5
+
+    static func flattened(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
+        let channelCount = Int(buffer.format.channelCount)
+        let frames = Int(buffer.frameLength)
+        guard channelCount > 2, frames > 0,
+              buffer.format.commonFormat == .pcmFormatFloat32, !buffer.format.isInterleaved,
+              let channels = buffer.floatChannelData,
+              let monoFormat = AVAudioFormat(
+                  commonFormat: .pcmFormatFloat32,
+                  sampleRate: buffer.format.sampleRate,
+                  channels: 1,
+                  interleaved: false
+              ),
+              let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: buffer.frameLength),
+              let output = mono.floatChannelData?[0]
+        else { return buffer }
+        let active = (0 ..< channelCount).filter { channel in
+            (0 ..< frames).contains { abs(channels[channel][$0]) > silenceFloor }
+        }
+        mono.frameLength = buffer.frameLength
+        for frame in 0 ..< frames {
+            let sum = active.reduce(Float(0)) { $0 + channels[$1][frame] }
+            output[frame] = active.isEmpty ? 0 : sum / Float(active.count)
+        }
+        return mono
+    }
+}
+
 final nonisolated class MonoDownmixer: @unchecked Sendable {
     private let lock = NSLock()
     private var converter: AVAudioConverter?
@@ -201,7 +231,8 @@ final nonisolated class MonoDownmixer: @unchecked Sendable {
 
     func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         guard buffer.frameLength > 0 else { return nil }
-        return lock.withLock { convertLocked(buffer) }
+        let flattened = MultichannelMix.flattened(buffer)
+        return lock.withLock { convertLocked(flattened) }
     }
 
     private func convertLocked(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
@@ -259,6 +290,24 @@ nonisolated struct CaptureWatchdog: Sendable {
     }
 }
 
+nonisolated struct CaptureRestartLimiter: Sendable {
+    let limit: Int
+    let window: TimeInterval
+    private var recent: [TimeInterval] = []
+
+    init(limit: Int = 5, window: TimeInterval = 30) {
+        self.limit = limit
+        self.window = window
+    }
+
+    mutating func allow(at now: TimeInterval) -> Bool {
+        recent.removeAll { now - $0 >= window }
+        guard recent.count < limit else { return false }
+        recent.append(now)
+        return true
+    }
+}
+
 nonisolated enum MicrophoneCapture {
     static let tapBufferSize: AVAudioFrameCount = 1024
 
@@ -274,8 +323,15 @@ nonisolated enum MicrophoneCapture {
         guard format.sampleRate > 0, format.channelCount > 0 else {
             throw DictationIssue.audioInputUnavailable
         }
-        input.installTap(onBus: 0, bufferSize: tapBufferSize, format: nil) { buffer, _ in
-            onBuffer(buffer)
+        do {
+            try ObjCException.catching {
+                input.installTap(onBus: 0, bufferSize: tapBufferSize, format: nil) { buffer, _ in
+                    onBuffer(buffer)
+                }
+            }
+        } catch {
+            DictationTrace.event("capture.tap_rejected", ["detail": "\(error)"])
+            throw DictationIssue.audioInputUnavailable
         }
         engine.prepare()
         do {
@@ -311,6 +367,7 @@ final nonisolated class MicrophoneSession: @unchecked Sendable {
     private var observers: [(center: NotificationCenter, token: NSObjectProtocol)] = []
     private var timer: (any DispatchSourceTimer)?
     private var isSuspended = false
+    private var restartLimiter = CaptureRestartLimiter()
 
     init(
         sink: MicrophoneTapSink,
@@ -440,6 +497,11 @@ final nonisolated class MicrophoneSession: @unchecked Sendable {
     private func restart(reason: String) {
         let failure: String? = stateLock.withLock {
             guard let engine else { return nil }
+            guard restartLimiter.allow(at: clock()) else {
+                DictationTrace.event("capture.restart_limited", ["reason": reason])
+                teardownLocked()
+                return reason
+            }
             engine.inputNode.removeTap(onBus: 0)
             engine.stop()
             onRouteChange?()

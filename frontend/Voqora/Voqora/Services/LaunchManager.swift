@@ -76,9 +76,10 @@ class LaunchManager: ObservableObject {
     @Published var error: String? = nil
     @Published private(set) var isPreparing = false
 
+    @Published private(set) var launchAtLoginIssue: String?
     @Published var isLaunchAtLoginEnabled: Bool = false {
         didSet {
-            try? updateLoginItem()
+            applyLoginItemChange()
         }
     }
 
@@ -394,6 +395,44 @@ class LaunchManager: ObservableObject {
         }
     }
 
+    nonisolated static let extractionSpaceFactor: Int64 = 2
+
+    nonisolated static func hasSpaceForExtraction(availableBytes: Int64?, archiveBytes: Int64) -> Bool {
+        guard let availableBytes else { return true }
+        return availableBytes >= archiveBytes * extractionSpaceFactor
+    }
+
+    nonisolated static func applyManifestModes(
+        at root: URL,
+        entries: [(path: String, mode: Int)],
+        fileManager: FileManager = .default
+    ) throws {
+        for entry in entries {
+            try fileManager.setAttributes(
+                [.posixPermissions: entry.mode],
+                ofItemAtPath: root.appendingPathComponent(entry.path).path
+            )
+        }
+    }
+
+    private func applyLoginItemChange() {
+        do {
+            try updateLoginItem()
+            launchAtLoginIssue = Self.loginItemIssue(for: SMAppService.mainApp.status)
+        } catch {
+            VoqoraLog.warn("LaunchManager", "Login item could not be changed", ["error": "\(error)"])
+            launchAtLoginIssue = "Voqora couldn't change this. Move it to Applications, then try again."
+        }
+        let isEnabled = SMAppService.mainApp.status == .enabled
+        if isLaunchAtLoginEnabled != isEnabled {
+            isLaunchAtLoginEnabled = isEnabled
+        }
+    }
+
+    nonisolated static func loginItemIssue(for status: SMAppService.Status) -> String? {
+        status == .requiresApproval ? "Allow Voqora in System Settings → General → Login Items." : nil
+    }
+
     private func updateLoginItem() throws {
         if isLaunchAtLoginEnabled {
             if SMAppService.mainApp.status != .enabled {
@@ -470,7 +509,7 @@ class LaunchManager: ObservableObject {
         do {
             try fm.createDirectory(at: appSupport, withIntermediateDirectories: true)
             try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: appSupport.path)
-            Self.removeStaleBackendStagingDirectories(in: appSupport, fileManager: fm)
+            Self.removeStaleBackendStagingDirectories(in: appSupport, fileManager: fm, minimumAge: 60)
             try fm.createDirectory(at: stagingURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             defer { try? fm.removeItem(at: stagingURL) }
 
@@ -484,6 +523,18 @@ class LaunchManager: ObservableObject {
             let stagingPath = stagingURL.path
             let stagedServerURL = stagingURL.appendingPathComponent("VoqoraServer")
             let installedServerURL = serverURL
+
+            let archiveBytes = (try? zipURL.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap(\.self).map(Int64.init) ?? 0
+            let availableBytes = (try? appSupport.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+                .volumeAvailableCapacityForImportantUsage
+            guard Self.hasSpaceForExtraction(availableBytes: availableBytes, archiveBytes: archiveBytes) else {
+                let needed = ByteCountFormatter.string(fromByteCount: archiveBytes * Self.extractionSpaceFactor, countStyle: .file)
+                throw NSError(
+                    domain: "LaunchManager",
+                    code: 28,
+                    userInfo: [NSLocalizedDescriptionKey: "Voqora needs about \(needed) of free disk space to finish setting up."]
+                )
+            }
 
             try await Task.detached(priority: .userInitiated) {
                 let fm = FileManager()
@@ -503,6 +554,11 @@ class LaunchManager: ObservableObject {
                     )
                 }
 
+                try Self.applyManifestModes(
+                    at: stagedServerURL,
+                    entries: manifest.files.map { (path: $0.path, mode: $0.mode) },
+                    fileManager: fm
+                )
                 try Self.validateInstalledRuntime(
                     at: stagedServerURL,
                     manifest: manifest,
