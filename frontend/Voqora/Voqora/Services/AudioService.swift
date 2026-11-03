@@ -2,6 +2,15 @@ import AppKit
 import AVFoundation
 import Combine
 
+// A completion handler must not take a strong reference: dropping the last one on AVFoundation's queue deallocates the engine there, which traps.
+private final nonisolated class AudioServiceReference: @unchecked Sendable {
+    weak var service: AudioService?
+
+    init(_ service: AudioService) {
+        self.service = service
+    }
+}
+
 @MainActor
 class AudioService: NSObject, ObservableObject {
     enum ExportError: LocalizedError {
@@ -459,14 +468,19 @@ class AudioService: NSObject, ObservableObject {
         streamScheduledEndFrame += AVAudioFramePosition(buffer.frameLength)
         scheduledBufferCount += 1
         let gen = generation
-        playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, gen == generation else { return }
-                scheduledBufferCount -= 1
-                if !isStreamActive, scheduledBufferCount == 0, isPlaying {
-                    finishStreamPlayback()
-                }
+        let reference = AudioServiceReference(self)
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) {
+            Task { @MainActor in
+                reference.service?.streamBufferFinished(generation: gen)
             }
+        }
+    }
+
+    private func streamBufferFinished(generation gen: Int) {
+        guard gen == generation else { return }
+        scheduledBufferCount -= 1
+        if !isStreamActive, scheduledBufferCount == 0, isPlaying {
+            finishStreamPlayback()
         }
     }
 
@@ -523,16 +537,21 @@ class AudioService: NSObject, ObservableObject {
         scheduledBufferCount += 1
         let gen = generation
         let sessionID = activeSessionID
-        playerNode.scheduleBuffer(buffer, at: nil, options: []) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, gen == generation else { return }
-                scheduledBufferCount -= 1
-                if audiobookFrameOffset < audiobookTotalFrames {
-                    scheduleNextFileChunk()
-                } else if scheduledBufferCount == 0, isPlaying {
-                    finishFilePlayback(sessionID: sessionID)
-                }
+        let reference = AudioServiceReference(self)
+        playerNode.scheduleBuffer(buffer, at: nil, options: []) {
+            Task { @MainActor in
+                reference.service?.fileBufferFinished(generation: gen, sessionID: sessionID)
             }
+        }
+    }
+
+    private func fileBufferFinished(generation gen: Int, sessionID: String?) {
+        guard gen == generation else { return }
+        scheduledBufferCount -= 1
+        if audiobookFrameOffset < audiobookTotalFrames {
+            scheduleNextFileChunk()
+        } else if scheduledBufferCount == 0, isPlaying {
+            finishFilePlayback(sessionID: sessionID)
         }
     }
 
