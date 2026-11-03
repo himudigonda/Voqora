@@ -155,6 +155,15 @@ private enum Adaptive {
     }
 }
 
+extension Theme {
+    static func fixedTone(hue: Double, lightLightness: Double, darkLightness: Double, chroma: Double) -> Color {
+        let seed = AccentSeed(hue: hue, chroma: chroma)
+        return Adaptive.color { appearance in
+            ColorRamp.tone(seed: seed, lightness: appearance.isDark ? darkLightness : lightLightness, chroma: chroma)
+        }
+    }
+}
+
 extension EnvironmentValues {
     @Entry var voqoraTheme: Theme = .fallback
 }

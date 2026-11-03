@@ -291,13 +291,11 @@ struct StatsActivityAreaCard: View {
     }
 
     private var series: [Series] {
-        let theme = context.theme
-        let audiobooks = StatsProduct.audiobooks.tint(in: theme)
-        return [
-            Series(id: "Read aloud", color: StatsProduct.readAloud.tint(in: theme), value: { $0.speechMinutes }),
-            Series(id: "Audiobook listening", color: audiobooks, value: { $0.listeningMinutes }),
-            Series(id: "Dictation", color: StatsProduct.dictation.tint(in: theme), value: { $0.dictationMinutes }),
-            Series(id: "Audiobook rendering", color: audiobooks.opacity(0.45), value: { $0.creatingMinutes }),
+        [
+            Series(id: "Read aloud", color: StatsPalette.readAloud, value: { $0.speechMinutes }),
+            Series(id: "Audiobook listening", color: StatsPalette.audiobooks, value: { $0.listeningMinutes }),
+            Series(id: "Dictation", color: StatsPalette.dictation, value: { $0.dictationMinutes }),
+            Series(id: "Audiobook rendering", color: StatsPalette.audiobookRendering, value: { $0.creatingMinutes }),
         ]
     }
 
@@ -365,7 +363,6 @@ struct StatsActivityAreaCard: View {
                     )
                     .foregroundStyle(by: .value("Activity", item.id))
                     .interpolationMethod(.monotone)
-                    .opacity(0.85)
                 }
             }
             if let point = selectedPoint {
@@ -410,7 +407,10 @@ struct StatsActivityAreaCard: View {
             }
         }
         .frame(height: 200)
-        .onAppear { selection = StatsDebug.selection(in: context.data.timeline) }
+        .onAppear {
+            selection = StatsDebug.selection(in: context.data.timeline)
+            isolated = StatsDebug.isolatedSeries
+        }
         .accessibilityLabel("Stacked area chart of minutes per \(unit == .day ? "day" : "month") by product")
         .accessibilityValue("Total \(StatsFormat.minutes(context.data.timeline.reduce(0) { $0 + $1.totalMinutes })) active")
     }

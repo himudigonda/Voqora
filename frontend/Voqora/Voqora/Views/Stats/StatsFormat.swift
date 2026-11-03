@@ -2,10 +2,21 @@ import AppKit
 import Foundation
 import SwiftUI
 
+enum StatsPalette {
+    private static func tone(hue: Double, light: Double, dark: Double) -> Color {
+        Theme.fixedTone(hue: hue, lightLightness: light, darkLightness: dark, chroma: 0.14)
+    }
+
+    static let readAloud = tone(hue: 250, light: 0.48, dark: 0.50)
+    static let dictation = tone(hue: 150, light: 0.56, dark: 0.62)
+    static let audiobooks = tone(hue: 318, light: 0.62, dark: 0.66)
+    static let audiobookRendering = tone(hue: 318, light: 0.46, dark: 0.50)
+    static let podcasts = tone(hue: 15, light: 0.50, dark: 0.62)
+    static let ai = tone(hue: 75, light: 0.60, dark: 0.66)
+}
+
 struct StatsTheme {
     let base: Theme
-
-    private static let hueOffsets: [Double] = [0, 180, 90, 270, 45, 225, 135, 315]
 
     var accent: Color {
         base.primary
@@ -43,10 +54,6 @@ struct StatsTheme {
         base.outline
     }
 
-    func series(_ index: Int) -> Color {
-        Self.rotated(base.primary, degrees: Self.hueOffsets[index % Self.hueOffsets.count])
-    }
-
     private static let rampOpacities: [Double] = [1, 0.72, 0.5, 0.34, 0.22, 0.14]
 
     func ramp(_ tint: Color, _ index: Int) -> Color {
@@ -62,28 +69,6 @@ struct StatsTheme {
         case 3: return color.opacity(0.78)
         default: return color
         }
-    }
-
-    private static func rotated(_ color: Color, degrees: Double) -> Color {
-        guard degrees != 0 else { return color }
-        let source = NSColor(color)
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            var hue: CGFloat = 0
-            var saturation: CGFloat = 0
-            var brightness: CGFloat = 0
-            var alpha: CGFloat = 0
-            appearance.performAsCurrentDrawingAppearance {
-                (source.usingColorSpace(.sRGB) ?? source).getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-            }
-            let shifted = (Double(hue) + degrees / 360).truncatingRemainder(dividingBy: 1)
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return NSColor(
-                hue: CGFloat(shifted),
-                saturation: max(saturation, isDark ? 0.5 : 0.6),
-                brightness: isDark ? max(brightness, 0.82) : min(max(brightness, 0.5), 0.72),
-                alpha: 1
-            )
-        })
     }
 }
 
@@ -200,6 +185,14 @@ enum StatsDebug {
             return points[points.count * 2 / 3].date
         #else
             return nil
+        #endif
+    }
+
+    static var isolatedSeries: String? {
+        #if DEBUG
+            ProcessInfo.processInfo.environment["VOQORA_STATS_ISOLATE"]
+        #else
+            nil
         #endif
     }
 }

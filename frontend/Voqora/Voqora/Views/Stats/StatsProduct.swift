@@ -67,11 +67,11 @@ enum StatsProduct: String, CaseIterable, Identifiable {
     func tint(in theme: StatsTheme) -> Color {
         switch self {
         case .overview: theme.accent
-        case .readAloud: theme.series(1)
-        case .dictation: theme.series(2)
-        case .audiobooks: theme.series(3)
-        case .podcasts: theme.series(7)
-        case .ai: theme.series(4)
+        case .readAloud: StatsPalette.readAloud
+        case .dictation: StatsPalette.dictation
+        case .audiobooks: StatsPalette.audiobooks
+        case .podcasts: StatsPalette.podcasts
+        case .ai: StatsPalette.ai
         }
     }
 
