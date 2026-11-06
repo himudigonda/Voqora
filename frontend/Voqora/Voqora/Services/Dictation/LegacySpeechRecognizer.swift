@@ -206,9 +206,35 @@ final nonisolated class RecognitionRequestSlot: @unchecked Sendable {
     }
 }
 
+nonisolated struct LegacyRestartBackoff {
+    static let immediateRetries = 3
+    static let failureLimit = 10
+    static let healthyRun: TimeInterval = 10
+    static let baseDelay: TimeInterval = 0.5
+    static let maxDelay: TimeInterval = 8
+
+    private var failures = 0
+    private var lastRestart: TimeInterval?
+
+    mutating func noteProgress() {
+        failures = 0
+    }
+
+    mutating func delayAfterFailure(at now: TimeInterval) -> TimeInterval? {
+        if let lastRestart, now - lastRestart >= Self.healthyRun {
+            failures = 0
+        }
+        failures += 1
+        guard failures <= Self.failureLimit else { return nil }
+        let delay = failures <= Self.immediateRetries
+            ? 0
+            : min(Self.baseDelay * pow(2, Double(failures - Self.immediateRetries - 1)), Self.maxDelay)
+        lastRestart = now + delay
+        return delay
+    }
+}
+
 final class LegacySpeechRecognizer: SpeechRecognizing {
-    static let restartLimit = 3
-    static let restartWindow: TimeInterval = 10
     static let rotationTimeout: Duration = .seconds(3)
 
     private let slot = RecognitionRequestSlot()
@@ -221,7 +247,8 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
     private var segmenter = LegacyTranscriptSegmenter()
     private var forward: SpeechRecognitionHandler?
     private var isFinishing = false
-    private var restarts: [TimeInterval] = []
+    private var backoff = LegacyRestartBackoff()
+    private var restartTask: Task<Void, Never>?
     private var generation = 0
     private var taskGeneration = 0
 
@@ -288,6 +315,24 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
         session?.stop()
         session = nil
         slot.closeInput()?.endAudio()
+        if let restartTask {
+            restartTask.cancel()
+            self.restartTask = nil
+            let token = generation
+            Task { [weak self] in
+                guard let self, generation == token else { return }
+                finishWithoutRunningTask()
+            }
+        }
+    }
+
+    private func finishWithoutRunningTask() {
+        if slot.hasPending {
+            drainPendingAudio()
+            return
+        }
+        DictationTrace.event("legacy.session_ended", ["result": "ended", "reason": "finish_during_backoff"])
+        emit([.ended])
     }
 
     func stop() {
@@ -296,6 +341,8 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
         taskGeneration += 1
         rotationTimeoutTask?.cancel()
         rotationTimeoutTask = nil
+        restartTask?.cancel()
+        restartTask = nil
         task?.cancel()
         task = nil
         slot.replace(with: nil)?.endAudio()
@@ -305,7 +352,7 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
         forward = nil
         segmenter = LegacyTranscriptSegmenter()
         isFinishing = false
-        restarts = []
+        backoff = LegacyRestartBackoff()
     }
 
     private func beginTask(reason: String) {
@@ -352,6 +399,9 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
 
     private func process(text: String?, isFinal: Bool, failure: NSError?, token: Int) {
         let failed = failure != nil
+        if let text, !text.isEmpty {
+            backoff.noteProgress()
+        }
         if let text, !isFinal {
             DictationTrace.event("legacy.partial", ["text": text, "task": "\(token)"])
             let events = segmenter.ingest(text)
@@ -397,16 +447,32 @@ final class LegacySpeechRecognizer: SpeechRecognizing {
     }
 
     private func restartAfterTaskEnded(failed: Bool) {
-        let now = ProcessInfo.processInfo.systemUptime
-        restarts = restarts.filter { now - $0 < Self.restartWindow } + [now]
-        guard !failed || restarts.count <= Self.restartLimit else {
+        guard failed else {
+            VoqoraLog.info("SpeechRecognizer", "Recognition task ended mid-session; continuing in a new task", ["failed": "false"])
+            beginTask(reason: "final")
+            return
+        }
+        guard let delay = backoff.delayAfterFailure(at: ProcessInfo.processInfo.systemUptime) else {
             DictationTrace.event("legacy.session_ended", ["result": "failed", "reason": "restart_limit"])
             VoqoraLog.warn("SpeechRecognizer", "Recognition kept failing; ending the session")
             emit([.failed])
             return
         }
-        VoqoraLog.info("SpeechRecognizer", "Recognition task ended mid-session; continuing in a new task", ["failed": "\(failed)"])
-        beginTask(reason: failed ? "failure" : "final")
+        VoqoraLog.info("SpeechRecognizer", "Recognition task ended mid-session; continuing in a new task", [
+            "failed": "true",
+            "delay": "\(delay)",
+        ])
+        guard delay > 0 else {
+            beginTask(reason: "failure")
+            return
+        }
+        let token = generation
+        restartTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self, generation == token else { return }
+            restartTask = nil
+            beginTask(reason: "failure_backoff")
+        }
     }
 
     private func traceRestart(_ events: [SpeechRecognitionEvent]) {

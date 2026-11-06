@@ -99,6 +99,34 @@ final class CaptureReliabilityTests: XCTestCase {
         XCTAssertTrue(limiter.allow(at: 31))
     }
 
+    func test_legacyBackoffRetriesThenWaitsLongerThenGivesUp() {
+        var backoff = LegacyRestartBackoff()
+        var now: TimeInterval = 0
+        var delays: [TimeInterval?] = []
+        for _ in 0 ..< 11 {
+            let delay = backoff.delayAfterFailure(at: now)
+            delays.append(delay)
+            now += (delay ?? 0) + 0.1
+        }
+        XCTAssertEqual(delays, [0, 0, 0, 0.5, 1, 2, 4, 8, 8, 8, nil])
+    }
+
+    func test_legacyBackoffForgetsFailuresOnceTextArrives() {
+        var backoff = LegacyRestartBackoff()
+        for _ in 0 ..< 5 {
+            _ = backoff.delayAfterFailure(at: 0)
+        }
+        backoff.noteProgress()
+        XCTAssertEqual(backoff.delayAfterFailure(at: 0), 0)
+    }
+
+    func test_legacyBackoffDoesNotEndASessionForSpacedOutFailures() {
+        var backoff = LegacyRestartBackoff()
+        for attempt in 0 ..< 50 {
+            XCTAssertEqual(backoff.delayAfterFailure(at: TimeInterval(attempt) * 15), 0)
+        }
+    }
+
     func test_parakeetConverterHandlesMultichannelInput() throws {
         let converter = try XCTUnwrap(ParakeetAudioConverter())
         let layout = try XCTUnwrap(AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | 4))

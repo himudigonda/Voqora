@@ -17,6 +17,9 @@
 
 ### Fixed
 
+- Dictation on Macs without SpeechAnalyzer keeps listening through a run of
+  recognition errors, retrying with growing pauses instead of ending the
+  session after three quick failures.
 - A faster AI response or fewer cancelled dictations no longer shows as a
   warning in Stats.
 - Voqora no longer crashes at launch when built with Xcode 27.2 on macOS 27.2.
